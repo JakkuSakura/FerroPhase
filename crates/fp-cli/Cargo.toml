@@ -21,6 +21,8 @@ fp-llvm = { path = "../fp-llvm" }
 fp-lang = { path = "../fp-lang" }
 fp-wit = { path = "../fp-wit" }
 fp-zig = { path = "../fp-zig" }
+fp-prql = { path = "../fp-prql" }
+fp-sql = { path = "../fp-sql" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
@@ -33,7 +35,7 @@ globset = "0.4"
 # Logging and diagnostics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-miette = { version = "7.6.0", features = ["fancy"] }
+miette = { version = "7.6.0", features = ["fancy"], optional = true }
 
 # Serialization for configuration
 serde = { version = "1.0", features = ["derive"] }
@@ -67,7 +69,7 @@ predicates = "3.0"
 criterion = { version = "0.7.0" }
 
 [features]
-default = []
+default = ["miette"]
 bootstrap = [
     "fp-core/bootstrap",
     "fp-typing/bootstrap",

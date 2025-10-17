@@ -117,6 +117,10 @@ pub enum Type {
         params: Vec<Type>,
         is_variadic: bool,
     },
+    Reference {
+        base: Box<Type>,
+        is_rvalue: bool,
+    },
     Struct(String),
     Union(String),
     Enum(String),
@@ -127,6 +131,7 @@ pub enum Type {
         is_volatile: bool,
         is_restrict: bool,
     },
+    Custom(String),
 }
 
 /// Storage class specifiers

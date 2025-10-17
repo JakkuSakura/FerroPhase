@@ -20,6 +20,7 @@ pub mod ops;
 pub mod package;
 pub mod pretty;
 pub mod printer;
+pub mod query;
 pub mod span;
 pub mod utils;
 pub mod vfs;

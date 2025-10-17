@@ -3,11 +3,13 @@ use crate::codegen::CodeGenerator;
 use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::frontend::{
     FerroFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend,
-    TypeScriptFrontend, WitFrontend,
+    PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
+#[cfg(feature = "bootstrap")]
+use fp_core::ast::json as ast_json;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
+use fp_core::ast::{AstSerializer, AstSnapshot, Node, NodeKind, RuntimeValue, Value, snapshot};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
@@ -20,11 +22,15 @@ use fp_llvm::{
     LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicMaterializer,
 };
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
+#[cfg(feature = "bootstrap")]
+use fp_optimize::passes::DefaultIntrinsicNormalizer;
 use fp_optimize::passes::{
     NoopIntrinsicMaterializer, lower_closures, materialize_intrinsics, normalize_intrinsics,
     remove_generic_templates,
 };
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
+#[cfg(feature = "bootstrap")]
+use fp_rust::printer::RustPrinter;
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
 use std::fs;
@@ -36,6 +42,8 @@ use tracing::{debug, info_span, warn};
 
 #[cfg(feature = "bootstrap")]
 const BOOTSTRAP_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP";
+const BOOTSTRAP_SNAPSHOT_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP_SNAPSHOT";
+const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
 #[cfg(feature = "bootstrap")]
 fn detect_bootstrap_mode() -> bool {
@@ -62,6 +70,48 @@ fn detect_bootstrap_mode() -> bool {
 #[cfg(not(feature = "bootstrap"))]
 const fn detect_bootstrap_mode() -> bool {
     false
+}
+
+fn detect_snapshot_export() -> bool {
+    use std::env;
+
+    let enabled = match env::var_os(BOOTSTRAP_SNAPSHOT_ENV_VAR) {
+        None => false,
+        Some(value) => {
+            if value.is_empty() {
+                return true;
+            }
+            match value.to_str() {
+                Some(text) => matches!(
+                    text.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                ),
+                None => false,
+            }
+        }
+    };
+
+    if enabled {
+        debug!("snapshot export requested");
+    }
+
+    enabled
+}
+
+fn build_ast_snapshot(ast: &Node) -> AstSnapshot {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    let created_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+
+    AstSnapshot {
+        schema_version: SNAPSHOT_SCHEMA_VERSION,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        created_ms,
+        ast: ast.clone(),
+    }
 }
 
 const STAGE_FRONTEND: &str = "frontend";
@@ -158,6 +208,10 @@ impl Pipeline {
         let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
         let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
         registry.register(ts_frontend);
+        let sql_frontend: Arc<dyn LanguageFrontend> = Arc::new(SqlFrontend::new());
+        registry.register(sql_frontend);
+        let prql_frontend: Arc<dyn LanguageFrontend> = Arc::new(PrqlFrontend::new());
+        registry.register(prql_frontend);
         let bootstrap_mode = detect_bootstrap_mode();
 
         #[cfg(feature = "bootstrap")]
@@ -333,6 +387,83 @@ impl Pipeline {
         Ok(ast)
     }
 
+    fn parse_input_source(
+        &mut self,
+        options: &PipelineOptions,
+        source: &str,
+        input_path: Option<&PathBuf>,
+    ) -> Result<Node, CliError> {
+        let language = self.resolve_language(options, input_path);
+        let frontend = self.frontends.get(&language).ok_or_else(|| {
+            CliError::Compilation(format!("Unsupported source language: {}", language))
+        })?;
+
+        self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)
+    }
+
+    fn try_load_bootstrap_ast(&mut self, path: &Path) -> Result<Option<Node>, CliError> {
+        #[cfg(feature = "bootstrap")]
+        {
+            if !self.bootstrap_mode {
+                return Ok(None);
+            }
+
+            let is_json = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .map(|ext| ext.eq_ignore_ascii_case("json"))
+                .unwrap_or(false);
+
+            if !is_json {
+                return Ok(None);
+            }
+
+            if let Ok(snapshot) = snapshot::load_snapshot_from_file(path) {
+                if snapshot.schema_version != SNAPSHOT_SCHEMA_VERSION {
+                    warn!(
+                        expected = SNAPSHOT_SCHEMA_VERSION,
+                        actual = snapshot.schema_version,
+                        "bootstrap snapshot schema mismatch"
+                    );
+                }
+                let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new_with_rustfmt());
+                register_threadlocal_serializer(serializer.clone());
+                self.serializer = Some(serializer);
+                let normalizer: Arc<dyn IntrinsicNormalizer> =
+                    Arc::new(DefaultIntrinsicNormalizer::default());
+                self.intrinsic_normalizer = Some(normalizer);
+                self.source_language = Some("bootstrap-json".to_string());
+                self.frontend_snapshot = None;
+                return Ok(Some(snapshot.ast));
+            }
+
+            match ast_json::load_node_from_file(path) {
+                Ok(node) => {
+                    let serializer: Arc<dyn AstSerializer> =
+                        Arc::new(RustPrinter::new_with_rustfmt());
+                    register_threadlocal_serializer(serializer.clone());
+                    self.serializer = Some(serializer);
+                    let normalizer: Arc<dyn IntrinsicNormalizer> =
+                        Arc::new(DefaultIntrinsicNormalizer::default());
+                    self.intrinsic_normalizer = Some(normalizer);
+                    self.source_language = Some("bootstrap-json".to_string());
+                    self.frontend_snapshot = None;
+                    Ok(Some(node))
+                }
+                Err(err) => Err(CliError::Compilation(format!(
+                    "Failed to load bootstrap AST {}: {}",
+                    path.display(),
+                    err
+                ))),
+            }
+        }
+        #[cfg(not(feature = "bootstrap"))]
+        {
+            let _ = path;
+            Ok(None)
+        }
+    }
+
     #[cfg(test)]
     pub fn parse_source_with_path_for_tests(
         &mut self,
@@ -349,18 +480,29 @@ impl Pipeline {
     ) -> Result<PipelineOutput, CliError> {
         self.refresh_bootstrap_mode();
         options.bootstrap_mode |= self.bootstrap_mode;
+        options.emit_bootstrap_snapshot |= detect_snapshot_export();
 
         let (source, base_path, input_path) = self.read_input(input)?;
         options.base_path = Some(base_path.clone());
 
         self.reset_state();
 
-        let language = self.resolve_language(&options, input_path.as_ref());
-        let frontend = self.frontends.get(&language).ok_or_else(|| {
-            CliError::Compilation(format!("Unsupported source language: {}", language))
-        })?;
-
-        let ast = self.parse_with_frontend(&frontend, &source, input_path.as_deref(), &options)?;
+        let ast = {
+            let path_ref = input_path.as_ref();
+            if options.bootstrap_mode {
+                if let Some(path) = path_ref {
+                    if let Some(node) = self.try_load_bootstrap_ast(path.as_path())? {
+                        node
+                    } else {
+                        self.parse_input_source(&options, &source, path_ref)?
+                    }
+                } else {
+                    self.parse_input_source(&options, &source, path_ref)?
+                }
+            } else {
+                self.parse_input_source(&options, &source, path_ref)?
+            }
+        };
 
         match options.target {
             PipelineTarget::Interpret => {
@@ -491,6 +633,7 @@ impl Pipeline {
         pipeline_options.save_intermediates = options.save_intermediates;
         pipeline_options.base_path = options.base_path.clone();
         pipeline_options.bootstrap_mode = self.bootstrap_mode;
+        pipeline_options.emit_bootstrap_snapshot |= detect_snapshot_export();
 
         let diagnostic_manager = DiagnosticManager::new();
 
@@ -521,6 +664,12 @@ impl Pipeline {
             if options.save_intermediates {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
                     self.save_pretty(ast, base_path, EXT_AST_EVAL, &pipeline_options)?;
+                }
+            }
+
+            if pipeline_options.emit_bootstrap_snapshot {
+                if let Some(base_path) = pipeline_options.base_path.as_ref() {
+                    self.save_bootstrap_snapshot(ast, base_path)?;
                 }
             }
         }
@@ -608,6 +757,10 @@ impl Pipeline {
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
+        }
+
+        if options.emit_bootstrap_snapshot {
+            self.save_bootstrap_snapshot(&ast, base_path)?;
         }
 
         self.run_stage(
@@ -1069,6 +1222,24 @@ impl Pipeline {
         Ok(())
     }
 
+    fn save_bootstrap_snapshot(&self, ast: &Node, base_path: &Path) -> Result<(), CliError> {
+        let snapshot_path = base_path.with_extension("ast.json");
+
+        if let Some(parent) = snapshot_path.parent() {
+            fs::create_dir_all(parent).map_err(CliError::Io)?;
+        }
+
+        let snapshot = build_ast_snapshot(ast);
+
+        snapshot::write_snapshot_to_file(&snapshot_path, &snapshot).map_err(|err| {
+            CliError::Compilation(format!(
+                "Failed to write bootstrap AST snapshot {}: {}",
+                snapshot_path.display(),
+                err
+            ))
+        })
+    }
+
     fn generate_llvm_artifacts(
         &self,
         lir_program: &lir::LirProgram,
@@ -1116,7 +1287,7 @@ impl Pipeline {
             generator.enable_error_tolerance(options.error_tolerance.max_errors);
         }
 
-        if matches!(ast.kind(), NodeKind::Item(_)) {
+        if matches!(ast.kind(), NodeKind::Item(_) | NodeKind::Query(_)) {
             manager.add_diagnostic(
                 Diagnostic::error(
                     "Top-level items are not supported; provide a file or expression".to_string(),
@@ -1130,6 +1301,7 @@ impl Pipeline {
             NodeKind::Expr(expr) => generator.transform(expr),
             NodeKind::File(file) => generator.transform(file),
             NodeKind::Item(_) => unreachable!(),
+            NodeKind::Query(_) => unreachable!(),
         };
 
         let (errors, warnings) = generator.take_diagnostics();
@@ -1194,6 +1366,11 @@ impl Pipeline {
             NodeKind::Item(_) => {
                 return Err(CliError::Compilation(
                     "Standalone item interpretation is not supported".to_string(),
+                ));
+            }
+            NodeKind::Query(_) => {
+                return Err(CliError::Compilation(
+                    "Query documents cannot be interpreted".to_string(),
                 ));
             }
         };
@@ -1622,6 +1799,7 @@ mod tests {
             }
             ast::NodeKind::Expr(expr) => collector.visit_expr(expr),
             ast::NodeKind::Item(item) => collector.visit_item(item),
+            ast::NodeKind::Query(_) => {}
         }
         collector.0
     }

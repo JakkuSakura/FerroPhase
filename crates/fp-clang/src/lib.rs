@@ -4,6 +4,7 @@
 //! and convert them to LLVM IR that can be used with the fp-llvm backend.
 
 pub mod ast;
+mod clang_ast_lowering;
 pub mod codegen;
 pub mod error;
 pub mod intrinsics;

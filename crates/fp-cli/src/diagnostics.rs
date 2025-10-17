@@ -1,12 +1,24 @@
 //! Diagnostic and error reporting utilities
 
 use crate::Result;
+#[cfg(not(feature = "bootstrap"))]
 use miette::Diagnostic;
+#[cfg(not(feature = "bootstrap"))]
 use thiserror::Error;
 
+#[cfg(feature = "bootstrap")]
+type SourceSpan = (usize, usize);
+#[cfg(not(feature = "bootstrap"))]
+type SourceSpan = miette::SourceSpan;
+
+#[cfg(feature = "bootstrap")]
+type OptionalSourceSpan = Option<(usize, usize)>;
+#[cfg(not(feature = "bootstrap"))]
+type OptionalSourceSpan = Option<miette::SourceSpan>;
+
 /// Set up enhanced error reporting with miette
+#[cfg(not(feature = "bootstrap"))]
 pub fn setup_error_reporting() -> Result<()> {
-    // Install miette as the global error handler
     miette::set_hook(Box::new(|_| {
         Box::new(
             miette::MietteHandlerOpts::new()
@@ -21,69 +33,85 @@ pub fn setup_error_reporting() -> Result<()> {
     Ok(())
 }
 
+#[cfg(feature = "bootstrap")]
+pub fn setup_error_reporting() -> Result<()> {
+    Ok(())
+}
+
 /// Enhanced diagnostic error for FerroPhase CLI
-#[derive(Error, Debug, Diagnostic)]
+#[cfg_attr(feature = "bootstrap", derive(Debug))]
+#[cfg_attr(not(feature = "bootstrap"), derive(Error, Debug, Diagnostic))]
 pub enum FerroPhaseError {
-    #[error("Syntax error in FerroPhase code")]
-    #[diagnostic(
-        code(ferrophase::syntax_error),
-        help("Check your syntax against the FerroPhase language reference")
+    #[cfg_attr(not(feature = "bootstrap"), error("Syntax error in FerroPhase code"))]
+    #[cfg_attr(
+        not(feature = "bootstrap"),
+        diagnostic(
+            code(ferrophase::syntax_error),
+            help("Check your syntax against the FerroPhase language reference")
+        )
     )]
     SyntaxError {
-        #[source_code]
+        #[cfg_attr(not(feature = "bootstrap"), source_code)]
         src: String,
-        #[label("syntax error here")]
-        err_span: miette::SourceSpan,
+        #[cfg_attr(not(feature = "bootstrap"), label("syntax error here"))]
+        err_span: SourceSpan,
     },
 
-    #[error("Type error in FerroPhase code")]
-    #[diagnostic(
-        code(ferrophase::type_error),
-        help("Ensure all types are correctly specified and compatible")
+    #[cfg_attr(not(feature = "bootstrap"), error("Type error in FerroPhase code"))]
+    #[cfg_attr(
+        not(feature = "bootstrap"),
+        diagnostic(
+            code(ferrophase::type_error),
+            help("Ensure all types are correctly specified and compatible")
+        )
     )]
     TypeError {
-        #[source_code]
+        #[cfg_attr(not(feature = "bootstrap"), source_code)]
         src: String,
-        #[label("type error here")]
-        err_span: miette::SourceSpan,
+        #[cfg_attr(not(feature = "bootstrap"), label("type error here"))]
+        err_span: SourceSpan,
         message: String,
     },
 
-    #[error("Compilation error")]
-    #[diagnostic(
-        code(ferrophase::compilation_error),
-        help("Check the compilation logs for more details")
+    #[cfg_attr(not(feature = "bootstrap"), error("Compilation error"))]
+    #[cfg_attr(
+        not(feature = "bootstrap"),
+        diagnostic(
+            code(ferrophase::compilation_error),
+            help("Check the compilation logs for more details")
+        )
     )]
     CompilationError {
         message: String,
         src: Option<String>,
-        #[label("error occurred here")]
-        err_span: Option<miette::SourceSpan>,
+        #[cfg_attr(not(feature = "bootstrap"), label("error occurred here"))]
+        err_span: OptionalSourceSpan,
     },
 
-    #[error("Project configuration error")]
-    #[diagnostic(
-        code(ferrophase::config_error),
-        help("Check your Ferrophase.toml file for correct syntax and values")
+    #[cfg_attr(not(feature = "bootstrap"), error("Project configuration error"))]
+    #[cfg_attr(
+        not(feature = "bootstrap"),
+        diagnostic(
+            code(ferrophase::config_error),
+            help("Check your Ferrophase.toml file for correct syntax and values")
+        )
     )]
     ConfigError {
         message: String,
         config_src: Option<String>,
-        #[label("configuration error")]
-        err_span: Option<miette::SourceSpan>,
+        #[cfg_attr(not(feature = "bootstrap"), label("configuration error"))]
+        err_span: OptionalSourceSpan,
     },
 }
 
-/// Helper function to create a syntax error with source context
-pub fn syntax_error(src: String, span: miette::SourceSpan) -> FerroPhaseError {
+pub fn syntax_error(src: String, span: SourceSpan) -> FerroPhaseError {
     FerroPhaseError::SyntaxError {
         src,
         err_span: span,
     }
 }
 
-/// Helper function to create a type error with source context
-pub fn type_error(src: String, span: miette::SourceSpan, message: String) -> FerroPhaseError {
+pub fn type_error(src: String, span: SourceSpan, message: String) -> FerroPhaseError {
     FerroPhaseError::TypeError {
         src,
         err_span: span,
@@ -104,7 +132,7 @@ pub fn compilation_error(message: String) -> FerroPhaseError {
 pub fn compilation_error_with_source(
     message: String,
     src: String,
-    span: miette::SourceSpan,
+    span: SourceSpan,
 ) -> FerroPhaseError {
     FerroPhaseError::CompilationError {
         message,
@@ -123,11 +151,17 @@ pub fn config_error(message: String) -> FerroPhaseError {
 }
 
 /// Pretty print diagnostics with context
+#[cfg(not(feature = "bootstrap"))]
 pub fn print_diagnostic(error: &dyn Diagnostic) {
     eprintln!("{:?}", error);
 }
 
-#[cfg(test)]
+#[cfg(feature = "bootstrap")]
+pub fn print_diagnostic(error: &FerroPhaseError) {
+    eprintln!("{:?}", error);
+}
+
+#[cfg(all(test, not(feature = "bootstrap")))]
 mod tests {
     use super::*;
 

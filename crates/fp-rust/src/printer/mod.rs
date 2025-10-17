@@ -505,6 +505,9 @@ impl RustPrinter {
             NodeKind::Item(n) => self.print_item(n),
             NodeKind::Expr(n) => self.print_expr(n),
             NodeKind::File(n) => self.print_file(n),
+            NodeKind::Query(_) => Err(fp_core::error::Error::Generic(eyre::eyre!(
+                "Query documents cannot be printed as Rust tokens"
+            ))),
         }
     }
 }

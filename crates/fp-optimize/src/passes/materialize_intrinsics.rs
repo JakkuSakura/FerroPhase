@@ -19,6 +19,7 @@ pub fn materialize_intrinsics(ast: &mut Node, strategy: &dyn IntrinsicMaterializ
         }
         NodeKind::Item(item) => materialize_item(item, strategy),
         NodeKind::Expr(expr) => materialize_expr(expr, strategy),
+        NodeKind::Query(_) => Ok(()),
     }
 }
 

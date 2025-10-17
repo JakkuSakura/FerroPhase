@@ -1,8 +1,8 @@
 //! Code generation utilities for integrating C/C++ with FerroPhase
 
-use crate::{ClangError, ClangParser, CompileOptions, Result};
+use crate::{ast, ClangError, ClangParser, CompileOptions, Result};
 use fp_core::lir;
-use std::path::Path;
+use std::{collections::HashMap, path::Path};
 use tracing::{debug, info};
 
 /// Integrates C/C++ compilation with the FerroPhase LLVM backend
@@ -59,6 +59,13 @@ impl ClangCodegen {
         options: &CompileOptions,
     ) -> Result<Vec<FunctionSignature>> {
         debug!("Extracting declarations from: {}", header_file.display());
+
+        if let Ok(translation_unit) = self.parser.parse_translation_unit(header_file, options) {
+            let signatures = collect_signatures_from_ast(&translation_unit);
+            if !signatures.is_empty() {
+                return Ok(signatures);
+            }
+        }
 
         // Create a temporary C file that includes the header
         use std::fs;
@@ -153,6 +160,138 @@ fn format_llvm_type(ty: &llvm_ir::Type) -> String {
         }
         llvm_ir::Type::StructType { .. } => "struct".to_string(),
         _ => "unknown".to_string(),
+    }
+}
+
+fn collect_signatures_from_ast(tu: &ast::TranslationUnit) -> Vec<FunctionSignature> {
+    let mut functions: HashMap<String, (FunctionSignature, bool)> = HashMap::new();
+
+    for decl in &tu.declarations {
+        let ast::Declaration::Function(func) = decl else {
+            continue;
+        };
+
+        if func.name.is_empty() {
+            continue;
+        }
+
+        let params = func
+            .parameters
+            .iter()
+            .enumerate()
+            .map(|(idx, param)| {
+                let name = param.name.clone().unwrap_or_else(|| format!("arg{}", idx));
+                let ty = format_ast_type(&param.param_type);
+                (name, ty)
+            })
+            .collect();
+
+        let signature = FunctionSignature {
+            name: func.name.clone(),
+            return_type: format_ast_type(&func.return_type),
+            parameters: params,
+            is_variadic: func.is_variadic,
+        };
+
+        functions
+            .entry(func.name.clone())
+            .and_modify(|(existing, is_definition)| {
+                if !*is_definition && func.is_definition {
+                    *existing = signature.clone();
+                    *is_definition = true;
+                }
+            })
+            .or_insert((signature, func.is_definition));
+    }
+
+    let mut result: Vec<_> = functions
+        .into_iter()
+        .map(|(name, (sig, _))| (name, sig))
+        .collect();
+    result.sort_by(|a, b| a.0.cmp(&b.0));
+    result.into_iter().map(|(_, sig)| sig).collect()
+}
+
+fn format_ast_type(ty: &ast::Type) -> String {
+    match ty {
+        ast::Type::Void => "void".to_string(),
+        ast::Type::Bool => "bool".to_string(),
+        ast::Type::Char => "char".to_string(),
+        ast::Type::UChar => "unsigned char".to_string(),
+        ast::Type::Short => "short".to_string(),
+        ast::Type::UShort => "unsigned short".to_string(),
+        ast::Type::Int => "int".to_string(),
+        ast::Type::UInt => "unsigned int".to_string(),
+        ast::Type::Long => "long".to_string(),
+        ast::Type::ULong => "unsigned long".to_string(),
+        ast::Type::LongLong => "long long".to_string(),
+        ast::Type::ULongLong => "unsigned long long".to_string(),
+        ast::Type::Float => "float".to_string(),
+        ast::Type::Double => "double".to_string(),
+        ast::Type::LongDouble => "long double".to_string(),
+        ast::Type::Pointer(inner) => {
+            let inner_str = format_ast_type(inner);
+            format!("{inner_str}*")
+        }
+        ast::Type::Array(inner, size) => {
+            let inner_str = format_ast_type(inner);
+            match size {
+                Some(len) => format!("{inner_str}[{len}]"),
+                None => format!("{inner_str}[]"),
+            }
+        }
+        ast::Type::Function {
+            return_type,
+            params,
+            is_variadic,
+        } => {
+            let ret = format_ast_type(return_type);
+            let mut param_strs: Vec<String> = params.iter().map(format_ast_type).collect();
+            if *is_variadic {
+                param_strs.push("...".to_string());
+            }
+            let params_joined = if param_strs.is_empty() {
+                "void".to_string()
+            } else {
+                param_strs.join(", ")
+            };
+            format!("{ret}({params_joined})")
+        }
+        ast::Type::Struct(name) => format!("struct {name}"),
+        ast::Type::Union(name) => format!("union {name}"),
+        ast::Type::Enum(name) => format!("enum {name}"),
+        ast::Type::Typedef(name) => name.to_string(),
+        ast::Type::Qualified {
+            base,
+            is_const,
+            is_volatile,
+            is_restrict,
+        } => {
+            let mut parts = Vec::new();
+            if *is_const {
+                parts.push("const".to_string());
+            }
+            if *is_volatile {
+                parts.push("volatile".to_string());
+            }
+            if *is_restrict {
+                parts.push("restrict".to_string());
+            }
+            let base_str = format_ast_type(base);
+            if !base_str.is_empty() {
+                parts.push(base_str);
+            }
+            parts.join(" ")
+        }
+        ast::Type::Reference { base, is_rvalue } => {
+            let mut base_str = format_ast_type(base);
+            base_str.push('&');
+            if *is_rvalue {
+                base_str.push('&');
+            }
+            base_str
+        }
+        ast::Type::Custom(value) => value.clone(),
     }
 }
 

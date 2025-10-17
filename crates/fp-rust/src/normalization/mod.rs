@@ -37,6 +37,7 @@ pub fn normalize_last_to_ast(node: &mut Node, diagnostics: Diagnostics<'_>) {
                 normalize_item(item, diagnostics);
             }
         }
+        NodeKind::Query(_) => {}
     }
 }
 

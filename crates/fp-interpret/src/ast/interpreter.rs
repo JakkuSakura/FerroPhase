@@ -160,6 +160,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             NodeKind::Expr(expr) => {
                 self.eval_expr(expr);
             }
+            NodeKind::Query(_) => {
+                self.emit_error("Query documents cannot be interpreted");
+            }
         }
     }
 
