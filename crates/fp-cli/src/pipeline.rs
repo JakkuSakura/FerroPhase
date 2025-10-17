@@ -34,6 +34,36 @@ use std::process::Command;
 use std::sync::Arc;
 use tracing::{debug, info_span, warn};
 
+#[cfg(feature = "bootstrap")]
+const BOOTSTRAP_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP";
+
+#[cfg(feature = "bootstrap")]
+fn detect_bootstrap_mode() -> bool {
+    use std::env;
+
+    match env::var_os(BOOTSTRAP_ENV_VAR) {
+        None => false,
+        Some(value) => {
+            if value.is_empty() {
+                return true;
+            }
+
+            match value.to_str() {
+                Some(text) => matches!(
+                    text.trim().to_ascii_lowercase().as_str(),
+                    "1" | "true" | "yes" | "on"
+                ),
+                None => false,
+            }
+        }
+    }
+}
+
+#[cfg(not(feature = "bootstrap"))]
+const fn detect_bootstrap_mode() -> bool {
+    false
+}
+
 const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
@@ -101,6 +131,7 @@ impl IntrinsicsMaterializer {
 pub struct Pipeline {
     frontends: Arc<FrontendRegistry>,
     default_runtime: String,
+    bootstrap_mode: bool,
     serializer: Option<Arc<dyn AstSerializer>>,
     intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     source_language: Option<String>,
@@ -127,10 +158,17 @@ impl Pipeline {
         let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
         let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
         registry.register(ts_frontend);
+        let bootstrap_mode = detect_bootstrap_mode();
+
+        #[cfg(feature = "bootstrap")]
+        if bootstrap_mode {
+            debug!("FERROPHASE_BOOTSTRAP detected; running pipeline in bootstrap mode");
+        }
 
         Self {
             frontends: Arc::new(registry),
             default_runtime: "literal".to_string(),
+            bootstrap_mode,
             serializer: None,
             intrinsic_normalizer: None,
             source_language: None,
@@ -148,9 +186,17 @@ impl Pipeline {
     }
 
     pub fn with_frontend_registry(registry: Arc<FrontendRegistry>) -> Self {
+        let bootstrap_mode = detect_bootstrap_mode();
+
+        #[cfg(feature = "bootstrap")]
+        if bootstrap_mode {
+            debug!("FERROPHASE_BOOTSTRAP detected; running pipeline in bootstrap mode");
+        }
+
         Self {
             frontends: registry,
             default_runtime: "literal".to_string(),
+            bootstrap_mode,
             serializer: None,
             intrinsic_normalizer: None,
             source_language: None,
@@ -168,6 +214,24 @@ impl Pipeline {
 
     pub fn set_runtime(&mut self, runtime_name: &str) {
         self.default_runtime = runtime_name.to_string();
+    }
+
+    fn refresh_bootstrap_mode(&mut self) {
+        #[cfg(feature = "bootstrap")]
+        {
+            let env_enabled = detect_bootstrap_mode();
+            if env_enabled != self.bootstrap_mode {
+                debug!(
+                    enabled = env_enabled,
+                    "FERROPHASE_BOOTSTRAP toggled; updating pipeline bootstrap mode"
+                );
+                self.bootstrap_mode = env_enabled;
+            }
+        }
+    }
+
+    pub fn bootstrap_mode(&self) -> bool {
+        self.bootstrap_mode
     }
 
     pub fn last_const_eval_outcome(&self) -> Option<&ConstEvalOutcome> {
@@ -200,7 +264,10 @@ impl Pipeline {
         input: PipelineInput,
         config: &PipelineConfig,
     ) -> Result<PipelineOutput, CliError> {
-        let options: PipelineOptions = config.into();
+        self.refresh_bootstrap_mode();
+
+        let mut options: PipelineOptions = config.into();
+        options.bootstrap_mode |= self.bootstrap_mode;
         self.execute_with_options(input, options).await
     }
 
@@ -280,6 +347,9 @@ impl Pipeline {
         input: PipelineInput,
         mut options: PipelineOptions,
     ) -> Result<PipelineOutput, CliError> {
+        self.refresh_bootstrap_mode();
+        options.bootstrap_mode |= self.bootstrap_mode;
+
         let (source, base_path, input_path) = self.read_input(input)?;
         options.base_path = Some(base_path.clone());
 
@@ -416,9 +486,11 @@ impl Pipeline {
         ast: &mut Node,
         options: &TranspilePreparationOptions,
     ) -> Result<(), CliError> {
+        self.refresh_bootstrap_mode();
         let mut pipeline_options = PipelineOptions::default();
         pipeline_options.save_intermediates = options.save_intermediates;
         pipeline_options.base_path = options.base_path.clone();
+        pipeline_options.bootstrap_mode = self.bootstrap_mode;
 
         let diagnostic_manager = DiagnosticManager::new();
 
@@ -1246,12 +1318,14 @@ mod tests {
 
     impl PipelineHarness {
         fn new(target: PipelineTarget) -> Self {
+            let mut pipeline = Pipeline::new();
             let mut options = PipelineOptions::default();
             options.target = target.clone();
             options.base_path = Some(PathBuf::from("unit_test_output"));
+            options.bootstrap_mode = pipeline.bootstrap_mode();
 
             Self {
-                pipeline: Pipeline::new(),
+                pipeline,
                 diagnostics: DiagnosticManager::new(),
                 options,
             }
