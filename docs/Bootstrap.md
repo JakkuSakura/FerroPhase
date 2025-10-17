@@ -27,7 +27,7 @@
   - switches `DashMap`-backed contexts in `context.rs` to plain `HashMap` + `RefCell`,
   - gates out `tree-sitter` exports in `cst::ts`,
   - bundles a lightweight `AstSerializer`/`Deserializer` using `serde_json`.
-- Guard the bootstrap runtime path with `FERROPHASE_BOOTSTRAP=1`; when set, the binary should prefer JSON inputs and skip work that requires missing external crates.
+- Guard the bootstrap runtime path with `FERROPHASE_BOOTSTRAP=1`; when set, the binary should prefer JSON inputs while still executing the full pipeline (type-checking, const-eval, lowering) using prepared metadata.
 - Deliver a `JsonAstLoader` helper (either in `fp-core` or a new `fp-bootstrap` crate) that loads `Node`, `Ty`, and `HIR` representations from JSON files.
 
 ### Diagnostics and intrinsic normalization
@@ -35,12 +35,8 @@
 - CLI diagnostics rely on `miette`; for bootstrap we can emit plain strings or reuse the simplified `DiagnosticManager` already provided by `fp-core`.
 
 ### Typing and const evaluation
-- Current code dynamically parses Rust fragments (`syn`) when it encounters `Expr::Any` or stringly typed casts. In bootstrap mode (cargo feature enabled **and** `FERROPHASE_BOOTSTRAP=1` present):
-  - Skip `fp_typing::annotate` entirely and require input ASTs to carry `Node.ty` fields populated.
-  - Optionally ship precomputed type tables (`HashMap<NodeId, Ty>`) in JSON and merge them after deserialization.
-- Const evaluation can be bypassed by:
-  - importing a `ConstEvalOutcome` snapshot (values, stdout, diagnostics) so that later stages still see specialized functions.
-  - or re-executing a trimmed interpreter that only handles literal folding and avoids `syn`-driven parsing; this is a stretch goal.
+- Current code dynamically parses Rust fragments (`syn`) when it encounters `Expr::Any` or stringly typed casts. In bootstrap mode (cargo feature enabled **and** `FERROPHASE_BOOTSTRAP=1` present) the pipeline still runs `fp_typing::annotate`, but it should rely on pre-populated `Node.ty` fields or bundled type tables to avoid invoking heavyweight parsers.
+- Const evaluation continues to execute so that downstream stages see the same mutations; preload serialized interpreter snapshots to supply any data consumers normally sourced from external crates.
 
 ### Lowering and backend stages
 - `fp_optimize::transformations` converts typed AST into HIR/MIR. These modules do not directly depend on the heavyweight parsers; they consume annotated ASTs. Once types are present, they can still run.
@@ -67,7 +63,7 @@
    - Ensure unit tests and CI build both default and `bootstrap` configurations.
 2. **Runtime toggle**
    - Introduce an environment variable (`FERROPHASE_BOOTSTRAP`) that switches the CLI into snapshot-replay mode at runtime.
-   - Flow this flag through `PipelineOptions` so stages can skip parsing, typing, and backend emission when operating on JSON inputs.
+   - Flow this flag through `PipelineOptions` so stages can adjust behaviour (prefer JSON artefacts, use alternate serializers) while still exercising the full pipeline.
 3. **Introduce JSON loaders**
    - Implement `JsonAstLoader` and `JsonConstSnapshot` utilities.
    - Extend `PipelineInput` with a `PreTypedJson` variant that skips frontends/type inference when `FERROPHASE_BOOTSTRAP` is set.

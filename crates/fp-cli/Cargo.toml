@@ -68,3 +68,8 @@ criterion = { version = "0.7.0" }
 
 [features]
 default = []
+bootstrap = [
+    "fp-core/bootstrap",
+    "fp-typing/bootstrap",
+    "fp-optimize/bootstrap",
+]

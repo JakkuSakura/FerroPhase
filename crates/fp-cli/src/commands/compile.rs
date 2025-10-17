@@ -205,6 +205,7 @@ async fn compile_file(
         },
         release: args.release,
         execute_main: execute_const_main,
+        bootstrap_mode: false,
     };
 
     // Execute pipeline with new options
