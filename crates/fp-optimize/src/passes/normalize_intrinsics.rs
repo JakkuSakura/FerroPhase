@@ -39,6 +39,7 @@ fn normalize_node(node: &mut Node, strategy: Option<&dyn IntrinsicNormalizer>) -
         }
         NodeKind::Item(item) => normalize_item(item, strategy)?,
         NodeKind::Expr(expr) => normalize_expr(expr, strategy)?,
+        NodeKind::Query(_) => {}
     }
     Ok(())
 }

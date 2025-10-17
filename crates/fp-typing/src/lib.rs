@@ -7,17 +7,8 @@ use fp_core::context::SharedScopedContext;
 use fp_core::error::{Error, Result};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_rust::{
-    parser::{parse_type as parse_raw_type, RustParser},
-    RawExpr,
-};
-
 fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
-}
-
-fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<Expr> {
-    RustParser::new().parse_expr(expr)
 }
 
 type TypeVarId = usize;
@@ -246,6 +237,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 node.set_ty(Ty::Unit(TypeUnit));
             }
+            NodeKind::Query(_) => {
+                node.set_ty(Ty::any());
+            }
         }
         Ok(self.finish())
     }
@@ -264,6 +258,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             NodeKind::Expr(_) => {
                 // Nothing to predeclare for expressions
+            }
+            NodeKind::Query(_) => {
+                // Query documents do not participate in type inference yet.
             }
         }
     }
@@ -858,29 +855,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ExprKind::Range(range) => self.infer_range(range)?,
             ExprKind::Splat(splat) => self.infer_splat(splat)?,
             ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
-            ExprKind::Any(any) => {
-                if let Some(raw) = any.downcast_ref::<RawExpr>() {
-                    if let syn::Expr::Cast(cast_expr) = &raw.raw {
-                        let mut operand_ast =
-                            parse_raw_expr((*cast_expr.expr).clone()).map_err(|err| {
-                                typing_error(format!("failed to parse cast operand: {err}"))
-                            })?;
-                        let _operand_var = self.infer_expr(&mut operand_ast)?;
-
-                        let target_ty = parse_raw_type((*cast_expr.ty).clone()).map_err(|err| {
-                            typing_error(format!("failed to parse cast type: {err}"))
-                        })?;
-                        self.type_from_ast_ty(&target_ty)?
-                    } else {
-                        let any_var = self.fresh_type_var();
-                        self.bind(any_var, TypeTerm::Any);
-                        any_var
-                    }
-                } else {
-                    let any_var = self.fresh_type_var();
-                    self.bind(any_var, TypeTerm::Any);
-                    any_var
-                }
+            ExprKind::Any(_any) => {
+                let any_var = self.fresh_type_var();
+                self.bind(any_var, TypeTerm::Any);
+                any_var
             }
             ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
                 let any_var = self.fresh_type_var();

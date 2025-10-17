@@ -100,6 +100,12 @@ impl ScriptEmitter {
                     self.push_line(&format!("{};", rendered));
                 }
             }
+            NodeKind::Query(_) => {
+                self.ensure_blank_line();
+                self.push_line(
+                    "// query documents are not yet supported in the TypeScript serializer",
+                );
+            }
         }
         Ok(())
     }

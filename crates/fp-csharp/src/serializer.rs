@@ -28,6 +28,7 @@ fn collect_from_node(node: &Node, context: &mut CSharpContext) {
         }
         NodeKind::Item(item) => collect_from_item(item, context),
         NodeKind::Expr(expr) => collect_from_expr(expr, context),
+        NodeKind::Query(_) => {}
     }
 }
 

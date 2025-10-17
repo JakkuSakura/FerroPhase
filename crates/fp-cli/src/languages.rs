@@ -17,6 +17,8 @@ pub const KOTLIN: &str = "kotlin";
 pub const SWIFT: &str = "swift";
 pub const FERROPHASE: &str = fp_lang::FERROPHASE;
 pub const WIT: &str = "wit";
+pub const SQL: &str = fp_sql::SQL;
+pub const PRQL: &str = fp_prql::PRQL;
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -98,6 +100,16 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         extensions: &["wit"],
         transpile_supported: true,
     },
+    Language {
+        name: SQL,
+        extensions: &["sql"],
+        transpile_supported: false,
+    },
+    Language {
+        name: PRQL,
+        extensions: &["prql"],
+        transpile_supported: false,
+    },
 ];
 
 /// Detect source language from file extension
@@ -141,6 +153,8 @@ pub fn get_target_extension(target: &str) -> Option<&'static str> {
         SWIFT => Some("swift"),
         FERROPHASE => Some("fp"),
         WIT => Some("wit"),
+        SQL => Some("sql"),
+        PRQL => Some("prql"),
         _ => None,
     }
 }

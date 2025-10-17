@@ -1,5 +1,6 @@
 //! AST are trees, so Box<T> is fine
 
+use crate::query::QueryDocument;
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
 
@@ -11,16 +12,20 @@ mod deserialize;
 mod expr;
 mod ident;
 mod item;
+pub mod json;
 mod pat;
 mod pretty;
 mod serialize;
+pub mod snapshot;
 mod value;
 
 pub use attr::*;
 pub use expr::*;
 pub use ident::*;
 pub use item::*;
+pub use json::*;
 pub use pat::*;
+pub use snapshot::*;
 #[allow(dead_code)]
 pub use value::*;
 
@@ -48,6 +53,7 @@ common_enum! {
         Item(Item),
         Expr(Expr),
         File(File),
+        Query(QueryDocument),
     }
 }
 
@@ -104,6 +110,10 @@ impl Node {
 
     pub fn expr(expr: Expr) -> Self {
         Node::from(NodeKind::Expr(expr))
+    }
+
+    pub fn query(query: QueryDocument) -> Self {
+        Node::from(NodeKind::Query(query))
     }
 }
 

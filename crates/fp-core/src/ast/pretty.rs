@@ -10,6 +10,7 @@ use crate::ast;
 use crate::ast::{Pattern, PatternKind, PatternStructField};
 use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
+use crate::query;
 
 impl PrettyPrintable for ast::Expr {
     fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
@@ -606,6 +607,7 @@ impl PrettyPrintable for ast::Node {
             ast::NodeKind::File(file) => file.fmt_pretty(f, ctx),
             ast::NodeKind::Item(item) => item.fmt_pretty(f, ctx),
             ast::NodeKind::Expr(expr) => expr.fmt_pretty(f, ctx),
+            ast::NodeKind::Query(query) => query.fmt_pretty(f, ctx),
         }
     }
 }
@@ -741,6 +743,63 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         ast::Ty::Slice(slice) => format!("[{}]", render_ty_brief(slice.elem.as_ref())),
         ast::Ty::Expr(expr) => format!("Expr({})", render_expr_inline(expr)),
         ast::Ty::AnyBox(_) => "AnyBox".into(),
+    }
+}
+
+impl PrettyPrintable for query::QueryDocument {
+    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+        let name_suffix = self
+            .name
+            .as_ref()
+            .map(|name| format!(" \"{}\"", name))
+            .unwrap_or_default();
+        match &self.kind {
+            query::QueryKind::Sql(sql) => {
+                let header = format!("query.sql[{}]{}", sql.dialect, name_suffix);
+                ctx.writeln(f, header)?;
+                ctx.with_indent(|ctx| {
+                    if let Some(raw) = &sql.raw {
+                        ctx.writeln(f, raw.trim())?;
+                    } else if !sql.statements.is_empty() {
+                        for (idx, stmt) in sql.statements.iter().enumerate() {
+                            ctx.writeln(f, format!("{}: {}", idx, stmt))?;
+                        }
+                    } else {
+                        ctx.writeln(f, "<empty>")?;
+                    }
+                    Ok(())
+                })
+            }
+            query::QueryKind::Prql(prql) => {
+                let target_suffix = prql
+                    .target
+                    .as_ref()
+                    .map(|target| format!(" -> {}", target))
+                    .unwrap_or_default();
+                let header = format!("query.prql{}{}", target_suffix, name_suffix);
+                ctx.writeln(f, header)?;
+                ctx.with_indent(|ctx| {
+                    if prql.pipeline.trim().is_empty() {
+                        ctx.writeln(f, "<empty>")?;
+                    } else {
+                        ctx.writeln(f, prql.pipeline.trim())?;
+                    }
+                    if !prql.compiled.is_empty() {
+                        ctx.writeln(f, "compiled:")?;
+                        ctx.with_indent(|ctx| {
+                            for (idx, stmt) in prql.compiled.iter().enumerate() {
+                                ctx.writeln(f, format!("{}: {}", idx, stmt))?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })
+            }
+            query::QueryKind::Any(any) => {
+                ctx.writeln(f, format!("query.any{} {:?}", name_suffix, any))
+            }
+        }
     }
 }
 
