@@ -508,6 +508,9 @@ impl RustPrinter {
             NodeKind::Query(_) => Err(fp_core::error::Error::Generic(eyre::eyre!(
                 "Query documents cannot be printed as Rust tokens"
             ))),
+            NodeKind::Schema(_) => Err(fp_core::error::Error::Generic(eyre::eyre!(
+                "Schema documents cannot be printed as Rust tokens"
+            ))),
         }
     }
 }

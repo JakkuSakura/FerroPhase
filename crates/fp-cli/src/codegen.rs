@@ -35,6 +35,9 @@ impl CodeGenerator {
             NodeKind::Query(_) => Err(CliError::Compilation(
                 "Query documents cannot be converted to Rust code".to_string(),
             )),
+            NodeKind::Schema(_) => Err(CliError::Compilation(
+                "Schema documents cannot be converted to Rust code".to_string(),
+            )),
         }
     }
 }

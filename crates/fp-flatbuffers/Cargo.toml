@@ -1,0 +1,8 @@
+[package]
+name = "fp-flatbuffers"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+regex = "1.10"

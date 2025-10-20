@@ -725,7 +725,9 @@ dependencies = [
  "eyre",
  "fp-core",
  "fp-csharp",
+ "fp-flatbuffers",
  "fp-interpret",
+ "fp-jsonschema",
  "fp-lang",
  "fp-llvm",
  "fp-optimize",
@@ -794,6 +796,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-flatbuffers"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "regex",
+]
+
+[[package]]
 name = "fp-interpret"
 version = "0.1.0"
 dependencies = [
@@ -807,6 +817,15 @@ dependencies = [
  "serde_json",
  "syn 2.0.106",
  "tracing",
+]
+
+[[package]]
+name = "fp-jsonschema"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

@@ -19,6 +19,8 @@ pub const FERROPHASE: &str = fp_lang::FERROPHASE;
 pub const WIT: &str = "wit";
 pub const SQL: &str = fp_sql::SQL;
 pub const PRQL: &str = fp_prql::PRQL;
+pub const JSONSCHEMA: &str = fp_jsonschema::JSON_SCHEMA;
+pub const FLATBUFFERS: &str = fp_flatbuffers::FLATBUFFERS;
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -110,6 +112,16 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         extensions: &["prql"],
         transpile_supported: false,
     },
+    Language {
+        name: JSONSCHEMA,
+        extensions: &["jsonschema"],
+        transpile_supported: false,
+    },
+    Language {
+        name: FLATBUFFERS,
+        extensions: &["fbs"],
+        transpile_supported: false,
+    },
 ];
 
 /// Detect source language from file extension
@@ -155,6 +167,8 @@ pub fn get_target_extension(target: &str) -> Option<&'static str> {
         WIT => Some("wit"),
         SQL => Some("sql"),
         PRQL => Some("prql"),
+        JSONSCHEMA => Some("jsonschema"),
+        FLATBUFFERS => Some("fbs"),
         _ => None,
     }
 }

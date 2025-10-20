@@ -68,6 +68,10 @@ impl PythonEmitter {
                 self.ensure_blank_line();
                 self.push_line("# Query documents are not yet supported for Python output");
             }
+            NodeKind::Schema(_) => {
+                self.ensure_blank_line();
+                self.push_line("# Schema documents are not yet supported for Python output");
+            }
         }
         Ok(())
     }
