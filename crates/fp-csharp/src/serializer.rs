@@ -30,6 +30,7 @@ fn collect_from_node(node: &Node, context: &mut CSharpContext) {
         NodeKind::Expr(expr) => collect_from_expr(expr, context),
         NodeKind::Query(_) => {}
         NodeKind::Schema(_) => {}
+        NodeKind::Workspace(_) => {}
     }
 }
 

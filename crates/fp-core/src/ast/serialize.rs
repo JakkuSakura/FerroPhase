@@ -6,6 +6,7 @@ use crate::ast::{
 use crate::ast::{Ty, Value, ValueFunction};
 use crate::bail;
 use crate::query::QueryDocument;
+use crate::workspace::WorkspaceDocument;
 use std::cell::RefCell;
 use std::sync::Arc;
 
@@ -18,6 +19,7 @@ pub trait AstSerializer: Send + Sync {
             NodeKind::File(file) => self.serialize_file(file),
             NodeKind::Query(query) => self.serialize_query(query),
             NodeKind::Schema(schema) => self.serialize_schema(schema),
+            NodeKind::Workspace(workspace) => self.serialize_workspace(workspace),
         }
     }
     fn serialize_expr(&self, node: &Expr) -> Result<String, crate::Error> {
@@ -85,6 +87,9 @@ pub trait AstSerializer: Send + Sync {
     }
     fn serialize_schema(&self, node: &SchemaDocument) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_schema")
+    }
+    fn serialize_workspace(&self, node: &WorkspaceDocument) -> Result<String, crate::Error> {
+        bail!("not implemented: serialize_workspace")
     }
 }
 

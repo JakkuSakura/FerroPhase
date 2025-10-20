@@ -8,7 +8,7 @@ use fp_core::error::{Error as CoreError, Result};
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
 
 fn expand_intrinsic_collection(expr: &mut Expr) -> bool {
-    if let ExprKind::IntrinsicCollection(collection) = expr.kind() {
+    if let ExprKind::IntrinsicContainer(collection) = expr.kind() {
         let new_expr = collection.clone().into_const_expr();
         *expr = new_expr;
         true
@@ -356,6 +356,7 @@ impl ClosureLowering {
                 }
             }
             ExprKind::Let(expr_let) => self.rewrite_in_expr(expr_let.expr.as_mut())?,
+            ExprKind::Macro(_) => {}
             ExprKind::Invoke(invoke) => {
                 for arg in &mut invoke.args {
                     self.rewrite_in_expr(arg)?;
@@ -395,6 +396,9 @@ impl ClosureLowering {
                     }
                     _ => {}
                 }
+            }
+            ExprKind::Await(await_expr) => {
+                self.rewrite_in_expr(await_expr.base.as_mut())?;
             }
             ExprKind::Assign(assign) => {
                 self.rewrite_in_expr(assign.target.as_mut())?;
@@ -486,7 +490,7 @@ impl ClosureLowering {
                 }
             },
             ExprKind::Paren(paren) => self.rewrite_in_expr(paren.expr.as_mut())?,
-            ExprKind::IntrinsicCollection(_) => {
+            ExprKind::IntrinsicContainer(_) => {
                 unreachable!("intrinsic collections should have been expanded")
             }
             ExprKind::Locator(_) | ExprKind::Closured(_) => {}
@@ -606,7 +610,7 @@ impl CaptureCollector {
     fn visit(&mut self, expr: &Expr) {
         match expr.kind() {
             ExprKind::Closure(_) | ExprKind::Closured(_) => {}
-            ExprKind::IntrinsicCollection(collection) => {
+            ExprKind::IntrinsicContainer(collection) => {
                 let expanded = collection.clone().into_const_expr();
                 self.visit(&expanded);
             }
@@ -630,6 +634,7 @@ impl CaptureCollector {
                     }
                 }
             }
+            ExprKind::Macro(_) => {}
             ExprKind::Invoke(invoke) => {
                 if let ExprInvokeTarget::Expr(target) = &invoke.target {
                     self.visit(target.as_ref());
@@ -641,6 +646,9 @@ impl CaptureCollector {
             ExprKind::Assign(assign) => {
                 self.visit(assign.target.as_ref());
                 self.visit(assign.value.as_ref());
+            }
+            ExprKind::Await(await_expr) => {
+                self.visit(await_expr.base.as_ref());
             }
             ExprKind::BinOp(binop) => {
                 self.visit(binop.lhs.as_ref());
@@ -839,6 +847,7 @@ impl CaptureReplacer {
                 }
             }
             ExprKind::Let(expr_let) => self.visit(expr_let.expr.as_mut()),
+            ExprKind::Macro(_) => {}
             ExprKind::Invoke(invoke) => {
                 if let ExprInvokeTarget::Expr(target) = &mut invoke.target {
                     self.visit(target.as_mut());
@@ -846,6 +855,9 @@ impl CaptureReplacer {
                 for arg in &mut invoke.args {
                     self.visit(arg);
                 }
+            }
+            ExprKind::Await(await_expr) => {
+                self.visit(await_expr.base.as_mut());
             }
             ExprKind::Select(select) => self.visit(select.obj.as_mut()),
             ExprKind::Assign(assign) => {
@@ -952,7 +964,7 @@ impl CaptureReplacer {
                 }
             },
             ExprKind::Paren(paren) => self.visit(paren.expr.as_mut()),
-            ExprKind::IntrinsicCollection(_) => {
+            ExprKind::IntrinsicContainer(_) => {
                 unreachable!("intrinsic collections should have been expanded")
             }
             ExprKind::Locator(locator) => {

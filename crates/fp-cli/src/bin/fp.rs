@@ -242,6 +242,10 @@ struct ParseArgs {
     /// Disable resolving and parsing imported modules
     #[arg(long = "no-resolve")]
     no_resolve: bool,
+
+    /// Persist the parsed AST as JSON at this path
+    #[arg(long, value_hint = ValueHint::FilePath)]
+    snapshot: Option<PathBuf>,
 }
 
 #[derive(Copy, Clone, Debug, clap::ValueEnum)]
@@ -342,6 +346,15 @@ struct CompletionsArgs {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Minimal bootstrap fast-path: when self-hosting (Stage 2), bypass Clap/Tracing and
+    // invoke the pipeline deterministically from the AST snapshot.
+    if std::env::var_os("FERROPHASE_BOOTSTRAP").is_some()
+        && std::env::var_os("FP_BOOTSTRAP_STAGE").as_deref() == Some(std::ffi::OsStr::new("2"))
+    {
+        return fp_cli::bootstrap::bootstrap_compile_from_env();
+    }
+
+    // Note: in bootstrap runs we still use the standard CLI + pipeline.
     let cli = Cli::parse();
 
     // Set up error reporting
@@ -412,6 +425,7 @@ async fn main() -> Result<()> {
                 files: args.files,
                 parse_mode: args.parse_mode.into(),
                 resolve_imports: !args.no_resolve,
+                snapshot: args.snapshot,
             };
             commands::parse_command(parse_args, &config).await
         }

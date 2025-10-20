@@ -5,7 +5,12 @@ use std::sync::Arc;
 
 use fp_core::ast::{File, Ident, Item, ItemKind, Module, Node, NodeKind, Visibility};
 use fp_core::error::{Error as CoreError, Result as CoreResult};
+use fp_core::module::ModuleLanguage;
 use fp_core::package::provider::{ModuleProvider, PackageProvider};
+use fp_core::package::DependencyKind;
+use fp_core::workspace::{
+    WorkspaceDependency, WorkspaceDocument, WorkspaceModule, WorkspacePackage,
+};
 
 use crate::package::{CargoPackageProvider, RustModuleProvider};
 use crate::parser::RustParser;
@@ -61,6 +66,7 @@ pub fn parse_cargo_workspace(manifest_path: &Path) -> CoreResult<Node> {
                 NodeKind::Query(_) | NodeKind::Schema(_) => {
                     // Queries are not represented in Rust workspace aggregation.
                 }
+                NodeKind::Workspace(_) => {}
             }
         }
     }
@@ -99,4 +105,97 @@ fn sanitise_package_ident(name: &str) -> String {
         ident.push_str("pkg");
     }
     ident
+}
+
+pub fn summarize_cargo_workspace(manifest_path: &Path) -> CoreResult<WorkspaceDocument> {
+    let workspace_root = manifest_path
+        .parent()
+        .ok_or_else(|| CoreError::from("Cargo manifest has no parent directory"))?
+        .to_path_buf();
+
+    let provider = Arc::new(CargoPackageProvider::new(workspace_root));
+    provider
+        .refresh()
+        .map_err(|err| CoreError::from(err.to_string()))?;
+    let module_provider = RustModuleProvider::new(provider.clone());
+
+    let mut packages = Vec::new();
+
+    for package_id in provider
+        .list_packages()
+        .map_err(|err| CoreError::from(err.to_string()))?
+    {
+        let descriptor = provider
+            .load_package(&package_id)
+            .map_err(|err| CoreError::from(err.to_string()))?;
+
+        let mut modules = Vec::new();
+        for module_id in module_provider
+            .modules_for_package(&package_id)
+            .map_err(|err| CoreError::from(err.to_string()))?
+        {
+            let module = module_provider
+                .load_module(&module_id)
+                .map_err(|err| CoreError::from(err.to_string()))?;
+
+            let language = match module.language {
+                ModuleLanguage::Ferro => Some("ferro".to_string()),
+                ModuleLanguage::Rust => Some("rust".to_string()),
+                ModuleLanguage::TypeScript => Some("typescript".to_string()),
+                ModuleLanguage::Python => Some("python".to_string()),
+                ModuleLanguage::Other(ref kind) => Some(kind.clone()),
+            };
+
+            let source_path = module.source.to_path_buf();
+            let workspace_module =
+                WorkspaceModule::new(module.id.to_string(), source_path.display().to_string())
+                    .with_module_path(module.module_path.clone())
+                    .with_language(language)
+                    .with_required_features(module.requires_features.clone());
+
+            modules.push(workspace_module);
+        }
+
+        modules.sort_by(|a, b| a.path.cmp(&b.path));
+
+        let metadata = &descriptor.metadata;
+        let mut features: Vec<String> = metadata.features.keys().cloned().collect();
+        features.sort();
+
+        let mut dependencies: Vec<WorkspaceDependency> = metadata
+            .dependencies
+            .iter()
+            .map(|dep| {
+                WorkspaceDependency::new(
+                    dep.package.clone(),
+                    Some(format_dependency_kind(dep.kind.clone())),
+                )
+            })
+            .collect();
+        dependencies.sort_by(|a, b| a.name.cmp(&b.name));
+
+        let package = WorkspacePackage::new(
+            descriptor.name.clone(),
+            descriptor.manifest_path.to_string(),
+            descriptor.root.to_string(),
+        )
+        .with_version(descriptor.version.as_ref().map(|v| v.to_string()))
+        .with_modules(modules)
+        .with_features(features)
+        .with_dependencies(dependencies);
+
+        packages.push(package);
+    }
+
+    packages.sort_by(|a, b| a.name.cmp(&b.name));
+
+    Ok(WorkspaceDocument::new(manifest_path.to_string_lossy()).with_packages(packages))
+}
+
+fn format_dependency_kind(kind: DependencyKind) -> String {
+    match kind {
+        DependencyKind::Normal => "normal".to_string(),
+        DependencyKind::Development => "dev".to_string(),
+        DependencyKind::Build => "build".to_string(),
+    }
 }

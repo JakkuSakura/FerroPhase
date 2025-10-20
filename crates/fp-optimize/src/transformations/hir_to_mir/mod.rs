@@ -3,13 +3,14 @@ use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-use fp_core::mir;
 use fp_core::mir::ty::{
-    ConstKind, ConstValue, ErrorGuaranteed, FloatTy, IntTy, Mutability, Scalar, ScalarInt, Ty,
-    TyKind, TypeAndMut, UintTy,
+    AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, IntTy, Mutability,
+    ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy, VariantDef,
+    VariantDiscr,
 };
+use fp_core::mir::{self, Symbol};
 use fp_core::span::Span;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use super::IrTransform;
 
@@ -67,6 +68,7 @@ pub struct MirLowering {
     next_mir_id: mir::MirId,
     next_body_id: u32,
     next_error_id: u32,
+    next_synthetic_def_id: mir::ty::DefId,
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     struct_defs: HashMap<hir::DefId, RegisteredStruct>,
@@ -78,6 +80,9 @@ pub struct MirLowering {
     method_lookup: HashMap<String, MethodLoweringInfo>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
+    opaque_types: HashMap<String, Ty>,
+    synthetic_runtime_functions: HashSet<String>,
+    tolerate_errors: bool,
 }
 
 impl MirLowering {
@@ -100,6 +105,7 @@ impl MirLowering {
             next_mir_id: 0,
             next_body_id: 0,
             next_error_id: 0,
+            next_synthetic_def_id: 1,
             diagnostics: Vec::new(),
             has_errors: false,
             struct_defs: HashMap::new(),
@@ -111,7 +117,14 @@ impl MirLowering {
             method_lookup: HashMap::new(),
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
+            opaque_types: HashMap::new(),
+            synthetic_runtime_functions: HashSet::new(),
+            tolerate_errors: false,
         }
+    }
+
+    pub fn set_error_tolerance(&mut self, enabled: bool) {
+        self.tolerate_errors = enabled;
     }
 
     fn lower_program(&mut self, program: &hir::Program) -> Result<mir::Program> {
@@ -141,8 +154,90 @@ impl MirLowering {
         }
 
         self.flush_extra_items(&mut mir_program);
+        self.append_runtime_stubs(&mut mir_program);
 
         Ok(mir_program)
+    }
+
+    fn append_runtime_stubs(&mut self, program: &mut mir::Program) {
+        let span = Span::new(0, 0, 0);
+        for name in self.synthetic_runtime_functions.clone() {
+            let exists = program.items.iter().any(|item| match &item.kind {
+                mir::ItemKind::Function(func) => func.name.as_str() == name,
+                _ => false,
+            });
+            if exists {
+                continue;
+            }
+
+            let Some(sig) = self.runtime_functions.get(&name).cloned() else {
+                continue;
+            };
+
+            let mut locals = Vec::new();
+            locals.push(self.make_local_decl(&sig.output, span));
+            for input in &sig.inputs {
+                locals.push(self.make_local_decl(input, span));
+            }
+
+            let mut basic_block = mir::BasicBlockData::new(Some(mir::Terminator {
+                source_info: span,
+                kind: mir::TerminatorKind::Return,
+            }));
+
+            if matches!(
+                sig.output.kind,
+                TyKind::Bool
+                    | TyKind::Int(_)
+                    | TyKind::Uint(_)
+                    | TyKind::Float(_)
+                    | TyKind::Ref(_, _, _)
+                    | TyKind::RawPtr(_)
+            ) {
+                let assign = mir::Statement {
+                    source_info: span,
+                    kind: mir::StatementKind::Assign(
+                        mir::Place::from_local(0),
+                        mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                            span,
+                            user_ty: None,
+                            literal: self.default_constant_for_ty(&sig.output),
+                        })),
+                    ),
+                };
+                basic_block.statements.push(assign);
+            }
+
+            let body = mir::Body::new(vec![basic_block], locals, sig.inputs.len(), span);
+            let body_id = mir::BodyId::new(self.next_body_id);
+            self.next_body_id += 1;
+            program.bodies.insert(body_id, body);
+
+            let mir_function = mir::Function {
+                name: mir::Symbol::new(name.clone()),
+                path: Vec::new(),
+                def_id: None,
+                sig: sig.clone(),
+                body_id,
+            };
+
+            program.items.push(mir::Item {
+                mir_id: self.next_mir_id,
+                kind: mir::ItemKind::Function(mir_function),
+            });
+            self.next_mir_id += 1;
+        }
+    }
+
+    fn default_constant_for_ty(&self, ty: &Ty) -> mir::ConstantKind {
+        match &ty.kind {
+            TyKind::Bool => mir::ConstantKind::Bool(false),
+            TyKind::Int(_) => mir::ConstantKind::Int(0),
+            TyKind::Uint(_) => mir::ConstantKind::UInt(0),
+            TyKind::Float(_) => mir::ConstantKind::Float(0.0),
+            TyKind::Ref(_, _, _) | TyKind::RawPtr(_) => mir::ConstantKind::UInt(0),
+            _ => mir::ConstantKind::Int(0),
+        }
     }
 
     fn flush_extra_items(&mut self, program: &mut mir::Program) {
@@ -433,9 +528,19 @@ impl MirLowering {
                     self.error_ty()
                 }
             },
-            TypePrimitive::String | TypePrimitive::List => {
-                self.emit_error(span, "string/list primitives are not yet supported in MIR");
-                self.error_ty()
+            TypePrimitive::String => {
+                self.emit_warning(
+                    span,
+                    "treating string primitive as opaque type during MIR lowering",
+                );
+                self.opaque_ty("string")
+            }
+            TypePrimitive::List => {
+                self.emit_warning(
+                    span,
+                    "treating list primitive as opaque type during MIR lowering",
+                );
+                self.opaque_ty("list")
             }
         }
     }
@@ -505,11 +610,14 @@ impl MirLowering {
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-        self.emit_error(
+        self.emit_warning(
             span,
-            format!("type lowering not yet supported for path `{}`", display),
+            format!(
+                "treating type `{}` as opaque during MIR lowering (bootstrap placeholder)",
+                display
+            ),
         );
-        self.error_ty()
+        self.opaque_ty(&display)
     }
 
     fn register_struct(&mut self, def_id: hir::DefId, strukt: &hir::Struct) {
@@ -884,11 +992,202 @@ impl MirLowering {
     }
 
     fn emit_error(&mut self, span: Span, message: impl Into<String>) {
+        if self.tolerate_errors {
+            let diagnostic = Diagnostic::warning(message.into())
+                .with_source_context(DIAGNOSTIC_CONTEXT)
+                .with_span(span);
+            self.diagnostics.push(diagnostic);
+            return;
+        }
         self.has_errors = true;
         let diagnostic = Diagnostic::error(message.into())
             .with_source_context(DIAGNOSTIC_CONTEXT)
             .with_span(span);
         self.diagnostics.push(diagnostic);
+    }
+
+    fn emit_warning(&mut self, span: Span, message: impl Into<String>) {
+        let diagnostic = Diagnostic::warning(message.into())
+            .with_source_context(DIAGNOSTIC_CONTEXT)
+            .with_span(span);
+        self.diagnostics.push(diagnostic);
+    }
+
+    fn unit_ty() -> Ty {
+        Ty {
+            kind: TyKind::Tuple(Vec::new()),
+        }
+    }
+
+    fn is_unit_ty(ty: &Ty) -> bool {
+        matches!(&ty.kind, TyKind::Tuple(elements) if elements.is_empty())
+    }
+
+    fn pointer_sized_ty(&self) -> Ty {
+        Ty {
+            kind: TyKind::RawPtr(TypeAndMut {
+                ty: Box::new(Ty {
+                    kind: TyKind::Uint(UintTy::U8),
+                }),
+                mutbl: Mutability::Not,
+            }),
+        }
+    }
+
+    fn sanitize_placeholder_ty(&self, ty: &Ty) -> Ty {
+        match &ty.kind {
+            TyKind::Bool
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::RawPtr(_)
+            | TyKind::Ref(_, _, _)
+            | TyKind::FnPtr(_) => ty.clone(),
+            _ => self.pointer_sized_ty(),
+        }
+    }
+
+    fn sanitize_function_sig(&self, sig: &mir::FunctionSig) -> mir::FunctionSig {
+        let inputs = sig
+            .inputs
+            .iter()
+            .map(|ty| self.sanitize_placeholder_ty(ty))
+            .collect();
+        let output = if Self::is_unit_ty(&sig.output) {
+            sig.output.clone()
+        } else {
+            self.sanitize_placeholder_ty(&sig.output)
+        };
+        mir::FunctionSig { inputs, output }
+    }
+
+    fn update_placeholder_signature(
+        &mut self,
+        name: &str,
+        existing_sig: &mir::FunctionSig,
+        arg_types: &[Ty],
+        destination_ty: Option<&Ty>,
+    ) -> mir::FunctionSig {
+        let mut inputs: Vec<Ty> = if arg_types.is_empty() {
+            existing_sig
+                .inputs
+                .iter()
+                .map(|ty| self.sanitize_placeholder_ty(ty))
+                .collect()
+        } else {
+            arg_types
+                .iter()
+                .map(|ty| self.sanitize_placeholder_ty(ty))
+                .collect()
+        };
+
+        let mut output = if let Some(expected) = destination_ty {
+            self.sanitize_placeholder_ty(expected)
+        } else if Self::is_unit_ty(&existing_sig.output) {
+            existing_sig.output.clone()
+        } else {
+            self.sanitize_placeholder_ty(&existing_sig.output)
+        };
+
+        if inputs.is_empty() && arg_types.is_empty() && !existing_sig.inputs.is_empty() {
+            inputs = existing_sig
+                .inputs
+                .iter()
+                .map(|ty| self.sanitize_placeholder_ty(ty))
+                .collect();
+        }
+
+        if destination_ty.is_none() && Self::is_unit_ty(&existing_sig.output) {
+            output = existing_sig.output.clone();
+        }
+
+        let new_sig = mir::FunctionSig { inputs, output };
+
+        let needs_update = self
+            .runtime_functions
+            .get(name)
+            .map(|current| current != &new_sig)
+            .unwrap_or(true);
+
+        if needs_update {
+            self.runtime_functions
+                .insert(name.to_string(), new_sig.clone());
+            self.synthetic_runtime_functions.insert(name.to_string());
+            new_sig
+        } else {
+            existing_sig.clone()
+        }
+    }
+
+    fn opaque_ty(&mut self, name: &str) -> Ty {
+        if let Some(existing) = self.opaque_types.get(name) {
+            return existing.clone();
+        }
+        let adt_def_id = self.next_synthetic_def_id;
+        self.next_synthetic_def_id = self.next_synthetic_def_id.saturating_add(1);
+        let variant_def_id = self.next_synthetic_def_id;
+        self.next_synthetic_def_id = self.next_synthetic_def_id.saturating_add(1);
+
+        let symbol = Symbol::new(name);
+        let variant = VariantDef {
+            def_id: variant_def_id,
+            ctor_def_id: None,
+            ident: symbol.clone(),
+            discr: VariantDiscr::Relative(0),
+            fields: Vec::new(),
+            ctor_kind: CtorKind::Const,
+            is_recovered: false,
+        };
+
+        let adt = AdtDef {
+            did: adt_def_id,
+            variants: vec![variant],
+            flags: AdtFlags::IS_STRUCT,
+            repr: ReprOptions {
+                int: None,
+                align: None,
+                pack: None,
+                flags: ReprFlags::empty(),
+                field_shuffle_seed: 0,
+            },
+        };
+
+        let ty = Ty {
+            kind: TyKind::Adt(adt, Vec::new()),
+        };
+        self.opaque_types.insert(name.to_string(), ty.clone());
+        ty
+    }
+
+    fn display_type_name(&self, ty: &Ty) -> Option<String> {
+        match &ty.kind {
+            TyKind::Adt(adt, _) => adt
+                .variants
+                .first()
+                .map(|variant| variant.ident.as_str().to_string()),
+            TyKind::Ref(_, inner, _) => self.display_type_name(inner),
+            TyKind::RawPtr(type_and_mut) => self.display_type_name(&type_and_mut.ty),
+            _ => None,
+        }
+    }
+
+    fn ensure_runtime_stub(&mut self, name: &str, sig: &mir::FunctionSig) {
+        let sanitized = self.sanitize_function_sig(sig);
+        self.runtime_functions.insert(name.to_string(), sanitized);
+        self.synthetic_runtime_functions.insert(name.to_string());
+    }
+
+    fn placeholder_function_sig(&mut self, name: &str) -> mir::FunctionSig {
+        let entry = self
+            .runtime_functions
+            .entry(name.to_string())
+            .or_insert_with(|| mir::FunctionSig {
+                inputs: Vec::new(),
+                output: Self::unit_ty(),
+            })
+            .clone();
+        self.synthetic_runtime_functions.insert(name.to_string());
+        entry
     }
 
     fn error_ty(&mut self) -> Ty {
@@ -948,6 +1247,19 @@ struct PlaceInfo {
 struct OperandInfo {
     operand: mir::Operand,
     ty: Ty,
+}
+
+impl OperandInfo {
+    fn constant(span: Span, ty: Ty, literal: mir::ConstantKind) -> Self {
+        Self {
+            operand: mir::Operand::Constant(mir::Constant {
+                span,
+                user_ty: None,
+                literal,
+            }),
+            ty,
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -1089,6 +1401,21 @@ impl<'a> BodyBuilder<'a> {
                     self.lower_expr_into_place(&body.value, place, &return_ty)?;
                 }
             }
+        }
+
+        let expected_return_ty = self.sig.output.clone();
+        if self.locals[0].ty != expected_return_ty {
+            let fallback = self.fallback_operand_for_reference(&expected_return_ty, self.span);
+            if let Some(block) = self.blocks.last_mut() {
+                block.statements.push(mir::Statement {
+                    source_info: self.span,
+                    kind: mir::StatementKind::Assign(
+                        mir::Place::from_local(0),
+                        mir::Rvalue::Use(fallback.operand),
+                    ),
+                });
+            }
+            self.locals[0].ty = expected_return_ty;
         }
 
         self.ensure_terminated();
@@ -1604,17 +1931,88 @@ impl<'a> BodyBuilder<'a> {
         args: &[hir::Expr],
         destination: Option<(mir::Place, Ty)>,
     ) -> Result<Option<PlaceInfo>> {
-        let (func_operand, sig, callee_name) = self.resolve_callee(callee)?;
+        let (mut func_operand, mut sig, callee_name) = self.resolve_callee(callee)?;
         let associated_struct = callee_name
             .as_ref()
             .and_then(|name| self.lowering.method_lookup.get(name))
             .and_then(|info| info.struct_def);
 
         let mut lowered_args = Vec::with_capacity(args.len());
+        let mut arg_types = Vec::with_capacity(args.len());
         for (idx, arg) in args.iter().enumerate() {
             let expected_ty = sig.inputs.get(idx);
             let operand = self.lower_operand(arg, expected_ty)?;
+            arg_types.push(operand.ty.clone());
             lowered_args.push(operand.operand);
+        }
+
+        if let Some(name) = callee_name.as_ref() {
+            if self.lowering.synthetic_runtime_functions.contains(name) {
+                let destination_ty = destination.as_ref().map(|(_, ty)| ty);
+                let updated_sig = self.lowering.update_placeholder_signature(
+                    name,
+                    &sig,
+                    &arg_types,
+                    destination_ty,
+                );
+
+                if updated_sig != sig {
+                    let symbol = Symbol::new(name.clone());
+                    let literal = match &func_operand {
+                        mir::Operand::Constant(constant) => match &constant.literal {
+                            mir::ConstantKind::Global(_, _) => mir::ConstantKind::Global(
+                                symbol.clone(),
+                                self.lowering.c_function_pointer_ty(&updated_sig),
+                            ),
+                            _ => mir::ConstantKind::Fn(
+                                symbol.clone(),
+                                self.lowering.function_pointer_ty(&updated_sig),
+                            ),
+                        },
+                        _ => mir::ConstantKind::Fn(
+                            symbol.clone(),
+                            self.lowering.function_pointer_ty(&updated_sig),
+                        ),
+                    };
+                    func_operand = mir::Operand::Constant(mir::Constant {
+                        span: callee.span,
+                        user_ty: None,
+                        literal,
+                    });
+                    sig = updated_sig;
+
+                    for (idx, expected_input) in sig.inputs.iter().enumerate() {
+                        if let Some(original_ty) = arg_types.get(idx) {
+                            if MirLowering::is_unit_ty(original_ty)
+                                && matches!(
+                                    expected_input.kind,
+                                    TyKind::Ref(_, _, _) | TyKind::RawPtr(_)
+                                )
+                            {
+                                lowered_args[idx] = mir::Operand::Constant(mir::Constant {
+                                    span: callee.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::UInt(0),
+                                });
+                            }
+                        }
+                    }
+
+                    for (idx, operand) in lowered_args.iter_mut().enumerate() {
+                        if let Some(expected_input) = sig.inputs.get(idx) {
+                            match operand {
+                                mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty =
+                                            expected_input.clone();
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         let continue_block = self.new_block();
@@ -1819,10 +2217,11 @@ impl<'a> BodyBuilder<'a> {
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
         }
 
-        // Search for function by name in def_map (for specialized functions created during const eval)
+        // Search for function by name in def_map (for functions not yet registered or created during earlier phases)
+        let name_tail = name.split("::").last().unwrap_or(name.as_str());
         for (def_id, item) in &self.program.def_map {
             if let hir::ItemKind::Function(func) = &item.kind {
-                if func.sig.name.as_str() == name {
+                if func.sig.name.as_str() == name || func.sig.name.as_str() == name_tail {
                     let sig = self.lowering.lower_function_sig(&func.sig, None);
                     let ty = self.lowering.function_pointer_ty(&sig);
                     let operand = mir::Operand::Constant(mir::Constant {
@@ -1835,20 +2234,47 @@ impl<'a> BodyBuilder<'a> {
                     return Ok((operand, sig, Some(name)));
                 }
             }
+            if let hir::ItemKind::Impl(impl_block) = &item.kind {
+                for impl_item in &impl_block.items {
+                    if let hir::ImplItemKind::Method(function) = &impl_item.kind {
+                        if function.sig.name.as_str() == name_tail {
+                            let method_ctx = self
+                                .lowering
+                                .make_method_context(&impl_block.self_ty);
+                            let sig = self
+                                .lowering
+                                .lower_function_sig(&function.sig, method_ctx.as_ref());
+                            let ty = self.lowering.function_pointer_ty(&sig);
+                            let operand = mir::Operand::Constant(mir::Constant {
+                                span: callee.span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::Fn(
+                                    mir::Symbol::new(name.clone()),
+                                    ty,
+                                ),
+                            });
+                            return Ok((operand, sig, Some(name)));
+                        }
+                    }
+                }
+            }
         }
 
-        self.lowering
-            .emit_error(callee.span, format!("unresolved call target `{}`", name));
-        Ok((
-            mir::Operand::Constant(self.lowering.error_constant(callee.span)),
-            mir::FunctionSig {
-                inputs: Vec::new(),
-                output: Ty {
-                    kind: TyKind::Tuple(Vec::new()),
-                },
-            },
-            Some(name),
-        ))
+        self.lowering.emit_warning(
+            callee.span,
+            format!(
+                "treating call target `{}` as opaque runtime stub during MIR lowering",
+                name
+            ),
+        );
+        let sig = self.lowering.placeholder_function_sig(&name);
+        let fn_ty = self.lowering.function_pointer_ty(&sig);
+        let operand = mir::Operand::Constant(mir::Constant {
+            span: callee.span,
+            user_ty: None,
+            literal: mir::ConstantKind::Fn(Symbol::new(name.clone()), fn_ty.clone()),
+        });
+        Ok((operand, sig, Some(name)))
     }
 
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
@@ -1958,12 +2384,20 @@ impl<'a> BodyBuilder<'a> {
                     .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
-                self.lowering
-                    .emit_error(expr.span, format!("unsupported path operand `{}`", name));
-                Ok(OperandInfo {
-                    operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
-                    ty: self.lowering.error_ty(),
-                })
+                self.lowering.emit_warning(
+                    expr.span,
+                    format!(
+                        "treating path `{}` as opaque constant during MIR lowering",
+                        name
+                    ),
+                );
+                let ty = self.lowering.opaque_ty(&name);
+                let operand = mir::Operand::Constant(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Global(Symbol::new(name), ty.clone()),
+                });
+                Ok(OperandInfo { operand, ty })
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
@@ -1984,6 +2418,30 @@ impl<'a> BodyBuilder<'a> {
                 })
             }
             hir::ExprKind::IntrinsicCall(call) => {
+                if matches!(
+                    call.kind,
+                    IntrinsicCallKind::Print | IntrinsicCallKind::Println
+                ) {
+                    self.lowering.emit_warning(
+                        expr.span,
+                        "treating print intrinsic as unit value during MIR operand lowering",
+                    );
+                    let unit_ty = MirLowering::unit_ty();
+                    let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: unit_ty,
+                    });
+                }
                 if call.kind == IntrinsicCallKind::ConstBlock {
                     if let IntrinsicCallPayload::Args { args } = &call.payload {
                         if let Some(arg) = args.first() {
@@ -2003,10 +2461,21 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     self.lowering
-                        .emit_error(expr.span, "const block intrinsic expects an argument");
+                        .emit_warning(expr.span, "const block intrinsic expects an argument");
+                    let unit_ty = MirLowering::unit_ty();
+                    let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(statement);
                     return Ok(OperandInfo {
-                        operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
-                        ty: self.lowering.error_ty(),
+                        operand: mir::Operand::copy(local_place),
+                        ty: unit_ty,
                     });
                 }
                 if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
@@ -2018,16 +2487,27 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo { operand, ty });
                 }
 
-                self.lowering.emit_error(
+                self.lowering.emit_warning(
                     expr.span,
                     format!(
-                        "intrinsic {:?} is not yet supported in MIR operand lowering",
+                        "treating intrinsic {:?} as opaque value during MIR operand lowering",
                         call.kind
                     ),
                 );
+                let unit_ty = MirLowering::unit_ty();
+                let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                let local_place = mir::Place::from_local(local_id);
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        local_place.clone(),
+                        mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                    ),
+                };
+                self.push_statement(statement);
                 Ok(OperandInfo {
-                    operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
-                    ty: self.lowering.error_ty(),
+                    operand: mir::Operand::copy(local_place),
+                    ty: unit_ty,
                 })
             }
             _ => {
@@ -2043,6 +2523,42 @@ impl<'a> BodyBuilder<'a> {
                     ty: actual_ty,
                 })
             }
+        }
+    }
+
+    fn constant_bool_operand(&self, value: bool, span: Span) -> OperandInfo {
+        OperandInfo::constant(
+            span,
+            Ty { kind: TyKind::Bool },
+            mir::ConstantKind::Bool(value),
+        )
+    }
+
+    fn fallback_operand_for_reference(&self, reference_ty: &Ty, span: Span) -> OperandInfo {
+        match &reference_ty.kind {
+            TyKind::Uint(kind) => OperandInfo::constant(
+                span,
+                Ty {
+                    kind: TyKind::Uint(*kind),
+                },
+                mir::ConstantKind::UInt(0),
+            ),
+            TyKind::Int(kind) => OperandInfo::constant(
+                span,
+                Ty {
+                    kind: TyKind::Int(*kind),
+                },
+                mir::ConstantKind::Int(0),
+            ),
+            TyKind::Float(kind) => OperandInfo::constant(
+                span,
+                Ty {
+                    kind: TyKind::Float(*kind),
+                },
+                mir::ConstantKind::Float(0.0),
+            ),
+            TyKind::Bool => self.constant_bool_operand(false, span),
+            _ => self.constant_bool_operand(false, span),
         }
     }
 
@@ -2118,8 +2634,10 @@ impl<'a> BodyBuilder<'a> {
         let args = match &call.payload {
             IntrinsicCallPayload::Args { args } => args,
             IntrinsicCallPayload::Format { .. } => {
-                self.lowering
-                    .emit_error(span, "intrinsic invocation expects positional arguments");
+                self.lowering.emit_warning(
+                    span,
+                    "treating formatted intrinsic payload as opaque during MIR lowering",
+                );
                 return None;
             }
         };
@@ -2617,8 +3135,21 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_struct_literal(local_id, Some(expected_ty), path, fields, expr.span)?;
             }
             hir::ExprKind::Binary(op, lhs, rhs) => {
-                let left = self.lower_operand(lhs, None)?;
-                let right = self.lower_operand(rhs, None)?;
+                let mut left = self.lower_operand(lhs, None)?;
+                let mut right = self.lower_operand(rhs, None)?;
+
+                if MirLowering::is_unit_ty(&left.ty) {
+                    left = self.fallback_operand_for_reference(&right.ty, expr.span);
+                }
+                if MirLowering::is_unit_ty(&right.ty) {
+                    right = self.fallback_operand_for_reference(&left.ty, expr.span);
+                }
+
+                if MirLowering::is_unit_ty(&left.ty) && MirLowering::is_unit_ty(&right.ty) {
+                    left = self.constant_bool_operand(false, expr.span);
+                    right = self.constant_bool_operand(false, expr.span);
+                }
+
                 let mir_op = Self::convert_bin_op(op);
                 let result_ty = Self::binary_result_ty(op, &left.ty);
                 let statement = mir::Statement {
@@ -2751,8 +3282,8 @@ impl<'a> BodyBuilder<'a> {
 
                 self.current_block = continue_block;
             }
-            hir::ExprKind::IntrinsicCall(call) => {
-                if call.kind == IntrinsicCallKind::ConstBlock {
+            hir::ExprKind::IntrinsicCall(call) => match call.kind {
+                IntrinsicCallKind::ConstBlock => {
                     if let IntrinsicCallPayload::Args { args } = &call.payload {
                         if let Some(arg) = args.first() {
                             self.lower_expr_into_place(arg, place, expected_ty)?;
@@ -2760,13 +3291,40 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     self.lowering
-                        .emit_error(expr.span, "const block intrinsic expects an argument");
-                } else {
+                        .emit_warning(expr.span, "const block intrinsic expects an argument");
+                    let unit_assign = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(unit_assign);
+                }
+                IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                    self.lowering.emit_warning(
+                        expr.span,
+                        "treating print intrinsic as no-op during MIR lowering",
+                    );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    if (place.local as usize) < self.locals.len() {
+                        self.locals[place.local as usize].ty = MirLowering::unit_ty();
+                    }
+                    return Ok(());
+                }
+                _ => {
                     if let Some((literal, _ty)) = self.lower_intrinsic_constant(call, expr.span) {
                         let statement = mir::Statement {
                             source_info: expr.span,
                             kind: mir::StatementKind::Assign(
-                                place,
+                                place.clone(),
                                 mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
                                     user_ty: None,
@@ -2778,15 +3336,23 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(());
                     }
 
-                    self.lowering.emit_error(
+                    self.lowering.emit_warning(
                         expr.span,
                         format!(
                             "intrinsic {:?} is not yet supported for MIR assignment",
                             call.kind
                         ),
                     );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(statement);
                 }
-            }
+            },
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
                 let method_key = method_name.clone();
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
@@ -2948,20 +3514,104 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
 
-                self.lowering.emit_error(
-                    expr.span,
-                    "method calls are not yet supported in MIR lowering",
-                );
-                let statement = mir::Statement {
-                    source_info: expr.span,
-                    kind: mir::StatementKind::Assign(
-                        place,
-                        mir::Rvalue::Use(mir::Operand::Constant(
-                            self.lowering.error_constant(expr.span),
-                        )),
-                    ),
+                let receiver_operand = self.lower_operand(receiver, None)?;
+                let mut lowered_args = Vec::with_capacity(args.len() + 1);
+                let mut input_tys = Vec::with_capacity(args.len() + 1);
+                lowered_args.push(receiver_operand.operand.clone());
+                input_tys.push(receiver_operand.ty.clone());
+                for arg in args {
+                    let lowered = self.lower_operand(arg, None)?;
+                    input_tys.push(lowered.ty.clone());
+                    lowered_args.push(lowered.operand);
+                }
+
+                let result_ty = expected_ty.clone();
+                let type_name = self
+                    .lowering
+                    .display_type_name(&receiver_operand.ty)
+                    .unwrap_or_else(|| "opaque".to_string());
+                let fn_name = format!("{}::{}", type_name, method_name);
+                let sig = mir::FunctionSig {
+                    inputs: input_tys,
+                    output: result_ty.clone(),
                 };
-                self.push_statement(statement);
+                self.lowering.ensure_runtime_stub(&fn_name, &sig);
+
+                let sanitized_sig = self
+                    .lowering
+                    .runtime_functions
+                    .get(&fn_name)
+                    .cloned()
+                    .unwrap_or_else(|| self.lowering.sanitize_function_sig(&sig));
+                let arg_types = sig.inputs.clone();
+
+                for (idx, expected_input) in sanitized_sig.inputs.iter().enumerate() {
+                    if let Some(original_ty) = arg_types.get(idx) {
+                        if MirLowering::is_unit_ty(original_ty)
+                            && matches!(
+                                expected_input.kind,
+                                TyKind::Ref(_, _, _) | TyKind::RawPtr(_)
+                            )
+                        {
+                            lowered_args[idx] = mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::UInt(0),
+                            });
+                        }
+                    }
+
+                    if let Some(operand) = lowered_args.get_mut(idx) {
+                        match operand {
+                            mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                                if (place.local as usize) < self.locals.len() {
+                                    self.locals[place.local as usize].ty = expected_input.clone();
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+
+                let func_operand = mir::Operand::Constant(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Fn(
+                        Symbol::new(fn_name.clone()),
+                        self.lowering.function_pointer_ty(&sanitized_sig),
+                    ),
+                });
+
+                let continue_block = self.new_block();
+                let destination = Some((place.clone(), continue_block));
+                self.blocks[self.current_block as usize].terminator = Some(mir::Terminator {
+                    source_info: expr.span,
+                    kind: mir::TerminatorKind::Call {
+                        func: func_operand,
+                        args: lowered_args,
+                        destination: destination.clone(),
+                        cleanup: None,
+                        from_hir_call: true,
+                        fn_span: expr.span,
+                    },
+                });
+
+                self.current_block = continue_block;
+                if (place.local as usize) < self.locals.len() {
+                    self.locals[place.local as usize].ty = result_ty.clone();
+                }
+                if let Some(struct_def) = self.struct_def_from_ty(&result_ty) {
+                    self.local_structs.insert(place.local, struct_def);
+                }
+
+                self.lowering.emit_warning(
+                    expr.span,
+                    format!(
+                        "treating method `{}` as opaque runtime stub during MIR lowering",
+                        method_name
+                    ),
+                );
+                return Ok(());
             }
             hir::ExprKind::Call(callee, args) => {
                 self.lower_call(expr, callee, args, Some((place, expected_ty.clone())))?;
@@ -3022,20 +3672,18 @@ impl<'a> BodyBuilder<'a> {
                 self.push_statement(statement);
             }
             _ => {
-                self.lowering.emit_error(
+                self.lowering.emit_warning(
                     expr.span,
                     format!(
-                        "expression not yet supported for MIR assignment: {:?}",
+                        "treating expression {:?} as unit during MIR assignment",
                         expr.kind
                     ),
                 );
                 let statement = mir::Statement {
                     source_info: expr.span,
                     kind: mir::StatementKind::Assign(
-                        place,
-                        mir::Rvalue::Use(mir::Operand::Constant(
-                            self.lowering.error_constant(expr.span),
-                        )),
+                        place.clone(),
+                        mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
                     ),
                 };
                 self.push_statement(statement);

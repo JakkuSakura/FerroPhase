@@ -166,6 +166,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             NodeKind::Schema(_) => {
                 self.emit_error("Schema documents cannot be interpreted");
             }
+            NodeKind::Workspace(_) => {
+                self.emit_error("Workspace documents cannot be interpreted");
+            }
         }
     }
 
@@ -208,6 +211,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn evaluate_item(&mut self, item: &mut Item) {
         match item.kind_mut() {
+            ItemKind::Macro(_mac) => {
+                // Item macros are compile-time constructs; interpreter skips them.
+            }
             ItemKind::DefStruct(def) => {
                 let ty = Ty::Struct(def.value.clone());
                 self.insert_type(def.name.as_str(), ty);
@@ -368,7 +374,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         };
 
         match expr.kind_mut() {
-            ExprKind::IntrinsicCollection(collection) => {
+            ExprKind::IntrinsicContainer(collection) => {
                 let new_expr = collection.clone().into_const_expr();
                 *expr = new_expr;
                 return self.eval_expr(expr);
@@ -524,6 +530,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     expr.set_ty(ty);
                 }
                 result
+            }
+            ExprKind::Macro(macro_expr) => {
+                self.emit_error(format!(
+                    "macro `{}` should have been lowered before const evaluation",
+                    macro_expr.invocation.path
+                ));
+                Value::undefined()
             }
             ExprKind::Closure(closure) => {
                 if let Some(Ty::Function(ref fn_sig)) = expr_ty_snapshot.as_ref() {
@@ -2219,7 +2232,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let mut updated_expr_ty: Option<Ty> = None;
 
         match expr.kind_mut() {
-            ExprKind::IntrinsicCollection(collection) => {
+            ExprKind::IntrinsicContainer(collection) => {
                 let new_expr = collection.clone().into_const_expr();
                 *expr = new_expr;
                 self.evaluate_function_body(expr);
@@ -2288,8 +2301,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.evaluate_function_body(arg);
                 }
             }
+            ExprKind::Macro(macro_expr) => {
+                self.emit_error(format!(
+                    "macro `{}` should have been lowered before const evaluation",
+                    macro_expr.invocation.path
+                ));
+            }
             ExprKind::IntrinsicCall(call) => {
                 self.evaluate_intrinsic_for_function_analysis(call);
+            }
+            ExprKind::Await(await_expr) => {
+                self.evaluate_function_body(await_expr.base.as_mut());
             }
             ExprKind::Reference(reference) => {
                 self.evaluate_function_body(reference.referee.as_mut());

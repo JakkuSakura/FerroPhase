@@ -25,6 +25,7 @@ pub struct LirCodegen<'ctx> {
     current_function: Option<String>,
     string_globals: HashMap<String, (Name, usize)>,
     next_string_id: u32,
+    symbol_prefix: String,
     // Track referenced globals that need const evaluation
     referenced_globals: std::collections::HashSet<String>,
     // Global constants map from MIR->LIR transformation
@@ -35,6 +36,7 @@ pub struct LirCodegen<'ctx> {
     symbol_names: HashMap<String, String>,
     defined_functions: std::collections::HashSet<String>,
     argument_operands: HashMap<u32, Operand>,
+    allow_unresolved_globals: bool,
 }
 
 impl<'ctx> LirCodegen<'ctx> {
@@ -59,7 +61,9 @@ impl<'ctx> LirCodegen<'ctx> {
 
         // should be in lir_ctx
         global_const_map: HashMap<String, lir::LirConstant>,
+        allow_unresolved_globals: bool,
     ) -> Self {
+        let prefix = Self::sanitize_symbol_component(&llvm_ctx.module.name);
         Self {
             llvm_ctx,
             value_map: HashMap::new(),
@@ -67,6 +71,7 @@ impl<'ctx> LirCodegen<'ctx> {
             current_function: None,
             string_globals: HashMap::new(),
             next_string_id: 0,
+            symbol_prefix: prefix,
             referenced_globals: std::collections::HashSet::new(),
             global_const_map,
             constant_results: HashMap::new(),
@@ -75,6 +80,7 @@ impl<'ctx> LirCodegen<'ctx> {
             symbol_names: HashMap::new(),
             defined_functions: std::collections::HashSet::new(),
             argument_operands: HashMap::new(),
+            allow_unresolved_globals,
         }
     }
 
@@ -809,7 +815,10 @@ impl<'ctx> LirCodegen<'ctx> {
                 volatile,
             } => {
                 let address_operand = self.convert_lir_value_to_operand(address)?;
-                let loaded_lir_type = ty_hint.clone().unwrap_or(lir::LirType::I32);
+                let mut loaded_lir_type = ty_hint.clone().unwrap_or(lir::LirType::I32);
+                if matches!(loaded_lir_type, lir::LirType::Void) {
+                    loaded_lir_type = lir::LirType::Ptr(Box::new(lir::LirType::I8));
+                }
                 let loaded_llvm_type = self.convert_lir_type_to_llvm(loaded_lir_type.clone())?;
                 let result_name = self
                     .llvm_ctx
@@ -845,8 +854,59 @@ impl<'ctx> LirCodegen<'ctx> {
                 element,
                 indices,
             } => {
-                let aggregate_operand = self.convert_lir_value_to_operand(aggregate)?;
-                let element_operand = self.convert_lir_value_to_operand(element)?;
+                let aggregate_operand = self.convert_lir_value_to_operand(aggregate.clone())?;
+                let mut element_operand = self.convert_lir_value_to_operand(element.clone())?;
+
+                // If we have a type hint for the aggregate, try to coerce element to the field type
+                if let Some(lir_ty) = ty_hint.clone() {
+                    if let Ok(llvm_agg_ty) = self.convert_lir_type_to_llvm(lir_ty.clone()) {
+                        if let (Some(&field_index), Type::StructType { element_types, .. }) =
+                            (indices.get(0), &llvm_agg_ty)
+                        {
+                            if let Some(expected_ty_ref) = element_types.get(field_index as usize)
+                            {
+                                // Determine current operand type
+                                let current_ty = match &element_operand {
+                                    Operand::LocalOperand { ty, .. } => Some(ty.clone()),
+                                    Operand::ConstantOperand(c) => Some(c.get_type(&self.llvm_ctx.module.types)),
+                                    _ => None,
+                                };
+                                if let Some(cur) = current_ty {
+                                    if &cur != expected_ty_ref {
+                                        // Try a few coercions
+                                        let expected = expected_ty_ref.as_ref().clone();
+                                        let coerced_name = match (cur.as_ref(), &expected) {
+                                            (Type::IntegerType { .. }, Type::PointerType { .. }) => {
+                                                self.llvm_ctx.build_inttoptr(
+                                                    element_operand.clone(),
+                                                    expected.clone(),
+                                                    &format!("itop_{}", instr_id),
+                                                )?
+                                            }
+                                            (Type::PointerType { .. }, Type::IntegerType { .. }) => {
+                                                self.llvm_ctx.build_ptrtoint(
+                                                    element_operand.clone(),
+                                                    expected.clone(),
+                                                    &format!("ptoi_{}", instr_id),
+                                                )?
+                                            }
+                                            (_, _) => {
+                                                self.llvm_ctx.build_bitcast(
+                                                    element_operand.clone(),
+                                                    expected.clone(),
+                                                    &format!("bitcast_{}", instr_id),
+                                                )?
+                                            }
+                                        };
+                                        element_operand = self
+                                            .llvm_ctx
+                                            .operand_from_name_and_type(coerced_name, expected_ty_ref.as_ref());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 let result_name = self
                     .llvm_ctx
                     .build_insert_value(
@@ -1798,6 +1858,19 @@ impl<'ctx> LirCodegen<'ctx> {
                     return Ok(self.llvm_ctx.operand_from_constant(llvm_constant));
                 }
 
+                if self.allow_unresolved_globals {
+                    tracing::warn!(
+                        "LLVM: synthesizing placeholder null for unresolved global '{}'",
+                        name
+                    );
+                    let llvm_ty = self
+                        .convert_lir_type_to_llvm(ty.clone())
+                        .unwrap_or(Type::PointerType { addr_space: 0 });
+                    let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
+                    let null_constant = ConstantRef::new(Constant::Null(ty_ref));
+                    return Ok(self.llvm_ctx.operand_from_constant(null_constant));
+                }
+
                 Err(report_error_with_context(
                     LOG_AREA,
                     format!("Global variable '{}' of type {:?} not found", name, ty),
@@ -1881,25 +1954,51 @@ impl<'ctx> LirCodegen<'ctx> {
                     ))
                 }
             }
-            lir::LirValue::Undef(_ty) => {
-                // For now, return a simple integer constant as placeholder
-                // TODO: Properly implement undef value creation
+            lir::LirValue::Undef(ty) => {
+                let llvm_ty = self.convert_lir_type_to_llvm(ty.clone())?;
+                let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
                 Ok(self
                     .llvm_ctx
-                    .operand_from_constant(self.llvm_ctx.const_i32(0)))
+                    .operand_from_constant(ConstantRef::new(Constant::Undef(ty_ref))))
             }
-            lir::LirValue::Null(_ty) => {
-                // For now, return a simple integer constant as placeholder
-                // TODO: Properly implement null pointer constant creation
-                Ok(self
-                    .llvm_ctx
-                    .operand_from_constant(self.llvm_ctx.const_i32(0)))
+            lir::LirValue::Null(ty) => {
+                let llvm_ty = self.convert_lir_type_to_llvm(ty.clone())?;
+                let constant = match &llvm_ty {
+                    Type::PointerType { .. }
+                    | Type::StructType { .. }
+                    | Type::ArrayType { .. }
+                    | Type::VectorType { .. } => {
+                        let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
+                        ConstantRef::new(Constant::Null(ty_ref))
+                    }
+                    Type::IntegerType { bits } => ConstantRef::new(Constant::Int {
+                        bits: *bits,
+                        value: 0,
+                    }),
+                    Type::FPType(fp_ty) => {
+                        let float_const = match fp_ty {
+                            FPType::Half => Float::Half,
+                            FPType::Single => Float::Single(0.0),
+                            FPType::Double => Float::Double(0.0),
+                            FPType::FP128 => Float::Quadruple,
+                            FPType::X86_FP80 => Float::X86_FP80,
+                            FPType::PPC_FP128 => Float::PPC_FP128,
+                            _ => Float::Double(0.0),
+                        };
+                        ConstantRef::new(Constant::Float(float_const))
+                    }
+                    _ => {
+                        let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
+                        ConstantRef::new(Constant::Null(ty_ref))
+                    }
+                };
+                Ok(self.llvm_ctx.operand_from_constant(constant))
             }
         }
     }
 
     /// Convert LIR constant to LLVM constant
-    fn convert_lir_constant_to_llvm(&self, lir_const: lir::LirConstant) -> Result<ConstantRef> {
+    fn convert_lir_constant_to_llvm(&mut self, lir_const: lir::LirConstant) -> Result<ConstantRef> {
         match lir_const {
             lir::LirConstant::Int(value, ty) => {
                 let bits = self.int_bit_width(&ty).unwrap_or(32);
@@ -1985,10 +2084,7 @@ impl<'ctx> LirCodegen<'ctx> {
                 let ty_ref = self.llvm_ctx.module.types.get_for_type(&llvm_ty);
                 Ok(ConstantRef::new(Constant::Undef(ty_ref)))
             }
-            lir::LirConstant::String(s) => Err(report_error_with_context(
-                LOG_AREA,
-                format!("String constant requires mutable context: {}", s),
-            )),
+            lir::LirConstant::String(s) => Ok(self.get_or_create_string_ptr(&s)),
         }
     }
 
@@ -2004,17 +2100,10 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn convert_lir_constant_to_llvm_mut(
-        &mut self,
-        lir_const: lir::LirConstant,
-    ) -> Result<ConstantRef> {
-        match lir_const {
-            lir::LirConstant::String(s) => Ok(self.get_or_create_string_ptr(&s)),
-            other => {
-                // Use the immutable path for non-string constants
-                self.convert_lir_constant_to_llvm(other)
-            }
-        }
+    // convert_lir_constant_to_llvm_mut is now identical to convert_lir_constant_to_llvm
+    // and retained for source compatibility.
+    fn convert_lir_constant_to_llvm_mut(&mut self, lir_const: lir::LirConstant) -> Result<ConstantRef> {
+        self.convert_lir_constant_to_llvm(lir_const)
     }
 
     fn infer_binary_result_type(
@@ -2159,6 +2248,7 @@ impl<'ctx> LirCodegen<'ctx> {
                 .module
                 .types
                 .array_of(element_type.clone(), elements.len()),
+            Constant::GlobalReference { ty, .. } => ty.clone(),
             other => {
                 return Err(report_error_with_context(
                     LOG_AREA,
@@ -2195,7 +2285,10 @@ impl<'ctx> LirCodegen<'ctx> {
             .module
             .types
             .array_of(self.llvm_ctx.module.types.i8(), len);
-        let gv_name = Name::Name(Box::new(format!(".str.{}", self.next_string_id)));
+        let gv_name = Name::Name(Box::new(format!(
+            ".str.{}.{}",
+            self.symbol_prefix, self.next_string_id
+        )));
         self.next_string_id += 1;
 
         let gvar = GlobalVariable {
@@ -2226,6 +2319,21 @@ impl<'ctx> LirCodegen<'ctx> {
             name: gv_name,
             ty: ptr_ty,
         })
+    }
+
+    fn sanitize_symbol_component(input: &str) -> String {
+        let mut sanitized = String::with_capacity(input.len());
+        for ch in input.chars() {
+            if ch.is_ascii_alphanumeric() {
+                sanitized.push(ch);
+            } else {
+                sanitized.push('_');
+            }
+        }
+        if sanitized.is_empty() {
+            sanitized.push_str("module");
+        }
+        sanitized
     }
 
     /// Convert LIR type to LLVM type

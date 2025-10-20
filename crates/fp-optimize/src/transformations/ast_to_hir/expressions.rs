@@ -37,6 +37,73 @@ impl HirGenerator {
             ExprKind::ArrayRepeat(array_repeat) => {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
+            ExprKind::Try(expr_try) => {
+                let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "`?` operator lowering is lossy during bootstrap; treating as passthrough"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: inner_expr.kind,
+                        span,
+                    });
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "`?` operator lowering not implemented",
+                    ));
+                }
+            }
+            ExprKind::Await(expr_await) => {
+                let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "async/await lowering is lossy during bootstrap; treating as passthrough"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: inner_expr.kind,
+                        span,
+                    });
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "`await` lowering not implemented",
+                    ));
+                }
+            }
+            ExprKind::Closure(_closure) => {
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "closure lowering is not supported during bootstrap; substituting unit"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    let block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: hir::ExprKind::Block(block),
+                        span,
+                    });
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "closure lowering not implemented",
+                    ));
+                }
+            }
             ExprKind::Cast(cast_expr) => {
                 let operand = self.transform_expr_to_hir(cast_expr.expr.as_ref())?;
                 let ty = self.transform_type_to_hir(&cast_expr.ty)?;
@@ -888,6 +955,23 @@ impl HirGenerator {
     ) -> Result<hir::Path> {
         match expr.kind() {
             ast::ExprKind::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
+            _ if self.error_tolerance => {
+                self.add_warning(
+                    Diagnostic::warning(format!(
+                        "Unsupported path expression encountered during bootstrap: {:?}",
+                        expr
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT),
+                );
+                let placeholder = hir::PathSegment {
+                    name: hir::Symbol::new("__bootstrap_unresolved"),
+                    args: None,
+                };
+                Ok(hir::Path {
+                    segments: vec![placeholder],
+                    res: None,
+                })
+            }
             _ => Err(crate::error::optimization_error(format!(
                 "Unsupported path expression: {:?}",
                 expr

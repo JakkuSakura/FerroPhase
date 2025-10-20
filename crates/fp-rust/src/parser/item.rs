@@ -8,7 +8,7 @@ use fp_core::ast::*;
 use super::RustParser;
 use crate::parser::ty::parse_struct_field;
 use crate::parser::{parse_ident, parse_path, parse_vis};
-use crate::RawItemMacro;
+// use crate::RawItemMacro;
 
 impl RustParser {
     fn parse_fn_arg_receiver_internal(&self, r: syn::Receiver) -> Result<FunctionParamReceiver> {
@@ -288,7 +288,18 @@ impl RustParser {
             }
             syn::Item::Impl(im) => ItemKind::Impl(self.parse_item_impl_internal(im)?).into(),
             syn::Item::Use(u) => ItemKind::Import(self.parse_item_use_internal(u)?).into(),
-            syn::Item::Macro(m) => Item::any(RawItemMacro { raw: m }),
+            syn::Item::Macro(m) => {
+                // Convert item macro into a first-class AST ItemMacro instead of AnyBox
+                let path = parse_path(m.mac.path.clone())?;
+                let delimiter = match m.mac.delimiter {
+                    syn::MacroDelimiter::Paren(_) => MacroDelimiter::Parenthesis,
+                    syn::MacroDelimiter::Brace(_) => MacroDelimiter::Brace,
+                    syn::MacroDelimiter::Bracket(_) => MacroDelimiter::Bracket,
+                };
+                let tokens = m.mac.tokens.to_string();
+                let invocation = MacroInvocation::new(path, delimiter, tokens);
+                ItemKind::Macro(ItemMacro::new(invocation)).into()
+            }
             syn::Item::Struct(s) => {
                 let s = parse_type_struct(s)?;
                 ItemKind::DefStruct(ItemDefStruct {

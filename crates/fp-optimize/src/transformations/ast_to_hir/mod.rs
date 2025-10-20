@@ -117,10 +117,15 @@ impl HirGenerator {
     /// Add an error to the collection (for error tolerance mode)
     fn add_error(&mut self, error: Diagnostic) -> bool {
         self.errors.push(error);
+        if self.max_errors == 0 {
+            // Zero means unlimited error collection; always continue.
+            return true;
+        }
         // Return false if we've hit the error limit (should stop transformation)
         self.errors.len() < self.max_errors
     }
 
+    #[allow(dead_code)]
     fn build_error(message: impl Into<String>) -> Diagnostic {
         Diagnostic::error(message.into()).with_source_context(DIAGNOSTIC_CONTEXT)
     }
@@ -173,8 +178,9 @@ impl HirGenerator {
             Ok(entries) => entries,
             Err(e) if self.error_tolerance => {
                 // In error tolerance mode, collect the error and continue
-                self.add_error(
-                    Self::build_error(format!("Failed to expand import tree: {}", e))
+                self.add_warning(
+                    Diagnostic::warning(format!("Failed to expand import tree: {}", e))
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_suggestion("Check import syntax and module availability".to_string()),
                 );
                 return Ok(()); // Continue with empty imports
@@ -196,8 +202,8 @@ impl HirGenerator {
                 }
                 if self.error_tolerance {
                     // Collect error and continue instead of early return
-                    let continue_processing = self.add_error(
-                        Self::build_error(format!(
+                    self.add_warning(
+                        Diagnostic::warning(format!(
                             "Unresolved import: {}",
                             path_segments.join("::")
                         ))
@@ -205,12 +211,10 @@ impl HirGenerator {
                             "Check if the module exists".to_string(),
                             "Verify the import path".to_string(),
                             "Make sure the symbol is exported".to_string(),
-                        ]),
+                        ])
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
                     );
 
-                    if !continue_processing {
-                        return Err(crate::error::optimization_error("Too many import errors"));
-                    }
                     continue; // Skip this import but continue with others
                 } else {
                     // Legacy behavior: early return
@@ -741,8 +745,26 @@ impl HirGenerator {
     // Expression lowering helpers live in expressions.rs
     /// Transform an AST item into a HIR statement
     fn transform_item_to_hir_stmt(&mut self, item: &ast::BItem) -> Result<hir::StmtKind> {
-        let hir_item = self.transform_item_to_hir(item.as_ref())?;
-        Ok(hir::StmtKind::Item(hir_item))
+        match item.as_ref().kind() {
+            ItemKind::Import(import) => {
+                self.handle_import(import)?;
+                let unit_block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                let unit_expr = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Block(unit_block),
+                    span: self.create_span(1),
+                };
+                Ok(hir::StmtKind::Expr(unit_expr))
+            }
+            _ => {
+                let hir_item = self.transform_item_to_hir(item.as_ref())?;
+                Ok(hir::StmtKind::Item(hir_item))
+            }
+        }
     }
 
     /// Transform an AST item into a HIR item
@@ -988,10 +1010,20 @@ impl HirGenerator {
                 ))
             }
             unsupported => {
-                self.add_error(Diagnostic::error(format!(
-                    "unsupported type in AST→HIR lowering: {:?}",
-                    unsupported
-                )));
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(format!(
+                            "unsupported type in AST→HIR lowering: {:?}",
+                            unsupported
+                        ))
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                } else {
+                    self.add_error(Diagnostic::error(format!(
+                        "unsupported type in AST→HIR lowering: {:?}",
+                        unsupported
+                    )));
+                }
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,

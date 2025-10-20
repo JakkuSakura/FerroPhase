@@ -82,6 +82,8 @@ impl LirGenerator {
     pub fn transform(&mut self, mir_program: mir::Program) -> Result<lir::LirProgram> {
         let mut lir_program = lir::LirProgram::new();
 
+        self.predeclare_function_signatures(&mir_program);
+
         for mir_item in mir_program.items {
             match mir_item.kind {
                 mir::ItemKind::Function(mir_func) => {
@@ -97,6 +99,25 @@ impl LirGenerator {
         }
 
         Ok(lir_program)
+    }
+
+    fn predeclare_function_signatures(&mut self, program: &mir::Program) {
+        for item in &program.items {
+            if let mir::ItemKind::Function(func) = &item.kind {
+                let name: String = String::from(&func.name);
+                let signature = lir::LirFunctionSignature {
+                    params: func
+                        .sig
+                        .inputs
+                        .iter()
+                        .map(|ty| self.lir_type_from_ty(ty))
+                        .collect(),
+                    return_type: self.lir_type_from_ty(&func.sig.output),
+                    is_variadic: false,
+                };
+                self.function_signatures.entry(name).or_insert(signature);
+            }
+        }
     }
 
     /// Transform a MIR function to LIR
@@ -1257,6 +1278,32 @@ impl LirGenerator {
         block: &mut lir::LirBasicBlock,
     ) -> lir::LirValue {
         if let Some(expected) = expected_ty {
+            if matches!(expected, lir::LirType::Ptr(_)) {
+                if let lir::LirValue::Constant(constant) = &value {
+                    match constant {
+                        lir::LirConstant::UInt(v, _) if *v == 0 => {
+                            return lir::LirValue::Constant(lir::LirConstant::Null(
+                                expected.clone(),
+                            ));
+                        }
+                        lir::LirConstant::Int(v, _) if *v == 0 => {
+                            return lir::LirValue::Constant(lir::LirConstant::Null(
+                                expected.clone(),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            if matches!(source_lir_ty, lir::LirType::Void) {
+                return if matches!(expected, lir::LirType::Ptr(_)) {
+                    lir::LirValue::Constant(lir::LirConstant::Null(expected.clone()))
+                } else {
+                    lir::LirValue::Constant(lir::LirConstant::Undef(expected.clone()))
+                };
+            }
+
             if source_lir_ty == expected {
                 return value;
             }
@@ -1401,11 +1448,28 @@ impl LirGenerator {
 
         let place_ty = self.lookup_place_type(place);
         let aggregate_ty = place_ty.as_ref().map(|ty| self.lir_type_from_ty(ty));
-        let expected_field_tys = self.expected_aggregate_element_types(
+        let mut expected_field_tys = self.expected_aggregate_element_types(
             place_ty.as_ref(),
             aggregate_ty.as_ref(),
             raw_values.len(),
         );
+
+        // If we could not infer field types from place/aggregate, derive them from values
+        if expected_field_tys.is_empty()
+            || (matches!(aggregate_ty, Some(lir::LirType::Ptr(_)))
+                && raw_values.len() == expected_field_tys.len()
+                && expected_field_tys
+                    .iter()
+                    .all(|t| matches!(t, lir::LirType::Ptr(_))))
+        {
+            expected_field_tys = raw_values
+                .iter()
+                .map(|v| {
+                    self.infer_lir_value_type(v)
+                        .unwrap_or(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+                })
+                .collect();
+        }
 
         if fields.is_empty() {
             if let Some(lir_ty) = aggregate_ty {
@@ -1427,9 +1491,50 @@ impl LirGenerator {
             }
         }
 
-        if let Some(agg_ty) = aggregate_ty {
-            let mut current_value =
-                lir::LirValue::Constant(lir::LirConstant::Undef(agg_ty.clone()));
+        // Choose an aggregate type suitable for InsertValue construction.
+        // Prefer a real struct/array type; otherwise synthesize a struct from expected fields.
+        let agg_construction_ty: Option<lir::LirType> = match aggregate_ty.clone() {
+            Some(lir::LirType::Struct { fields, packed, name }) => {
+                if fields.len() == raw_values.len() {
+                    Some(lir::LirType::Struct { fields, packed, name })
+                } else {
+                    Some(lir::LirType::Struct {
+                        fields: expected_field_tys.clone(),
+                        packed: false,
+                        name: None,
+                    })
+                }
+            }
+            Some(lir::LirType::Array(elem, _n)) => {
+                Some(lir::LirType::Array(elem, raw_values.len() as u64))
+            }
+            Some(_other) => {
+                // Not an aggregate; synthesize a struct if multiple fields; if single field, just return it below
+                if raw_values.len() > 1 {
+                    Some(lir::LirType::Struct {
+                        fields: expected_field_tys.clone(),
+                        packed: false,
+                        name: None,
+                    })
+                } else {
+                    None
+                }
+            }
+            None => {
+                if raw_values.len() > 1 {
+                    Some(lir::LirType::Struct {
+                        fields: expected_field_tys.clone(),
+                        packed: false,
+                        name: None,
+                    })
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(agg_ty) = agg_construction_ty {
+            let mut current_value = lir::LirValue::Constant(lir::LirConstant::Undef(agg_ty.clone()));
 
             for (index, value) in raw_values.into_iter().enumerate() {
                 let mut element = value;
@@ -1451,6 +1556,11 @@ impl LirGenerator {
             }
 
             return Ok((instructions, Some(current_value)));
+        }
+
+        // If we couldn't build an aggregate and there is exactly one element, return it directly
+        if raw_values.len() == 1 {
+            return Ok((instructions, raw_values.into_iter().next()));
         }
 
         Ok((instructions, None))
@@ -1574,6 +1684,32 @@ impl LirGenerator {
                 instructions.push(lir::LirInstruction {
                     id: instr_id,
                     kind,
+                    type_hint: Some(target_ty.clone()),
+                    debug_info: None,
+                });
+                return lir::LirValue::Register(instr_id);
+            }
+
+            // Pointer/integer interop for bootstrap tolerance
+            let current_is_int = self.is_integral_type(&current_ty);
+            let target_is_int = self.is_integral_type(&target_ty);
+            let current_is_ptr = matches!(&current_ty, lir::LirType::Ptr(_));
+            let target_is_ptr = matches!(&target_ty, lir::LirType::Ptr(_));
+            if current_is_int && target_is_ptr {
+                let instr_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind: lir::LirInstructionKind::IntToPtr(value.clone()),
+                    type_hint: Some(target_ty.clone()),
+                    debug_info: None,
+                });
+                return lir::LirValue::Register(instr_id);
+            }
+            if current_is_ptr && target_is_int {
+                let instr_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind: lir::LirInstructionKind::PtrToInt(value.clone()),
                     type_hint: Some(target_ty.clone()),
                     debug_info: None,
                 });
@@ -2005,11 +2141,25 @@ impl LirGenerator {
                     type_hint: Some(element_ty.clone()),
                     debug_info: None,
                 });
-                return Some(lir::LirValue::Register(load_id));
+
+                if element_ty == return_ty {
+                    return Some(lir::LirValue::Register(load_id));
+                } else if let Some(zero) = self.zero_value_for_lir_type(&return_ty) {
+                    return Some(zero);
+                } else {
+                    return Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)));
+                }
             }
 
             if let Some(value) = self.register_map.get(&local) {
-                return Some(value.clone());
+                if let Some(current_ty) = self.infer_lir_value_type(value) {
+                    if current_ty == return_ty {
+                        return Some(value.clone());
+                    } else if let Some(zero) = self.zero_value_for_lir_type(&return_ty) {
+                        return Some(zero);
+                    }
+                }
+                return Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)));
             }
         }
 
@@ -2196,6 +2346,7 @@ impl LirGenerator {
     fn lir_type_from_ty(&self, ty: &Ty) -> lir::LirType {
         match &ty.kind {
             TyKind::Bool => lir::LirType::I1,
+            TyKind::Char => lir::LirType::I32,
             TyKind::Int(int_ty) => match int_ty {
                 IntTy::I8 => lir::LirType::I8,
                 IntTy::I16 => lir::LirType::I16,
@@ -2237,6 +2388,20 @@ impl LirGenerator {
             TyKind::RawPtr(TypeAndMut { ty: inner, .. }) => {
                 lir::LirType::Ptr(Box::new(self.lir_type_from_ty(inner)))
             }
+            TyKind::Adt(_, _)
+            | TyKind::FnDef(_, _)
+            | TyKind::Dynamic(_, _)
+            | TyKind::Closure(_, _)
+            | TyKind::Generator(_, _, _)
+            | TyKind::GeneratorWitness(_)
+            | TyKind::Projection(_)
+            | TyKind::Opaque(_, _)
+            | TyKind::Param(_)
+            | TyKind::Bound(_, _)
+            | TyKind::Placeholder(_)
+            | TyKind::Infer(_)
+            | TyKind::Error(_) => lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            TyKind::Never => lir::LirType::Void,
             TyKind::FnPtr(poly_fn_sig) => {
                 let fn_sig = &poly_fn_sig.binder.value;
                 lir::LirType::Ptr(Box::new(lir::LirType::Function {
@@ -2248,13 +2413,6 @@ impl LirGenerator {
                         .collect(),
                     is_variadic: fn_sig.c_variadic,
                 }))
-            }
-            unsupported => {
-                fp_core::diagnostics::report_warning_with_context(
-                    "mir→lir",
-                    format!("unsupported type in MIR→LIR lowering: {:?}", unsupported),
-                );
-                lir::LirType::Error
             }
         }
     }

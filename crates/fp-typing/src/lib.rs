@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
 
 use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator};
@@ -12,6 +13,22 @@ fn typing_error(msg: impl Into<String>) -> Error {
 }
 
 type TypeVarId = usize;
+
+fn detect_lossy_mode() -> bool {
+    static LOSSY: OnceLock<bool> = OnceLock::new();
+    *LOSSY.get_or_init(|| {
+        let env_true = |key: &str| {
+            std::env::var(key)
+                .map(|val| {
+                    let trimmed = val.trim();
+                    !trimmed.is_empty() && !matches!(trimmed, "0" | "false" | "FALSE" | "False")
+                })
+                .unwrap_or(false)
+        };
+
+        env_true("FERROPHASE_BOOTSTRAP") || env_true("FERROPHASE_LOSSY")
+    })
+}
 
 #[derive(Clone, Debug)]
 struct TypeVar {
@@ -188,6 +205,7 @@ pub struct AstTypeInferencer<'ctx> {
     has_errors: bool,
     literal_ints: HashSet<TypeVarId>,
     loop_stack: Vec<LoopContext>,
+    lossy_mode: bool,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -207,6 +225,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             has_errors: false,
             literal_ints: HashSet::new(),
             loop_stack: Vec::new(),
+            lossy_mode: detect_lossy_mode(),
         }
     }
 
@@ -243,6 +262,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Schema(_) => {
                 node.set_ty(Ty::any());
             }
+            NodeKind::Workspace(_) => {
+                node.set_ty(Ty::any());
+            }
         }
         Ok(self.finish())
     }
@@ -265,6 +287,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Query(_) | NodeKind::Schema(_) => {
                 // Non-AST documents do not participate in type inference yet.
             }
+            NodeKind::Workspace(_) => {}
         }
     }
 
@@ -734,7 +757,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let existing_ty = expr.ty().cloned();
         let var = match expr.kind_mut() {
-            ExprKind::IntrinsicCollection(collection) => {
+            ExprKind::IntrinsicContainer(collection) => {
                 let new_expr = collection.clone().into_const_expr();
                 *expr = new_expr;
                 return self.infer_expr(expr);
@@ -856,8 +879,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ExprKind::Closure(closure) => self.infer_closure(closure)?,
             ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
             ExprKind::Range(range) => self.infer_range(range)?,
+            ExprKind::Await(await_expr) => self.infer_expr(await_expr.base.as_mut())?,
             ExprKind::Splat(splat) => self.infer_splat(splat)?,
             ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
+            ExprKind::Macro(macro_expr) => {
+                self.emit_error(format!(
+                    "macro `{}` was not lowered before type checking",
+                    macro_expr.invocation.path
+                ));
+                self.error_type_var()
+            }
             ExprKind::Any(_any) => {
                 let any_var = self.fresh_type_var();
                 self.bind(any_var, TypeTerm::Any);
@@ -2590,8 +2621,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn emit_error(&mut self, message: impl Into<String>) {
-        self.has_errors = true;
-        self.diagnostics.push(TypingDiagnostic::error(message));
+        let message = message.into();
+        if self.lossy_mode {
+            self.diagnostics.push(TypingDiagnostic::warning(message));
+        } else {
+            self.has_errors = true;
+            self.diagnostics.push(TypingDiagnostic::error(message));
+        }
     }
 
     #[allow(dead_code)]
@@ -2673,6 +2709,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn ensure_bool(&mut self, var: TypeVarId, context: &str) -> Result<()> {
+        if self.lossy_mode {
+            return Ok(());
+        }
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
@@ -2681,8 +2720,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(())
             }
             TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Bool)) => Ok(()),
+            TypeVarKind::Bound(TypeTerm::Any) | TypeVarKind::Bound(TypeTerm::Unknown) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
             other => {
+                eprintln!("ensure_bool failure: context={} type={:?}", context, other);
                 self.emit_error(format!("expected boolean for {}", context));
                 Err(typing_error(format!("expected bool, found {:?}", other)))
             }

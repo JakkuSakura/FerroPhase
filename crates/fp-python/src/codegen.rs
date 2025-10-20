@@ -72,6 +72,10 @@ impl PythonEmitter {
                 self.ensure_blank_line();
                 self.push_line("# Schema documents are not yet supported for Python output");
             }
+            NodeKind::Workspace(_) => {
+                self.ensure_blank_line();
+                self.push_line("# Workspace snapshots are not supported for Python output");
+            }
         }
         Ok(())
     }
@@ -109,6 +113,7 @@ impl PythonEmitter {
             | ItemKind::DefTrait(_)
             | ItemKind::Impl(_)
             | ItemKind::DefStructural(_)
+            | ItemKind::Macro(_)
             | ItemKind::Any(_) => {
                 // Unsupported in Python output for now.
             }

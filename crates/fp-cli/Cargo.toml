@@ -50,6 +50,7 @@ indicatif = "0.18.0"
 
 # Async runtime for potential future features
 tokio = { version = "1.0", features = ["rt", "rt-multi-thread", "fs", "process", "time", "macros"] }
+futures-executor = "0.3"
 
 # Error handling
 eyre = "0.6"

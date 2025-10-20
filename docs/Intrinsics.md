@@ -168,26 +168,26 @@ Because everyone consults the same resolver, adding a new intrinsic involves:
 2. Providing materialisers for the desired backend flavours.
 3. (Optionally) updating the AST normaliser to detect more surface spellings.
 
-## Collection Intrinsics (`Vec`, `HashMap`, and friends)
+## Container Intrinsics (`Vec`, `HashMap`, and friends)
 
 The current pipeline treats collection literals as *compile-time* conveniences
 without introducing new runtime `Value` variants. Instead, the Rust frontend
-emits `ExprKind::IntrinsicCollection` nodes that are normalised away before type
+emits `ExprKind::IntrinsicContainer` nodes that are normalised away before type
 inference runs.
 
 ### Frontend lowering
 
-- `vec!` / `hashmap!` macros create an `ExprIntrinsicCollection` variant:
+- `vec!` / `hashmap!` macros create an `ExprIntrinsicContainer` variant:
   - `VecElements { elements: Vec<Expr> }`
   - `VecRepeat { elem: BExpr, len: BExpr }`
-  - `HashMapEntries { entries: Vec<ExprIntrinsicCollectionEntry> }`
+  - `HashMapEntries { entries: Vec<ExprIntrinsicContainerEntry> }`
 - Elements remain ordinary `Expr` nodes. There is **no** `Value::Vec` or
   `Value::HashMap`; the existing `ValueList` / `ValueMap` continues to represent
   evaluated data.
 
 ### Normalisation
 
-- `fp-optimize::passes::normalize_intrinsics` rewrites the intrinsic collection
+- `fp-optimize::passes::normalize_intrinsics` rewrites the intrinsic container
   nodes into const blocks that invoke `Vec::from` / `HashMap::from` with array
   or tuple literals. Once this pass finishes the AST contains only canonical
   helper calls, so type inference and later passes operate on familiar shapes.
@@ -204,7 +204,7 @@ inference runs.
 
 Extending the system with new collection intrinsics follows the general recipe:
 
-1. Teach the parser to emit an `ExprIntrinsicCollection` (or equivalent
+1. Teach the parser to emit an `ExprIntrinsicContainer` (or equivalent
    desugaring) for the surface syntax you want to support.
 2. Update the intrinsic normaliser so the new variant rewrites to canonical
    helper calls before type inference.

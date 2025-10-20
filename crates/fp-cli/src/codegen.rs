@@ -38,6 +38,9 @@ impl CodeGenerator {
             NodeKind::Schema(_) => Err(CliError::Compilation(
                 "Schema documents cannot be converted to Rust code".to_string(),
             )),
+            NodeKind::Workspace(_) => Err(CliError::Compilation(
+                "Workspace documents cannot be converted to Rust code".to_string(),
+            )),
         }
     }
 }
