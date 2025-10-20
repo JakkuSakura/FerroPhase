@@ -23,6 +23,8 @@ fp-wit = { path = "../fp-wit" }
 fp-zig = { path = "../fp-zig" }
 fp-prql = { path = "../fp-prql" }
 fp-sql = { path = "../fp-sql" }
+fp-jsonschema = { path = "../fp-jsonschema" }
+fp-flatbuffers = { path = "../fp-flatbuffers" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }

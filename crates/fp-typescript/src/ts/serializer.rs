@@ -106,6 +106,12 @@ impl ScriptEmitter {
                     "// query documents are not yet supported in the TypeScript serializer",
                 );
             }
+            NodeKind::Schema(_) => {
+                self.ensure_blank_line();
+                self.push_line(
+                    "// schema documents are not yet supported in the TypeScript serializer",
+                );
+            }
         }
         Ok(())
     }
