@@ -7,7 +7,9 @@
 use std::fmt::{self, Formatter, Write};
 
 use crate::ast;
-use crate::ast::{Pattern, PatternKind, PatternStructField};
+use crate::ast::{
+    Pattern, PatternKind, PatternStructField, SchemaDocument, SchemaKind, SchemaNode,
+};
 use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use crate::pretty::{PrettyCtx, PrettyPrintable};
 use crate::query;
@@ -608,6 +610,7 @@ impl PrettyPrintable for ast::Node {
             ast::NodeKind::Item(item) => item.fmt_pretty(f, ctx),
             ast::NodeKind::Expr(expr) => expr.fmt_pretty(f, ctx),
             ast::NodeKind::Query(query) => query.fmt_pretty(f, ctx),
+            ast::NodeKind::Schema(schema) => schema.fmt_pretty(f, ctx),
         }
     }
 }
@@ -798,6 +801,58 @@ impl PrettyPrintable for query::QueryDocument {
             }
             query::QueryKind::Any(any) => {
                 ctx.writeln(f, format!("query.any{} {:?}", name_suffix, any))
+            }
+        }
+    }
+}
+
+impl PrettyPrintable for SchemaDocument {
+    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+        let title = self.title.as_deref().unwrap_or("<schema>");
+        ctx.writeln(f, format!("schema {title}"))?;
+        ctx.with_indent(|ctx| self.root.fmt_pretty(f, ctx))
+    }
+}
+
+impl PrettyPrintable for SchemaNode {
+    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+        if let Some(description) = &self.description {
+            ctx.writeln(f, format!("description: {description}"))?;
+        }
+        match &self.kind {
+            SchemaKind::Any => ctx.writeln(f, "type: any"),
+            SchemaKind::Null => ctx.writeln(f, "type: null"),
+            SchemaKind::Boolean => ctx.writeln(f, "type: boolean"),
+            SchemaKind::Number => ctx.writeln(f, "type: number"),
+            SchemaKind::Integer => ctx.writeln(f, "type: integer"),
+            SchemaKind::String => ctx.writeln(f, "type: string"),
+            SchemaKind::Reference(reference) => ctx.writeln(f, format!("ref: {}", reference.path)),
+            SchemaKind::Array(array) => {
+                ctx.writeln(f, "type: array")?;
+                ctx.with_indent(|ctx| {
+                    ctx.writeln(f, "items:")?;
+                    ctx.with_indent(|ctx| array.items.fmt_pretty(f, ctx))
+                })
+            }
+            SchemaKind::Object(object) => {
+                ctx.writeln(f, "type: object")?;
+                if !object.properties.is_empty() {
+                    ctx.writeln(f, "properties:")?;
+                    ctx.with_indent(|ctx| {
+                        for (name, schema) in &object.properties {
+                            ctx.writeln(f, format!("{name}:"))?;
+                            ctx.with_indent(|ctx| schema.fmt_pretty(f, ctx))?;
+                        }
+                        Ok(())
+                    })?;
+                }
+                if !object.required.is_empty() {
+                    ctx.writeln(f, format!("required: {:?}", object.required))?;
+                }
+                if !object.additional_properties {
+                    ctx.writeln(f, "additional_properties: false")?;
+                }
+                Ok(())
             }
         }
     }

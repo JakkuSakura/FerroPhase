@@ -1,3 +1,4 @@
+use crate::ast::SchemaDocument;
 use crate::ast::{
     BExpr, BlockStmt, Expr, ExprBlock, ExprInvoke, File, Item, ItemDefFunction, Module, Node,
     NodeKind,
@@ -16,6 +17,7 @@ pub trait AstSerializer: Send + Sync {
             NodeKind::Expr(expr) => self.serialize_expr(expr),
             NodeKind::File(file) => self.serialize_file(file),
             NodeKind::Query(query) => self.serialize_query(query),
+            NodeKind::Schema(schema) => self.serialize_schema(schema),
         }
     }
     fn serialize_expr(&self, node: &Expr) -> Result<String, crate::Error> {
@@ -80,6 +82,9 @@ pub trait AstSerializer: Send + Sync {
     }
     fn serialize_query(&self, node: &QueryDocument) -> Result<String, crate::Error> {
         bail!("not implemented: serialize_query")
+    }
+    fn serialize_schema(&self, node: &SchemaDocument) -> Result<String, crate::Error> {
+        bail!("not implemented: serialize_schema")
     }
 }
 
