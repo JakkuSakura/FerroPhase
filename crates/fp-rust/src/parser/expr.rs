@@ -1,19 +1,25 @@
 use super::RustParser;
 
-use crate::{parser, RawExpr, RawExprMacro, RawStmtMacro};
+use crate::{parser, RawExpr, RawExprMacro};
 use fp_core::ast::Ident;
 use fp_core::ast::*;
+use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use itertools::Itertools;
 use proc_macro2::Span;
-use quote::ToTokens;
+use quote::{quote, ToTokens};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use syn::parse::{Parse, ParseStream};
+use syn::parse::{Parse, ParseStream, Parser};
+use syn::parse_quote;
 use syn::punctuated::Punctuated;
+use syn::LitStr;
+use syn::Token;
 
 static FOR_LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static MATCH_EXPR_COUNTER: AtomicUsize = AtomicUsize::new(0);
+static ASSERT_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 pub(super) struct ExprParser<'a> {
     parser: &'a RustParser,
@@ -49,6 +55,7 @@ impl<'a> ExprParser<'a> {
             syn::Expr::Paren(p) => self.parse_expr_paren(p)?.into(),
             syn::Expr::Range(r) => self.parse_expr_range(r)?.into(),
             syn::Expr::ForLoop(f) => self.parse_expr_for(f)?,
+            syn::Expr::Match(m) => self.parse_expr(self.desugar_match(m)?)?,
             syn::Expr::Field(f) => self.parse_expr_field(f)?.into(),
             syn::Expr::Try(t) => self.parse_expr_try(t)?.into(),
             syn::Expr::While(w) => self.parse_expr_while(w)?.into(),
@@ -56,8 +63,10 @@ impl<'a> ExprParser<'a> {
             syn::Expr::Closure(c) => self.parse_expr_closure(c)?.into(),
             syn::Expr::Array(a) => self.parse_expr_array(a)?.into(),
             syn::Expr::Repeat(r) => self.parse_expr_repeat(r)?.into(),
+            syn::Expr::Async(a) => self.parse_expr_async(a)?,
             syn::Expr::Assign(a) => self.parse_expr_assign(a)?.into(),
             syn::Expr::Cast(c) => self.parse_expr_cast(c)?.into(),
+            syn::Expr::Await(a) => self.parse_expr_await(a)?.into(),
             syn::Expr::Break(b) => self.parse_expr_break(b)?,
             syn::Expr::Continue(_) => self.parse_expr_continue()?,
             syn::Expr::Return(r) => self.parse_expr_return(r)?,
@@ -74,9 +83,7 @@ impl<'a> ExprParser<'a> {
         let range = match iter_expr_clone {
             syn::Expr::Range(range) => range,
             _ => {
-                return Ok(Expr::any(RawExpr {
-                    raw: syn::Expr::ForLoop(f),
-                }));
+                return self.parse_expr(self.desugar_general_for_loop(f)?);
             }
         };
 
@@ -138,6 +145,101 @@ impl<'a> ExprParser<'a> {
         self.parse_expr(desugared)
     }
 
+    fn desugar_general_for_loop(&self, f: syn::ExprForLoop) -> Result<syn::Expr> {
+        let iter_expr = *f.expr;
+        let pat = *f.pat;
+        let body = f.body;
+        let idx = FOR_LOOP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let iter_ident = syn::Ident::new(&format!("__fp_for_iter_{idx}"), Span::call_site());
+
+        let loop_expr: syn::Expr = if let Some(label) = f.label {
+            let loop_label = label.name;
+            let break_label = loop_label.clone();
+            syn::parse_quote!({
+                let mut #iter_ident = (#iter_expr).into_iter();
+                #loop_label: loop {
+                    if let Some(#pat) = #iter_ident.next() {
+                        #body
+                    } else {
+                        break #break_label;
+                    }
+                }
+            })
+        } else {
+            syn::parse_quote!({
+                let mut #iter_ident = (#iter_expr).into_iter();
+                loop {
+                    if let Some(#pat) = #iter_ident.next() {
+                        #body
+                    } else {
+                        break;
+                    }
+                }
+            })
+        };
+
+        Ok(loop_expr)
+    }
+
+    fn desugar_match(&self, m: syn::ExprMatch) -> Result<syn::Expr> {
+        let scrutinee = *m.expr;
+        let idx = MATCH_EXPR_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let value_ident = syn::Ident::new(&format!("__fp_match_value_{idx}"), Span::call_site());
+        let result_ident = syn::Ident::new(&format!("__fp_match_result_{idx}"), Span::call_site());
+
+        let mut cases = Vec::new();
+        let mut default_case = None;
+
+        for arm in m.arms {
+            let pat = arm.pat;
+            let guard = arm.guard.map(|(_, expr)| *expr);
+            let body = *arm.body;
+
+            let is_wildcard = matches!(pat, syn::Pat::Wild(_));
+            if is_wildcard && guard.is_none() {
+                default_case = Some(quote! {
+                    break { #body };
+                });
+                continue;
+            }
+
+            let guard_tokens = guard.map(|g| quote! { if #g { break { #body }; }});
+
+            let case_tokens = if let Some(guard_block) = guard_tokens {
+                quote! {
+                    if let #pat = &#value_ident {
+                        #guard_block
+                    }
+                }
+            } else {
+                quote! {
+                    if let #pat = &#value_ident {
+                        break { #body };
+                    }
+                }
+            };
+
+            cases.push(case_tokens);
+        }
+
+        let default_tokens = default_case.unwrap_or_else(|| {
+            quote! {
+                break { { ::std::process::abort() } };
+            }
+        });
+
+        let desugared: syn::Expr = syn::parse_quote!({
+            let #value_ident = (#scrutinee);
+            let #result_ident = loop {
+                #(#cases)*
+                #default_tokens
+            };
+            #result_ident
+        });
+
+        Ok(desugared)
+    }
+
     fn parse_expr_array(&self, a: syn::ExprArray) -> Result<ExprArray> {
         Ok(ExprArray {
             values: a
@@ -153,6 +255,39 @@ impl<'a> ExprParser<'a> {
             elem: self.parse_expr(*r.expr)?.into(),
             len: self.parse_expr(*r.len)?.into(),
         })
+    }
+
+    fn parse_expr_await(&self, a: syn::ExprAwait) -> Result<Expr> {
+        let base = self.parse_expr(*a.base)?;
+        Ok(ExprKind::Await(ExprAwait { base: base.into() }).into())
+    }
+
+    fn parse_expr_async(&self, expr: syn::ExprAsync) -> Result<Expr> {
+        let message = "async blocks are not fully supported";
+        if self.parser.lossy_mode() {
+            self.parser
+                .record_diagnostic(DiagnosticLevel::Warning, message.to_string());
+            return Ok(Expr::any(RawExpr {
+                raw: syn::Expr::Async(expr),
+            }));
+        }
+        self.parser.error(message, Expr::unit())
+    }
+
+    fn unsupported_expr_macro(&self, mac: &syn::ExprMacro) -> Result<Expr> {
+        let name = mac.mac.path.to_token_stream().to_string();
+        let message = format!("Unsupported expression macro `{}`", name);
+        self.warn_or_error_expr(message, Expr::unit())
+    }
+
+    fn warn_or_error_expr(&self, message: impl Into<String>, fallback: Expr) -> Result<Expr> {
+        if self.parser.lossy_mode() {
+            self.parser
+                .record_diagnostic(DiagnosticLevel::Warning, message.into());
+            Ok(fallback)
+        } else {
+            self.parser.error(message, fallback)
+        }
     }
 
     fn parse_expr_closure(&self, c: syn::ExprClosure) -> Result<ExprClosure> {
@@ -534,6 +669,34 @@ impl<'a> ExprParser<'a> {
     }
 
     fn parse_expr_macro(&self, m: syn::ExprMacro) -> Result<Expr> {
+        match self.build_macro_invocation(&m.mac) {
+            Ok(invocation) => Ok(Expr::macro_invocation(invocation)),
+            Err(err) => self.err(
+                format!(
+                    "failed to record macro invocation `{}`: {}",
+                    m.mac.path.to_token_stream(),
+                    err
+                ),
+                Expr::any(RawExprMacro { raw: m }),
+            ),
+        }
+    }
+
+    fn build_macro_invocation(&self, mac: &syn::Macro) -> Result<MacroInvocation> {
+        let path = parser::parse_path(mac.path.clone())?;
+        let delimiter = match &mac.delimiter {
+            syn::MacroDelimiter::Paren(_) => MacroDelimiter::Parenthesis,
+            syn::MacroDelimiter::Brace(_) => MacroDelimiter::Brace,
+            syn::MacroDelimiter::Bracket(_) => MacroDelimiter::Bracket,
+        };
+        Ok(MacroInvocation::new(
+            path,
+            delimiter,
+            mac.tokens.to_string(),
+        ))
+    }
+
+    pub(crate) fn lower_expr_macro(&self, m: syn::ExprMacro) -> Result<Expr> {
         if Self::is_println_macro(&m.mac) {
             return self.parse_io_macro_to_function_call(&m.mac, IntrinsicCallKind::Println);
         }
@@ -560,11 +723,63 @@ impl<'a> ExprParser<'a> {
             return self.parse_vec_macro(&m);
         }
 
+        if Self::is_matches_macro(&m.mac) {
+            return self.parse_matches_macro(&m);
+        }
+
+        if Self::is_format_macro(&m.mac) {
+            return self.parse_format_macro(&m);
+        }
+
+        if let Some(level) = Self::log_macro_level(&m.mac) {
+            return self.parse_logging_macro(&m.mac, level);
+        }
+
+        if Self::is_panic_macro(&m.mac)
+            || Self::is_unreachable_macro(&m.mac)
+            || Self::is_unimplemented_macro(&m.mac)
+            || Self::is_todo_macro(&m.mac)
+        {
+            return self.parse_panic_like_macro(&m);
+        }
+
+        if Self::is_assert_macro(&m.mac) {
+            return self.parse_assert_macro(&m.mac, AssertKind::Assert);
+        }
+
+        if Self::is_debug_assert_macro(&m.mac) {
+            return self.parse_assert_macro(&m.mac, AssertKind::DebugAssert);
+        }
+
+        if Self::is_assert_eq_macro(&m.mac) {
+            return self.parse_assert_macro(&m.mac, AssertKind::AssertEq);
+        }
+
+        if Self::is_assert_ne_macro(&m.mac) {
+            return self.parse_assert_macro(&m.mac, AssertKind::AssertNe);
+        }
+
+        if Self::is_debug_assert_eq_macro(&m.mac) {
+            return self.parse_assert_macro(&m.mac, AssertKind::DebugAssertEq);
+        }
+
+        if Self::is_debug_assert_ne_macro(&m.mac) {
+            return self.parse_assert_macro(&m.mac, AssertKind::DebugAssertNe);
+        }
+
+        if Self::is_env_macro(&m.mac) {
+            return self.parse_env_macro(&m.mac, false);
+        }
+
+        if Self::is_option_env_macro(&m.mac) {
+            return self.parse_env_macro(&m.mac, true);
+        }
+
         if let Some(intrinsic_kind) = get_metaprogramming_intrinsic(&m.mac) {
             return self.parse_metaprogramming_intrinsic(&m.mac, intrinsic_kind);
         }
 
-        Ok(Expr::any(RawExprMacro { raw: m }))
+        self.unsupported_expr_macro(&m)
     }
 
     fn parse_vec_macro(&self, m: &syn::ExprMacro) -> Result<Expr> {
@@ -584,49 +799,432 @@ impl<'a> ExprParser<'a> {
         }
     }
 
-    fn parse_stmt_macro(&self, raw: syn::StmtMacro) -> Result<BlockStmt> {
-        if Self::is_println_macro(&raw.mac) {
-            let call_expr =
-                self.parse_io_macro_to_function_call(&raw.mac, IntrinsicCallKind::Println)?;
-            tracing::debug!("parsed println! macro to function call");
-            return Ok(BlockStmt::Expr(
-                BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
-            ));
+    fn parse_matches_macro(&self, m: &syn::ExprMacro) -> Result<Expr> {
+        let args = match syn::parse2::<MatchesMacroArgs>(m.mac.tokens.clone()) {
+            Ok(args) => args,
+            Err(err) => {
+                return self.err(
+                    format!("failed to parse matches! macro: {}", err),
+                    Expr::unit(),
+                );
+            }
+        };
+
+        let scrutinee = args.expr;
+        let pat = args.pat;
+        let guard = args.guard;
+
+        let desugared: syn::Expr = if let Some(guard_expr) = guard {
+            parse_quote!({
+                match #scrutinee {
+                    #pat if #guard_expr => true,
+                    _ => false,
+                }
+            })
+        } else {
+            parse_quote!({
+                match #scrutinee {
+                    #pat => true,
+                    _ => false,
+                }
+            })
+        };
+
+        self.parse_expr(desugared)
+    }
+
+    fn parse_format_macro(&self, m: &syn::ExprMacro) -> Result<Expr> {
+        let tokens_str = m.mac.tokens.to_string();
+        let wrapped_tokens = format!("format({})", tokens_str);
+
+        let call_expr = match syn::parse_str::<syn::ExprCall>(&wrapped_tokens) {
+            Ok(expr) => expr,
+            Err(err) => {
+                return self.err(
+                    format!(
+                        "Failed to parse format! macro arguments '{}': {}",
+                        tokens_str, err
+                    ),
+                    Expr::unit(),
+                );
+            }
+        };
+
+        let args: Vec<_> = call_expr
+            .args
+            .into_iter()
+            .map(|arg| self.parse_expr(arg))
+            .collect::<Result<Vec<_>>>()?;
+
+        let path = Path::new(vec![
+            Ident::new("std"),
+            Ident::new("fmt"),
+            Ident::new("format"),
+        ]);
+
+        Ok(ExprInvoke {
+            target: ExprInvokeTarget::expr(Expr::path(path)),
+            args,
+        }
+        .into())
+    }
+
+    fn parse_logging_macro(&self, mac: &syn::Macro, level: LogLevel) -> Result<Expr> {
+        if mac.tokens.is_empty() {
+            return Ok(self.make_logging_literal(level, None));
         }
 
-        if Self::is_print_macro(&raw.mac) {
-            let call_expr =
-                self.parse_io_macro_to_function_call(&raw.mac, IntrinsicCallKind::Print)?;
-            tracing::debug!("parsed print! macro to function call");
-            return Ok(BlockStmt::Expr(
-                BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
-            ));
-        }
+        if let Ok(args) = parse_expr_arguments(mac.tokens.clone()) {
+            if args.is_empty() {
+                return Ok(self.make_logging_literal(level, None));
+            }
 
-        if Self::is_cfg_macro(&raw.mac) {
-            if let Some(expr) = self.parse_cfg_macro(&raw.mac)? {
-                return Ok(BlockStmt::Expr(
-                    BlockStmtExpr::new(expr).with_semicolon(raw.semi_token.is_some()),
-                ));
+            if let Some(fmt_index) = args
+                .iter()
+                .rposition(|expr| extract_string_literal(expr).is_some())
+            {
+                let fmt_literal = extract_string_literal(&args[fmt_index]).unwrap();
+                let trailing_args = args.iter().skip(fmt_index + 1).cloned().collect::<Vec<_>>();
+
+                let mut parts = parse_format_template(&fmt_literal)?;
+                let prefix = level.prefix();
+                if !prefix.is_empty() {
+                    let mut prefixed = Vec::with_capacity(parts.len() + 1);
+                    prefixed.push(FormatTemplatePart::Literal(prefix.to_string()));
+                    prefixed.extend(parts.into_iter());
+                    parts = prefixed;
+                }
+
+                let parsed_args = trailing_args
+                    .into_iter()
+                    .map(|expr| self.parse_expr(expr))
+                    .collect::<Result<Vec<_>>>()?;
+
+                let template = ExprFormatString {
+                    parts,
+                    args: parsed_args,
+                    kwargs: Vec::new(),
+                };
+
+                if fmt_index > 0 {
+                    let macro_name = mac.path.to_token_stream().to_string();
+                    let message = format!(
+                        "logging macro `{}` structured fields are ignored in lossy mode",
+                        macro_name
+                    );
+                    if self.parser.lossy_mode() {
+                        self.parser
+                            .record_diagnostic(DiagnosticLevel::Warning, message);
+                    } else {
+                        return self.parser.error(
+                            format!(
+                                "logging macro `{}` structured fields are not supported",
+                                macro_name
+                            ),
+                            Expr::unit(),
+                        );
+                    }
+                }
+
+                return Ok(ExprIntrinsicCall::new(
+                    IntrinsicCallKind::Println,
+                    IntrinsicCallPayload::Format { template },
+                )
+                .into());
             }
         }
 
-        if Self::is_input_macro(&raw.mac) {
-            let call_expr = self.parse_input_macro(&raw.mac)?;
-            return Ok(BlockStmt::Expr(
-                BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
-            ));
+        let macro_name = mac.path.to_token_stream().to_string();
+        let tokens_str = mac.tokens.to_string();
+        let fallback = self.make_logging_literal(level, Some(tokens_str));
+        self.warn_or_error_expr(
+            format!(
+                "logging macro `{}` arguments are not yet supported; emitting literal output",
+                macro_name
+            ),
+            fallback,
+        )
+    }
+
+    fn make_logging_literal(&self, level: LogLevel, message: Option<String>) -> Expr {
+        let mut literal = String::new();
+        literal.push_str(level.prefix());
+        match message {
+            Some(msg) => {
+                let trimmed = msg.trim();
+                if trimmed.is_empty() {
+                    literal.push_str(level.default_message());
+                } else {
+                    literal.push_str(trimmed);
+                }
+            }
+            None => literal.push_str(level.default_message()),
         }
 
-        if Self::is_fp_macro(&raw.mac) {
-            let call_expr = self.parse_fp_macro(&raw.mac)?;
-            tracing::debug!("parsed fp! macro");
-            return Ok(BlockStmt::Expr(
-                BlockStmtExpr::new(call_expr).with_semicolon(raw.semi_token.is_some()),
-            ));
+        ExprIntrinsicCall::new(
+            IntrinsicCallKind::Println,
+            IntrinsicCallPayload::Format {
+                template: ExprFormatString {
+                    parts: vec![FormatTemplatePart::Literal(literal)],
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
+            },
+        )
+        .into()
+    }
+
+    fn parse_stmt_macro(&self, raw: syn::StmtMacro) -> Result<BlockStmt> {
+        let expr_macro = syn::ExprMacro {
+            attrs: raw.attrs.clone(),
+            mac: raw.mac.clone(),
+        };
+        let expr = self.parse_expr_macro(expr_macro)?;
+        Ok(BlockStmt::Expr(
+            BlockStmtExpr::new(expr).with_semicolon(raw.semi_token.is_some()),
+        ))
+    }
+
+    fn parse_panic_like_macro(&self, m: &syn::ExprMacro) -> Result<Expr> {
+        let args = parse_expr_arguments(m.mac.tokens.clone())?;
+        let macro_name = m
+            .mac
+            .path
+            .segments
+            .last()
+            .map(|segment| segment.ident.to_string())
+            .unwrap_or_else(|| "panic".to_owned());
+
+        let default_message = match macro_name.as_str() {
+            "panic" => "panic! macro triggered",
+            "panic_any" => "panic_any! macro triggered",
+            "unreachable" => "entered unreachable! macro branch",
+            "unimplemented" => "unimplemented! macro invoked",
+            "todo" => "todo! macro invoked",
+            _ => "panic macro triggered",
+        };
+
+        let stmts = self.make_failure_stmts(args, Vec::new(), default_message)?;
+        Ok(Expr::block(ExprBlock::new_stmts(stmts)))
+    }
+
+    fn parse_assert_macro(&self, mac: &syn::Macro, kind: AssertKind) -> Result<Expr> {
+        let args = parse_expr_arguments(mac.tokens.clone())?;
+        let base = match kind {
+            AssertKind::Assert => self.lower_assert_condition(args, "assertion failed")?,
+            AssertKind::DebugAssert => {
+                self.lower_assert_condition(args, "debug assertion failed")?
+            }
+            AssertKind::AssertEq => {
+                self.lower_assert_eq(args, true, "assertion failed: left != right")?
+            }
+            AssertKind::DebugAssertEq => {
+                self.lower_assert_eq(args, true, "debug assertion failed: left != right")?
+            }
+            AssertKind::AssertNe => {
+                self.lower_assert_eq(args, false, "assertion failed: left == right")?
+            }
+            AssertKind::DebugAssertNe => {
+                self.lower_assert_eq(args, false, "debug assertion failed: left == right")?
+            }
+        };
+
+        if kind.is_debug() {
+            let cond = self.debug_assertions_intrinsic();
+            let if_expr = ExprIf {
+                cond: cond.into(),
+                then: base.into(),
+                elze: None,
+            };
+            Ok(Expr::from(ExprKind::If(if_expr)))
+        } else {
+            Ok(base)
+        }
+    }
+
+    fn lower_assert_condition(&self, args: Vec<syn::Expr>, default_message: &str) -> Result<Expr> {
+        if args.is_empty() {
+            return self.err("assert! requires a condition", Expr::unit());
         }
 
-        Ok(BlockStmt::any(RawStmtMacro { raw }))
+        let mut iter = args.into_iter();
+        let condition_expr = iter.next().unwrap();
+        let message_args: Vec<_> = iter.collect();
+
+        let condition = self.parse_expr(condition_expr)?;
+        let fail_stmts = self.make_failure_stmts(message_args, Vec::new(), default_message)?;
+
+        let fail_cond = Expr::from(ExprKind::UnOp(ExprUnOp {
+            op: UnOpKind::Not,
+            val: condition.into(),
+        }));
+
+        let if_expr = ExprIf {
+            cond: fail_cond.into(),
+            then: Expr::block(ExprBlock::new_stmts(fail_stmts)).into(),
+            elze: None,
+        };
+
+        let stmts = vec![BlockStmt::Expr(
+            BlockStmtExpr::new(Expr::from(ExprKind::If(if_expr))).with_semicolon(true),
+        )];
+
+        Ok(Expr::block(ExprBlock::new_stmts(stmts)))
+    }
+
+    fn lower_assert_eq(
+        &self,
+        args: Vec<syn::Expr>,
+        expect_equal: bool,
+        default_message: &str,
+    ) -> Result<Expr> {
+        if args.len() < 2 {
+            return self.err("assert_eq!/assert_ne! require two operands", Expr::unit());
+        }
+
+        let idx = ASSERT_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let left_ident = Ident::new(format!("__fp_assert_left_{idx}"));
+        let right_ident = Ident::new(format!("__fp_assert_right_{idx}"));
+        let left_ident_name = left_ident.as_str().to_string();
+        let right_ident_name = right_ident.as_str().to_string();
+
+        let left_expr = self.parse_expr(args[0].clone())?;
+        let right_expr = self.parse_expr(args[1].clone())?;
+
+        let mut stmts = Vec::new();
+        stmts.push(BlockStmt::Let(StmtLet::new_simple(
+            left_ident.clone(),
+            left_expr,
+        )));
+        stmts.push(BlockStmt::Let(StmtLet::new_simple(
+            right_ident.clone(),
+            right_expr,
+        )));
+
+        let lhs_value = Expr::ident(left_ident.clone());
+        let rhs_value = Expr::ident(right_ident.clone());
+        let cmp_kind = if expect_equal {
+            BinOpKind::Ne
+        } else {
+            BinOpKind::Eq
+        };
+
+        let message_args = args.into_iter().skip(2).collect::<Vec<_>>();
+
+        let format_lit = if expect_equal {
+            LitStr::new(
+                "assertion failed: left != right (left: {:#?}, right: {:#?})",
+                Span::call_site(),
+            )
+        } else {
+            LitStr::new(
+                "assertion failed: left == right (left: {:#?}, right: {:#?})",
+                Span::call_site(),
+            )
+        };
+        let left_syn_ident = syn::Ident::new(&left_ident_name, Span::call_site());
+        let right_syn_ident = syn::Ident::new(&right_ident_name, Span::call_site());
+        let default_print_args = vec![
+            syn::parse_quote!(#format_lit),
+            syn::parse_quote!(#left_syn_ident),
+            syn::parse_quote!(#right_syn_ident),
+        ];
+        let fail_block_stmts =
+            self.make_failure_stmts(message_args, default_print_args, default_message)?;
+
+        let comparison = Expr::from(ExprKind::BinOp(ExprBinOp {
+            kind: cmp_kind,
+            lhs: lhs_value.into(),
+            rhs: rhs_value.into(),
+        }));
+
+        let if_expr = ExprIf {
+            cond: comparison.into(),
+            then: Expr::block(ExprBlock::new_stmts(fail_block_stmts)).into(),
+            elze: None,
+        };
+
+        stmts.push(BlockStmt::Expr(
+            BlockStmtExpr::new(Expr::from(ExprKind::If(if_expr))).with_semicolon(true),
+        ));
+
+        Ok(Expr::block(ExprBlock::new_stmts(stmts)))
+    }
+
+    fn make_failure_stmts(
+        &self,
+        message_args: Vec<syn::Expr>,
+        default_print_args: Vec<syn::Expr>,
+        default_message: &str,
+    ) -> Result<Vec<BlockStmt>> {
+        let mut default_print_args = default_print_args;
+        if default_print_args.is_empty() {
+            let lit = LitStr::new(default_message, Span::call_site());
+            default_print_args.push(syn::parse_quote!(#lit));
+        }
+
+        let mut stmts = Vec::new();
+        let use_user_format = matches!(
+            message_args.first(),
+            Some(syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Str(_),
+                ..
+            }))
+        );
+
+        let print_args = if message_args.is_empty() {
+            default_print_args
+        } else if use_user_format {
+            message_args
+        } else {
+            for expr in message_args {
+                let parsed = self.parse_expr(expr)?;
+                stmts.push(BlockStmt::Expr(
+                    BlockStmtExpr::new(parsed).with_semicolon(true),
+                ));
+            }
+            default_print_args
+        };
+
+        let println_syn: syn::Expr = syn::parse_quote!(println!(#(#print_args),*));
+        let println_expr = self.parse_expr(println_syn)?;
+        stmts.push(BlockStmt::Expr(
+            BlockStmtExpr::new(println_expr).with_semicolon(true),
+        ));
+        stmts.push(BlockStmt::Expr(
+            BlockStmtExpr::new(make_abort_expr()).with_semicolon(true),
+        ));
+        Ok(stmts)
+    }
+
+    fn parse_env_macro(&self, mac: &syn::Macro, optional: bool) -> Result<Expr> {
+        let args: EnvMacroArgs = match syn::parse2(mac.tokens.clone()) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                return self.err(
+                    format!("Failed to parse env! macro arguments: {}", err),
+                    Expr::unit(),
+                )
+            }
+        };
+
+        let key = args.key.value();
+        let mut value = std::env::var(&key).ok();
+        if value.is_none() {
+            if let Some(default_expr) = args.default.as_ref() {
+                if let Some(default) = extract_string_literal(default_expr) {
+                    value = Some(default);
+                }
+            }
+        }
+
+        if optional {
+            let option = ValueOption::new(value.map(Value::string));
+            Ok(Expr::value(Value::Option(option)))
+        } else {
+            let resolved = value.unwrap_or_default();
+            Ok(Expr::value(Value::string(resolved)))
+        }
     }
 
     fn parse_cfg_macro(&self, mac: &syn::Macro) -> Result<Option<Expr>> {
@@ -843,12 +1441,86 @@ impl<'a> ExprParser<'a> {
         mac.path.segments.len() == 1 && mac.path.segments[0].ident == "input"
     }
 
-    fn is_vec_macro(mac: &syn::Macro) -> bool {
+    fn macro_matches(mac: &syn::Macro, names: &[&str]) -> bool {
         mac.path
             .segments
             .last()
-            .map(|segment| segment.ident == "vec")
+            .map(|segment| names.iter().any(|name| segment.ident == *name))
             .unwrap_or(false)
+    }
+
+    fn is_vec_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["vec"])
+    }
+
+    fn is_matches_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["matches"])
+    }
+
+    fn is_format_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["format"])
+    }
+
+    fn is_panic_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["panic", "panic_any"])
+    }
+
+    fn is_unreachable_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["unreachable"])
+    }
+
+    fn is_unimplemented_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["unimplemented"])
+    }
+
+    fn is_todo_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["todo"])
+    }
+
+    fn is_assert_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["assert"])
+    }
+
+    fn is_debug_assert_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["debug_assert"])
+    }
+
+    fn is_assert_eq_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["assert_eq"])
+    }
+
+    fn is_assert_ne_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["assert_ne"])
+    }
+
+    fn is_debug_assert_eq_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["debug_assert_eq"])
+    }
+
+    fn is_debug_assert_ne_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["debug_assert_ne"])
+    }
+
+    fn is_env_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["env"])
+    }
+
+    fn is_option_env_macro(mac: &syn::Macro) -> bool {
+        Self::macro_matches(mac, &["option_env"])
+    }
+
+    fn log_macro_level(mac: &syn::Macro) -> Option<LogLevel> {
+        mac.path
+            .segments
+            .last()
+            .and_then(|segment| match segment.ident.to_string().as_str() {
+                "trace" => Some(LogLevel::Trace),
+                "debug" => Some(LogLevel::Debug),
+                "info" => Some(LogLevel::Info),
+                "warn" => Some(LogLevel::Warn),
+                "error" => Some(LogLevel::Error),
+                _ => None,
+            })
     }
 }
 
@@ -867,30 +1539,163 @@ impl<'a> ExprParser<'a> {
             .into_iter()
             .map(|element| self.parse_expr(element))
             .collect::<Result<Vec<_>>>()?;
-        Ok(
-            ExprKind::IntrinsicCollection(ExprIntrinsicCollection::VecElements {
+        Ok(ExprKind::IntrinsicContainer(
+            ExprIntrinsicContainer::VecElements {
                 elements: parsed_elements,
-            })
-            .into(),
+            },
         )
+        .into())
     }
 
     fn make_vec_from_repeat(&self, elem: syn::Expr, len: syn::Expr) -> Result<Expr> {
         let elem_expr = self.parse_expr(elem)?;
         let len_expr = self.parse_expr(len)?;
-        Ok(
-            ExprKind::IntrinsicCollection(ExprIntrinsicCollection::VecRepeat {
+        Ok(ExprKind::IntrinsicContainer(
+            ExprIntrinsicContainer::VecRepeat {
                 elem: elem_expr.into(),
                 len: len_expr.into(),
-            })
-            .into(),
+            },
         )
+        .into())
     }
 }
 
 enum VecMacroKind {
     Elements(Punctuated<syn::Expr, syn::Token![,]>),
     Repeat { elem: syn::Expr, len: syn::Expr },
+}
+
+enum AssertKind {
+    Assert,
+    DebugAssert,
+    AssertEq,
+    DebugAssertEq,
+    AssertNe,
+    DebugAssertNe,
+}
+
+impl AssertKind {
+    fn is_debug(&self) -> bool {
+        matches!(
+            self,
+            AssertKind::DebugAssert | AssertKind::DebugAssertEq | AssertKind::DebugAssertNe
+        )
+    }
+}
+
+#[derive(Copy, Clone)]
+enum LogLevel {
+    Trace,
+    Debug,
+    Info,
+    Warn,
+    Error,
+}
+
+impl LogLevel {
+    fn prefix(&self) -> &'static str {
+        match self {
+            LogLevel::Trace => "[TRACE] ",
+            LogLevel::Debug => "[DEBUG] ",
+            LogLevel::Info => "[INFO] ",
+            LogLevel::Warn => "[WARN] ",
+            LogLevel::Error => "[ERROR] ",
+        }
+    }
+
+    fn default_message(&self) -> &'static str {
+        match self {
+            LogLevel::Trace => "trace event",
+            LogLevel::Debug => "debug event",
+            LogLevel::Info => "info event",
+            LogLevel::Warn => "warning event",
+            LogLevel::Error => "error event",
+        }
+    }
+}
+
+struct EnvMacroArgs {
+    key: syn::LitStr,
+    default: Option<syn::Expr>,
+}
+
+impl Parse for EnvMacroArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let key: syn::LitStr = input.parse()?;
+        let mut default = None;
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+            if !input.is_empty() {
+                default = Some(input.parse::<syn::Expr>()?);
+            }
+        }
+        if input.peek(Token![,]) {
+            let _ = input.parse::<Token![,]>();
+        }
+        Ok(Self { key, default })
+    }
+}
+
+struct MatchesMacroArgs {
+    expr: syn::Expr,
+    pat: syn::Pat,
+    guard: Option<syn::Expr>,
+}
+
+impl Parse for MatchesMacroArgs {
+    fn parse(input: ParseStream<'_>) -> syn::Result<Self> {
+        let expr: syn::Expr = input.parse()?;
+        input.parse::<Token![,]>()?;
+        let pat = syn::Pat::parse_single(input)?;
+
+        let guard = if input.peek(Token![if]) {
+            input.parse::<Token![if]>()?;
+            Some(input.parse::<syn::Expr>()?)
+        } else {
+            None
+        };
+
+        if input.peek(Token![,]) {
+            let _ = input.parse::<Token![,]>();
+        }
+
+        Ok(Self { expr, pat, guard })
+    }
+}
+
+fn parse_expr_arguments(tokens: proc_macro2::TokenStream) -> Result<Vec<syn::Expr>> {
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    Punctuated::<syn::Expr, Token![,]>::parse_terminated
+        .parse2(tokens)
+        .map(|punct| punct.into_iter().collect())
+        .map_err(|err| err.to_string().into())
+}
+
+fn extract_string_literal(expr: &syn::Expr) -> Option<String> {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(lit),
+            ..
+        }) => Some(lit.value()),
+        _ => None,
+    }
+}
+
+fn make_abort_expr() -> Expr {
+    let path = Path::new(vec![
+        Ident::new("std"),
+        Ident::new("process"),
+        Ident::new("abort"),
+    ]);
+
+    ExprInvoke {
+        target: ExprInvokeTarget::expr(Expr::path(path)),
+        args: Vec::new(),
+    }
+    .into()
 }
 
 impl Parse for VecMacroKind {

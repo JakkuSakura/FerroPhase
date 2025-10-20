@@ -511,6 +511,9 @@ impl RustPrinter {
             NodeKind::Schema(_) => Err(fp_core::error::Error::Generic(eyre::eyre!(
                 "Schema documents cannot be printed as Rust tokens"
             ))),
+            NodeKind::Workspace(_) => Err(fp_core::error::Error::Generic(eyre::eyre!(
+                "Workspace snapshots cannot be printed as Rust tokens"
+            ))),
         }
     }
 }

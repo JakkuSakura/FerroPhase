@@ -21,11 +21,15 @@ pub fn materialize_intrinsics(ast: &mut Node, strategy: &dyn IntrinsicMaterializ
         NodeKind::Expr(expr) => materialize_expr(expr, strategy),
         NodeKind::Query(_) => Ok(()),
         NodeKind::Schema(_) => Ok(()),
+        NodeKind::Workspace(_) => Ok(()),
     }
 }
 
 fn materialize_item(item: &mut Item, strategy: &dyn IntrinsicMaterializer) -> Result<()> {
     match item.kind_mut() {
+        ItemKind::Macro(_) => {
+            // Not materialized; retain for later passes.
+        }
         ItemKind::Module(module) => {
             for child in &mut module.items {
                 materialize_item(child, strategy)?;
@@ -249,18 +253,18 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn IntrinsicMaterializer) -> Re
                 replacement = Some(expr);
             }
         }
-        ExprKind::IntrinsicCollection(collection) => {
+        ExprKind::IntrinsicContainer(collection) => {
             match collection {
-                fp_core::ast::ExprIntrinsicCollection::VecElements { elements } => {
+                fp_core::ast::ExprIntrinsicContainer::VecElements { elements } => {
                     for element in elements {
                         materialize_expr(element, strategy)?;
                     }
                 }
-                fp_core::ast::ExprIntrinsicCollection::VecRepeat { elem, len } => {
+                fp_core::ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
                     materialize_expr(elem.as_mut(), strategy)?;
                     materialize_expr(len.as_mut(), strategy)?;
                 }
-                fp_core::ast::ExprIntrinsicCollection::HashMapEntries { entries } => {
+                fp_core::ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
                     for entry in entries {
                         materialize_expr(&mut entry.key, strategy)?;
                         materialize_expr(&mut entry.value, strategy)?;
@@ -268,7 +272,7 @@ fn materialize_expr(expr: &mut Expr, strategy: &dyn IntrinsicMaterializer) -> Re
                 }
             }
 
-            if let Some(new_expr) = strategy.materialize_collection(collection, &expr_ty)? {
+            if let Some(new_expr) = strategy.materialize_container(collection, &expr_ty)? {
                 replacement = Some(new_expr);
             }
         }

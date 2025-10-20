@@ -24,6 +24,7 @@ pub mod query;
 pub mod span;
 pub mod utils;
 pub mod vfs;
+pub mod workspace;
 
 // Re-export commonly used items for convenience
 pub use tracing;

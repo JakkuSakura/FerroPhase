@@ -533,6 +533,40 @@ impl LlvmContext {
         Ok(name)
     }
 
+    pub fn build_inttoptr(
+        &mut self,
+        operand: Operand,
+        target_ptr_type: Type,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::IntToPtr(instruction::IntToPtr {
+            operand,
+            to_type: self.module.types.get_for_type(&target_ptr_type),
+            dest: name.clone(),
+            debugloc: None,
+        });
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
+    pub fn build_ptrtoint(
+        &mut self,
+        operand: Operand,
+        target_int_type: Type,
+        result_name: &str,
+    ) -> Result<Name, String> {
+        let name = Name::Name(Box::new(result_name.to_string()));
+        let instruction = Instruction::PtrToInt(instruction::PtrToInt {
+            operand,
+            to_type: self.module.types.get_for_type(&target_int_type),
+            dest: name.clone(),
+            debugloc: None,
+        });
+        self.add_instruction(instruction)?;
+        Ok(name)
+    }
+
     pub fn build_alloca(
         &mut self,
         allocated_type: TypeRef,
@@ -790,24 +824,31 @@ impl LlvmContext {
         ir.push_str(&format!("target datalayout = \"{}\"\n", datalayout));
         ir.push_str(&format!("target triple = \"{}\"\n\n", triple));
 
-        // Global variables and constants
-        for global in &self.module.global_vars {
+        // Global variables and constants (emit in deterministic order)
+        let mut globals_sorted = self.module.global_vars.clone();
+        globals_sorted.sort_by(|a, b| format_name(&a.name).cmp(&format_name(&b.name)));
+        for global in &globals_sorted {
             ir.push_str(&format_global_variable(global));
         }
 
-        // External function declarations
-        for declaration in &self.module.func_declarations {
+        // External function declarations (deterministic order)
+        let mut decls_sorted = self.module.func_declarations.clone();
+        decls_sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        for declaration in &decls_sorted {
             ir.push_str(&format_function_declaration_proto(declaration));
         }
 
-        for function in &self.module.functions {
+        // Emit function declarations (externals) first in deterministic name order
+        let mut funcs_sorted = self.module.functions.clone();
+        funcs_sorted.sort_by(|a, b| a.name.cmp(&b.name));
+        for function in &funcs_sorted {
             if function.linkage == llvm_ir::module::Linkage::External {
                 ir.push_str(&format_function_declaration(function));
             }
         }
 
         // Functions (skip external declarations which were already handled above)
-        for function in &self.module.functions {
+        for function in &funcs_sorted {
             if function.linkage == llvm_ir::module::Linkage::External
                 && function.basic_blocks.is_empty()
             {
@@ -881,13 +922,9 @@ impl LlvmContext {
                 }
 
                 // Terminator - handle main function special case
-                if is_main
-                    && matches!(bb.term, Terminator::Ret(ref ret) if ret.return_operand.is_none())
-                {
-                    // For main function, emit ret i32 0 instead of ret void
+                if is_main && matches!(bb.term, Terminator::Ret(_)) {
                     ir.push_str("  ret i32 0\n");
                 } else {
-                    // Normal terminator handling
                     ir.push_str(&format!("  {}\n", format_terminator(&bb.term)));
                 }
             }

@@ -38,6 +38,7 @@ common_enum! {
         DeclFunction(ItemDeclFunction),
         Import(ItemImport),
         Impl(ItemImpl),
+        Macro(ItemMacro),
         /// not for direct construction, but for interpretation and optimization
         Expr(Expr),
         Any(AnyBox),

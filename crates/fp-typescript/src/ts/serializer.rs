@@ -112,6 +112,12 @@ impl ScriptEmitter {
                     "// schema documents are not yet supported in the TypeScript serializer",
                 );
             }
+            NodeKind::Workspace(_) => {
+                self.ensure_blank_line();
+                self.push_line(
+                    "// workspace snapshots are not supported in the TypeScript serializer",
+                );
+            }
         }
         Ok(())
     }

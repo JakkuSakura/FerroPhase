@@ -2,15 +2,16 @@ use fp_core::{bail, Result};
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
+use std::str::FromStr;
 use syn::LitStr;
 
 use fp_core::ast::{
-    BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprBinOp, ExprBlock, ExprCast,
-    ExprClosure, ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex,
-    ExprIntrinsicCall, ExprIntrinsicCollection, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
-    ExprLoop, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference, ExprSelect,
-    ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple, ExprUnOp,
-    ExprWhile, FormatArgRef, FormatTemplatePart, Item, StmtLet,
+    BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp, ExprBlock,
+    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex,
+    ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
+    ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
+    ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple,
+    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, StmtLet,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -58,21 +59,23 @@ impl RustPrinter {
             ExprKind::Closure(n) => self.print_expr_closure(n),
             ExprKind::Array(n) => self.print_expr_array(n),
             ExprKind::ArrayRepeat(n) => self.print_expr_array_repeat(n),
-            ExprKind::IntrinsicCollection(n) => self.print_intrinsic_collection(n),
+            ExprKind::Await(n) => self.print_expr_await(n),
+            ExprKind::IntrinsicContainer(n) => self.print_intrinsic_container(n),
             ExprKind::IntrinsicCall(n) => self.print_intrinsic_call(n),
             ExprKind::Structural(n) => self.print_structural_expr(n),
             ExprKind::Dereference(n) => self.print_expr_dereference(n),
             ExprKind::FormatString(n) => self.print_expr_format_string(n),
             ExprKind::Splat(n) => self.print_expr_splat(n),
             ExprKind::SplatDict(n) => self.print_expr_splat_dict(n),
+            ExprKind::Macro(n) => self.print_macro_expr(n),
             ExprKind::Item(item) => self.print_expr_item(item),
             ExprKind::Cast(n) => self.print_expr_cast(n),
         }
     }
 
-    fn print_intrinsic_collection(
+    fn print_intrinsic_container(
         &self,
-        collection: &ExprIntrinsicCollection,
+        collection: &ExprIntrinsicContainer,
     ) -> fp_core::Result<TokenStream> {
         self.print_expr(&collection.clone().into_const_expr())
     }
@@ -81,6 +84,23 @@ impl RustPrinter {
         let expr = self.print_expr(&cast.expr)?;
         let ty = self.print_type(&cast.ty)?;
         Ok(quote!(#expr as #ty))
+    }
+
+    fn print_macro_expr(&self, mac: &ExprMacro) -> Result<TokenStream> {
+        let path = self.print_path(&mac.invocation.path);
+        let tokens =
+            TokenStream::from_str(&mac.invocation.tokens).unwrap_or_else(|_| TokenStream::new());
+        let expanded = match mac.invocation.delimiter {
+            MacroDelimiter::Parenthesis => quote!(#path!(#tokens)),
+            MacroDelimiter::Bracket => quote!(#path![#tokens]),
+            MacroDelimiter::Brace => quote!(#path!{#tokens}),
+        };
+        Ok(expanded)
+    }
+
+    fn print_expr_await(&self, await_expr: &ExprAwait) -> Result<TokenStream> {
+        let base = self.print_expr(&await_expr.base)?;
+        Ok(quote!((#base).await))
     }
 
     fn print_bin_op(&self, binop: &ExprBinOp) -> Result<TokenStream> {

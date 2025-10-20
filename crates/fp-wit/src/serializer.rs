@@ -136,6 +136,9 @@ impl WitEmitter {
             NodeKind::Schema(_) => Err(CoreError::from(
                 "WIT serialization does not support schema documents".to_string(),
             )),
+            NodeKind::Workspace(_) => Err(CoreError::from(
+                "WIT serialization does not support workspace documents".to_string(),
+            )),
         }
     }
 
@@ -183,6 +186,10 @@ impl WitEmitter {
                 } else {
                     self.interfaces.remove(&interface_name);
                 }
+                Ok(())
+            }
+            ItemKind::Macro(_) => {
+                // Item macros are not material for WIT serialization; skip.
                 Ok(())
             }
             ItemKind::Impl(impl_block) => {

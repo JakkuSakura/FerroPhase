@@ -1,6 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
 use crate::query::QueryDocument;
+use crate::workspace::WorkspaceDocument;
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
 
@@ -14,6 +15,7 @@ mod ident;
 mod item;
 #[cfg(feature = "bootstrap")]
 pub mod json;
+mod macros;
 mod pat;
 mod pretty;
 mod schema;
@@ -28,6 +30,7 @@ pub use ident::*;
 pub use item::*;
 #[cfg(feature = "bootstrap")]
 pub use json::*;
+pub use macros::*;
 pub use pat::*;
 pub use schema::*;
 #[cfg(feature = "bootstrap")]
@@ -60,12 +63,14 @@ common_enum! {
     /// - `Item`/`Expr`/`File`: the canonical FerroPhase AST hierarchy.
     /// - `Query`: textual query documents (SQL, PRQL, ...).
     /// - `Schema`: validation schemas such as JSON Schema.
+    /// - `Workspace`: metadata describing a Rust workspace (used for bootstrap).
     pub enum NodeKind {
         Item(Item),
         Expr(Expr),
         File(File),
         Query(QueryDocument),
         Schema(schema::SchemaDocument),
+        Workspace(WorkspaceDocument),
     }
 }
 
@@ -130,6 +135,10 @@ impl Node {
 
     pub fn schema(schema: schema::SchemaDocument) -> Self {
         Node::from(NodeKind::Schema(schema))
+    }
+
+    pub fn workspace(workspace: WorkspaceDocument) -> Self {
+        Node::from(NodeKind::Workspace(workspace))
     }
 }
 

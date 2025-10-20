@@ -44,38 +44,52 @@
 
 ## JSON Snapshot Workflow
 
-1. **Stage 0 (full toolchain)**: run the existing `fp` CLI (ideally built with the `bootstrap` feature enabled so snapshot helpers are available) to produce:
-   - `*.ast.json` — serialized `Node` with `ty` metadata (exported by setting `FERROPHASE_BOOTSTRAP_SNAPSHOT=1`),
-   - optional `*.hir.json` / `*.mir.json` (future work).
-2. **Stage 1 (bootstrap)**: rebuild `fp` with `--features bootstrap`, export `FERROPHASE_BOOTSTRAP=1`, and rerun the CLI to:
-   - detect `.json` inputs emitted in Stage 0 and reconstruct `Node` values using the built-in snapshot loader,
-   - run intrinsic normalization / typing / const evaluation / lowering using the dependency-light path,
-   - emit the usual artifacts (`.rs`, `.ll`, binaries) using the same backends as Stage 0.
-3. **Stage 2 (self-host)**: once FerroPhase can regenerate the Stage 0 snapshots, a script can orchestrate `cargo run --release` (standard mode) to seed JSON artefacts, rebuild with `--features bootstrap`, and invoke the bootstrap flow so the new binary proves it can process its own inputs.
+1. **Stage 0 – frontend only.** Build the toolchain normally (`cargo build --release`) and run `fp parse Cargo.toml --no-resolve --snapshot …` to materialise the entire workspace AST as `*.ast.json`. No optimisation, typing, or lowering occurs; we only capture the parsed tree that later stages will replay.
+2. **Stage 1 – replay and emit.** Using the Stage 0 `fp` binary, set `FERROPHASE_BOOTSTRAP=1` and feed the saved snapshot into `fp compile`. The pipeline skips parsing, rehydrates the AST, then performs intrinsic normalisation, typing, const evaluation, MIR/LIR generation, emits LLVM IR, and finally links the requested binary via `lld`/`clang`.
+3. **Stage 2 – self-host check.** Take the freshly produced `fp` binary from Stage 1 and repeat Stage 1 against the same snapshot. Matching LLVM/binary artefacts demonstrate that the new compiler can drive the optimisation and codegen passes on its own inputs.
 
 ### Reference command sequence
 
 ```
-# Stage 0 – emit snapshots with the full toolchain
+# Stage 0 – parse and persist the AST snapshot
 cargo build --release
-FERROPHASE_BOOTSTRAP_SNAPSHOT=1 target/release/fp compile \
-  examples/05_struct_generation.fp --target rust --output /tmp/out.rs
+"$PWD/target/release/fp" parse \
+  Cargo.toml \
+  --no-resolve \
+  --snapshot target/bootstrap/workspace.stage0.ast.json
 
-# Stage 1 – rebuild in bootstrap mode and replay snapshots
+# Stage 1 – rebuild in bootstrap mode
 cargo build --release --no-default-features --features bootstrap
-FERROPHASE_BOOTSTRAP=1 target/release/fp compile \
-  examples/05_struct_generation.ast.json --target rust --output /tmp/out.rs
-FERROPHASE_BOOTSTRAP=1 target/release/fp compile \
-  examples/05_struct_generation.ast.json --target llvm --output /tmp/out.ll
+
+# Stage 1 – replay snapshot, emit LLVM IR, and link a binary
+FERROPHASE_BOOTSTRAP=1 "$PWD/target/release/fp" compile \
+  target/bootstrap/workspace.stage0.ast.json \
+  --target llvm \
+  --output target/bootstrap/workspace.stage1.ll
+FERROPHASE_BOOTSTRAP=1 "$PWD/target/release/fp" compile \
+  target/bootstrap/workspace.stage0.ast.json \
+  --target binary \
+  --output target/bootstrap/workspace.stage1.bin
+
+# Stage 2 – use the Stage 1 compiler to repeat the replay
+stage1_bin="$PWD/target/bootstrap/workspace.stage1.out" # use .exe on Windows
+FERROPHASE_BOOTSTRAP=1 "$stage1_bin" compile \
+  target/bootstrap/workspace.stage0.ast.json \
+  --target llvm \
+  --output target/bootstrap/workspace.stage2.ll
+FERROPHASE_BOOTSTRAP=1 "$stage1_bin" compile \
+  target/bootstrap/workspace.stage0.ast.json \
+  --target binary \
+  --output target/bootstrap/workspace.stage2.bin
 ```
 
-For convenience, `scripts/bootstrap.sh` automates these steps (including the bootstrap rebuild). Example:
+For convenience, `scripts/bootstrap.sh` automates these steps (including rebuilding with the `bootstrap` feature and the Stage 2 verification). Running it from the repository root produces both LLVM IR and binaries for Stage 1 and Stage 2 with no additional arguments:
 
 ```
-scripts/bootstrap.sh --target rust examples/05_struct_generation.fp
-scripts/bootstrap.sh --target llvm examples/05_struct_generation.fp
-scripts/bootstrap.sh --target binary examples/05_struct_generation.fp
+scripts/bootstrap.sh
 ```
+
+> Note: the Stage 1 binary is emitted as `*.out` on Unix-like systems and `*.exe` on Windows—adjust the `stage1_bin` assignment accordingly.
 
 When using the bootstrap binary, default features (and therefore optional dependencies like `miette`) stay disabled. Pass `--no-default-features --features bootstrap` to ensure the smaller dependency surface.
 
