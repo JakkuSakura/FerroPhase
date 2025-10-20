@@ -9,7 +9,7 @@ pub mod parser;
 pub mod printer;
 pub mod workspace;
 
-pub use workspace::parse_cargo_workspace;
+pub use workspace::{parse_cargo_workspace, summarize_cargo_workspace};
 
 macro_rules! unsafe_impl_send_sync {
     ($t: ty) => {

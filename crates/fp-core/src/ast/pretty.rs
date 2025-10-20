@@ -104,8 +104,8 @@ impl PrettyPrintable for ast::Expr {
                     Ok(())
                 })
             }
-            ast::ExprKind::IntrinsicCollection(collection) => {
-                ctx.writeln(f, format!("intrinsic_collection{}", suffix))?;
+            ast::ExprKind::IntrinsicContainer(collection) => {
+                ctx.writeln(f, format!("intrinsic_container{}", suffix))?;
                 let expanded = collection.clone().into_const_expr();
                 ctx.with_indent(|ctx| expanded.fmt_pretty(f, ctx))
             }
@@ -248,6 +248,10 @@ impl PrettyPrintable for ast::Expr {
                     ctx.with_indent(|ctx| array.len.fmt_pretty(f, ctx))
                 })
             }
+            ast::ExprKind::Await(await_expr) => {
+                ctx.writeln(f, format!("await{}", suffix))?;
+                ctx.with_indent(|ctx| await_expr.base.fmt_pretty(f, ctx))
+            }
             ast::ExprKind::Cast(cast) => {
                 ctx.writeln(
                     f,
@@ -325,6 +329,18 @@ impl PrettyPrintable for ast::Expr {
                 ctx.writeln(f, format!("splat_dict{}", suffix))?;
                 ctx.with_indent(|ctx| splat_dict.dict.fmt_pretty(f, ctx))
             }
+            ast::ExprKind::Macro(mac) => {
+                ctx.writeln(f, format!("macro {}{}", mac.invocation.path, suffix))?;
+                ctx.with_indent(|ctx| {
+                    ctx.writeln(
+                        f,
+                        format!(
+                            "delimiter: {:?}, tokens: {}",
+                            mac.invocation.delimiter, mac.invocation.tokens
+                        ),
+                    )
+                })
+            }
             ast::ExprKind::Item(item) => {
                 ctx.writeln(f, format!("item_expr{}", suffix))?;
                 ctx.with_indent(|ctx| item.fmt_pretty(f, ctx))
@@ -354,6 +370,21 @@ impl PrettyPrintable for ast::Item {
                     Ok(())
                 })?;
                 ctx.writeln(f, "}")
+            }
+            ast::ItemKind::Macro(mac) => {
+                ctx.writeln(
+                    f,
+                    format!(
+                        "macro item {} (delim: {:?})",
+                        mac.invocation.path, mac.invocation.delimiter
+                    ),
+                )?;
+                ctx.with_indent(|ctx| {
+                    ctx.writeln(
+                        f,
+                        format!("tokens: {}{}", mac.invocation.tokens, suffix),
+                    )
+                })
             }
             ast::ItemKind::DefStruct(def) => {
                 ctx.writeln(
@@ -611,6 +642,56 @@ impl PrettyPrintable for ast::Node {
             ast::NodeKind::Expr(expr) => expr.fmt_pretty(f, ctx),
             ast::NodeKind::Query(query) => query.fmt_pretty(f, ctx),
             ast::NodeKind::Schema(schema) => schema.fmt_pretty(f, ctx),
+            ast::NodeKind::Workspace(workspace) => {
+                ctx.writeln(f, format!("workspace {}", workspace.manifest))?;
+                ctx.with_indent(|ctx| {
+                    for package in &workspace.packages {
+                        let version = package
+                            .version
+                            .as_deref()
+                            .map(|v| format!(" {}", v))
+                            .unwrap_or_default();
+                        ctx.writeln(f, format!("package {}{}", package.name, version))?;
+                        ctx.with_indent(|ctx| {
+                            ctx.writeln(f, format!("manifest: {}", package.manifest_path))?;
+                            ctx.writeln(f, format!("root: {}", package.root))?;
+                            if !package.features.is_empty() {
+                                ctx.writeln(
+                                    f,
+                                    format!("features: {}", package.features.join(", ")),
+                                )?;
+                            }
+                            if !package.dependencies.is_empty() {
+                                let deps = package
+                                    .dependencies
+                                    .iter()
+                                    .map(|dep| {
+                                        dep.kind
+                                            .as_deref()
+                                            .map(|kind| format!("{} ({kind})", dep.name))
+                                            .unwrap_or_else(|| dep.name.clone())
+                                    })
+                                    .collect::<Vec<_>>()
+                                    .join(", ");
+                                ctx.writeln(f, format!("dependencies: {}", deps))?;
+                            }
+                            if !package.modules.is_empty() {
+                                ctx.writeln(f, "modules:")?;
+                                ctx.with_indent(|ctx| {
+                                    for module in &package.modules {
+                                        let language =
+                                            module.language.as_deref().unwrap_or("unknown");
+                                        ctx.writeln(f, format!("{} [{}]", module.path, language))?;
+                                    }
+                                    Ok(())
+                                })?;
+                            }
+                            Ok(())
+                        })?;
+                    }
+                    Ok(())
+                })
+            }
         }
     }
 }
@@ -1070,12 +1151,15 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             render_expr_inline(array.elem.as_ref()),
             render_expr_inline(array.len.as_ref())
         ),
+        ast::ExprKind::Await(await_expr) => {
+            format!("await {}", render_expr_inline(await_expr.base.as_ref()))
+        }
         ast::ExprKind::Cast(cast) => format!(
             "({}) as {}",
             render_expr_inline(cast.expr.as_ref()),
             render_ty_brief(&cast.ty)
         ),
-        ast::ExprKind::IntrinsicCollection(collection) => {
+        ast::ExprKind::IntrinsicContainer(collection) => {
             render_expr_inline(&collection.clone().into_const_expr())
         }
         ast::ExprKind::Range(range) => {
@@ -1092,6 +1176,7 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             format!("{}..{}", start, end)
         }
         ast::ExprKind::FormatString(template) => render_format_template(template),
+        ast::ExprKind::Macro(mac) => format!("macro {}", mac.invocation.path),
         ast::ExprKind::Block(_)
         | ast::ExprKind::Match(_)
         | ast::ExprKind::If(_)

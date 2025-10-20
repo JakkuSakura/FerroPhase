@@ -185,6 +185,7 @@ impl RustPrinter {
             ItemKind::Impl(n) => self.print_impl(n),
             ItemKind::Module(n) => self.print_module(n),
             ItemKind::Import(n) => self.print_import(n),
+            ItemKind::Macro(_n) => Ok(quote!()),
             ItemKind::Expr(n) => self.print_expr(n),
             ItemKind::Any(n) => self.print_any(n),
         }

@@ -27,6 +27,7 @@ pub struct LlvmConfig {
     pub enable_debug_info: bool,
     pub producer_name: String,
     pub module_name: String,
+    pub allow_unresolved_globals: bool,
 }
 
 impl Default for LlvmConfig {
@@ -37,6 +38,7 @@ impl Default for LlvmConfig {
             enable_debug_info: true,
             producer_name: "fp-compiler".to_string(),
             module_name: "main".to_string(),
+            allow_unresolved_globals: false,
         }
     }
 }
@@ -100,6 +102,12 @@ impl LlvmConfig {
         self.module_name = name.into();
         self
     }
+
+    /// Allow unresolved globals during codegen (bootstrap fallback)
+    pub fn with_allow_unresolved_globals(mut self, allow: bool) -> Self {
+        self.allow_unresolved_globals = allow;
+        self
+    }
 }
 
 /// Main LLVM compilation interface
@@ -149,7 +157,11 @@ impl LlvmCompiler {
             })?;
             global_map.insert(String::from(global.name.clone()), initializer);
         }
-        let mut codegen = LirCodegen::new(&mut llvm_ctx, global_map);
+        let mut codegen = LirCodegen::new(
+            &mut llvm_ctx,
+            global_map,
+            self.config.allow_unresolved_globals,
+        );
 
         codegen
             .generate_program(lir_program)
@@ -192,6 +204,81 @@ impl LlvmCompiler {
         // and target codegen to produce object files directly.
 
         Ok(output_path)
+    }
+
+    /// Compile and return the LLVM IR text along with the output path, avoiding
+    /// reading the file back from disk.
+    pub fn compile_to_string(
+        &self,
+        lir_program: LirProgram,
+        source_file: Option<&Path>,
+    ) -> Result<(PathBuf, String)> {
+        // Create LLVM context
+        let mut llvm_ctx = LlvmContext::new(&self.config.module_name);
+
+        // Initialize target machine
+        llvm_ctx
+            .init_target_machine()
+            .map_err(fp_core::error::Error::from)?;
+
+        // Create target codegen
+        let _target_codegen = TargetCodegen::new(self.config.target.clone())
+            .with_context(|| "Failed to create target codegen")
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        // Create debug info builder if enabled
+        let debug_builder = if self.config.enable_debug_info {
+            let source_path = source_file.unwrap_or_else(|| Path::new("unknown.fp"));
+            Some(
+                DebugInfoBuilder::new(&llvm_ctx.module, source_path, &self.config.producer_name)
+                    .with_context(|| "Failed to create debug info builder")
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+            )
+        } else {
+            None
+        };
+        let mut global_map = std::collections::HashMap::new();
+        for global in &lir_program.globals {
+            let initializer = global.initializer.clone().ok_or_else(|| {
+                report_error(format!(
+                    "[lir→llvm] Global '{}' is missing an initializer before LLVM codegen",
+                    global.name
+                ))
+            })?;
+            global_map.insert(String::from(global.name.clone()), initializer);
+        }
+        let mut codegen = LirCodegen::new(
+            &mut llvm_ctx,
+            global_map,
+            self.config.allow_unresolved_globals,
+        );
+
+        codegen
+            .generate_program(lir_program)
+            .with_context(|| "Failed to generate LLVM IR from LIR")
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        // Finalize debug info
+        if let Some(ref debug_info) = debug_builder {
+            debug_info.finalize();
+        }
+
+        // Verify the module
+        llvm_ctx.verify_module().map_err(|e| {
+            println!("[fp-llvm] module verification failed: {}", e);
+            fp_core::error::Error::from(e.to_string())
+        })?;
+
+        // Obtain IR text in-memory
+        let ir_text = llvm_ctx.print_to_string();
+
+        // Also write it to file for downstream linkers
+        let output_path = self.config.linker.output_path.clone();
+        llvm_ctx
+            .write_to_file(&output_path)
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+        Ok((output_path, ir_text))
     }
 
     /// Get the configuration

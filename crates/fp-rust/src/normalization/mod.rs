@@ -1,9 +1,13 @@
 use fp_core::ast::{
-    self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprIntrinsicCollection, ExprInvokeTarget,
-    ExprKind, ExprMatchCase, FormatKwArg, Item, ItemKind, Node, NodeKind, Ty, Value, ValueFunction,
+    self, BlockStmt, BlockStmtExpr, Expr, ExprField, ExprIntrinsicContainer, ExprInvokeTarget,
+    ExprKind, ExprMacro, ExprMatchCase, FormatKwArg, Item, ItemKind, Node, NodeKind, Ty, Value,
+    ValueFunction,
 };
 use fp_core::ast::{Ident, Locator, Path};
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
+use std::sync::OnceLock;
+
+mod macro_lowering;
 
 type Diagnostics<'a> = Option<&'a DiagnosticManager>;
 
@@ -21,11 +25,37 @@ fn report_unhandled_any(kind: &str, diagnostics: Diagnostics<'_>) {
             "Normalization cannot process placeholder `{}` nodes left as `Any`. This usually means the frontend failed to lower a construct.",
             kind
         );
-        let diagnostic = Diagnostic::error(message)
-            .with_source_context(NORMALIZATION_CONTEXT)
-            .with_code(format!("{}.{kind}", ANY_ERROR_CODE_PREFIX));
-        manager.error(diagnostic);
+        if lossy_normalization_mode() {
+            manager.add_diagnostic(
+                Diagnostic::warning(message)
+                    .with_source_context(NORMALIZATION_CONTEXT)
+                    .with_code(format!("{}.{kind}", ANY_ERROR_CODE_PREFIX)),
+            );
+        } else {
+            let diagnostic = Diagnostic::error(message)
+                .with_source_context(NORMALIZATION_CONTEXT)
+                .with_code(format!("{}.{kind}", ANY_ERROR_CODE_PREFIX));
+            manager.error(diagnostic);
+        }
     }
+}
+
+fn lossy_normalization_mode() -> bool {
+    static LOSSY: OnceLock<bool> = OnceLock::new();
+    *LOSSY.get_or_init(|| {
+        let env_true = |key: &str| {
+            std::env::var(key).map(|val| {
+                let trimmed = val.trim();
+                !trimmed.is_empty() && !matches!(trimmed, "0" | "false" | "FALSE" | "False")
+            })
+        };
+
+        if env_true("FERROPHASE_BOOTSTRAP").unwrap_or(false) {
+            return true;
+        }
+
+        env_true("FERROPHASE_LOSSY").unwrap_or(false)
+    })
 }
 
 pub fn normalize_last_to_ast(node: &mut Node, diagnostics: Diagnostics<'_>) {
@@ -39,7 +69,15 @@ pub fn normalize_last_to_ast(node: &mut Node, diagnostics: Diagnostics<'_>) {
         }
         NodeKind::Schema(_) => {}
         NodeKind::Query(_) => {}
+        NodeKind::Workspace(_) => {}
     }
+}
+
+pub fn lower_macro_for_ast(
+    macro_expr: &ExprMacro,
+    diagnostics: Option<&DiagnosticManager>,
+) -> Expr {
+    macro_lowering::lower_macro_expression(macro_expr, diagnostics)
 }
 
 fn normalize_item(item: &mut Item, diagnostics: Diagnostics<'_>) {
@@ -81,8 +119,8 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
             for arg in &mut invoke.args {
                 normalize_expr(arg, diagnostics);
             }
-            if let Some(collection) = ExprIntrinsicCollection::from_invoke(invoke) {
-                apply_intrinsic_collection(expr, collection, diagnostics);
+            if let Some(collection) = ExprIntrinsicContainer::from_invoke(invoke) {
+                apply_intrinsic_container(expr, collection, diagnostics);
             }
         }
         ExprKind::Match(expr_match) => {
@@ -121,6 +159,7 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
         }
         ExprKind::Reference(reference) => normalize_bexpr(&mut reference.referee, diagnostics),
         ExprKind::Dereference(deref) => normalize_bexpr(&mut deref.referee, diagnostics),
+        ExprKind::Await(await_expr) => normalize_bexpr(&mut await_expr.base, diagnostics),
         ExprKind::Cast(cast) => {
             normalize_expr(cast.expr.as_mut(), diagnostics);
             normalize_type(&mut cast.ty);
@@ -179,11 +218,20 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
         }
         ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut(), diagnostics),
         ExprKind::SplatDict(dict) => normalize_expr(dict.dict.as_mut(), diagnostics),
+        ExprKind::Macro(_) => {
+            let macro_expr = match expr.kind().clone() {
+                ExprKind::Macro(mac) => mac,
+                _ => unreachable!(),
+            };
+            let lowered = macro_lowering::lower_macro_expression(&macro_expr, diagnostics);
+            *expr = lowered;
+            normalize_expr(expr, diagnostics);
+        }
         ExprKind::Closured(closured) => normalize_bexpr(&mut closured.expr, diagnostics),
         ExprKind::Item(item) => normalize_item(item.as_mut(), diagnostics),
-        ExprKind::IntrinsicCollection(collection) => {
+        ExprKind::IntrinsicContainer(collection) => {
             let owned = collection.clone();
-            apply_intrinsic_collection(expr, owned, diagnostics);
+            apply_intrinsic_container(expr, owned, diagnostics);
         }
         ExprKind::IntrinsicCall(call) => match &mut call.payload {
             fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
@@ -205,9 +253,9 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
     }
 }
 
-fn apply_intrinsic_collection(
+fn apply_intrinsic_container(
     expr: &mut Expr,
-    mut collection: ExprIntrinsicCollection,
+    mut collection: ExprIntrinsicContainer,
     diagnostics: Diagnostics<'_>,
 ) {
     collection.for_each_expr_mut(|inner| normalize_expr(inner, diagnostics));

@@ -46,6 +46,12 @@ common_struct! {
         pub args: Vec<Expr>,
     }
 }
+
+common_struct! {
+    pub struct ExprAwait {
+        pub base: BExpr,
+    }
+}
 impl Display for ExprInvoke {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_invoke(self).unwrap();

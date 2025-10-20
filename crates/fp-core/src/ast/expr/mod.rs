@@ -1,5 +1,6 @@
 use crate::ast::{
-    get_threadlocal_serializer, BItem, BValue, Ident, Locator, Path, Ty, TySlot, Value, ValueUnit,
+    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, Locator, MacroInvocation, Path,
+    Ty, TySlot, Value, ValueUnit,
 };
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
@@ -47,10 +48,11 @@ common_enum! {
         Closure(ExprClosure),
         Array(ExprArray),
         ArrayRepeat(ExprArrayRepeat),
-        IntrinsicCollection(ExprIntrinsicCollection),
+    IntrinsicContainer(ExprIntrinsicContainer),
         IntrinsicCall(ExprIntrinsicCall),
         /// closured because it's conceptually a closure, not a real one
         Closured(ExprClosured),
+        Await(ExprAwait),
         Paren(ExprParen),
         Range(ExprRange),
         /// Format string expression (f-string) for println! and similar built-ins
@@ -58,6 +60,7 @@ common_enum! {
 
         Splat(ExprSplat),
         SplatDict(ExprSplatDict),
+        Macro(ExprMacro),
         /// for items in dynamic languages
         Item(BItem),
         Any(AnyBox),
@@ -157,6 +160,9 @@ impl Expr {
     }
     pub fn any<T: AnyBoxable>(any: T) -> Self {
         ExprKind::Any(AnyBox::new(any)).into()
+    }
+    pub fn macro_invocation(invocation: MacroInvocation) -> Self {
+        ExprKind::Macro(ExprMacro::new(invocation)).into()
     }
 }
 impl Display for Expr {

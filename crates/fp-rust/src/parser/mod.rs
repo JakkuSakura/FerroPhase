@@ -18,7 +18,7 @@ use fp_core::error::Result;
 use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use syn::parse_str;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -76,12 +76,19 @@ const FRONTEND_CONTEXT: &str = "pipeline.frontend";
 #[derive(Debug, Clone)]
 pub struct RustParser {
     diagnostics: Arc<DiagnosticManager>,
+    lossy_mode: bool,
 }
 
 impl RustParser {
     pub fn new() -> Self {
+        let lossy_mode = detect_lossy_mode();
+        Self::new_with_lossy(lossy_mode)
+    }
+
+    pub fn new_with_lossy(lossy_mode: bool) -> Self {
         Self {
             diagnostics: Arc::new(DiagnosticManager::new()),
+            lossy_mode,
         }
     }
 
@@ -178,6 +185,10 @@ impl RustParser {
         self.expr_parser().parse_expr(code)
     }
 
+    pub(crate) fn lower_expr_macro(&self, mac: syn::ExprMacro) -> Result<Expr> {
+        self.expr_parser().lower_expr_macro(mac)
+    }
+
     pub fn parse_block(&self, block: syn::Block) -> Result<ExprBlock> {
         self.expr_parser().parse_block(block)
     }
@@ -238,6 +249,10 @@ impl RustParser {
         }
         let path = self.parse_parameter_path(p)?;
         Ok(Locator::parameter_path(path))
+    }
+
+    pub fn lossy_mode(&self) -> bool {
+        self.lossy_mode
     }
     pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
         self.parse_item_internal(code)
@@ -590,4 +605,22 @@ fn run_cargo_expand(crate_root: &FsPath, target: &ExpandTarget) -> eyre::Result<
     }
     let stdout = String::from_utf8(output.stdout)?;
     Ok(stdout)
+}
+
+fn detect_lossy_mode() -> bool {
+    static LOSSY: OnceLock<bool> = OnceLock::new();
+    *LOSSY.get_or_init(|| {
+        let env_true = |key: &str| {
+            std::env::var(key).map(|val| {
+                let trimmed = val.trim();
+                !trimmed.is_empty() && !matches!(trimmed, "0" | "false" | "FALSE" | "False")
+            })
+        };
+
+        if env_true("FERROPHASE_BOOTSTRAP").unwrap_or(false) {
+            return true;
+        }
+
+        env_true("FERROPHASE_LOSSY").unwrap_or(false)
+    })
 }

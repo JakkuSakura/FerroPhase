@@ -15,6 +15,7 @@ pub mod pipeline;
 pub mod project;
 pub mod transpiler; // New unified transpiler
 pub mod utils;
+pub mod bootstrap;
 
 // Re-export core types for convenience, avoiding conflicts
 pub use fp_core::{Error as CoreError, Result as CoreResult, ast, context, ops, span};
