@@ -2,14 +2,17 @@ use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::frontend::{
-    FerroFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot, LanguageFrontend,
-    PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
+    FerroFrontend, FlatbuffersFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot,
+    JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend,
+    WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 #[cfg(feature = "bootstrap")]
 use fp_core::ast::json as ast_json;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstSerializer, AstSnapshot, Node, NodeKind, RuntimeValue, Value, snapshot};
+use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
+#[cfg(feature = "bootstrap")]
+use fp_core::ast::{AstSnapshot, snapshot};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
@@ -43,6 +46,7 @@ use tracing::{debug, info_span, warn};
 #[cfg(feature = "bootstrap")]
 const BOOTSTRAP_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP";
 const BOOTSTRAP_SNAPSHOT_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP_SNAPSHOT";
+#[cfg(feature = "bootstrap")]
 const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
 
 #[cfg(feature = "bootstrap")]
@@ -98,6 +102,7 @@ fn detect_snapshot_export() -> bool {
     enabled
 }
 
+#[cfg(feature = "bootstrap")]
 fn build_ast_snapshot(ast: &Node) -> AstSnapshot {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -212,6 +217,10 @@ impl Pipeline {
         registry.register(sql_frontend);
         let prql_frontend: Arc<dyn LanguageFrontend> = Arc::new(PrqlFrontend::new());
         registry.register(prql_frontend);
+        let jsonschema_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonSchemaFrontend::new());
+        registry.register(jsonschema_frontend);
+        let flatbuffers_frontend: Arc<dyn LanguageFrontend> = Arc::new(FlatbuffersFrontend::new());
+        registry.register(flatbuffers_frontend);
         let bootstrap_mode = detect_bootstrap_mode();
 
         #[cfg(feature = "bootstrap")]
@@ -667,6 +676,7 @@ impl Pipeline {
                 }
             }
 
+            #[cfg(feature = "bootstrap")]
             if pipeline_options.emit_bootstrap_snapshot {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
                     self.save_bootstrap_snapshot(ast, base_path)?;
@@ -759,6 +769,7 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
         }
 
+        #[cfg(feature = "bootstrap")]
         if options.emit_bootstrap_snapshot {
             self.save_bootstrap_snapshot(&ast, base_path)?;
         }
@@ -1222,6 +1233,7 @@ impl Pipeline {
         Ok(())
     }
 
+    #[cfg(feature = "bootstrap")]
     fn save_bootstrap_snapshot(&self, ast: &Node, base_path: &Path) -> Result<(), CliError> {
         let snapshot_path = base_path.with_extension("ast.json");
 
@@ -1287,7 +1299,10 @@ impl Pipeline {
             generator.enable_error_tolerance(options.error_tolerance.max_errors);
         }
 
-        if matches!(ast.kind(), NodeKind::Item(_) | NodeKind::Query(_)) {
+        if matches!(
+            ast.kind(),
+            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_)
+        ) {
             manager.add_diagnostic(
                 Diagnostic::error(
                     "Top-level items are not supported; provide a file or expression".to_string(),
@@ -1301,7 +1316,7 @@ impl Pipeline {
             NodeKind::Expr(expr) => generator.transform(expr),
             NodeKind::File(file) => generator.transform(file),
             NodeKind::Item(_) => unreachable!(),
-            NodeKind::Query(_) => unreachable!(),
+            NodeKind::Query(_) | NodeKind::Schema(_) => unreachable!(),
         };
 
         let (errors, warnings) = generator.take_diagnostics();
@@ -1371,6 +1386,11 @@ impl Pipeline {
             NodeKind::Query(_) => {
                 return Err(CliError::Compilation(
                     "Query documents cannot be interpreted".to_string(),
+                ));
+            }
+            NodeKind::Schema(_) => {
+                return Err(CliError::Compilation(
+                    "Schema documents cannot be interpreted".to_string(),
                 ));
             }
         };
@@ -1799,7 +1819,7 @@ mod tests {
             }
             ast::NodeKind::Expr(expr) => collector.visit_expr(expr),
             ast::NodeKind::Item(item) => collector.visit_item(item),
-            ast::NodeKind::Query(_) => {}
+            ast::NodeKind::Query(_) | ast::NodeKind::Schema(_) => {}
         }
         collector.0
     }

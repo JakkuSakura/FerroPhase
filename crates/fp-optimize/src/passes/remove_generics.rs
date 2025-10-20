@@ -21,6 +21,7 @@ pub fn remove_generic_templates(ast: &mut Node) -> Result<()> {
         }
         NodeKind::Expr(_) => Ok(()),
         NodeKind::Query(_) => Ok(()),
+        NodeKind::Schema(_) => Ok(()),
     }
 }
 

@@ -23,6 +23,14 @@ impl TypedAstInspector {
             NodeKind::Query(query) => {
                 writeln!(output, "Query document: {}", query.to_string_render()).ok();
             }
+            NodeKind::Schema(schema) => {
+                writeln!(
+                    output,
+                    "Schema document: {}",
+                    schema.title.as_deref().unwrap_or("<schema>")
+                )
+                .ok();
+            }
         }
         output
     }

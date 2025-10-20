@@ -87,9 +87,14 @@ flags for informational entries but always surfaces warnings and errors.
   `LanguageFrontend` implementations. The default registry ships with:
   - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`).
   - `TypeScriptFrontend` for TypeScript/JavaScript families.
-  - `WitFrontend` for WebAssembly Interface Types.
+  - `WitFrontend` for WebAssembly Interface Types (IDL).
   - `SqlFrontend` for `.sql` sources (query documents).
-  - `PrqlFrontend` for `.prql` pipelines with a best-effort SQL projection.
+  - `PrqlFrontend` for `.prql` pipelines with a best-effort SQL projection (queries).
+  - `JsonSchemaFrontend` for `.jsonschema` validation documents (schemas).
+  - `FlatbuffersFrontend` for `.fbs` FlatBuffers IDL files (lowered into struct/enum items).
+- AST nodes mirror these categories: `NodeKind::Query` for queries and `NodeKind::Schema` for
+  validation schemas. Non-AST documents remain separate from the standard `Item`/`Expr` tree so
+  tooling can special-case them without impacting code generation.
 - `PipelineOptions.source_language` allows callers to override detection when an
   expression lacks a file extension.
 - Additional frontends should implement `LanguageFrontend::parse`, returning a

@@ -163,6 +163,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             NodeKind::Query(_) => {
                 self.emit_error("Query documents cannot be interpreted");
             }
+            NodeKind::Schema(_) => {
+                self.emit_error("Schema documents cannot be interpreted");
+            }
         }
     }
 

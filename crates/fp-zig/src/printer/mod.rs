@@ -53,6 +53,12 @@ impl ZigEmitter {
                     "query documents are not yet supported for Zig output",
                 );
             }
+            NodeKind::Schema(_) => {
+                self.ensure_header();
+                self.push_placeholder_comment(
+                    "schema documents are not yet supported for Zig output",
+                );
+            }
         }
         Ok(())
     }

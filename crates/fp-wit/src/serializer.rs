@@ -133,6 +133,9 @@ impl WitEmitter {
             NodeKind::Query(_) => Err(CoreError::from(
                 "WIT serialization does not support query documents".to_string(),
             )),
+            NodeKind::Schema(_) => Err(CoreError::from(
+                "WIT serialization does not support schema documents".to_string(),
+            )),
         }
     }
 

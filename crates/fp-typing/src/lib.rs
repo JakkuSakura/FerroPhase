@@ -240,6 +240,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Query(_) => {
                 node.set_ty(Ty::any());
             }
+            NodeKind::Schema(_) => {
+                node.set_ty(Ty::any());
+            }
         }
         Ok(self.finish())
     }
@@ -259,8 +262,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Expr(_) => {
                 // Nothing to predeclare for expressions
             }
-            NodeKind::Query(_) => {
-                // Query documents do not participate in type inference yet.
+            NodeKind::Query(_) | NodeKind::Schema(_) => {
+                // Non-AST documents do not participate in type inference yet.
             }
         }
     }
