@@ -1,4 +1,4 @@
-//! FerroPhase frontend for FlatBuffers interface definition files.
+//! FerroPhase frontend for FlatBuffers type-IDL files.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

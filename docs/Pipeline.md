@@ -84,17 +84,29 @@ flags for informational entries but always surfaces warnings and errors.
 ## Multi-Language Frontends
 
 - `FrontendRegistry` maps language identifiers and file extensions to
-  `LanguageFrontend` implementations. The default registry ships with:
-  - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`).
-  - `TypeScriptFrontend` for TypeScript/JavaScript families.
-  - `WitFrontend` for WebAssembly Interface Types (IDL).
-  - `SqlFrontend` for `.sql` sources (query documents).
-  - `PrqlFrontend` for `.prql` pipelines with a best-effort SQL projection (queries).
-  - `JsonSchemaFrontend` for `.jsonschema` validation documents (schemas).
-  - `FlatbuffersFrontend` for `.fbs` FlatBuffers IDL files (lowered into struct/enum items).
-- AST nodes mirror these categories: `NodeKind::Query` for queries and `NodeKind::Schema` for
-  validation schemas. Non-AST documents remain separate from the standard `Item`/`Expr` tree so
-  tooling can special-case them without impacting code generation.
+  `LanguageFrontend` implementations. The default registry currently ships with:
+  - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`) — produces runtime types and code.
+  - `TypeScriptFrontend` for TypeScript/JavaScript families — also runtime types.
+  - `WitFrontend` for WebAssembly Interface Types — treated as *service IDL* + *type IDL* and lowered into regular items.
+  - `SqlFrontend` for `.sql` sources — produces *query documents*.
+  - `PrqlFrontend` for `.prql` pipelines — also *query documents*.
+  - `JsonSchemaFrontend` for `.jsonschema` files — produces *validation schemas* (see `NodeKind::Schema`).
+  - `FlatbuffersFrontend` for `.fbs` files — treated as *type IDL* and lowered into struct/enum items (runtime types after generation).
+- `NodeKind::Query` carries query documents, while `NodeKind::Schema` captures validation schemas. All other IDL data is normalised into the existing `Item`/`Expr` tree so runtime code generation stays uniform.
+
+### Terminology cheat sheet
+
+Use the following vocabulary when talking about cross-language specifications:
+
+| Term | What it contains | Examples | Notes |
+| ---- | ---------------- | -------- | ----- |
+| **Service IDL** | Operations/endpoints, signatures, errors/streams | WIT interfaces/worlds, Thrift/Proto services, JSON-RPC method catalogs | Describes callable APIs. Lower these into items (e.g. functions) or keep side metadata. |
+| **Type IDL** | Portable data shapes (records, enums, options/results) | WIT type blocks, FlatBuffers tables, Thrift/Proto messages considered abstractly | We normalise these into struct/enum items which later become runtime types per target language. |
+| **Runtime types** | Concrete per-language definitions | `struct Foo { … }` in Rust, Python `class Baz`, C# records, TS interfaces | Generated or handwritten code; lives in the usual AST `Item`/`Expr` hierarchy. |
+| **Validation schema** | JSON-specific constraints, validation rules | JSON Schema files, OpenAPI component schemas | Captured via `NodeKind::Schema`; never conflated with IDL. |
+| **Protocol spec** | Wire format, envelopes, transport mapping | JSON-RPC framing over ZMQ, FlatBuffers envelopes, MsgPack contracts | Track separately when documenting/onboarding but out-of-scope for the AST today. |
+
+When updating existing material, migrate language like “WIT interface” → *Service IDL*, “WIT types” → *Type IDL*, “Rust struct Foo” → *Runtime type*, “JSON schema” → *Validation schema*, and reserve “Protocol spec” for transport-level descriptions.
 - `PipelineOptions.source_language` allows callers to override detection when an
   expression lacks a file extension.
 - Additional frontends should implement `LanguageFrontend::parse`, returning a

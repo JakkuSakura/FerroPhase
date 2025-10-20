@@ -1,4 +1,4 @@
-//! FerroPhase frontend for JSON Schema documents.
+//! FerroPhase frontend for JSON Schema validation documents.
 
 use std::collections::BTreeMap;
 use std::path::Path;

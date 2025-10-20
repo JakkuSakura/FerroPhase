@@ -1,4 +1,8 @@
 //! FerroPhase frontend for WebAssembly Interface Types (WIT).
+//!
+//! WIT files mix *service IDL* (interfaces/worlds) and *type IDL* blocks. The
+//! frontend lowers both facets into the regular AST so downstream tooling sees
+//! callable APIs and portable data shapes alongside other runtime types.
 
 pub mod error;
 pub mod frontend;
