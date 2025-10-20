@@ -6,7 +6,7 @@
 //! language before we introduce backend-specific resolvers.
 
 use crate::ast::{
-    Expr, ExprIntrinsicCall, ExprIntrinsicCollection, ExprStruct, ExprStructural, File,
+    Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprStruct, ExprStructural, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind, Ty, TySlot,
     TypeFunction,
 };
@@ -22,7 +22,7 @@ pub trait IntrinsicNormalizer {
         Ok(None)
     }
 
-    fn normalize_collection(&self, _collection: &ExprIntrinsicCollection) -> Result<Option<Expr>> {
+    fn normalize_container(&self, _container: &ExprIntrinsicContainer) -> Result<Option<Expr>> {
         Ok(None)
     }
 
@@ -63,9 +63,9 @@ pub trait IntrinsicMaterializer {
         Ok(None)
     }
 
-    fn materialize_collection(
+    fn materialize_container(
         &self,
-        _collection: &mut ExprIntrinsicCollection,
+        _container: &mut ExprIntrinsicContainer,
         _expr_ty: &TySlot,
     ) -> Result<Option<Expr>> {
         Ok(None)

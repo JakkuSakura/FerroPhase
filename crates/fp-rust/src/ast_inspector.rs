@@ -31,6 +31,15 @@ impl TypedAstInspector {
                 )
                 .ok();
             }
+            NodeKind::Workspace(workspace) => {
+                writeln!(
+                    output,
+                    "Workspace manifest: {} ({} package(s))",
+                    workspace.manifest,
+                    workspace.packages.len()
+                )
+                .ok();
+            }
         }
         output
     }

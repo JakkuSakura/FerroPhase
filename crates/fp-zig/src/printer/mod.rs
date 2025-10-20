@@ -59,6 +59,12 @@ impl ZigEmitter {
                     "schema documents are not yet supported for Zig output",
                 );
             }
+            NodeKind::Workspace(_) => {
+                self.ensure_header();
+                self.push_placeholder_comment(
+                    "workspace snapshots are not supported for Zig output",
+                );
+            }
         }
         Ok(())
     }

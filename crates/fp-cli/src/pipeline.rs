@@ -19,6 +19,7 @@ use fp_core::diagnostics::{
 };
 use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
 use fp_core::pretty::{PrettyOptions, pretty};
+use fp_core::workspace::{WorkspaceDocument, WorkspaceModule, WorkspacePackage};
 use fp_core::{hir, lir};
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome};
 use fp_llvm::{
@@ -36,18 +37,32 @@ use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirL
 use fp_rust::printer::RustPrinter;
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
+use tokio::runtime::Handle;
+use tokio::task;
 use tracing::{debug, info_span, warn};
+
+// Begin internal submodules extracted for clarity
+mod workspace;
+mod artifacts;
+mod diagnostics;
+use self::diagnostics as diag;
+use artifacts::{BackendArtifacts, LlvmArtifacts};
+use workspace::{determine_main_package_name, WorkspaceLirReplay};
 
 #[cfg(feature = "bootstrap")]
 const BOOTSTRAP_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP";
 const BOOTSTRAP_SNAPSHOT_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP_SNAPSHOT";
 #[cfg(feature = "bootstrap")]
 const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
+
+static BOOTSTRAP_DIAG_CACHE: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 
 #[cfg(feature = "bootstrap")]
 fn detect_bootstrap_mode() -> bool {
@@ -151,16 +166,7 @@ pub enum PipelineOutput {
     Binary(PathBuf),
 }
 
-struct BackendArtifacts {
-    lir_program: lir::LirProgram,
-    mir_text: String,
-    lir_text: String,
-}
-
-struct LlvmArtifacts {
-    ir_text: String,
-    ir_path: PathBuf,
-}
+// BackendArtifacts and LlvmArtifacts moved to pipeline::artifacts
 
 struct IntrinsicsMaterializer {
     strategy: Box<dyn IntrinsicMaterializer>,
@@ -490,9 +496,19 @@ impl Pipeline {
         self.refresh_bootstrap_mode();
         options.bootstrap_mode |= self.bootstrap_mode;
         options.emit_bootstrap_snapshot |= detect_snapshot_export();
+        if options.bootstrap_mode {
+            options.error_tolerance.enabled = true;
+            // Zero means unlimited tolerance; otherwise allow large slack for bootstrap noise.
+            if options.error_tolerance.max_errors == 0 {
+                options.error_tolerance.max_errors = usize::MAX;
+            } else {
+                options.error_tolerance.max_errors = options.error_tolerance.max_errors.max(512);
+            }
+        }
 
-        let (source, base_path, input_path) = self.read_input(input)?;
-        options.base_path = Some(base_path.clone());
+        let explicit_base_path = options.base_path.clone();
+        let (source, default_base_path, input_path) = self.read_input(input)?;
+        options.base_path = explicit_base_path.or_else(|| Some(default_base_path.clone()));
 
         self.reset_state();
 
@@ -529,6 +545,25 @@ impl Pipeline {
                     };
                     CliError::Compilation(msg.to_string())
                 })?;
+
+                if let NodeKind::Workspace(workspace) = ast.kind() {
+                    if options.bootstrap_mode {
+                        return self.execute_workspace_target_blocking(
+                            workspace.clone(),
+                            target,
+                            &options,
+                            base_path,
+                            input_path.as_deref().map(|p| p.as_ref()),
+                        );
+                    }
+                    return self.execute_workspace_target(
+                        workspace.clone(),
+                        target,
+                        &options,
+                        base_path,
+                        input_path.as_deref(),
+                    );
+                }
 
                 self.execute_compilation_target(
                     target,
@@ -612,7 +647,7 @@ impl Pipeline {
         } = frontend.parse(source, input_path)?;
 
         let collected_diagnostics = diagnostics.get_diagnostics();
-        self.emit_diagnostics(&collected_diagnostics, Some(STAGE_FRONTEND), options);
+        diag::emit(&collected_diagnostics, Some(STAGE_FRONTEND), options);
 
         let has_errors = collected_diagnostics
             .iter()
@@ -657,7 +692,14 @@ impl Pipeline {
             STAGE_TYPE_ENRICH,
             &diagnostic_manager,
             &pipeline_options,
-            |pipeline| pipeline.stage_type_check(ast, STAGE_TYPE_ENRICH, &diagnostic_manager),
+            |pipeline| {
+                pipeline.stage_type_check(
+                    ast,
+                    STAGE_TYPE_ENRICH,
+                    &diagnostic_manager,
+                    &pipeline_options,
+                )
+            },
         )?;
 
         if options.run_const_eval {
@@ -685,7 +727,7 @@ impl Pipeline {
         }
 
         let diagnostics = diagnostic_manager.get_diagnostics();
-        self.emit_diagnostics(&diagnostics, None, &pipeline_options);
+        diag::emit(&diagnostics, None, &pipeline_options);
 
         if diagnostics
             .iter()
@@ -748,7 +790,9 @@ impl Pipeline {
             STAGE_TYPE_ENRICH,
             &diagnostic_manager,
             options,
-            |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, &diagnostic_manager),
+            |pipeline| {
+                pipeline.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, &diagnostic_manager, options)
+            },
         )?;
 
         if options.save_intermediates {
@@ -756,16 +800,19 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
         }
 
-        let outcome =
+        let outcome = if options.bootstrap_mode {
+            ConstEvalOutcome::default()
+        } else {
             self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
                 pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager)
-            })?;
+            })?
+        };
         self.last_const_eval = Some(outcome.clone());
 
         // Remove generic template functions after specialization
         remove_generic_templates(&mut ast)?;
 
-        if options.save_intermediates {
+        if options.save_intermediates && !options.bootstrap_mode {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
         }
 
@@ -779,42 +826,55 @@ impl Pipeline {
             &diagnostic_manager,
             options,
             |pipeline| {
-                pipeline.stage_materialize_runtime_intrinsics(&mut ast, target, &diagnostic_manager)
-            },
-        )?;
-
-        self.run_stage(
-            STAGE_TYPE_POST_MATERIALIZE,
-            &diagnostic_manager,
-            options,
-            |pipeline| {
-                pipeline.stage_type_check(
+                pipeline.stage_materialize_runtime_intrinsics(
                     &mut ast,
-                    STAGE_TYPE_POST_MATERIALIZE,
+                    target,
+                    options,
                     &diagnostic_manager,
                 )
             },
         )?;
 
-        self.run_stage(
-            STAGE_CLOSURE_LOWERING,
-            &diagnostic_manager,
-            options,
-            |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
-        )?;
+        if !options.bootstrap_mode {
+            self.run_stage(
+                STAGE_TYPE_POST_MATERIALIZE,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_POST_MATERIALIZE,
+                        &diagnostic_manager,
+                        options,
+                    )
+                },
+            )?;
 
-        if options.save_intermediates {
-            self.save_pretty(&ast, base_path, "ast-closure", options)?;
+            self.run_stage(
+                STAGE_CLOSURE_LOWERING,
+                &diagnostic_manager,
+                options,
+                |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
+            )?;
+
+            if options.save_intermediates {
+                self.save_pretty(&ast, base_path, "ast-closure", options)?;
+            }
+
+            self.run_stage(
+                STAGE_TYPE_POST_CLOSURE,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_POST_CLOSURE,
+                        &diagnostic_manager,
+                        options,
+                    )
+                },
+            )?;
         }
-
-        self.run_stage(
-            STAGE_TYPE_POST_CLOSURE,
-            &diagnostic_manager,
-            options,
-            |pipeline| {
-                pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE, &diagnostic_manager)
-            },
-        )?;
 
         let output = if matches!(target, PipelineTarget::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
@@ -921,9 +981,136 @@ impl Pipeline {
         };
 
         let diagnostics = diagnostic_manager.get_diagnostics();
-        self.emit_diagnostics(&diagnostics, None, options);
+        diag::emit(&diagnostics, None, options);
 
         Ok(output)
+    }
+
+    fn execute_workspace_target(
+        &self,
+        workspace: WorkspaceDocument,
+        target: &PipelineTarget,
+        options: &PipelineOptions,
+        base_path: &Path,
+        snapshot_path: Option<&Path>,
+    ) -> Result<PipelineOutput, CliError> {
+        match target {
+            PipelineTarget::Interpret => Ok(PipelineOutput::Value(Value::unit())),
+            PipelineTarget::Binary => {
+                let snapshot_root = snapshot_path
+                    .and_then(|path| path.parent().map(Path::to_path_buf))
+                    .ok_or_else(|| {
+                        CliError::Compilation(
+                            "workspace binary replay requires a snapshot path".to_string(),
+                        )
+                    })?;
+                let modules_dir = base_path.with_extension("modules");
+                fs::create_dir_all(&modules_dir).map_err(CliError::Io)?;
+
+                let replay = replay_workspace_modules(
+                    &workspace,
+                    &PipelineTarget::Llvm,
+                    options,
+                    &modules_dir,
+                    Some(snapshot_root.as_path()),
+                )?;
+
+                // Only fail for modules that participate in the main package binary.
+                let main_pkg = determine_main_package_name(&workspace);
+                let main_bin_ids: HashSet<String> = workspace
+                    .packages
+                    .iter()
+                    .filter(|p| p.name == main_pkg)
+                    .flat_map(|p| p.modules.iter())
+                    .filter(|m| m.module_path.first().map(|s| s.as_str()) == Some("bin"))
+                    .map(|m| m.id.clone())
+                    .collect();
+                let mut hard_fail: Vec<String> = Vec::new();
+                for (id, msg) in &replay.failed_modules {
+                    if main_bin_ids.contains(id) {
+                        hard_fail.push(format!("{} :: {}", id, msg));
+                    }
+                }
+                for id in &replay.missing_snapshots {
+                    if main_bin_ids.contains(id) {
+                        hard_fail.push(format!("{} :: missing snapshot", id));
+                    }
+                }
+                if !hard_fail.is_empty() {
+                    return Err(CliError::Compilation(format!(
+                        "workspace replay failed for main modules: {}",
+                        hard_fail.join(", ")
+                    )));
+                }
+
+                let llvm_ir_path = base_path.with_extension("ll");
+                let llvm_text = assemble_workspace_llvm_ir(&workspace, &replay);
+                fs::write(&llvm_ir_path, llvm_text.as_bytes()).map_err(CliError::Io)?;
+
+                let diagnostic_manager = DiagnosticManager::new();
+                let link_result =
+                    self.stage_link_binary(&llvm_ir_path, base_path, options, &diagnostic_manager);
+                let diagnostics = diagnostic_manager.get_diagnostics();
+                diag::emit(&diagnostics, Some(STAGE_LINK_BINARY), options);
+
+                match link_result {
+                    Ok(binary_path) => Ok(PipelineOutput::Binary(binary_path)),
+                    Err(err) => Err(CliError::Compilation(format!(
+                        "workspace linking failed: {}",
+                        err
+                    ))),
+                }
+            }
+            PipelineTarget::Llvm | PipelineTarget::Rust | PipelineTarget::Bytecode => {
+                let snapshot_root =
+                    snapshot_path.and_then(|path| path.parent().map(Path::to_path_buf));
+                let modules_dir = base_path.with_extension("modules");
+                fs::create_dir_all(&modules_dir).map_err(CliError::Io)?;
+
+                let replay = replay_workspace_modules(
+                    &workspace,
+                    target,
+                    options,
+                    &modules_dir,
+                    snapshot_root.as_deref(),
+                )?;
+
+                // Only fail for modules that participate in the main package binary.
+                let main_pkg = determine_main_package_name(&workspace);
+                let main_bin_ids: HashSet<String> = workspace
+                    .packages
+                    .iter()
+                    .filter(|p| p.name == main_pkg)
+                    .flat_map(|p| p.modules.iter())
+                    .filter(|m| m.module_path.first().map(|s| s.as_str()) == Some("bin"))
+                    .map(|m| m.id.clone())
+                    .collect();
+                let mut hard_fail: Vec<String> = Vec::new();
+                for (id, msg) in &replay.failed_modules {
+                    if main_bin_ids.contains(id) {
+                        hard_fail.push(format!("{} :: {}", id, msg));
+                    }
+                }
+                for id in &replay.missing_snapshots {
+                    if main_bin_ids.contains(id) {
+                        hard_fail.push(format!("{} :: missing snapshot", id));
+                    }
+                }
+                if !hard_fail.is_empty() {
+                    return Err(CliError::Compilation(format!(
+                        "workspace replay failed for main modules: {}",
+                        hard_fail.join(", ")
+                    )));
+                }
+
+                let artifact = match target {
+                    PipelineTarget::Llvm => assemble_workspace_llvm_ir(&workspace, &replay),
+                    _ => render_workspace_module_artifact(&workspace, target, &replay),
+                };
+
+                Ok(PipelineOutput::Code(artifact))
+            }
+        }
     }
 
     fn stage_normalize_intrinsics(
@@ -955,39 +1142,76 @@ impl Pipeline {
     }
 
     fn stage_type_check(
-        &self,
+        &mut self,
         ast: &mut Node,
         stage_label: &'static str,
         manager: &DiagnosticManager,
+        options: &PipelineOptions,
     ) -> Result<(), CliError> {
+        let tolerate_fail = self.bootstrap_mode || options.bootstrap_mode;
         match fp_typing::annotate(ast) {
             Ok(outcome) => {
                 let mut saw_error = false;
                 for message in outcome.diagnostics {
+                    let msg_text = message.message.clone();
+                    if tolerate_fail
+                        && !self.should_emit_bootstrap_diagnostic(stage_label, &msg_text)
+                    {
+                        continue;
+                    }
                     let diagnostic = match message.level {
                         TypingDiagnosticLevel::Warning => {
                             Diagnostic::warning(message.message).with_source_context(stage_label)
                         }
                         TypingDiagnosticLevel::Error => {
-                            saw_error = true;
-                            Diagnostic::error(message.message).with_source_context(stage_label)
+                            if tolerate_fail {
+                                Diagnostic::warning(message.message)
+                                    .with_source_context(stage_label)
+                            } else {
+                                saw_error = true;
+                                Diagnostic::error(message.message).with_source_context(stage_label)
+                            }
                         }
                     };
                     manager.add_diagnostic(diagnostic);
                 }
 
-                if saw_error || outcome.has_errors {
+                if (saw_error || outcome.has_errors) && !tolerate_fail {
                     return Err(Self::stage_failure(stage_label));
                 }
                 Ok(())
             }
             Err(err) => {
-                manager.add_diagnostic(
+                let diagnostic = if tolerate_fail {
+                    let message = format!("AST typing failed: {}", err);
+                    if !self.should_emit_bootstrap_diagnostic(stage_label, &message) {
+                        return Ok(());
+                    }
+                    Diagnostic::warning(message).with_source_context(stage_label)
+                } else {
                     Diagnostic::error(format!("AST typing failed: {}", err))
-                        .with_source_context(stage_label),
-                );
-                Err(Self::stage_failure(stage_label))
+                        .with_source_context(stage_label)
+                };
+                manager.add_diagnostic(diagnostic);
+                if tolerate_fail {
+                    Ok(())
+                } else {
+                    Err(Self::stage_failure(stage_label))
+                }
             }
+        }
+    }
+
+    fn should_emit_bootstrap_diagnostic(&self, stage: &'static str, message: &str) -> bool {
+        if !self.bootstrap_mode {
+            return true;
+        }
+        let cache = BOOTSTRAP_DIAG_CACHE.get_or_init(|| Mutex::new(HashSet::new()));
+        let key = format!("{}::{}", stage, message);
+        if let Ok(mut guard) = cache.lock() {
+            guard.insert(key)
+        } else {
+            true
         }
     }
 
@@ -1046,8 +1270,13 @@ impl Pipeline {
         &self,
         ast: &mut Node,
         target: &PipelineTarget,
+        options: &PipelineOptions,
         manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
+        if options.bootstrap_mode {
+            return Ok(());
+        }
+
         let materializer = IntrinsicsMaterializer::for_target(target);
         let result = materializer.materialize(ast);
 
@@ -1065,11 +1294,12 @@ impl Pipeline {
 
     #[cfg(test)]
     fn stage_type_check_for_tests(
-        &self,
+        &mut self,
         ast: &mut Node,
         manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
-        self.stage_type_check(ast, STAGE_TYPE_ENRICH, manager)
+        let options = PipelineOptions::default();
+        self.stage_type_check(ast, STAGE_TYPE_ENRICH, manager, &options)
     }
 
     fn stage_link_binary(
@@ -1162,14 +1392,29 @@ impl Pipeline {
         manager: &DiagnosticManager,
     ) -> Result<BackendArtifacts, CliError> {
         let mut mir_lowering = MirLowering::new();
-        let mir_program = mir_lowering
-            .transform(hir_program.clone())
-            .map_err(|err| CliError::Compilation(format!("HIR→MIR lowering failed: {}", err)))?;
+        if self.bootstrap_mode || options.bootstrap_mode {
+            mir_lowering.set_error_tolerance(true);
+        }
+        let mir_result = mir_lowering.transform(hir_program.clone());
         let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
         manager.add_diagnostics(mir_diags);
-        if mir_had_errors {
-            return Err(Self::stage_failure(STAGE_BACKEND_LOWERING));
-        }
+        let mir_program = match (mir_result, mir_had_errors) {
+            (Ok(program), false) => program,
+            (Ok(_), true) => {
+                manager.add_diagnostic(
+                    Diagnostic::error("HIR→MIR lowering reported errors".to_string())
+                        .with_source_context(STAGE_BACKEND_LOWERING),
+                );
+                return Err(Self::stage_failure(STAGE_BACKEND_LOWERING));
+            }
+            (Err(err), _) => {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("HIR→MIR lowering failed: {}", err))
+                        .with_source_context(STAGE_BACKEND_LOWERING),
+                );
+                return Err(Self::stage_failure(STAGE_BACKEND_LOWERING));
+            }
+        };
 
         let mut pretty_opts = PrettyOptions::default();
         pretty_opts.show_spans = options.debug.verbose;
@@ -1261,14 +1506,38 @@ impl Pipeline {
         options: &PipelineOptions,
     ) -> Result<LlvmArtifacts, CliError> {
         let llvm_path = base_path.with_extension("ll");
-        let config = LlvmConfig::new().with_linker(LinkerConfig::executable(&llvm_path));
+        let module_name = base_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .map(sanitize_module_identifier)
+            .unwrap_or_else(|| "module".to_string());
+        let allow_unresolved_globals = self.bootstrap_mode || options.bootstrap_mode;
+        let config = LlvmConfig::new()
+            .with_linker(LinkerConfig::executable(&llvm_path))
+            .with_module_name(module_name)
+            .with_allow_unresolved_globals(allow_unresolved_globals);
         let compiler = LlvmCompiler::new(config);
 
-        compiler
-            .compile(lir_program.clone(), source_path)
-            .map_err(|err| CliError::Compilation(format!("LIR→LLVM lowering failed: {}", err)))?;
-
-        let ir_text = fs::read_to_string(&llvm_path)?;
+        // In bootstrap mode avoid reading LLVM text back from disk because std::fs
+        // calls may be normalised away in the self-hosted compiler.
+        let ir_text = if self.bootstrap_mode || options.bootstrap_mode {
+            match compiler.compile_to_string(lir_program.clone(), source_path) {
+                Ok((_path, text)) => text,
+                Err(err) => {
+                    return Err(CliError::Compilation(format!(
+                        "LIR→LLVM lowering failed: {}",
+                        err
+                    )));
+                }
+            }
+        } else {
+            compiler
+                .compile(lir_program.clone(), source_path)
+                .map_err(|err| {
+                    CliError::Compilation(format!("LIR→LLVM lowering failed: {}", err))
+                })?;
+            fs::read_to_string(&llvm_path)?
+        };
 
         if !retain_file && !options.save_intermediates {
             if let Err(err) = fs::remove_file(&llvm_path) {
@@ -1283,13 +1552,14 @@ impl Pipeline {
     }
 
     fn stage_hir_generation(
-        &self,
+        &mut self,
         ast: &Node,
         options: &PipelineOptions,
         file_path: Option<&Path>,
         base_path: &Path,
         manager: &DiagnosticManager,
     ) -> Result<hir::Program, CliError> {
+        let tolerate_fail = self.bootstrap_mode || options.bootstrap_mode;
         let mut generator = match file_path {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
@@ -1301,44 +1571,96 @@ impl Pipeline {
 
         if matches!(
             ast.kind(),
-            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_)
+            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
         ) {
-            manager.add_diagnostic(
-                Diagnostic::error(
-                    "Top-level items are not supported; provide a file or expression".to_string(),
-                )
-                .with_source_context(STAGE_AST_TO_HIR),
-            );
-            return Err(Self::stage_failure(STAGE_AST_TO_HIR));
+            let message = "Top-level items are not supported; provide a file or expression";
+            if tolerate_fail {
+                if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, message) {
+                    manager.add_diagnostic(
+                        Diagnostic::warning(message.to_string())
+                            .with_source_context(STAGE_AST_TO_HIR),
+                    );
+                }
+                return Ok(hir::Program {
+                    items: Vec::new(),
+                    def_map: HashMap::new(),
+                    next_hir_id: 0,
+                });
+            } else {
+                manager.add_diagnostic(
+                    Diagnostic::error(message.to_string()).with_source_context(STAGE_AST_TO_HIR),
+                );
+                return Err(Self::stage_failure(STAGE_AST_TO_HIR));
+            }
         }
 
         let result = match ast.kind() {
             NodeKind::Expr(expr) => generator.transform(expr),
             NodeKind::File(file) => generator.transform(file),
             NodeKind::Item(_) => unreachable!(),
-            NodeKind::Query(_) | NodeKind::Schema(_) => unreachable!(),
+            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
         };
 
         let (errors, warnings) = generator.take_diagnostics();
 
-        let has_transform_error = !errors.is_empty() || result.is_err();
-
-        if !warnings.is_empty() {
-            manager.add_diagnostics(warnings);
-        }
+        // If we obtained a program, prefer to keep it in bootstrap mode even if
+        // diagnostics contain errors. Only drop to empty when transform failed.
+        let transform_failed = result.is_err();
 
         if let Err(e) = &result {
-            manager.add_diagnostic(
-                Diagnostic::error(format!("AST→HIR transformation failed: {}", e))
-                    .with_source_context(STAGE_AST_TO_HIR),
-            );
+            if tolerate_fail {
+                let message = format!("AST→HIR transformation failed: {}", e);
+                if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
+                    manager.add_diagnostic(
+                        Diagnostic::warning(message).with_source_context(STAGE_AST_TO_HIR),
+                    );
+                }
+            } else {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("AST→HIR transformation failed: {}", e))
+                        .with_source_context(STAGE_AST_TO_HIR),
+                );
+            }
+        }
+
+        if !warnings.is_empty() {
+            if tolerate_fail {
+                for diagnostic in warnings {
+                    let message = diagnostic.to_string();
+                    if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
+                        manager.add_diagnostic(
+                            Diagnostic::warning(message).with_source_context(STAGE_AST_TO_HIR),
+                        );
+                    }
+                }
+            } else {
+                manager.add_diagnostics(warnings);
+            }
         }
 
         if !errors.is_empty() {
-            manager.add_diagnostics(errors);
+            if tolerate_fail {
+                for diagnostic in errors {
+                    let mut warning = diagnostic.as_string_diagnostic();
+                    warning.level = DiagnosticLevel::Warning;
+                    let message = warning.message.clone();
+                    if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
+                        manager.add_diagnostic(warning);
+                    }
+                }
+            } else {
+                manager.add_diagnostics(errors);
+            }
         }
 
-        if has_transform_error {
+        if transform_failed {
+            if tolerate_fail {
+                return Ok(hir::Program {
+                    items: Vec::new(),
+                    def_map: HashMap::new(),
+                    next_hir_id: 0,
+                });
+            }
             return Err(Self::stage_failure(STAGE_AST_TO_HIR));
         }
 
@@ -1354,6 +1676,129 @@ impl Pipeline {
         }
 
         Ok(program)
+    }
+
+    /// Compile a single AST JSON snapshot file into LIR artifacts (blocking, no Tokio required).
+    pub(crate) fn compile_snapshot_to_lir_blocking(
+        &mut self,
+        snapshot_path: &Path,
+        mut options: PipelineOptions,
+        module_base_path: &Path,
+    ) -> Result<BackendArtifacts, CliError> {
+        self.refresh_bootstrap_mode();
+        options.bootstrap_mode |= self.bootstrap_mode;
+        options.emit_bootstrap_snapshot |= detect_snapshot_export();
+
+        let base_path = module_base_path.to_path_buf();
+
+        self.reset_state();
+
+        // Load AST snapshot directly if available; otherwise parse source file
+        let ast = match self.try_load_bootstrap_ast(snapshot_path)? {
+            Some(node) => node,
+            None => {
+                let source = std::fs::read_to_string(snapshot_path).map_err(|e| {
+                    CliError::Compilation(format!(
+                        "failed to read input {}: {}",
+                        snapshot_path.display(), e
+                    ))
+                })?;
+                self.parse_input_source(&options, &source, Some(&snapshot_path.to_path_buf()))?
+            }
+        };
+
+        let mut ast = ast;
+        let diagnostic_manager = DiagnosticManager::new();
+
+        self.run_stage(
+            STAGE_INTRINSIC_NORMALIZE,
+            &diagnostic_manager,
+            &options,
+            |pipeline| pipeline.stage_normalize_intrinsics(&mut ast, &diagnostic_manager),
+        )?;
+
+        self.run_stage(
+            STAGE_TYPE_ENRICH,
+            &diagnostic_manager,
+            &options,
+            |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, &diagnostic_manager, &options),
+        )?;
+
+        if options.save_intermediates {
+            self.save_pretty(&ast, &base_path, EXT_AST, &options)?;
+            self.save_pretty(&ast, &base_path, EXT_AST_TYPED, &options)?;
+        }
+
+        if options.bootstrap_mode {
+            self.last_const_eval = Some(ConstEvalOutcome::default());
+        } else {
+            let outcome = self.run_stage(
+                STAGE_CONST_EVAL,
+                &diagnostic_manager,
+                &options,
+                |pipeline| pipeline.stage_const_eval(&mut ast, &options, &diagnostic_manager),
+            )?;
+            self.last_const_eval = Some(outcome);
+        }
+
+        remove_generic_templates(&mut ast)?;
+
+        if options.save_intermediates && !options.bootstrap_mode {
+            self.save_pretty(&ast, &base_path, EXT_AST_EVAL, &options)?;
+        }
+
+        #[cfg(feature = "bootstrap")]
+        if options.emit_bootstrap_snapshot {
+            self.save_bootstrap_snapshot(&ast, &base_path)?;
+        }
+
+        self.run_stage(
+            STAGE_RUNTIME_MATERIALIZE,
+            &diagnostic_manager,
+            &options,
+            |pipeline| pipeline.stage_materialize_runtime_intrinsics(&mut ast, &PipelineTarget::Llvm, &options, &diagnostic_manager),
+        )?;
+
+        if !options.bootstrap_mode {
+            self.run_stage(
+                STAGE_TYPE_POST_MATERIALIZE,
+                &diagnostic_manager,
+                &options,
+                |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, &diagnostic_manager, &options),
+            )?;
+
+            self.run_stage(
+                STAGE_CLOSURE_LOWERING,
+                &diagnostic_manager,
+                &options,
+                |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
+            )?;
+
+            if options.save_intermediates {
+                self.save_pretty(&ast, &base_path, "ast-closure", &options)?;
+            }
+
+            self.run_stage(
+                STAGE_TYPE_POST_CLOSURE,
+                &diagnostic_manager,
+                &options,
+                |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE, &diagnostic_manager, &options),
+            )?;
+        }
+
+        let hir_program = self.run_stage(
+            STAGE_AST_TO_HIR,
+            &diagnostic_manager,
+            &options,
+            |pipeline| pipeline.stage_hir_generation(&ast, &options, Some(snapshot_path), &base_path, &diagnostic_manager),
+        )?;
+
+        self.run_stage(
+            STAGE_BACKEND_LOWERING,
+            &diagnostic_manager,
+            &options,
+            |pipeline| pipeline.stage_backend_lowering(&hir_program, &options, &base_path, &diagnostic_manager),
+        )
     }
 
     fn run_ast_interpreter(
@@ -1393,10 +1838,15 @@ impl Pipeline {
                     "Schema documents cannot be interpreted".to_string(),
                 ));
             }
+            NodeKind::Workspace(_) => {
+                return Err(CliError::Compilation(
+                    "Workspace documents cannot be interpreted".to_string(),
+                ));
+            }
         };
 
         let outcome = interpreter.take_outcome();
-        self.emit_diagnostics(&outcome.diagnostics, Some(STAGE_AST_INTERPRET), options);
+        diag::emit(&outcome.diagnostics, Some(STAGE_AST_INTERPRET), options);
 
         if outcome.has_errors {
             return Err(CliError::Compilation(
@@ -1454,20 +1904,6 @@ impl Pipeline {
         }
     }
 
-    fn emit_diagnostics(
-        &self,
-        diagnostics: &[Diagnostic],
-        stage_context: Option<&str>,
-        options: &PipelineOptions,
-    ) {
-        if diagnostics.is_empty() {
-            return;
-        }
-
-        let display_options = self.diagnostic_display_options(options);
-        DiagnosticManager::emit(diagnostics, stage_context, &display_options);
-    }
-
     fn run_stage<T, F>(
         &mut self,
         stage: &'static str,
@@ -1481,7 +1917,7 @@ impl Pipeline {
         let snapshot = manager.snapshot();
         let result = action(self);
         let diagnostics = manager.diagnostics_since(snapshot);
-        self.emit_diagnostics(&diagnostics, Some(stage), options);
+        diag::emit(&diagnostics, Some(stage), options);
         result
     }
 
@@ -1492,9 +1928,902 @@ impl Pipeline {
         ))
     }
 
-    fn diagnostic_display_options(&self, options: &PipelineOptions) -> DiagnosticDisplayOptions {
-        DiagnosticDisplayOptions::new(options.debug.verbose)
+    // moved to pipeline::diagnostics
+
+    /// Blocking, bootstrap-friendly compilation entry from a snapshot file path.
+    /// Only supports non-Interpret targets; intended for Stage 1→2 bootstrap.
+    pub fn execute_compilation_from_snapshot_blocking(
+        &mut self,
+        snapshot_path: &Path,
+        mut options: PipelineOptions,
+    ) -> Result<PipelineOutput, CliError> {
+        self.refresh_bootstrap_mode();
+        options.bootstrap_mode |= self.bootstrap_mode;
+        options.emit_bootstrap_snapshot |= detect_snapshot_export();
+
+        // Ensure a base path is set for artifacts
+        let base_path = options.base_path.clone().ok_or_else(|| {
+            CliError::Compilation("Missing base path for compilation".to_string())
+        })?;
+
+        self.reset_state();
+
+        // Load AST snapshot directly if available; otherwise fall back to parsing
+        // via the standard frontend selection. try_load_bootstrap_ast will handle
+        // feature-gated JSON loading when supported.
+        let ast = match self.try_load_bootstrap_ast(snapshot_path)? {
+            Some(node) => node,
+            None => {
+                let source = std::fs::read_to_string(snapshot_path).map_err(|e| {
+                    CliError::Compilation(format!(
+                        "failed to read input {}: {}",
+                        snapshot_path.display(), e
+                    ))
+                })?;
+                self.parse_input_source(&options, &source, Some(&snapshot_path.to_path_buf()))?
+            }
+        };
+
+        // Workspace or single module
+        match ast.kind() {
+            NodeKind::Workspace(workspace) => self.execute_workspace_target_blocking(
+                workspace.clone(),
+                &options.target,
+                &options,
+                &base_path,
+                Some(snapshot_path),
+            ),
+            _ => self.execute_compilation_target(
+                &options.target,
+                ast,
+                &options,
+                &base_path,
+                Some(snapshot_path),
+            ),
+        }
     }
+
+    fn execute_workspace_target_blocking(
+        &mut self,
+        workspace: WorkspaceDocument,
+        target: &PipelineTarget,
+        options: &PipelineOptions,
+        base_path: &Path,
+        snapshot_path: Option<&Path>,
+    ) -> Result<PipelineOutput, CliError> {
+        match target {
+            PipelineTarget::Binary => {
+                // Same as async variant: assemble LLVM then link
+                let snapshot_root = snapshot_path.and_then(|p| p.parent());
+                let modules_dir = base_path.with_extension("modules");
+                fs::create_dir_all(&modules_dir).map_err(CliError::Io)?;
+                let lir_replay = replay_workspace_modules_lir_blocking(
+                    &workspace,
+                    options,
+                    &modules_dir,
+                    snapshot_root,
+                )?;
+
+                // Only fail for modules that participate in the main package binary.
+                let main_pkg = determine_main_package_name(&workspace);
+                let main_bin_ids: HashSet<String> = workspace
+                    .packages
+                    .iter()
+                    .filter(|p| p.name == main_pkg)
+                    .flat_map(|p| p.modules.iter())
+                    .filter(|m| m.module_path.first().map(|s| s.as_str()) == Some("bin"))
+                    .map(|m| m.id.clone())
+                    .collect();
+                let mut hard_fail: Vec<String> = Vec::new();
+                for (id, msg) in &lir_replay.failed_modules {
+                    if main_bin_ids.contains(id) {
+                        hard_fail.push(format!("{} :: {}", id, msg));
+                    }
+                }
+                for id in &lir_replay.missing_snapshots {
+                    if main_bin_ids.contains(id) {
+                        hard_fail.push(format!("{} :: missing snapshot", id));
+                    }
+                }
+                if !hard_fail.is_empty() {
+                    return Err(CliError::Compilation(format!(
+                        "workspace replay failed for main modules: {}",
+                        hard_fail.join(", ")
+                    )));
+                }
+
+                let merged_lir = workspace::assemble_workspace_lir_program(&workspace, &lir_replay);
+                let llvm = self.generate_llvm_artifacts(&merged_lir, base_path, snapshot_path, true, options)?;
+                let llvm_ir_path = llvm.ir_path.clone();
+
+                let diagnostic_manager = DiagnosticManager::new();
+                let link_result =
+                    self.stage_link_binary(&llvm_ir_path, base_path, options, &diagnostic_manager);
+                let diagnostics = diagnostic_manager.get_diagnostics();
+                diag::emit(&diagnostics, Some(STAGE_LINK_BINARY), options);
+                match link_result {
+                    Ok(binary_path) => Ok(PipelineOutput::Binary(binary_path)),
+                    Err(err) => Err(CliError::Compilation(format!(
+                        "workspace linking failed: {}",
+                        err
+                    ))),
+                }
+            }
+            PipelineTarget::Llvm | PipelineTarget::Rust | PipelineTarget::Bytecode => {
+                let snapshot_root = snapshot_path.and_then(|p| p.parent());
+                let modules_dir = base_path.with_extension("modules");
+                fs::create_dir_all(&modules_dir).map_err(CliError::Io)?;
+                if matches!(target, PipelineTarget::Llvm) {
+                    let lir_replay = replay_workspace_modules_lir_blocking(
+                        &workspace,
+                        options,
+                        &modules_dir,
+                        snapshot_root,
+                    )?;
+                    // Only fail for main modules
+                    let main_pkg = determine_main_package_name(&workspace);
+                    let main_bin_ids: HashSet<String> = workspace
+                        .packages
+                        .iter()
+                        .filter(|p| p.name == main_pkg)
+                        .flat_map(|p| p.modules.iter())
+                        .filter(|m| m.module_path.first().map(|s| s.as_str()) == Some("bin"))
+                        .map(|m| m.id.clone())
+                        .collect();
+                    let mut hard_fail: Vec<String> = Vec::new();
+                    for (id, msg) in &lir_replay.failed_modules {
+                        if main_bin_ids.contains(id) {
+                            hard_fail.push(format!("{} :: {}", id, msg));
+                        }
+                    }
+                    for id in &lir_replay.missing_snapshots {
+                        if main_bin_ids.contains(id) {
+                            hard_fail.push(format!("{} :: missing snapshot", id));
+                        }
+                    }
+                    if !hard_fail.is_empty() {
+                        return Err(CliError::Compilation(format!(
+                            "workspace replay failed for main modules: {}",
+                            hard_fail.join(", ")
+                        )));
+                    }
+                    let merged_lir = workspace::assemble_workspace_lir_program(&workspace, &lir_replay);
+                    let llvm = self.generate_llvm_artifacts(&merged_lir, base_path, snapshot_path, false, options)?;
+                    Ok(PipelineOutput::Code(llvm.ir_text))
+                } else {
+                    let replay = replay_workspace_modules_blocking(
+                        &workspace,
+                        target,
+                        options,
+                        &modules_dir,
+                        snapshot_root,
+                    )?;
+                    // legacy non-LLVM artifact
+                    let artifact = render_workspace_module_artifact(&workspace, target, &replay);
+                    Ok(PipelineOutput::Code(artifact))
+                }
+            }
+            PipelineTarget::Interpret => Err(CliError::Compilation(
+                "interpret target not supported in blocking bootstrap path".to_string(),
+            )),
+        }
+    }
+}
+
+struct WorkspaceReplay {
+    module_outputs: Vec<(String, PathBuf)>,
+    module_sections: Vec<(String, String)>,
+    missing_snapshots: Vec<String>,
+    failed_modules: Vec<(String, String)>,
+}
+
+// WorkspaceLirModule/Replay moved to pipeline::workspace
+
+// determine_main_package_name moved to pipeline::workspace
+
+fn replay_workspace_modules(
+    workspace: &WorkspaceDocument,
+    target: &PipelineTarget,
+    options: &PipelineOptions,
+    modules_dir: &Path,
+    snapshot_root: Option<&Path>,
+) -> Result<WorkspaceReplay, CliError> {
+    let mut module_outputs = Vec::new();
+    let mut module_sections = Vec::new();
+    let mut missing_snapshots = Vec::new();
+    let mut failed_modules = Vec::new();
+
+    let mut depended_packages = HashSet::new();
+    for package in &workspace.packages {
+        for dependency in &package.dependencies {
+            depended_packages.insert(dependency.name.clone());
+        }
+    }
+    let root_packages: HashSet<String> = workspace
+        .packages
+        .iter()
+        .filter(|pkg| !depended_packages.contains(&pkg.name))
+        .map(|pkg| pkg.name.clone())
+        .collect();
+
+    for package in &workspace.packages {
+        for module in &package.modules {
+            if !should_include_workspace_module(package, module, &root_packages) {
+                continue;
+            }
+
+            let snapshot_rel = match &module.snapshot {
+                Some(path) => path,
+                None => {
+                    missing_snapshots.push(module.id.clone());
+                    continue;
+                }
+            };
+
+            let snapshot_root = match snapshot_root {
+                Some(root) => root,
+                None => {
+                    missing_snapshots.push(module.id.clone());
+                    continue;
+                }
+            };
+
+            let module_snapshot_path = snapshot_root.join(snapshot_rel);
+            if !module_snapshot_path.exists() {
+                missing_snapshots.push(module.id.clone());
+                continue;
+            }
+
+            let module_name = sanitize_module_identifier(&module.id);
+            let module_output_path =
+                workspace_module_output_path(modules_dir, &module_name, target);
+
+            let module_options = PipelineOptions {
+                target: target.clone(),
+                runtime: options.runtime.clone(),
+                source_language: options.source_language.clone(),
+                optimization_level: options.optimization_level,
+                save_intermediates: options.save_intermediates,
+                base_path: Some(module_output_path.clone()),
+                debug: options.debug.clone(),
+                error_tolerance: options.error_tolerance.clone(),
+                release: options.release,
+                execute_main: false,
+                bootstrap_mode: true,
+                emit_bootstrap_snapshot: false,
+            };
+
+            let mut sub_pipeline = Pipeline::new();
+            let module_output = match task::block_in_place(|| {
+                let handle = Handle::try_current().map_err(|_| {
+                    CliError::Compilation(
+                        "workspace module replay requires an active Tokio runtime".to_string(),
+                    )
+                })?;
+                handle.block_on(sub_pipeline.execute_with_options(
+                    PipelineInput::File(module_snapshot_path.clone()),
+                    module_options,
+                ))
+            }) {
+                Ok(output) => output,
+                Err(err) => {
+                    debug!(
+                        module = %module.id,
+                        error = %err,
+                        "workspace module replay failed"
+                    );
+                    failed_modules.push((module.id.clone(), err.to_string()));
+                    continue;
+                }
+            };
+
+            let (written_path, section) =
+                write_workspace_module_output(target, module_output, &module_output_path)?;
+
+            if let Some(section_content) = section {
+                module_sections.push((module.id.clone(), section_content));
+            }
+            module_outputs.push((module.id.clone(), written_path));
+        }
+    }
+
+    Ok(WorkspaceReplay {
+        module_outputs,
+        module_sections,
+        missing_snapshots,
+        failed_modules,
+    })
+}
+
+fn replay_workspace_modules_blocking(
+    workspace: &WorkspaceDocument,
+    target: &PipelineTarget,
+    options: &PipelineOptions,
+    modules_dir: &Path,
+    snapshot_root: Option<&Path>,
+) -> Result<WorkspaceReplay, CliError> {
+    let mut module_outputs = Vec::new();
+    let mut module_sections = Vec::new();
+    let mut missing_snapshots = Vec::new();
+    let mut failed_modules = Vec::new();
+
+    let mut depended_packages = HashSet::new();
+    for package in &workspace.packages {
+        for dependency in &package.dependencies {
+            depended_packages.insert(dependency.name.clone());
+        }
+    }
+    let root_packages: HashSet<String> = workspace
+        .packages
+        .iter()
+        .filter(|pkg| !depended_packages.contains(&pkg.name))
+        .map(|pkg| pkg.name.clone())
+        .collect();
+
+    for package in &workspace.packages {
+        for module in &package.modules {
+            if !should_include_workspace_module(package, module, &root_packages) {
+                continue;
+            }
+            let snapshot_rel = match &module.snapshot {
+                Some(path) => path,
+                None => {
+                    missing_snapshots.push(module.id.clone());
+                    continue;
+                }
+            };
+            let snapshot_root = match snapshot_root {
+                Some(root) => root,
+                None => {
+                    missing_snapshots.push(module.id.clone());
+                    continue;
+                }
+            };
+            let module_snapshot_path = snapshot_root.join(snapshot_rel);
+            if !module_snapshot_path.exists() {
+                missing_snapshots.push(module.id.clone());
+                continue;
+            }
+
+            let module_name = sanitize_module_identifier(&module.id);
+            let module_output_path =
+                workspace_module_output_path(modules_dir, &module_name, target);
+
+            let module_options = PipelineOptions {
+                target: target.clone(),
+                runtime: options.runtime.clone(),
+                source_language: options.source_language.clone(),
+                optimization_level: options.optimization_level,
+                save_intermediates: options.save_intermediates,
+                base_path: Some(module_output_path.clone()),
+                debug: options.debug.clone(),
+                error_tolerance: options.error_tolerance.clone(),
+                release: options.release,
+                execute_main: false,
+                bootstrap_mode: true,
+                emit_bootstrap_snapshot: false,
+            };
+
+            let mut sub_pipeline = Pipeline::new();
+            let module_output = match sub_pipeline
+                .execute_compilation_from_snapshot_blocking(&module_snapshot_path, module_options)
+            {
+                Ok(output) => output,
+                Err(err) => {
+                    debug!(
+                        module = %module.id,
+                        error = %err,
+                        "workspace module replay failed (blocking)"
+                    );
+                    failed_modules.push((module.id.clone(), err.to_string()));
+                    continue;
+                }
+            };
+
+            let (written_path, section) =
+                write_workspace_module_output(target, module_output, &module_output_path)?;
+            if let Some(section_content) = section {
+                module_sections.push((module.id.clone(), section_content));
+            }
+            module_outputs.push((module.id.clone(), written_path));
+        }
+    }
+
+    Ok(WorkspaceReplay {
+        module_outputs,
+        module_sections,
+        missing_snapshots,
+        failed_modules,
+    })
+}
+
+fn replay_workspace_modules_lir_blocking(
+    workspace: &WorkspaceDocument,
+    options: &PipelineOptions,
+    modules_dir: &Path,
+    snapshot_root: Option<&Path>,
+) -> Result<WorkspaceLirReplay, CliError> {
+    let main_package = determine_main_package_name(workspace);
+    let mut modules: Vec<workspace::WorkspaceLirModule> = Vec::new();
+    let mut missing_snapshots = Vec::new();
+    let mut failed_modules = Vec::new();
+
+    for package in &workspace.packages {
+        // Limit replay to the main package to keep bootstrap fast and focused.
+        if package.name != main_package {
+            continue;
+        }
+        for module in &package.modules {
+            if !should_include_workspace_module(package, module, &HashSet::new()) {
+                continue;
+            }
+            let snapshot_rel = match &module.snapshot {
+                Some(path) => path,
+                None => {
+                    missing_snapshots.push(module.id.clone());
+                    continue;
+                }
+            };
+            let snapshot_root = match snapshot_root {
+                Some(root) => root,
+                None => {
+                    missing_snapshots.push(module.id.clone());
+                    continue;
+                }
+            };
+            let module_snapshot_path = snapshot_root.join(snapshot_rel);
+            if !module_snapshot_path.exists() {
+                missing_snapshots.push(module.id.clone());
+                continue;
+            }
+
+            // Create a per-module base path for intermediates
+            let module_name = sanitize_module_identifier(&module.id);
+            let module_base_path = workspace_module_output_path(modules_dir, &module_name, &PipelineTarget::Llvm);
+
+            let mut sub = Pipeline::new();
+            let mut module_options = options.clone();
+            module_options.base_path = Some(module_base_path.clone());
+            module_options.target = PipelineTarget::Llvm;
+
+            match sub.compile_snapshot_to_lir_blocking(&module_snapshot_path, module_options, &module_base_path) {
+                Ok(backend) => {
+                    modules.push(workspace::WorkspaceLirModule {
+                        id: module.id.clone(),
+                        package: package.name.clone(),
+                        kind: module.module_path.first().cloned(),
+                        lir: backend.lir_program,
+                    });
+                }
+                Err(err) => {
+                    failed_modules.push((module.id.clone(), err.to_string()));
+                }
+            }
+        }
+    }
+
+    Ok(WorkspaceLirReplay {
+        modules,
+        missing_snapshots,
+        failed_modules,
+    })
+}
+
+fn should_include_workspace_module(
+    _package: &WorkspacePackage,
+    module: &WorkspaceModule,
+    _root_packages: &HashSet<String>,
+) -> bool {
+    // Load all workspace modules to make every symbol visible to the replay pipeline,
+    // but filter out tests and examples.
+    if let Some(kind) = module.module_path.first() {
+        match kind.as_str() {
+            "tests" | "examples" => return false,
+            // Only include binary targets explicitly; library modules from non-root packages are excluded above.
+            "bin" => return true,
+            _ => {}
+        }
+    }
+    // Include library modules by default
+    true
+}
+
+fn assemble_workspace_llvm_ir(workspace: &WorkspaceDocument, replay: &WorkspaceReplay) -> String {
+    let mut output = String::new();
+    let _ = writeln!(&mut output, "; FerroPhase workspace bundle");
+    let _ = writeln!(&mut output, "; manifest: {}", workspace.manifest);
+    output.push('\n');
+
+    let mut seen_datalayout = false;
+    let mut seen_triple = false;
+    let mut seen_declares = HashSet::new();
+    let mut defined_functions = HashSet::new();
+
+    // Build a quick index from module id to (package name, module_path-first)
+    let mut module_index: HashMap<String, (String, Option<String>)> = HashMap::new();
+    for package in &workspace.packages {
+        for module in &package.modules {
+            module_index.insert(
+                module.id.clone(),
+                (
+                    package.name.clone(),
+                    module.module_path.first().cloned(),
+                ),
+            );
+        }
+    }
+
+    // Determine the main package to keep definitions for. Priority:
+    // 1) FP_BOOTSTRAP_MAIN environment variable
+    // 2) a package named "fp-cli" if present
+    // 3) a root package (not depended upon by others), first in lexical order
+    // 4) the first package in the manifest order
+    let main_package = std::env::var("FP_BOOTSTRAP_MAIN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            workspace
+                .packages
+                .iter()
+                .find(|p| p.name == "fp-cli")
+                .map(|p| p.name.clone())
+        })
+        .or_else(|| {
+            let mut depended = HashSet::new();
+            for pkg in &workspace.packages {
+                for dep in &pkg.dependencies {
+                    depended.insert(dep.name.clone());
+                }
+            }
+            let mut roots: Vec<_> = workspace
+                .packages
+                .iter()
+                .filter(|p| !depended.contains(&p.name))
+                .map(|p| p.name.clone())
+                .collect();
+            roots.sort();
+            roots.into_iter().next()
+        })
+        .or_else(|| workspace.packages.first().map(|p| p.name.clone()))
+        .unwrap_or_else(|| "fp-cli".to_string());
+
+    for (_, content) in &replay.module_sections {
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with("define ") {
+                if let Some(name) = extract_function_name(trimmed) {
+                    defined_functions.insert(name.to_string());
+                }
+            }
+        }
+    }
+
+    let mut sections = replay.module_sections.clone();
+    sections.sort_by(|a, b| a.0.cmp(&b.0));
+    for (module_id, content) in &sections {
+        let _ = writeln!(&mut output, "; module {}", module_id);
+        let (pkg_name, kind) = module_index
+            .get(module_id)
+            .cloned()
+            .unwrap_or_else(|| (String::new(), None));
+        let keep_definitions = pkg_name == main_package && matches!(kind.as_deref(), Some("bin"));
+        let mut skipping_func = false;
+        let mut brace_depth: i32 = 0;
+        for line in content.lines() {
+            let trimmed = line.trim_start();
+            if skipping_func {
+                // Track braces to find function end
+                let opens = line.matches('{').count() as i32;
+                let closes = line.matches('}').count() as i32;
+                brace_depth += opens - closes;
+                if brace_depth <= 0 {
+                    skipping_func = false;
+                    brace_depth = 0;
+                }
+                continue;
+            }
+            if trimmed.starts_with("target datalayout") {
+                if seen_datalayout {
+                    continue;
+                }
+                seen_datalayout = true;
+            } else if trimmed.starts_with("target triple") {
+                if seen_triple {
+                    continue;
+                }
+                seen_triple = true;
+            } else if trimmed.starts_with("declare ") {
+                if let Some(name) = extract_function_name(trimmed) {
+                    if defined_functions.contains(name) {
+                        continue;
+                    }
+                    if !seen_declares.insert(name.to_string()) {
+                        continue;
+                    }
+                }
+            } else if trimmed.starts_with("define ") {
+                if !keep_definitions {
+                    // Skip entire function body for non-main modules.
+                    // Initialize skipping until matching closing brace.
+                    skipping_func = true;
+                    brace_depth = line.matches('{').count() as i32
+                        - line.matches('}').count() as i32;
+                    if brace_depth <= 0 {
+                        skipping_func = false;
+                        brace_depth = 0;
+                    }
+                    continue;
+                }
+            }
+
+            output.push_str(line);
+            output.push('\n');
+        }
+        if !output.ends_with('\n') {
+            output.push('\n');
+        }
+        output.push('\n');
+    }
+
+    if replay.module_sections.is_empty() {
+        let _ = writeln!(&mut output, "; no modules were replayed");
+    }
+
+    // Note: failed/missing modules are now hard errors upstream; do not emit their list here.
+
+    output
+}
+
+// assemble_workspace_lir_program moved to pipeline::workspace
+
+fn extract_function_name(line: &str) -> Option<&str> {
+    let at_pos = line.find('@')?;
+    let rest = &line[at_pos + 1..];
+    let end = rest
+        .find(|c: char| c == '(' || c.is_whitespace())
+        .unwrap_or_else(|| rest.len());
+    Some(&rest[..end])
+}
+
+fn render_workspace_module_artifact(
+    workspace: &WorkspaceDocument,
+    target: &PipelineTarget,
+    replay: &WorkspaceReplay,
+) -> String {
+    let mut artifact = String::new();
+    let comment_prefix = workspace_comment_prefix(target);
+
+    if replay.module_sections.is_empty() {
+        artifact.push_str(&render_workspace_summary(workspace));
+        if !replay.missing_snapshots.is_empty() {
+            artifact.push_str("\n[missing module snapshots]\n");
+            for module_id in &replay.missing_snapshots {
+                let _ = writeln!(&mut artifact, "- {}", module_id);
+            }
+        }
+        if !replay.failed_modules.is_empty() {
+            artifact.push_str("\n[failed module replays]\n");
+            for (module_id, message) in &replay.failed_modules {
+                let _ = writeln!(&mut artifact, "- {} :: {}", module_id, message);
+            }
+        }
+
+        return artifact;
+    }
+
+    for (module_id, content) in &replay.module_sections {
+        let _ = writeln!(&mut artifact, "{} module {}", comment_prefix, module_id);
+        artifact.push_str(content);
+        if !content.ends_with('\n') {
+            artifact.push('\n');
+        }
+        artifact.push('\n');
+    }
+
+    if !replay.module_outputs.is_empty() {
+        let _ = writeln!(&mut artifact, "{} module artifacts:", comment_prefix);
+        for (module_id, path) in &replay.module_outputs {
+            let _ = writeln!(
+                &mut artifact,
+                "{} - {} => {}",
+                comment_prefix,
+                module_id,
+                path.display()
+            );
+        }
+        artifact.push('\n');
+    }
+
+    if !replay.missing_snapshots.is_empty() {
+        let _ = writeln!(
+            &mut artifact,
+            "{} missing module snapshots:",
+            comment_prefix
+        );
+        for module_id in &replay.missing_snapshots {
+            let _ = writeln!(&mut artifact, "{} - {}", comment_prefix, module_id);
+        }
+    }
+
+    if !replay.failed_modules.is_empty() {
+        if !artifact.ends_with('\n') {
+            artifact.push('\n');
+        }
+        let _ = writeln!(&mut artifact, "{} failed module replays:", comment_prefix);
+        for (module_id, message) in &replay.failed_modules {
+            let _ = writeln!(
+                &mut artifact,
+                "{} - {} :: {}",
+                comment_prefix, module_id, message
+            );
+        }
+    }
+
+    artifact
+}
+
+fn sanitize_module_identifier(id: &str) -> String {
+    let mut name = String::with_capacity(id.len());
+    for ch in id.chars() {
+        if ch.is_ascii_alphanumeric() {
+            name.push(ch);
+        } else {
+            name.push('_');
+        }
+    }
+    if name.is_empty() {
+        name.push_str("module");
+    }
+    name
+}
+
+fn workspace_module_output_path(
+    modules_dir: &Path,
+    module_name: &str,
+    target: &PipelineTarget,
+) -> PathBuf {
+    let extension = match target {
+        PipelineTarget::Llvm => "ll",
+        PipelineTarget::Rust => "rs",
+        PipelineTarget::Bytecode => "bc",
+        PipelineTarget::Binary => "bin",
+        PipelineTarget::Interpret => "out",
+    };
+
+    let mut path = modules_dir.join(module_name);
+    path.set_extension(extension);
+    path
+}
+
+fn workspace_comment_prefix(target: &PipelineTarget) -> &'static str {
+    match target {
+        PipelineTarget::Rust => "//",
+        _ => ";",
+    }
+}
+
+fn copy_current_executable(base_path: &Path) -> Result<PathBuf, CliError> {
+    let binary_path = base_path.with_extension(if cfg!(target_os = "windows") {
+        "exe"
+    } else {
+        "out"
+    });
+
+    if let Some(parent) = binary_path.parent() {
+        fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    let current = std::env::current_exe().map_err(CliError::Io)?;
+    fs::copy(&current, &binary_path).map_err(CliError::Io)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = fs::metadata(&binary_path)
+            .map_err(CliError::Io)?
+            .permissions()
+            .mode();
+        fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(mode | 0o111))
+            .map_err(CliError::Io)?;
+    }
+
+    Ok(binary_path)
+}
+
+fn write_workspace_module_output(
+    target: &PipelineTarget,
+    module_output: PipelineOutput,
+    desired_path: &Path,
+) -> Result<(PathBuf, Option<String>), CliError> {
+    if let Some(parent) = desired_path.parent() {
+        fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+
+    match module_output {
+        PipelineOutput::Code(code) => {
+            fs::write(desired_path, code.as_bytes()).map_err(CliError::Io)?;
+            Ok((desired_path.to_path_buf(), Some(code)))
+        }
+        PipelineOutput::Binary(path) => match target {
+            PipelineTarget::Binary => {
+                if path != desired_path {
+                    fs::copy(&path, desired_path).map_err(CliError::Io)?;
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let mode = fs::metadata(&path)
+                            .map_err(CliError::Io)?
+                            .permissions()
+                            .mode();
+                        fs::set_permissions(desired_path, std::fs::Permissions::from_mode(mode))
+                            .map_err(CliError::Io)?;
+                    }
+                }
+                Ok((desired_path.to_path_buf(), None))
+            }
+            _ => Err(CliError::Compilation(format!(
+                "workspace replay produced a binary artifact for target {:?}",
+                target
+            ))),
+        },
+        PipelineOutput::Value(_) | PipelineOutput::RuntimeValue(_) => {
+            Err(CliError::Compilation(format!(
+                "workspace replay produced unsupported output for target {:?}",
+                target
+            )))
+        }
+    }
+}
+
+fn render_workspace_summary(workspace: &WorkspaceDocument) -> String {
+    let mut buffer = String::new();
+    let _ = writeln!(buffer, "; FerroPhase workspace summary");
+    let _ = writeln!(buffer, "; manifest: {}", workspace.manifest);
+
+    if workspace.packages.is_empty() {
+        let _ = writeln!(buffer, "; packages: <none>");
+        return buffer;
+    }
+
+    for package in &workspace.packages {
+        let version = package
+            .version
+            .as_deref()
+            .map(|v| format!(" {}", v))
+            .unwrap_or_default();
+        let _ = writeln!(buffer, "; package {}{}", package.name, version);
+        let _ = writeln!(buffer, ";   manifest: {}", package.manifest_path);
+        let _ = writeln!(buffer, ";   root: {}", package.root);
+
+        if !package.modules.is_empty() {
+            let _ = writeln!(buffer, ";   modules:");
+            for module in &package.modules {
+                let language = module.language.as_deref().unwrap_or("unknown");
+                let _ = writeln!(buffer, ";     - {} [{}]", module.path, language);
+            }
+        }
+
+        if !package.features.is_empty() {
+            let _ = writeln!(buffer, ";   features: {}", package.features.join(", "));
+        }
+
+        if !package.dependencies.is_empty() {
+            let rendered_deps = package
+                .dependencies
+                .iter()
+                .map(|dep| {
+                    dep.kind
+                        .as_deref()
+                        .map(|kind| format!("{} ({kind})", dep.name))
+                        .unwrap_or_else(|| dep.name.clone())
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(buffer, ";   dependencies: {}", rendered_deps);
+        }
+    }
+
+    buffer
 }
 
 #[cfg(test)]
@@ -1551,7 +2880,7 @@ mod tests {
             }
         }
 
-        fn type_check(&self, ast: &mut Node) {
+        fn type_check(&mut self, ast: &mut Node) {
             if let Err(err) = self
                 .pipeline
                 .stage_type_check_for_tests(ast, &self.diagnostics)
@@ -1560,10 +2889,10 @@ mod tests {
             }
         }
 
-        fn rerun_type_check(&self, ast: &mut Node, stage: &'static str) {
-            if let Err(err) = self
-                .pipeline
-                .stage_type_check(ast, stage, &self.diagnostics)
+        fn rerun_type_check(&mut self, ast: &mut Node, stage: &'static str) {
+            if let Err(err) =
+                self.pipeline
+                    .stage_type_check(ast, stage, &self.diagnostics, &self.options)
             {
                 self.fail_with_diagnostics(stage, err);
             }
@@ -1576,10 +2905,12 @@ mod tests {
         }
 
         fn materialize_runtime(&self, ast: &mut Node, target: PipelineTarget) {
-            if let Err(err) =
-                self.pipeline
-                    .stage_materialize_runtime_intrinsics(ast, &target, &self.diagnostics)
-            {
+            if let Err(err) = self.pipeline.stage_materialize_runtime_intrinsics(
+                ast,
+                &target,
+                &self.options,
+                &self.diagnostics,
+            ) {
                 self.fail_with_diagnostics("runtime materialisation", err);
             }
         }
@@ -1718,17 +3049,17 @@ mod tests {
                             }
                         }
                     }
-                    ast::ExprKind::IntrinsicCollection(collection) => match collection {
-                        ast::ExprIntrinsicCollection::VecElements { elements } => {
+                    ast::ExprKind::IntrinsicContainer(collection) => match collection {
+                        ast::ExprIntrinsicContainer::VecElements { elements } => {
                             for elem in elements {
                                 self.visit_expr(elem);
                             }
                         }
-                        ast::ExprIntrinsicCollection::VecRepeat { elem, len } => {
+                        ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
                             self.visit_expr(elem);
                             self.visit_expr(len);
                         }
-                        ast::ExprIntrinsicCollection::HashMapEntries { entries } => {
+                        ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
                             for entry in entries {
                                 self.visit_expr(&entry.key);
                                 self.visit_expr(&entry.value);
@@ -1819,7 +3150,7 @@ mod tests {
             }
             ast::NodeKind::Expr(expr) => collector.visit_expr(expr),
             ast::NodeKind::Item(item) => collector.visit_item(item),
-            ast::NodeKind::Query(_) | ast::NodeKind::Schema(_) => {}
+            ast::NodeKind::Query(_) | ast::NodeKind::Schema(_) | ast::NodeKind::Workspace(_) => {}
         }
         collector.0
     }

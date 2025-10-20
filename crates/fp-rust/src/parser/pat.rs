@@ -1,8 +1,8 @@
 use super::RustParser;
 use crate::parser::parse_ident;
 use fp_core::ast::{
-    Pattern, PatternIdent, PatternKind, PatternTuple, PatternTupleStruct, PatternType,
-    PatternWildcard,
+    Expr, Pattern, PatternIdent, PatternKind, PatternTuple, PatternTupleStruct, PatternType,
+    PatternVariant, PatternWildcard,
 };
 use fp_core::error::Result;
 use itertools::Itertools;
@@ -44,6 +44,21 @@ impl RustParser {
                 pat: self.parse_pat(*p.pat)?.into(),
                 ty: self.parse_type(*p.ty)?,
             })),
+            syn::Pat::Path(path) => {
+                let locator = self.parse_locator(path.path)?;
+                Pattern::from(PatternKind::Variant(PatternVariant {
+                    name: Expr::locator(locator),
+                    pattern: None,
+                }))
+            }
+            syn::Pat::Lit(lit) => {
+                let expr = self.expr_parser().parse_expr(syn::Expr::Lit(lit))?;
+                Pattern::from(PatternKind::Variant(PatternVariant {
+                    name: expr,
+                    pattern: None,
+                }))
+            }
+            syn::Pat::Paren(paren) => return self.parse_pat(*paren.pat),
             other => {
                 return self.error(
                     format!(

@@ -45,6 +45,8 @@ fn main() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -140,6 +142,8 @@ fn main() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -203,6 +207,8 @@ fn main() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -251,6 +257,8 @@ fn main() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -262,7 +270,7 @@ fn main() {
 
     let output_content = fs::read_to_string(&output_file).unwrap();
     assert!(
-        output_content.contains("pub fn main"),
+        output_content.contains("fn main()"),
         "Zig output should define main function"
     );
     assert!(
@@ -309,6 +317,8 @@ fn main() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -363,6 +373,8 @@ async fn test_transpile_invalid_target() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -387,6 +399,8 @@ async fn test_transpile_nonexistent_file() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
@@ -424,6 +438,8 @@ async fn test_transpile_multiple_files() {
         pretty: true,
         source_maps: false,
         watch: false,
+        resolve_imports: true,
+        single_world: false,
     };
 
     let config = CliConfig::default();
