@@ -43,13 +43,13 @@ Example `src/main.fp` demonstrating const evaluation, quoting, and a simple entr
 ```ferrophase
 const API_NAME: str = "FerroPhase";
 
-const GREETING = quote {
+const GREETING = quote item {
     fn message() -> str {
         "Hello from quote/splice!"
     }
 };
 
-const GENERATED: () = splice(GREETING);
+const GENERATED: () = splice GREETING;
 
 fn main() {
     println!("Welcome to {}", API_NAME);

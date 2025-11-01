@@ -6,6 +6,13 @@ place, and both the interpreter and backends read the same typed structures.
 This document describes how intrinsic normalisation and backend materialisation
 work in the new world.
 
+Callout: keywords vs builtins
+- Keywords like `const`, `quote`, and `splice` affect staging and are handled by
+  the parser/const evaluator; they are not intrinsics.
+- Builtin macros like `emit!` are sugar that expand to AST after parsing and are
+  not intrinsics either. Intrinsics are library-like operations (e.g.,
+  `sizeof!`, `hasfield!`) resolved through the intrinsic registry.
+
 ## Two-Phase Approach
 
 1. **Symbolic AST normalisation**
