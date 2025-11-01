@@ -19,9 +19,12 @@ lowerings consume the already-typed structures.
    - The frontend stores provenance (`FrontendSnapshot`) on the pipeline so
      later tooling can persist or inspect LAST data without re-parsing.
 
-2. **Parsing & Normalisation (AST → AST)**
-   - Macro expansion, annotation, and canonical std remapping execute in this
-     stage while spans are preserved.
+2. **Parsing, Builtin Macros & Normalisation (AST → AST)**
+   - Builtin macro expansion runs immediately after parsing. Builtins are
+     compiler-reserved forms (e.g., `emit!`) that expand to AST but do not
+     change staging/scoping rules and cannot query types.
+   - Annotation and canonical std remapping execute after expansion while spans
+     are preserved.
    - The output is the normalised AST that every downstream mode consumes.
 
 3. **Type Enrichment (AST → ASTᵗ)**
@@ -37,6 +40,12 @@ lowerings consume the already-typed structures.
    - Const evaluation may mutate the AST in place (folding expressions,
      synthesising declarations, materialising intrinsic calls). The resulting
      `ASTᵗ′` snapshot becomes the source of truth for subsequent stages.
+
+   Keywords vs builtins in this phase
+   - Keywords (`const`, `quote`, `splice`) affect staging/behaviour and are
+     recognised by the parser.
+   - Builtins like `emit!` are sugar only; by this phase they have expanded to
+     equivalent keyword forms (e.g., `splice (quote stmt { … })`).
 
 5. **Typed Projection (ASTᵗ′ → HIRᵗ)**
    - `HirGenerator` consumes the evaluated typed AST and produces a

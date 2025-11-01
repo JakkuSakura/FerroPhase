@@ -31,6 +31,13 @@ const RESULT: i32 = {
 - Structural edits (new structs, impls, generated functions) update the AST and
   promote any provisional `mut type` tokens to concrete entries.
 
+### Compile-time Generation (overview)
+
+Const evaluation may synthesize runtime code based on compile-time data. The
+language provides dedicated keywords for quoting and splicing code, and a
+convenience macro for emission. See `docs/Quoting.md` for full syntax and
+semantics of `quote`, `splice`, and `emit!`.
+
 ### Advanced Patterns
 
 ```rust
@@ -90,6 +97,40 @@ const GENERATED: Type = {
    - Merge evaluated values back into the AST.
    - Emit diagnostics using the shared `DiagnosticManager`.
    - Persist `.ast-eval` artefacts when `--save-intermediates` is enabled.
+
+## Emission and Quoting
+
+For emission and quoting/splicing semantics (context, captures, control flow,
+diagnostics), see `docs/Quoting.md`. Const evaluation executes those operations
+and commits the resulting `ASTᵗ′` but does not redefine their behaviour here.
+
+## Quoting and Splicing (pointer)
+
+- `quote` captures code as a hygienic AST value (compile-time only).
+- `splice` inserts a previously quoted fragment into the current AST.
+- Both contribute to `ASTᵗ′` during const evaluation.
+
+Full details and examples: `docs/Quoting.md`.
+
+Use `emit!` for simple “write this block into the runtime body.” Use
+`quote`/`splice` when you need to treat code as data (store, transform, compose
+fragments) before insertion. See `docs/Quoting.md` for full semantics.
+
+## Determinism and Staging
+
+- All const expressions and structural edits must be acyclic. The interpreter
+  evaluates const items/blocks in a topologically sorted order derived from
+  their dependencies (names and types they reference).
+- An emission or splice cannot reference results from a later stage; such
+  cross‑stage references produce a compile‑time diagnostic.
+- Repeated evaluation with identical inputs yields identical `ASTᵗ′` snapshots.
+
+## Diagnostics
+
+- Cycle or cross‑stage reference during const evaluation → error with a cycle
+  report.
+- Illegal side effects or capability violations during const execution →
+  compile‑time diagnostics from the interpreter.
 
 ## Comparison
 

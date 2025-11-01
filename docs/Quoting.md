@@ -1,47 +1,85 @@
-# FerroPhase Quoting & Splicing Semantics
+# FerroPhase Quoting & Splicing (Keywords)
 
-This note documents the language-level operations that convert code into data and back again. The goal is to support
-structured metaprogramming without sacrificing the determinism guarantees described in `docs/ConstEval.md` and
-`docs/Design.md`.
+This document defines the language keywords that turn code into data (quoting)
+and insert code produced at compile time (splicing). They establish compiler
+behaviour and staging boundaries and are distinct from builtin macros.
 
-## Terminology
+Keywords vs builtin macros
+- Keywords affect parsing, staging, scoping, and compiler behaviour.
+- Builtin macros are compiler-reserved sugar that expand to AST after parsing;
+  they cannot change staging rules. See `docs/ConstEval.md` for `emit!`.
 
-We adopt the names **`quote`** and **`splice`**:
+In FerroPhase, `quote` and `splice` are keywords.
 
-- **`quote { ... }`** captures code as an AST value while preserving hygiene metadata (scopes, bindings, spans).
-- **`splice(expr)`** re-injects a previously quoted value into surrounding code, producing new AST structure.
+## Syntax
 
-> Other candidates (e.g., `quote`/`unquote`, `quote`/`run`, `lift`/`lower`) were considered. "Splice" emphasises that the
-> operation inserts structured code into a host context, mirroring terminology from Template Haskell and Rust macro_rules!
-> `quote!`/`#` syntax, while avoiding confusion with the `mut` keyword.
+- Quote (produces a const QuoteToken):
+  - Kinded forms (explicit): `quote expr { … }`, `quote stmt { … }`, `quote item { … }`, `quote type { … }`
+  - Unkinded form (inferred): `quote { … }`
+
+Kind inference for `quote { … }`:
+- If the fragment is a single expression → expr token.
+- If the fragment contains only item declarations at top level → item token.
+- Otherwise, if the fragment is a sequence of statements → stmt token.
+- Ambiguous or mixed forms produce a diagnostic suggesting an explicit kind.
+
+- Splice (inserts a QuoteToken according to the surrounding position):
+  - Expression position: `let v = splice EXPR_TOKEN;`
+  - Statement position: `splice STMT_TOKEN;`
+  - Item position: `splice ITEM_TOKEN;`
+
+Notes
+- Quoted fragments are values at compile time (consts). Tokens carry their
+  fragment kind; `splice` validates that the token kind matches the insertion
+  site and emits a diagnostic otherwise.
 
 ## Basic Usage
 
 ```ferrophase
-const BLOCK = quote {
-    fn helper(x: i32) -> i32 { x * 2 }
+// Top-level consts: quote produces const tokens
+const CASES = quote item {
+    enum E { A, B }
 };
 
-const DOUBLE_HELPER = splice(BLOCK);
+const BODY = quote stmt {
+    if x > 0 { return x; }
+};
+
+// Inferred kind (expr):
+const EXPR = quote { 1 + x };
+
+fn f(x: i32) -> i32 {
+    const {
+        // Insert previously quoted fragments
+        splice BODY;
+    }
+    0
+}
+
+// Insert items
+const {
+    splice CASES;
+}
 ```
 
-- `BLOCK` becomes an AST value (represented internally as an `NodeId` + hygienic context).
-- `splice(BLOCK)` materialises the AST inside the surrounding context, contributing to TAST during const evaluation.
+- `CASES` and `BODY` are compile-time values (QuoteTokens) and can only exist as
+  consts. Splicing inserts their contents into the typed AST during const eval.
 
-## Comptime Integration
+## Compile-time Integration
 
-During Phase 2 const evaluation:
+During const evaluation:
 
-1. `quote` serialises the target code into an AST value stored in a `comptime::QuoteToken`. The token contains:
-   - `Ty` annotations inferred for the quoted fragment
+1. `quote` captures the code as a hygienic AST value (QuoteToken) with:
+   - Inferred `Ty` annotations for nodes inside the fragment
    - Hygiene metadata (scope ids, span provenance)
-   - References to any `mut type` tokens produced inside the quote
-2. `splice` registers a structural transformation identical to `addfield!`/`addmethod!`. The TypeQueryEngine treats the
-   quoted fragment as an atomic transformation:
-   - New declarations are introduced via provisional `mut type` tokens (if types are declared within the splice)
-   - The TAST snapshot records the splice source span for diagnostics
+   - References to any provisional `mut type` tokens created within
+2. `splice` inserts the fragment into the current AST as a structural edit:
+   - New declarations are introduced via provisional `mut type` tokens and
+     promoted during commit
+   - The `ASTᵗ′` snapshot retains provenance for diagnostics
 
-All transformations remain deterministic: repeated quoting/splicing with identical inputs yields identical TAST.
+Determinism: identical inputs produce identical `ASTᵗ′` after splicing. The
+const interpreter evaluates splices in topological order respecting dependencies.
 
 ## Type Handling
 
@@ -53,7 +91,7 @@ All transformations remain deterministic: repeated quoting/splicing with identic
 ## Hygiene & Scoping
 
 - `quote` captures lexical scopes, preventing accidental variable capture. Spliced fragments introduce fresh bindings
-  unless explicitly marked with `splice(using scope_var)` (future extension).
+  unless explicitly marked with a future `splice using scope_var` form (extension).
 - Span information is preserved so diagnostics point to the original quoted location.
 
 ## Error Handling
@@ -71,8 +109,81 @@ All transformations remain deterministic: repeated quoting/splicing with identic
 - **Bytecode/compile**: typed HIR lowering consumes spliced fragments after const evaluation; no special casing
   required.
 
+## Relation to `emit!`
+
+- `emit! { … }` is a builtin macro that desugars to `splice (quote stmt { … })`.
+- It is only valid inside `const { … }` (enforced by the const interpreter).
+- `emit!` does not change staging rules; it is ergonomics sugar.
+
+### `emit!` Semantics
+
+- Context: `emit! { … }` may appear only inside a `const { … }` region. Using
+  it elsewhere is a compile‑time error.
+- Effect: during const eval, the interpreter serializes the block into AST
+  statements and appends them to the surrounding function/module body in
+  `ASTᵗ′`, preserving order.
+- Captures: references to compile‑time constants are literalized; references to
+  runtime variables remain as normal name refs. Non‑serializable const values
+  cannot be captured (diagnostic is emitted).
+- Control flow: `return`, `break`, and `continue` inside `emit!` target the
+  runtime scopes they would have targeted if the code had been written inline.
+  They do not terminate const evaluation; they become part of the emitted code.
+- Typing: after emission, the mutated nodes are (re‑)typed as part of the
+  `ASTᵗ′` commit so downstream stages see a fully typed tree.
+- Side effects: the body of `emit!` is never executed at compile time; it is
+  only materialized. Any attempt to execute side effects in const code still
+  follows the const interpreter’s capability rules.
+
+Example (specialization via unrolling):
+
+```ferrophase
+fn first_gt(const xs: [i32], ys: [i32]) -> i32 {
+    const {
+        for (i, x) in xs.iter().enumerate() {
+            emit! { if x > ys[i] { return x; } }
+        }
+    }
+    0
+}
+```
+
+After const evaluation, this becomes straight‑line checks using the literal
+values from `xs`.
+
+## Macro Stage and Restrictions
+
+- Builtin macros expand immediately after parsing, before type inference.
+- They cannot query types or const-eval state and may not change staging rules.
+- `quote` and `splice` are keywords; they are not macros and are recognised by
+  the parser directly.
+
 ## Future Work
 
-- Support parameterised quoting (`quote<T>`), enabling type-specialised AST generation.
-- Provide `splice!` macro sugar for concise embedding.
-- Explore incremental caching so identical quotes across modules share storage.
+- Anti-quotation inside `quote` (e.g., `#{expr}`) for inline composition.
+- Incremental caching so identical quotes across modules share storage.
+
+## Diagnostics
+
+- `emit!` used outside a const region → error: “emit! is only valid in const
+  context”.
+- Emitting statements where an expression is required (or vice versa) → error
+  with a span to the offending block.
+- Attempting to capture non‑serializable const values → error: literalization
+  failed (with value kind).
+- Splicing into an incompatible syntactic position → error with a precise
+  site/kind mismatch message.
+
+## Shorthand Sugar (documentation-only)
+
+The following shorthands are documented for ergonomics but are not yet
+implemented. They are equivalent to the keyword forms above and may be added in
+the future:
+
+- Backtick quoting: `` ` … ` `` is sugar for `quote { … }`.
+  - Example: ``const EXPR2 = `1 + x`;``
+- Splice prefix: `# TOKEN` is sugar for `splice TOKEN`.
+  - Example (statement position): `const { # BODY; }`
+  - Example (expr position): `let v = # EXPR;`
+
+Within `quote { … }`, a future anti-quote form may allow inline splicing (e.g.,
+`#{expr}`), but for now splicing occurs at the host level only.
