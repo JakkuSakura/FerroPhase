@@ -62,6 +62,8 @@ impl RustPrinter {
             ExprKind::Await(n) => self.print_expr_await(n),
             ExprKind::IntrinsicContainer(n) => self.print_intrinsic_container(n),
             ExprKind::IntrinsicCall(n) => self.print_intrinsic_call(n),
+            ExprKind::Quote(_n) => Ok(quote!({ /* quote */ })),
+            ExprKind::Splice(_n) => Ok(quote!({ /* splice */ })),
             ExprKind::Structural(n) => self.print_structural_expr(n),
             ExprKind::Dereference(n) => self.print_expr_dereference(n),
             ExprKind::FormatString(n) => self.print_expr_format_string(n),

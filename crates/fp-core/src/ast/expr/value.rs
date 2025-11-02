@@ -111,6 +111,38 @@ common_struct! {
 
 pub type ExprIntrinsicCall = IntrinsicCall<IntrinsicCallPayload<Expr, ExprFormatString>>;
 
+// === Quoting & Splicing (AST-level keywords) ===
+
+common_enum! {
+    #[derive(Copy)]
+    pub enum QuoteFragmentKind {
+        Expr,
+        Stmt,
+        Item,
+        Type,
+    }
+}
+
+common_struct! {
+    /// Quote expression: captures a block of code as a compile-time token.
+    ///
+    /// - `block` holds the surface fragment. Kind may be inferred later.
+    /// - `kind` is optional and, when present, indicates explicit fragment kind.
+    pub struct ExprQuote {
+        pub block: ExprBlock,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub kind: Option<QuoteFragmentKind>,
+    }
+}
+
+common_struct! {
+    /// Splice expression: inserts a previously quoted token into the AST.
+    /// The `token` expression should evaluate (in const) to a QuoteToken.
+    pub struct ExprSplice {
+        pub token: BExpr,
+    }
+}
+
 impl Display for ExprFormatString {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "format!(\"")?;

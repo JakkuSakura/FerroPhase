@@ -757,6 +757,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let existing_ty = expr.ty().cloned();
         let var = match expr.kind_mut() {
+            ExprKind::Quote(_quote) => {
+                let any_var = self.fresh_type_var();
+                self.bind(any_var, TypeTerm::Any);
+                any_var
+            }
+            ExprKind::Splice(_splice) => {
+                let any_var = self.fresh_type_var();
+                self.bind(any_var, TypeTerm::Any);
+                any_var
+            }
             ExprKind::IntrinsicContainer(collection) => {
                 let new_expr = collection.clone().into_const_expr();
                 *expr = new_expr;
