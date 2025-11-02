@@ -22,6 +22,20 @@ use fp_typing::AstTypeInferencer;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
+// === Quote token representation (used only inside interpreter via Value::Any) ===
+#[derive(Debug, Clone, PartialEq)]
+pub enum QuotedFragment {
+    Expr(Expr),
+    Stmts(Vec<BlockStmt>),
+    Items(Vec<Item>),
+    Type(Ty),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QuoteToken {
+    pub fragment: QuotedFragment,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpreterMode {
     CompileTime,
@@ -106,6 +120,7 @@ pub struct AstInterpreter<'ctx> {
     pending_expr_ty: Option<Ty>,
     closure_types: HashMap<String, Ty>,
     typer: Option<AstTypeInferencer<'ctx>>,
+    in_const_region: usize,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -135,6 +150,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             pending_expr_ty: None,
             closure_types: HashMap::new(),
             typer: None,
+            in_const_region: 0,
         }
     }
 
@@ -378,6 +394,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let new_expr = collection.clone().into_const_expr();
                 *expr = new_expr;
                 return self.eval_expr(expr);
+            }
+            ExprKind::Quote(quote) => {
+                let token = self.build_quote_token(quote);
+                return Value::any(token);
+            }
+            ExprKind::Splice(_splice) => {
+                self.emit_error("splice cannot be evaluated to a value; it is only valid inside const regions to insert code");
+                return Value::undefined();
             }
             ExprKind::Value(value) => match value.as_ref() {
                 Value::Expr(inner) => {
@@ -2232,6 +2256,39 @@ impl<'ctx> AstInterpreter<'ctx> {
         let mut updated_expr_ty: Option<Ty> = None;
 
         match expr.kind_mut() {
+            ExprKind::Quote(_quote) => {
+                // Quoted fragments inside function analysis remain as-is until evaluated (e.g., by splice)
+            }
+            ExprKind::Splice(splice) => {
+                if self.in_const_region == 0 {
+                    self.emit_error("splice is only valid inside const { ... } regions");
+                    return;
+                }
+                let mut token_expr = splice.token.as_ref().clone();
+                let value = self.eval_expr(&mut token_expr);
+                match value {
+                    Value::Any(any) => {
+                        if let Some(qt) = any.downcast_ref::<QuoteToken>() {
+                            match &qt.fragment {
+                                QuotedFragment::Expr(e) => {
+                                    *expr = e.clone();
+                                    self.mark_mutated();
+                                }
+                                QuotedFragment::Stmts(_)
+                                | QuotedFragment::Items(_)
+                                | QuotedFragment::Type(_) => {
+                                    self.emit_error("cannot splice non-expression token in expression position");
+                                }
+                            }
+                        } else {
+                            self.emit_error("splice expects a quote token value");
+                        }
+                    }
+                    other => {
+                        self.emit_error(format!("splice expects a quote token; found {}", other));
+                    }
+                }
+            }
             ExprKind::IntrinsicContainer(collection) => {
                 let new_expr = collection.clone().into_const_expr();
                 *expr = new_expr;
@@ -2308,6 +2365,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 ));
             }
             ExprKind::IntrinsicCall(call) => {
+                if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
+                    // Enter const region and analyze the block body for splices/quotes
+                    if let IntrinsicCallPayload::Args { args } = &mut call.payload {
+                        if let Some(body) = args.first_mut() {
+                            self.in_const_region += 1;
+                            self.evaluate_function_body(body);
+                            self.in_const_region -= 1;
+                        }
+                    }
+                }
                 self.evaluate_intrinsic_for_function_analysis(call);
             }
             ExprKind::Await(await_expr) => {
@@ -2374,9 +2441,84 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn evaluate_function_block(&mut self, block: &mut ExprBlock) {
         self.push_scope();
-        for stmt in block.stmts.iter_mut() {
-            self.evaluate_function_stmt(stmt);
+        // Rebuild statements to allow splice expansion
+        let mut new_stmts: Vec<BlockStmt> = Vec::with_capacity(block.stmts.len());
+        for mut stmt in std::mem::take(&mut block.stmts) {
+            match &mut stmt {
+                BlockStmt::Expr(expr_stmt) => {
+                    // Handle statement-position splice expansion
+                    if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
+                        if self.in_const_region == 0 {
+                            self.emit_error("splice is only valid inside const { ... } regions");
+                            // Keep original statement to avoid dropping code
+                            new_stmts.push(stmt);
+                        } else {
+                            let mut token_expr = splice.token.as_ref().clone();
+                            let value = self.eval_expr(&mut token_expr);
+                            match value {
+                                Value::Any(any) => {
+                                    if let Some(qt) = any.downcast_ref::<QuoteToken>() {
+                                        match &qt.fragment {
+                                            QuotedFragment::Stmts(stmts) => {
+                                                for s in stmts {
+                                                    new_stmts.push(s.clone());
+                                                }
+                                                self.mark_mutated();
+                                            }
+                                            QuotedFragment::Items(items) => {
+                                                // Insert items at current scope as pending items
+                                                for it in items {
+                                                    let mut cloned = it.clone();
+                                                    self.evaluate_item(&mut cloned);
+                                                }
+                                                // Drop the placeholder statement
+                                                self.mark_mutated();
+                                            }
+                                            QuotedFragment::Expr(e) => {
+                                                // Turn into a plain expression statement
+                                                let mut es = expr_stmt.clone();
+                                                es.expr = e.clone().into();
+                                                es.semicolon = Some(true);
+                                                new_stmts.push(BlockStmt::Expr(es));
+                                                self.mark_mutated();
+                                            }
+                                            QuotedFragment::Type(_) => {
+                                                self.emit_error("cannot splice a type fragment at statement position");
+                                                new_stmts.push(stmt);
+                                            }
+                                        }
+                                    } else {
+                                        self.emit_error("splice expects a quote token value");
+                                        new_stmts.push(stmt);
+                                    }
+                                }
+                                other => {
+                                    self.emit_error(format!(
+                                        "splice expects a quote token; found {}",
+                                        other
+                                    ));
+                                    new_stmts.push(stmt);
+                                }
+                            }
+                        }
+                    } else {
+                        // Generic case: analyze expression and keep statement
+                        self.evaluate_function_body(expr_stmt.expr.as_mut());
+                        new_stmts.push(stmt);
+                    }
+                }
+                BlockStmt::Item(item) => {
+                    self.evaluate_item(item.as_mut());
+                    new_stmts.push(stmt);
+                }
+                BlockStmt::Let(let_stmt) => {
+                    self.evaluate_function_let_stmt(let_stmt);
+                    new_stmts.push(stmt);
+                }
+                BlockStmt::Noop | BlockStmt::Any(_) => new_stmts.push(stmt),
+            }
         }
+        block.stmts = new_stmts;
         if let Some(last) = block.last_expr_mut() {
             self.evaluate_function_body(last);
         }
@@ -3000,6 +3142,32 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::undefined()
             }
         }
+    }
+
+    fn build_quote_token(&mut self, quote: &mut fp_core::ast::ExprQuote) -> QuoteToken {
+        // If kind is explicitly provided, we still infer from block shape to build fragment
+        let block = quote.block.clone();
+        // If only a single expression without preceding statements ⇒ Expr fragment
+        let is_only_expr = block.first_stmts().is_empty() && block.last_expr().is_some();
+        if is_only_expr {
+            let expr = block.last_expr().unwrap().clone();
+            return QuoteToken { fragment: QuotedFragment::Expr(expr) };
+        }
+        // If contains only items ⇒ Items fragment
+        let only_items = block
+            .stmts
+            .iter()
+            .all(|s| matches!(s, BlockStmt::Item(_)));
+        if only_items {
+            let items: Vec<Item> = block
+                .stmts
+                .iter()
+                .filter_map(|s| match s { BlockStmt::Item(i) => Some((**i).clone()), _ => None })
+                .collect();
+            return QuoteToken { fragment: QuotedFragment::Items(items) };
+        }
+        // Fallback ⇒ Stmts fragment (keep entire statement list)
+        QuoteToken { fragment: QuotedFragment::Stmts(block.stmts.clone()) }
     }
 }
 
