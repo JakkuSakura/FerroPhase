@@ -1,14 +1,7 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect,
-    ExprSelectType, ExprStruct, Ident, ItemDefFunction, Locator, Path, Value,
+    BlockStmt, Expr, ExprBlock, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind,
+    ExprStruct, Ident, ItemDefFunction, Locator, Path, Value,
 };
-
-fn env_true(key: &str) -> bool {
-    std::env::var(key).map(|v| {
-        let t = v.trim().to_ascii_lowercase();
-        !t.is_empty() && t != "0" && t != "false" && t != "no"
-    }).unwrap_or(false)
-}
 
 fn path_tail_matches(path: &Path, tail: &[&str]) -> bool {
     if tail.is_empty() {

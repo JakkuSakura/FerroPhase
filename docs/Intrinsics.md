@@ -8,15 +8,16 @@ work in the new world.
 
 Callout: keywords vs builtins
 - Keywords like `const`, `quote`, and `splice` affect staging and are handled by
-  the parser/const evaluator; they are not intrinsics.
-- Builtin macros like `emit!` are sugar that expand to AST after parsing and are
-  not intrinsics either. Intrinsics are library-like operations (e.g.,
-  `sizeof!`, `hasfield!`) resolved through the intrinsic registry.
+  the parser directly and the const evaluator; they are not intrinsics.
+- Builtin macros like `emit!` are sugar recorded as AST during parsing and
+  lowered in a normalization pass; they are not intrinsics either. Intrinsics
+  are library-like operations (e.g., `sizeof!`, `hasfield!`) resolved through
+  the intrinsic registry.
 
 ## Two-Phase Approach
 
 1. **Symbolic AST normalisation**
-   - After parsing and macro expansion, a dedicated pass rewrites
+   - After parsing, a dedicated pass lowers builtin macros and rewrites
      language-specific helpers into canonical `std::…` symbols directly on the
      AST.
    - The pass operates before type inference so the inferencer sees the unified

@@ -19,13 +19,14 @@ lowerings consume the already-typed structures.
    - The frontend stores provenance (`FrontendSnapshot`) on the pipeline so
      later tooling can persist or inspect LAST data without re-parsing.
 
-2. **Parsing, Builtin Macros & Normalisation (AST → AST)**
-   - Builtin macro expansion runs immediately after parsing. Builtins are
-     compiler-reserved forms (e.g., `emit!`) that expand to AST but do not
-     change staging/scoping rules and cannot query types.
-   - Annotation and canonical std remapping execute after expansion while spans
-     are preserved.
-   - The output is the normalised AST that every downstream mode consumes.
+2. **Parsing & Normalisation (AST → AST)**
+   - The parser records macros as AST (`ExprKind::Macro`) without lowering.
+   - A dedicated normalization pass then lowers builtin macros (e.g., `emit!`)
+     and rewrites intrinsic forms. Builtins are compiler-reserved sugar and do
+     not change staging/scoping rules or query types.
+   - Annotation and canonical std remapping execute during normalization while
+     spans are preserved.
+   - The output is the normalized AST that every downstream mode consumes.
 
 3. **Type Enrichment (AST → ASTᵗ)**
    - An Algorithm W style inferencer walks the normalised AST, resolving names
