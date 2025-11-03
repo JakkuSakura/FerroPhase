@@ -743,15 +743,57 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let existing_ty = expr.ty().cloned();
         let var = match expr.kind_mut() {
-            ExprKind::Quote(_quote) => {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                any_var
+            ExprKind::Quote(quote) => {
+                let kind = match quote.kind {
+                    Some(k) => k,
+                    None => infer_quote_kind(&quote.block),
+                };
+                let inner = if matches!(kind, QuoteFragmentKind::Expr) {
+                    let block_var = self.infer_block(&mut quote.block)?;
+                    Some(self.resolve_to_ty(block_var)?)
+                } else {
+                    None
+                };
+                let ty = Ty::QuoteToken(Box::new(TypeQuoteToken { kind, inner: inner.map(Box::new) }));
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Custom(ty.clone()));
+                expr.set_ty(ty);
+                var
             }
-            ExprKind::Splice(_splice) => {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                any_var
+            ExprKind::Splice(splice) => {
+                // Expression-position splice must carry an expr token
+                let token_var = self.infer_expr(splice.token.as_mut())?;
+                let token_ty = self.resolve_to_ty(token_var)?;
+                match token_ty {
+                    Ty::QuoteToken(qt) => match qt.kind {
+                        QuoteFragmentKind::Expr => {
+                            if let Some(inner) = qt.inner.clone() {
+                                let var = self.fresh_type_var();
+                                self.bind(var, TypeTerm::Custom((*inner).clone()));
+                                expr.set_ty(*inner);
+                                var
+                            } else {
+                                self.emit_warning(
+                                    "splice expr token lacks inner type; defaulting to any",
+                                );
+                                let any_var = self.fresh_type_var();
+                                self.bind(any_var, TypeTerm::Any);
+                                any_var
+                            }
+                        }
+                        other => {
+                            self.emit_error(format!(
+                                "splice in expression position requires expr token, found {:?}",
+                                other
+                            ));
+                            self.error_type_var()
+                        }
+                    },
+                    _ => {
+                        self.emit_error("splice expects a quote token expression");
+                        self.error_type_var()
+                    }
+                }
             }
             ExprKind::IntrinsicContainer(collection) => {
                 let new_expr = collection.clone().into_const_expr();
@@ -940,6 +982,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.bind(last, TypeTerm::Unit);
                 }
                 BlockStmt::Expr(expr_stmt) => {
+                    // If this is a splice in statement position, enforce stmt token
+                    if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
+                        let token_var = self.infer_expr(splice.token.as_mut())?;
+                        let token_ty = self.resolve_to_ty(token_var)?;
+                        match token_ty {
+                            Ty::QuoteToken(qt) => {
+                                if !matches!(qt.kind, QuoteFragmentKind::Stmt) {
+                                    self.emit_error(format!(
+                                        "splice in statement position requires stmt token, found {:?}",
+                                        qt.kind
+                                    ));
+                                }
+                            }
+                            _ => self.emit_error("splice expects a quote token expression"),
+                        }
+                        // Statements do not contribute a value
+                        last = self.fresh_type_var();
+                        self.bind(last, TypeTerm::Unit);
+                        continue;
+                    }
                     let expr_var = self.infer_expr(expr_stmt.expr.as_mut())?;
                     if expr_stmt.has_value() {
                         last = expr_var;
@@ -2530,7 +2592,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::Type(_) => self.bind(var, TypeTerm::Custom(ty.clone())),
             Ty::Unknown(_) => self.bind(var, TypeTerm::Unknown),
-            Ty::Value(_) | Ty::AnyBox(_) => {
+            Ty::Value(_) | Ty::AnyBox(_) | Ty::QuoteToken(_) => {
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
         }
@@ -2973,6 +3035,41 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             _ => None,
         }
     }
+
+}
+
+/// Infer the fragment kind for an unkinded quote based on its block shape.
+/// - Single trailing expression and no statements => Expr
+/// - All items at top level => Item
+/// - Otherwise => Stmt
+fn infer_quote_kind(block: &ExprBlock) -> QuoteFragmentKind {
+    let all_items = block
+        .stmts
+        .iter()
+        .all(|s| matches!(s, BlockStmt::Item(_)));
+    let has_non_item_stmt = block
+        .stmts
+        .iter()
+        .any(|s| !matches!(s, BlockStmt::Item(_)));
+
+    if block.stmts.is_empty() {
+        if block.last_expr().is_some() {
+            return QuoteFragmentKind::Expr;
+        }
+        // Empty quote defaults to Stmt
+        return QuoteFragmentKind::Stmt;
+    }
+
+    if all_items {
+        // If there are only items and no trailing expression (or even if there is), it's an item fragment
+        return QuoteFragmentKind::Item;
+    }
+
+    if !has_non_item_stmt && block.last_expr().is_some() {
+        return QuoteFragmentKind::Expr;
+    }
+
+    QuoteFragmentKind::Stmt
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {

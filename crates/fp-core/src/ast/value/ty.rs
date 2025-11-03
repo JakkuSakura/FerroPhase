@@ -6,6 +6,16 @@ use std::hash::Hash;
 
 pub type TypeId = u64;
 pub type BType = Box<Ty>;
+common_struct! {
+    /// Type of a quoted fragment token.
+    /// - `kind` records the fragment kind (expr/stmt/item/type).
+    /// - `inner` may carry the inner expression/type when applicable (e.g., expr quoting).
+    pub struct TypeQuoteToken {
+        pub kind: QuoteFragmentKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub inner: Option<Box<Ty>>,
+    }
+}
 common_enum! {
     /// TypeValue is a solid type value
     pub enum Ty {
@@ -28,6 +38,7 @@ common_enum! {
         Reference(TypeReference),
         Slice(TypeSlice),
         Expr(BExpr),
+        QuoteToken(Box<TypeQuoteToken>),
         AnyBox(AnyBox),
     }
 
