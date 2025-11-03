@@ -2930,7 +2930,7 @@ mod tests {
             outcome
         }
 
-        fn hir(&self, ast: &Node) -> hir::Program {
+        fn hir(&mut self, ast: &Node) -> hir::Program {
             match self.pipeline.stage_hir_generation(
                 ast,
                 &self.options,
@@ -3104,6 +3104,24 @@ mod tests {
                             self.visit_expr(arg);
                         }
                     }
+                    ast::ExprKind::Quote(q) => {
+                        for stmt in &q.block.stmts {
+                            match stmt {
+                                ast::BlockStmt::Expr(expr_stmt) => self.visit_expr(expr_stmt.expr.as_ref()),
+                                ast::BlockStmt::Let(stmt_let) => {
+                                    if let Some(init) = &stmt_let.init {
+                                        self.visit_expr(init);
+                                    }
+                                    if let Some(on_drop) = &stmt_let.diverge {
+                                        self.visit_expr(on_drop);
+                                    }
+                                }
+                                ast::BlockStmt::Item(item) => self.visit_item(item),
+                                ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
+                            }
+                        }
+                    }
+                    ast::ExprKind::Splice(s) => self.visit_expr(&s.token),
                     ast::ExprKind::Value(_)
                     | ast::ExprKind::Locator(_)
                     | ast::ExprKind::Id(_)
@@ -3122,6 +3140,7 @@ mod tests {
                             self.visit_expr(step);
                         }
                     }
+                    _ => {}
                 }
             }
 

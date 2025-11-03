@@ -185,6 +185,9 @@ impl RustParser {
         self.expr_parser().parse_expr(code)
     }
 
+    // Note: macros are recorded as AST (ExprKind::Macro) by the parser.
+    // Lowering occurs later in the normalization stage.
+
     pub(crate) fn lower_expr_macro(&self, mac: syn::ExprMacro) -> Result<Expr> {
         self.expr_parser().lower_expr_macro(mac)
     }
