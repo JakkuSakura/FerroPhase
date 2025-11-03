@@ -43,6 +43,7 @@ impl<'a> ExprParser<'a> {
             syn::Expr::If(i) => self.parse_expr_if(i)?.into(),
             syn::Expr::Loop(l) => self.parse_expr_loop(l)?.into(),
             syn::Expr::Lit(l) => Expr::value(self.parse_literal(l.lit)?),
+            // Record macro invocation as AST; lowering happens in normalization stage.
             syn::Expr::Macro(m) => self.parse_expr_macro(m)?,
             syn::Expr::MethodCall(c) => self.parse_expr_method_call(c)?.into(),
             syn::Expr::Index(i) => self.parse_expr_index(i)?.into(),
@@ -979,6 +980,7 @@ impl<'a> ExprParser<'a> {
             attrs: raw.attrs.clone(),
             mac: raw.mac.clone(),
         };
+        // Record macro invocation as AST; lowering happens later in normalization stage.
         let expr = self.parse_expr_macro(expr_macro)?;
         Ok(BlockStmt::Expr(
             BlockStmtExpr::new(expr).with_semicolon(raw.semi_token.is_some()),

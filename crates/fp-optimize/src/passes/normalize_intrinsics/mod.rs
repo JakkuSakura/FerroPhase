@@ -235,6 +235,8 @@ fn normalize_expr(expr: &mut Expr, strategy: Option<&dyn IntrinsicNormalizer>) -
                 normalize_expr(step, strategy)?;
             }
         }
+        ExprKind::Quote(q) => normalize_block(&mut q.block, strategy)?,
+        ExprKind::Splice(s) => normalize_expr(s.token.as_mut(), strategy)?,
         ExprKind::Id(_) | ExprKind::Locator(_) | ExprKind::Any(_) => {}
     }
     if let Some(new_expr) = replacement {
@@ -346,7 +348,7 @@ fn normalize_intrinsic_call(
 mod tests {
     use super::*;
     use crate::passes::normalize_intrinsics::bootstrap as b;
-    use fp_core::ast::{Ident, Locator, Path};
+    use fp_core::ast::{FormatTemplatePart, Ident, Locator, Path};
 
     #[test]
     fn test_convert_print_args_to_format() {
@@ -363,7 +365,11 @@ mod tests {
     #[test]
     fn test_bootstrap_env_replacement() {
         std::env::set_var("FERROPHASE_BOOTSTRAP", "1");
-        let path = Path::from_segments(["std", "env", "var"]);
+        let path = Path::new(vec![
+            Ident::new("std".to_string()),
+            Ident::new("env".to_string()),
+            Ident::new("var".to_string()),
+        ]);
         let loc = Locator::Path(path);
         let invoke = ExprInvoke {
             target: ExprInvokeTarget::Function(loc),
