@@ -1,7 +1,6 @@
 //! Example: Parse a C file and display the LLVM IR
 
 use fp_clang::{ClangParser, CompileOptions, Standard};
-use std::path::Path;
 
 fn main() -> anyhow::Result<()> {
     // Initialize tracing

@@ -5,7 +5,7 @@ use fp_core::ast::{
 };
 use fp_core::ast::{Ident, Locator, Path};
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
-use std::sync::OnceLock;
+use fp_core::config;
 
 mod macro_lowering;
 
@@ -40,23 +40,7 @@ fn report_unhandled_any(kind: &str, diagnostics: Diagnostics<'_>) {
     }
 }
 
-fn lossy_normalization_mode() -> bool {
-    static LOSSY: OnceLock<bool> = OnceLock::new();
-    *LOSSY.get_or_init(|| {
-        let env_true = |key: &str| {
-            std::env::var(key).map(|val| {
-                let trimmed = val.trim();
-                !trimmed.is_empty() && !matches!(trimmed, "0" | "false" | "FALSE" | "False")
-            })
-        };
-
-        if env_true("FERROPHASE_BOOTSTRAP").unwrap_or(false) {
-            return true;
-        }
-
-        env_true("FERROPHASE_LOSSY").unwrap_or(false)
-    })
-}
+fn lossy_normalization_mode() -> bool { config::lossy_mode() }
 
 pub fn normalize_last_to_ast(node: &mut Node, diagnostics: Diagnostics<'_>) {
     match node.kind_mut() {

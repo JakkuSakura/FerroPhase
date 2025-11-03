@@ -2469,7 +2469,7 @@ fn replay_workspace_modules_lir_blocking(
                     modules.push(workspace::WorkspaceLirModule {
                         id: module.id.clone(),
                         package: package.name.clone(),
-                        kind: module.module_path.first().cloned(),
+                        _kind: module.module_path.first().cloned(),
                         lir: backend.lir_program,
                     });
                 }
@@ -2922,7 +2922,7 @@ mod tests {
 
     impl PipelineHarness {
         fn new(target: PipelineTarget) -> Self {
-            let mut pipeline = Pipeline::new();
+            let pipeline = Pipeline::new();
             let mut options = PipelineOptions::default();
             options.target = target.clone();
             options.base_path = Some(PathBuf::from("unit_test_output"));
