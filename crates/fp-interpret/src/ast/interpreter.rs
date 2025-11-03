@@ -13,6 +13,7 @@ use fp_core::ast::{
     Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::ast::{Ident, Locator};
+use fp_core::ast::TypeQuoteToken;
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
@@ -1564,6 +1565,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     .map(|ret| Box::new(self.substitute_ty(ret.as_ref(), subst))),
             }),
             Ty::Expr(_) => ty.clone(),
+            Ty::QuoteToken(qt) => Ty::QuoteToken(Box::new(TypeQuoteToken {
+                kind: qt.kind,
+                inner: qt.inner.as_ref().map(|inner| Box::new(self.substitute_ty(inner.as_ref(), subst))),
+            })),
             Ty::Structural(structural) => Ty::Structural(structural.clone()),
             Ty::Enum(enm) => Ty::Enum(enm.clone()),
             Ty::ImplTraits(_) | Ty::TypeBounds(_) | Ty::Type(_) | Ty::Value(_) | Ty::AnyBox(_) => {
