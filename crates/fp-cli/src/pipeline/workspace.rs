@@ -1,14 +1,15 @@
 use std::collections::{HashMap, HashSet};
 
 use fp_core::lir;
-use fp_core::workspace::{WorkspaceDocument, WorkspacePackage, WorkspaceModule};
+use fp_core::workspace::WorkspaceDocument;
 
 /// Minimal LIR capture per workspace module during replay.
 #[derive(Clone)]
 pub(crate) struct WorkspaceLirModule {
     pub(crate) id: String,
     pub(crate) package: String,
-    pub(crate) kind: Option<String>,
+    // Kind is currently unused by the assembler; keep for future filtering.
+    pub(crate) _kind: Option<String>,
     pub(crate) lir: lir::LirProgram,
 }
 
@@ -120,7 +121,7 @@ pub(crate) fn assemble_workspace_lir_program(
 mod tests {
     use super::*;
     use fp_core::lir::{CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, Linkage, Name, Ty as LirType};
-    use fp_core::workspace::{WorkspaceDependency, WorkspacePackage};
+    use fp_core::workspace::{WorkspaceDependency, WorkspaceModule, WorkspacePackage};
 
     fn make_func(name: &str) -> LirFunction {
         let sig = LirFunctionSignature { params: vec![], return_type: LirType::Void, is_variadic: false };
@@ -161,13 +162,13 @@ mod tests {
         replay.modules.push(WorkspaceLirModule {
             id: "fp-cli::a".to_string(),
             package: "fp-cli".to_string(),
-            kind: Some("bin".to_string()),
+            _kind: Some("bin".to_string()),
             lir: program_with("foo"),
         });
         replay.modules.push(WorkspaceLirModule {
             id: "beta::b".to_string(),
             package: "beta".to_string(),
-            kind: Some("bin".to_string()),
+            _kind: Some("bin".to_string()),
             lir: {
                 let mut p = LirProgram::new();
                 p.add_function(make_func("foo"));

@@ -19,7 +19,7 @@ use fp_core::error::Result;
 use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Command;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use syn::parse_str;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
@@ -82,7 +82,7 @@ pub struct RustParser {
 
 impl RustParser {
     pub fn new() -> Self {
-        let lossy_mode = detect_lossy_mode();
+        let lossy_mode = fp_core::config::lossy_mode();
         Self::new_with_lossy(lossy_mode)
     }
 
@@ -662,20 +662,4 @@ fn run_cargo_expand(crate_root: &FsPath, target: &ExpandTarget) -> eyre::Result<
     Ok(stdout)
 }
 
-fn detect_lossy_mode() -> bool {
-    static LOSSY: OnceLock<bool> = OnceLock::new();
-    *LOSSY.get_or_init(|| {
-        let env_true = |key: &str| {
-            std::env::var(key).map(|val| {
-                let trimmed = val.trim();
-                !trimmed.is_empty() && !matches!(trimmed, "0" | "false" | "FALSE" | "False")
-            })
-        };
-
-        if env_true("FERROPHASE_BOOTSTRAP").unwrap_or(false) {
-            return true;
-        }
-
-        env_true("FERROPHASE_LOSSY").unwrap_or(false)
-    })
-}
+// lossy-mode detection moved to fp_core::config
