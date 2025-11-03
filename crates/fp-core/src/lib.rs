@@ -6,6 +6,7 @@ pub mod macros;
 pub mod ast;
 pub mod collections;
 pub mod context;
+pub mod config;
 pub mod cst;
 pub mod ctx;
 pub mod diagnostics;

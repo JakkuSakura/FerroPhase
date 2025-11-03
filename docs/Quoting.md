@@ -187,3 +187,24 @@ the future:
 
 Within `quote { … }`, a future anti-quote form may allow inline splicing (e.g.,
 `#{expr}`), but for now splicing occurs at the host level only.
+
+## Alternatives Considered
+
+- `emit` keyword vs `emit!` macro
+  - Decision: keep `emit!` as a builtin macro that desugars to `splice (quote stmt { … })`.
+  - Rationale: `emit!` does not define new staging behaviour; it is ergonomics
+    sugar. By keeping staging control in the `quote`/`splice` keywords only,
+    we ensure gating is enforced pre-expansion and avoid conflating surface
+    sugar with compiler semantics.
+
+- `dyn { … }` (explicit runtime blocks inside const)
+  - Decision: not adopted. Using `const { … }` plus `emit!` (or `splice quote`) keeps
+    a single staging construct while making code generation sites explicit.
+    The compiler already knows which parts are const vs runtime from `const`
+    regions; additional `dyn` syntax adds complexity for little benefit.
+
+- Macros for `quote`/`splice`
+  - Decision: `quote` and `splice` are keywords, not macros.
+  - Rationale: these affect staging, scope hygiene, and type-checking sites.
+    They must be enforced pre‑expansion; the macro system is not a suitable
+    enforcement layer for staging rules or type‑driven placement checks.

@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::OnceLock;
+use fp_core::config;
 
 use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator};
@@ -14,21 +14,7 @@ fn typing_error(msg: impl Into<String>) -> Error {
 
 type TypeVarId = usize;
 
-fn detect_lossy_mode() -> bool {
-    static LOSSY: OnceLock<bool> = OnceLock::new();
-    *LOSSY.get_or_init(|| {
-        let env_true = |key: &str| {
-            std::env::var(key)
-                .map(|val| {
-                    let trimmed = val.trim();
-                    !trimmed.is_empty() && !matches!(trimmed, "0" | "false" | "FALSE" | "False")
-                })
-                .unwrap_or(false)
-        };
-
-        env_true("FERROPHASE_BOOTSTRAP") || env_true("FERROPHASE_LOSSY")
-    })
-}
+fn detect_lossy_mode() -> bool { config::lossy_mode() }
 
 #[derive(Clone, Debug)]
 struct TypeVar {

@@ -109,13 +109,19 @@ impl CargoPackageProvider {
 
 impl PackageProvider for CargoPackageProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        Ok(self.packages.read().unwrap().keys().cloned().collect())
+        let guard = match self.packages.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        Ok(guard.keys().cloned().collect())
     }
 
     fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        self.packages
-            .read()
-            .unwrap()
+        let guard = match self.packages.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
             .get(id)
             .cloned()
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
@@ -139,27 +145,40 @@ impl PackageProvider for CargoPackageProvider {
             package_map.insert(descriptor.id.clone(), Arc::new(descriptor));
         }
 
-        *self.packages.write().unwrap() = package_map;
-        *self.modules.write().unwrap() = module_map;
-        *self.modules_by_package.write().unwrap() = modules_by_pkg;
+        match self.packages.write() {
+            Ok(mut w) => *w = package_map,
+            Err(poison) => *poison.into_inner() = package_map,
+        }
+        match self.modules.write() {
+            Ok(mut w) => *w = module_map,
+            Err(poison) => *poison.into_inner() = module_map,
+        }
+        match self.modules_by_package.write() {
+            Ok(mut w) => *w = modules_by_pkg,
+            Err(poison) => *poison.into_inner() = modules_by_pkg,
+        }
         Ok(())
     }
 }
 
 impl ModuleSource for CargoPackageProvider {
     fn modules_for_package(&self, id: &PackageId) -> ProviderResult<Vec<ModuleId>> {
-        self.modules_by_package
-            .read()
-            .unwrap()
+        let guard = match self.modules_by_package.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
             .get(id)
             .cloned()
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
     }
 
     fn load_module_descriptor(&self, id: &ModuleId) -> ProviderResult<Arc<ModuleDescriptor>> {
-        self.modules
-            .read()
-            .unwrap()
+        let guard = match self.modules.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
             .get(id)
             .cloned()
             .ok_or_else(|| ProviderError::ModuleNotFound(id.clone()))
