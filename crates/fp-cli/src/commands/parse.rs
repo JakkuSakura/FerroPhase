@@ -189,6 +189,8 @@ fn scrub_any_expressions(file: &mut File) {
                     scrub_expr(&mut kw.value);
                 }
             }
+            ExprKind::Quote(q) => scrub_block(&mut q.block),
+            ExprKind::Splice(s) => scrub_expr(s.token.as_mut()),
             ExprKind::Item(item) => scrub_item(item.as_mut()),
             ExprKind::Value(_) => {}
             ExprKind::IntrinsicCall(call) => {

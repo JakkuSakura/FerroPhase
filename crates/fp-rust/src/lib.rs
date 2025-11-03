@@ -75,16 +75,16 @@ pub struct RawExpr {
 unsafe_impl_send_sync!(RawExpr);
 
 #[derive(Debug, Clone)]
-pub struct RawTokenSteam {
+pub struct RawTokenStream {
     pub raw: proc_macro2::TokenStream,
 }
-unsafe_impl_send_sync!(RawTokenSteam);
-impl PartialEq for RawTokenSteam {
+unsafe_impl_send_sync!(RawTokenStream);
+impl PartialEq for RawTokenStream {
     fn eq(&self, other: &Self) -> bool {
         self.raw.to_string() == other.raw.to_string()
     }
 }
-impl Eq for RawTokenSteam {}
+impl Eq for RawTokenStream {}
 #[macro_export]
 macro_rules! fp {
     ($t: tt) => {};
