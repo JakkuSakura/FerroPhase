@@ -838,6 +838,19 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         }
         ast::Ty::Slice(slice) => format!("[{}]", render_ty_brief(slice.elem.as_ref())),
         ast::Ty::Expr(expr) => format!("Expr({})", render_expr_inline(expr)),
+        ast::Ty::QuoteToken(q) => {
+            let kind = match q.kind {
+                ast::QuoteFragmentKind::Expr => "expr",
+                ast::QuoteFragmentKind::Stmt => "stmt",
+                ast::QuoteFragmentKind::Item => "item",
+                ast::QuoteFragmentKind::Type => "type",
+            };
+            if let Some(inner) = &q.inner {
+                format!("QuoteToken<{}>({})", kind, render_ty_brief(inner.as_ref()))
+            } else {
+                format!("QuoteToken<{}>", kind)
+            }
+        }
         ast::Ty::AnyBox(_) => "AnyBox".into(),
     }
 }
