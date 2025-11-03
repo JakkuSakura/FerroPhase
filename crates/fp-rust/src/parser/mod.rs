@@ -13,6 +13,7 @@ use fp_core::bail;
 use itertools::Itertools;
 
 use eyre::{eyre, Context};
+use quote::ToTokens;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use std::fs;
@@ -185,6 +186,57 @@ impl RustParser {
         self.expr_parser().parse_expr(code)
     }
 
+    // Parse an expression from raw tokens; supports semicolon-terminated macro
+    // statements by parsing as a statement and extracting the expression or
+    // macro invocation without lowering.
+    pub fn parse_expr_tokens(
+        &self,
+        tokens: proc_macro2::TokenStream,
+    ) -> Result<Expr> {
+        if let Ok(expr) = syn::parse2::<syn::Expr>(tokens.clone()) {
+            return self.parse_expr(expr);
+        }
+
+        if let Ok(stmt) = syn::parse2::<syn::Stmt>(tokens) {
+            return match stmt {
+                syn::Stmt::Expr(expr, _) => self.parse_expr(expr),
+                syn::Stmt::Macro(raw_mac) => {
+                    // Wrap as ExprMacro and record as AST macro (no lowering here)
+                    let _expr_macro = syn::ExprMacro {
+                        attrs: raw_mac.attrs.clone(),
+                        mac: raw_mac.mac.clone(),
+                    };
+                    // Build macro invocation directly to avoid calling the private helper.
+                    // Rebuild MacroInvocation inline
+                    match crate::parser::parse_path(raw_mac.mac.path.clone()) {
+                        Ok(path) => Ok(Expr::macro_invocation(MacroInvocation::new(
+                            path,
+                            match &raw_mac.mac.delimiter {
+                                syn::MacroDelimiter::Paren(_) => MacroDelimiter::Parenthesis,
+                                syn::MacroDelimiter::Brace(_) => MacroDelimiter::Brace,
+                                syn::MacroDelimiter::Bracket(_) => MacroDelimiter::Bracket,
+                            },
+                            raw_mac.mac.tokens.to_string(),
+                        ))),
+                        Err(err) => self.error(
+                            format!(
+                                "failed to record macro invocation `{}`: {}",
+                                raw_mac.mac.path.to_token_stream(),
+                                err
+                            ),
+                            Expr::unit(),
+                        ),
+                    }
+                }
+                _ => self.error(
+                    "unsupported statement form in parse_expr_tokens",
+                    Expr::unit(),
+                ),
+            };
+        }
+
+        self.error("failed to parse tokens as expression", Expr::unit())
+    }
     // Note: macros are recorded as AST (ExprKind::Macro) by the parser.
     // Lowering occurs later in the normalization stage.
 
