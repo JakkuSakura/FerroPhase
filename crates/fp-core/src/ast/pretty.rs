@@ -289,7 +289,7 @@ impl PrettyPrintable for ast::Expr {
                     .map(|k| format!(" {:?}", k))
                     .unwrap_or_default();
                 ctx.writeln(f, format!("quote{}{}", kind, suffix))?;
-                ctx.with_indent(|ctx| q.block.fmt_pretty(f, ctx))
+                ctx.with_indent(|ctx| ast::Expr::block(q.block.clone()).fmt_pretty(f, ctx))
             }
             ast::ExprKind::Splice(s) => {
                 ctx.writeln(f, format!("splice{}", suffix))?;

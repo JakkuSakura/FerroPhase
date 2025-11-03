@@ -5,7 +5,7 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::Result;
-use fp_optimize::orchestrators::ConstEvaluationOrchestrator;
+use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use fp_rust::printer::RustPrinter;
 
 fn i32_ty() -> Ty {
@@ -64,8 +64,14 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
     fp_core::ast::register_threadlocal_serializer(serializer.clone());
 
     let ctx = SharedScopedContext::new();
-    let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
-    let _ = orchestrator.evaluate(&mut ast, &ctx)?;
+    let options = InterpreterOptions {
+        mode: InterpreterMode::CompileTime,
+        debug_assertions: false,
+        diagnostics: None,
+        diagnostic_context: "ast-interpreter",
+    };
+    let mut interpreter = AstInterpreter::new(&ctx, options);
+    interpreter.interpret(&mut ast);
 
     // Inspect mutated AST: find the function and check a return(42) now exists in body
     let file_ref = match ast.kind() {
@@ -105,4 +111,3 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
 
     Ok(())
 }
-

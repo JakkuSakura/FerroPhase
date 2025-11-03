@@ -357,6 +357,18 @@ impl ClosureLowering {
             }
             ExprKind::Let(expr_let) => self.rewrite_in_expr(expr_let.expr.as_mut())?,
             ExprKind::Macro(_) => {}
+            ExprKind::Quote(q) => {
+                for stmt in &mut q.block.stmts {
+                    self.rewrite_in_stmt(stmt)?;
+                }
+                if let Some(last) = q.block.clone().last_expr_mut() {
+                    let mut last_clone = last.clone();
+                    self.rewrite_in_expr(&mut last_clone)?;
+                }
+            }
+            ExprKind::Splice(s) => {
+                self.rewrite_in_expr(s.token.as_mut())?;
+            }
             ExprKind::Invoke(invoke) => {
                 for arg in &mut invoke.args {
                     self.rewrite_in_expr(arg)?;
@@ -609,6 +621,19 @@ impl CaptureCollector {
 
     fn visit(&mut self, expr: &Expr) {
         match expr.kind() {
+            ExprKind::Quote(q) => {
+                self.scope.push(HashSet::new());
+                for stmt in &q.block.stmts {
+                    self.visit_stmt(stmt);
+                }
+                if let Some(last) = q.block.last_expr() {
+                    self.visit(last);
+                }
+                self.scope.pop();
+            }
+            ExprKind::Splice(s) => {
+                self.visit(s.token.as_ref());
+            }
             ExprKind::Closure(_) | ExprKind::Closured(_) => {}
             ExprKind::IntrinsicContainer(collection) => {
                 let expanded = collection.clone().into_const_expr();
@@ -838,6 +863,17 @@ impl CaptureReplacer {
         }
 
         match expr.kind_mut() {
+            ExprKind::Quote(q) => {
+                for stmt in &mut q.block.stmts {
+                    self.visit_stmt(stmt);
+                }
+                if let Some(last) = q.block.last_expr_mut() {
+                    self.visit(last);
+                }
+            }
+            ExprKind::Splice(s) => {
+                self.visit(s.token.as_mut());
+            }
             ExprKind::Block(block) => {
                 for stmt in &mut block.stmts {
                     self.visit_stmt(stmt);

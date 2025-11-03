@@ -216,6 +216,12 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
                 normalize_expr(value, diagnostics);
             }
         }
+        ExprKind::Quote(q) => {
+            normalize_block(&mut q.block, diagnostics);
+        }
+        ExprKind::Splice(s) => {
+            normalize_bexpr(&mut s.token, diagnostics);
+        }
         ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut(), diagnostics),
         ExprKind::SplatDict(dict) => normalize_expr(dict.dict.as_mut(), diagnostics),
         ExprKind::Macro(_) => {
