@@ -32,8 +32,14 @@ impl SharedValueSlot {
         }
     }
     pub fn with_storage<R>(&self, func: impl FnOnce(&mut ValueSlot) -> R) -> R {
-        let mut storage = self.storage.lock().unwrap();
-        func(&mut storage)
+        match self.storage.lock() {
+            Ok(mut storage) => func(&mut storage),
+            Err(poison) => {
+                // Recover from a poisoned lock by taking the inner value
+                let mut storage = poison.into_inner();
+                func(&mut storage)
+            }
+        }
     }
     pub fn value(&self) -> Option<Value> {
         self.with_storage(|x| x.value.clone())
@@ -160,10 +166,19 @@ impl ScopedContext {
     }
 
     pub fn print_str(&self, s: String) {
-        self.buffer.lock().unwrap().push(s);
+        match self.buffer.lock() {
+            Ok(mut buf) => buf.push(s),
+            Err(poison) => poison.into_inner().push(s),
+        }
     }
     pub fn take_outputs(&self) -> Vec<String> {
-        std::mem::replace(&mut self.buffer.lock().unwrap(), vec![])
+        match self.buffer.lock() {
+            Ok(mut buf) => std::mem::replace(&mut *buf, vec![]),
+            Err(poison) => {
+                let mut buf = poison.into_inner();
+                std::mem::replace(&mut *buf, vec![])
+            }
+        }
     }
 }
 
@@ -204,7 +219,10 @@ impl SharedScopedContext {
     pub fn get_function(&self, key: impl Into<Path>) -> Option<(ValueFunction, Self)> {
         let value = self.get_storage(key, true)?;
         value.with_storage(|value| match value.value.clone()? {
-            Value::Function(func) => Some((func.clone(), Self(value.closure.clone().unwrap()))),
+            Value::Function(func) => {
+                let closure = value.closure.clone()?;
+                Some((func.clone(), Self(closure)))
+            }
             _ => None,
         })
     }
@@ -234,7 +252,7 @@ impl SharedScopedContext {
             "get_storage in {} {} access_local={}",
             self.path, key, access_local
         );
-        self.print_local_values().unwrap();
+        let _ = self.print_local_values();
         if key.segments.is_empty() {
             return None;
         }
@@ -355,12 +373,7 @@ impl SharedScopedContext {
     }
     pub fn get_parent(&self) -> Option<Self> {
         match &self.parent {
-            Some(parent) => match parent.upgrade() {
-                Some(parent) => Some(Self(parent)),
-                None => {
-                    panic!("Context parent is dropped")
-                }
-            },
+            Some(parent) => parent.upgrade().map(Self),
             _ => None,
         }
     }

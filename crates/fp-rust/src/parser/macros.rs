@@ -22,8 +22,8 @@ macro_rules! shll_parse_type {
 #[macro_export]
 macro_rules! shll_parse_expr {
     ($($tt:tt)*) => {{
-        let code: syn::Expr = syn::parse_quote!($($tt)*);
-        fp_rust::parser::RustParser::new().parse_expr(code)?
+        let tokens: proc_macro2::TokenStream = quote::quote!($($tt)*);
+        fp_rust::parser::RustParser::new().parse_expr_tokens(tokens)?
     }};
 }
 #[macro_export]
