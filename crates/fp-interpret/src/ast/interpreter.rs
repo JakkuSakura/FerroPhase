@@ -2516,14 +2516,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.pop_scope();
     }
 
-    fn evaluate_function_stmt(&mut self, stmt: &mut BlockStmt) {
-        match stmt {
-            BlockStmt::Item(item) => self.evaluate_item(item.as_mut()),
-            BlockStmt::Expr(expr_stmt) => self.evaluate_function_body(expr_stmt.expr.as_mut()),
-            BlockStmt::Let(stmt_let) => self.evaluate_function_let_stmt(stmt_let),
-            BlockStmt::Noop | BlockStmt::Any(_) => {}
-        }
-    }
+    // Removed: evaluate_function_stmt was unused and duplicative of evaluate_function_block logic.
 
     fn evaluate_function_let_stmt(&mut self, stmt_let: &mut StmtLet) {
         if let Some(init) = stmt_let.init.as_mut() {

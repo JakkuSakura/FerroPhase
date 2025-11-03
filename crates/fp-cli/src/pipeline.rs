@@ -58,6 +58,71 @@ use workspace::{determine_main_package_name, WorkspaceLirReplay};
 
 #[cfg(feature = "bootstrap")]
 const BOOTSTRAP_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP";
+
+// AST invariant checks
+fn ast_contains_quote_or_splice(node: &Node) -> bool {
+    use fp_core::ast as ast;
+    fn expr_has(e: &ast::Expr) -> bool {
+        use ast::ExprKind::*;
+        match e.kind() {
+            Quote(_) | Splice(_) => true,
+            Block(b) => b.stmts.iter().any(stmt_has) || b.last_expr().map(expr_has).unwrap_or(false),
+            If(i) => expr_has(i.cond.as_ref()) || expr_has(i.then.as_ref()) || i.elze.as_ref().map(|x| expr_has(x.as_ref())).unwrap_or(false),
+            Loop(l) => expr_has(l.body.as_ref()),
+            While(w) => expr_has(w.cond.as_ref()) || expr_has(w.body.as_ref()),
+            Match(m) => m.cases.iter().any(|c| expr_has(c.cond.as_ref()) || expr_has(c.body.as_ref())),
+            Let(l) => expr_has(l.expr.as_ref()),
+            Assign(a) => expr_has(a.target.as_ref()) || expr_has(a.value.as_ref()),
+            Invoke(i) => i.args.iter().any(expr_has),
+            Struct(s) => expr_has(s.name.as_ref()) || s.fields.iter().any(|f| f.value.as_ref().map(expr_has).unwrap_or(false)),
+            Structural(s) => s.fields.iter().any(|f| f.value.as_ref().map(expr_has).unwrap_or(false)),
+            IntrinsicContainer(c) => match c {
+                ast::ExprIntrinsicContainer::VecElements{elements} => elements.iter().any(expr_has),
+                ast::ExprIntrinsicContainer::VecRepeat{elem,len} => expr_has(elem) || expr_has(len),
+                ast::ExprIntrinsicContainer::HashMapEntries{entries} => entries.iter().any(|e| expr_has(&e.key) || expr_has(&e.value)),
+            },
+            Array(a) => a.values.iter().any(expr_has),
+            ArrayRepeat(r) => expr_has(r.elem.as_ref()) || expr_has(r.len.as_ref()),
+            Tuple(t) => t.values.iter().any(expr_has),
+            BinOp(b) => expr_has(b.lhs.as_ref()) || expr_has(b.rhs.as_ref()),
+            UnOp(u) => expr_has(u.val.as_ref()),
+            Reference(r) => expr_has(r.referee.as_ref()),
+            Dereference(d) => expr_has(d.referee.as_ref()),
+            Select(s) => expr_has(s.obj.as_ref()),
+            Index(i) => expr_has(i.obj.as_ref()) || expr_has(i.index.as_ref()),
+            Cast(c) => expr_has(c.expr.as_ref()),
+            Closure(cl) => expr_has(cl.body.as_ref()),
+            Closured(cl) => expr_has(cl.expr.as_ref()),
+            Try(t) => expr_has(t.expr.as_ref()),
+            Paren(p) => expr_has(p.expr.as_ref()),
+            FormatString(fs) => fs.args.iter().any(expr_has),
+            Value(_) | Locator(_) | Id(_) | Item(_) | Any(_) | Await(_) | Range(_) | Splat(_) | SplatDict(_) | IntrinsicCall(_) | Macro(_) => false,
+        }
+    }
+    fn stmt_has(s: &ast::BlockStmt) -> bool {
+        match s {
+            ast::BlockStmt::Expr(e) => expr_has(e.expr.as_ref()),
+            ast::BlockStmt::Let(l) => l.init.as_ref().map(expr_has).unwrap_or(false) || l.diverge.as_ref().map(expr_has).unwrap_or(false),
+            ast::BlockStmt::Item(i) => item_has(i),
+            ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => false,
+        }
+    }
+    fn item_has(i: &ast::Item) -> bool {
+        match i.kind() {
+            ast::ItemKind::DefFunction(f) => expr_has(f.body.as_ref()),
+            ast::ItemKind::DefConst(c) => expr_has(&c.value),
+            ast::ItemKind::DefStatic(s) => expr_has(&s.value),
+            ast::ItemKind::Module(m) => m.items.iter().any(item_has),
+            _ => false,
+        }
+    }
+    match node.kind() {
+        NodeKind::Expr(e) => expr_has(e),
+        NodeKind::Item(i) => item_has(i),
+        NodeKind::File(f) => f.items.iter().any(item_has),
+        _ => false,
+    }
+}
 const BOOTSTRAP_SNAPSHOT_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP_SNAPSHOT";
 #[cfg(feature = "bootstrap")]
 const SNAPSHOT_SCHEMA_VERSION: u32 = 1;
@@ -1244,6 +1309,19 @@ impl Pipeline {
         manager.add_diagnostics(outcome.diagnostics.clone());
         if outcome.has_errors {
             return Err(Self::stage_failure(STAGE_CONST_EVAL));
+        }
+
+        // Enforce: in strict mode (non-tolerant), no quote/splice remain after const-eval
+        if !options.error_tolerance.enabled {
+            if ast_contains_quote_or_splice(ast) {
+                manager.add_diagnostic(
+                    Diagnostic::error(
+                        "quote/splice nodes remain after const-eval in strict mode".to_string(),
+                    )
+                    .with_source_context(STAGE_CONST_EVAL),
+                );
+                return Err(Self::stage_failure(STAGE_CONST_EVAL));
+            }
         }
 
         Ok(outcome)
