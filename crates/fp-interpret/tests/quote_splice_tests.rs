@@ -109,5 +109,53 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
 
     assert!(saw_return_42, "expected spliced return 42; to be present in function body");
 
+    // Also assert no quote/splice nodes remain in the function body after const-eval
+    let mut has_quote_or_splice = false;
+    fn visit_expr(e: &Expr, hit: &mut bool) {
+        match e.kind() {
+            ExprKind::Quote(_) | ExprKind::Splice(_) => { *hit = true; }
+            ExprKind::Block(b) => {
+                for s in &b.stmts {
+                    if let BlockStmt::Expr(es) = s { visit_expr(es.expr.as_ref(), hit); }
+                }
+                if let Some(last) = b.last_expr() { visit_expr(last, hit); }
+            }
+            ExprKind::If(i) => { visit_expr(i.cond.as_ref(), hit); visit_expr(i.then.as_ref(), hit); if let Some(e) = &i.elze { visit_expr(e.as_ref(), hit); } }
+            ExprKind::Loop(l) => visit_expr(l.body.as_ref(), hit),
+            ExprKind::While(w) => { visit_expr(w.cond.as_ref(), hit); visit_expr(w.body.as_ref(), hit); }
+            ExprKind::Match(m) => { for c in &m.cases { visit_expr(c.cond.as_ref(), hit); visit_expr(c.body.as_ref(), hit); } }
+            ExprKind::Let(l) => visit_expr(l.expr.as_ref(), hit),
+            ExprKind::Assign(a) => { visit_expr(a.target.as_ref(), hit); visit_expr(a.value.as_ref(), hit); }
+            ExprKind::Invoke(i) => { for a in &i.args { visit_expr(a, hit); } }
+            ExprKind::Struct(s) => { visit_expr(s.name.as_ref(), hit); for f in &s.fields { if let Some(v) = &f.value { visit_expr(v, hit); } } }
+            ExprKind::Structural(s) => { for f in &s.fields { if let Some(v) = &f.value { visit_expr(v, hit); } } }
+            ExprKind::IntrinsicContainer(c) => match c {
+                ExprIntrinsicContainer::VecElements{elements} => { for e in elements { visit_expr(e, hit); } }
+                ExprIntrinsicContainer::VecRepeat{elem,len} => { visit_expr(elem, hit); visit_expr(len, hit); }
+                ExprIntrinsicContainer::HashMapEntries{entries} => { for e in entries { visit_expr(&e.key, hit); visit_expr(&e.value, hit); } }
+            },
+            ExprKind::Array(a) => { for v in &a.values { visit_expr(v, hit); } }
+            ExprKind::ArrayRepeat(r) => { visit_expr(r.elem.as_ref(), hit); visit_expr(r.len.as_ref(), hit); }
+            ExprKind::Tuple(t) => { for v in &t.values { visit_expr(v, hit); } }
+            ExprKind::BinOp(b) => { visit_expr(b.lhs.as_ref(), hit); visit_expr(b.rhs.as_ref(), hit); }
+            ExprKind::UnOp(u) => visit_expr(u.val.as_ref(), hit),
+            ExprKind::Reference(r) => visit_expr(r.referee.as_ref(), hit),
+            ExprKind::Dereference(d) => visit_expr(d.referee.as_ref(), hit),
+            ExprKind::Select(s) => visit_expr(s.obj.as_ref(), hit),
+            ExprKind::Index(i) => { visit_expr(i.obj.as_ref(), hit); visit_expr(i.index.as_ref(), hit); }
+            ExprKind::Cast(c) => visit_expr(c.expr.as_ref(), hit),
+            ExprKind::Closure(cl) => visit_expr(cl.body.as_ref(), hit),
+            ExprKind::Closured(cl) => visit_expr(cl.expr.as_ref(), hit),
+            ExprKind::Try(t) => visit_expr(t.expr.as_ref(), hit),
+            ExprKind::Paren(p) => visit_expr(p.expr.as_ref(), hit),
+            ExprKind::FormatString(fs) => { for a in &fs.args { visit_expr(a, hit); } },
+            _ => {}
+        }
+    }
+    for s in &block.stmts {
+        if let BlockStmt::Expr(es) = s { visit_expr(es.expr.as_ref(), &mut has_quote_or_splice); }
+    }
+    assert!(!has_quote_or_splice, "quote/splice should not remain after const-eval in function body");
+
     Ok(())
 }
