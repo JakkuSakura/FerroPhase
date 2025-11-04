@@ -190,7 +190,7 @@ impl LlvmCompiler {
 
         // Verify the module
         llvm_ctx.verify_module().map_err(|e| {
-            println!("[fp-llvm] module verification failed: {}", e);
+            tracing::error!("[fp-llvm] module verification failed: {}", e);
             fp_core::error::Error::from(e.to_string())
         })?;
 
@@ -265,7 +265,7 @@ impl LlvmCompiler {
 
         // Verify the module
         llvm_ctx.verify_module().map_err(|e| {
-            println!("[fp-llvm] module verification failed: {}", e);
+            tracing::error!("[fp-llvm] module verification failed: {}", e);
             fp_core::error::Error::from(e.to_string())
         })?;
 

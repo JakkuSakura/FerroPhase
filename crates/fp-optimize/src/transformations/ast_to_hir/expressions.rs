@@ -2,7 +2,6 @@ use super::*;
 use ast::ItemKind;
 use fp_core::ast::PatternKind;
 use fp_rust::parser::{parse_type as parse_raw_type, RustParser};
-use fp_rust::normalization::lower_macro_for_ast;
 use fp_rust::RawExpr;
 
 fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<ast::Expr> {
@@ -149,16 +148,11 @@ impl HirGenerator {
                 }
             }
             ExprKind::Macro(mac) => {
-                // Fallback macro lowering at AST→HIR time; should have been handled in normalization.
-                // Emit a warning so we can track and remove this path once coverage is complete.
-                self.add_warning(
-                    Diagnostic::warning(
-                        "fallback macro lowering triggered at AST→HIR".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT),
-                );
-                let lowered = lower_macro_for_ast(mac, None);
-                return self.transform_expr_to_hir(&lowered);
+                // Hard error: macros must be lowered during normalization.
+                return Err(crate::error::optimization_error(format!(
+                    "macro `{}` was not lowered during normalization",
+                    mac.invocation.path
+                )));
             }
             ExprKind::FormatString(format_str) => {
                 self.transform_format_string_to_hir(format_str)?
