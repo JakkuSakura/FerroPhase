@@ -35,7 +35,12 @@ impl ExprInvokeTarget {
             Value::BinOpKind(kind) => Self::BinOp(kind.clone()),
             Value::Type(ty) => Self::Type(ty.clone()),
             Value::Expr(expr) => Self::expr(*expr),
-            _ => panic!("Invalid value for ExprInvokeTarget::value: {}", value),
+            other => {
+                // Gracefully handle unexpected values by treating them as dynamic expressions.
+                // This avoids panicking in library code paths and keeps the pipeline resilient.
+                tracing::warn!("ExprInvokeTarget::value received unsupported value kind: {}", other);
+                Self::Expr(Expr::value(other).into())
+            }
         }
     }
 }

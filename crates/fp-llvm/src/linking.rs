@@ -401,6 +401,6 @@ mod tests {
     fn test_linker_availability() {
         // This test might fail on some systems, but it's useful for CI
         let available = LlvmLinker::is_available();
-        println!("Linker availability: {}", available);
+        tracing::info!("Linker availability: {}", available);
     }
 }
