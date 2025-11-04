@@ -452,7 +452,7 @@ impl PrettyPrintable for ast::Item {
                 ctx.with_indent(|ctx| {
                     for variant in &def.value.variants {
                         let mut line = String::new();
-                        write!(&mut line, "{}", variant.name).unwrap();
+                        let _ = write!(&mut line, "{}", variant.name);
                         line.push_str(": ");
                         line.push_str(&render_ty_brief(&variant.value));
                         if let Some(expr) = &variant.discriminant {
@@ -513,7 +513,7 @@ impl PrettyPrintable for ast::Item {
                     if def.attrs.is_empty() { "" } else { "[attrs] " },
                     render_function_signature(&def.sig)
                 )
-                .unwrap();
+                .unwrap_or(());
                 if let Some(ty) = def.ty.as_ref() {
                     header.push_str(" : ");
                     header.push_str(&render_type_function(ty));
@@ -828,7 +828,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         ast::Ty::Reference(reference) => {
             let mut out = String::from("&");
             if let Some(lifetime) = &reference.lifetime {
-                write!(&mut out, "'{} ", lifetime).unwrap();
+                let _ = write!(&mut out, "'{} ", lifetime);
             }
             if reference.mutability.unwrap_or(false) {
                 out.push_str("mut ");

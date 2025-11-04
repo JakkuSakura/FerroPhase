@@ -64,7 +64,10 @@ impl TypeRegistry {
     }
 
     fn initialize_primitives(&self) {
-        let mut sizes = self.primitive_sizes.write().unwrap();
+        let mut sizes = match self.primitive_sizes.write() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
         sizes.insert("i8".to_string(), 1);
         sizes.insert("i16".to_string(), 2);
         sizes.insert("i32".to_string(), 4);
@@ -81,8 +84,8 @@ impl TypeRegistry {
 
     /// Register a new type in the registry
     pub fn register_type(&self, type_info: TypeInfo) -> TypeId {
-        let mut types = self.types.write().unwrap();
-        let mut name_to_id = self.name_to_id.write().unwrap();
+        let mut types = match self.types.write() { Ok(g) => g, Err(poison) => poison.into_inner() };
+        let mut name_to_id = match self.name_to_id.write() { Ok(g) => g, Err(poison) => poison.into_inner() };
 
         types.insert(type_info.id, type_info.clone());
         name_to_id.insert(type_info.name.clone(), type_info.id);
@@ -92,12 +95,15 @@ impl TypeRegistry {
 
     /// Get type information by ID
     pub fn get_type_info(&self, type_id: TypeId) -> Option<TypeInfo> {
-        self.types.read().unwrap().get(&type_id).cloned()
+        match self.types.read() {
+            Ok(g) => g.get(&type_id).cloned(),
+            Err(poison) => poison.into_inner().get(&type_id).cloned(),
+        }
     }
 
     /// Get type information by name
     pub fn get_type_by_name(&self, name: &str) -> Option<TypeInfo> {
-        let name_to_id = self.name_to_id.read().unwrap();
+        let name_to_id = match self.name_to_id.read() { Ok(g) => g, Err(poison) => poison.into_inner() };
         let type_id = *name_to_id.get(name)?;
         self.get_type_info(type_id)
     }
@@ -114,7 +120,7 @@ impl TypeRegistry {
                 Ty::Expr(expr) => {
                     if let crate::ast::ExprKind::Locator(locator) = expr.as_ref().kind() {
                         if let Some(ident) = locator.as_ident() {
-                            let sizes = self.primitive_sizes.read().unwrap();
+                            let sizes = match self.primitive_sizes.read() { Ok(g) => g, Err(poison) => poison.into_inner() };
                             return sizes.get(&ident.name).copied().ok_or_else(|| {
                                 report_error(format!("Unknown primitive type: {}", ident.name))
                             });
@@ -169,7 +175,7 @@ impl TypeRegistry {
 
     /// Add a method to an existing type
     pub fn add_method(&self, type_id: TypeId, method: MethodInfo) -> Result<()> {
-        let mut types = self.types.write().unwrap();
+        let mut types = match self.types.write() { Ok(g) => g, Err(poison) => poison.into_inner() };
         if let Some(type_info) = types.get_mut(&type_id) {
             type_info.methods.push(method);
             Ok(())
@@ -180,7 +186,7 @@ impl TypeRegistry {
 
     /// Add a field to an existing struct type (for metaprogramming)
     pub fn add_field(&self, type_id: TypeId, field: FieldInfo) -> Result<()> {
-        let mut types = self.types.write().unwrap();
+        let mut types = match self.types.write() { Ok(g) => g, Err(poison) => poison.into_inner() };
         if let Some(type_info) = types.get_mut(&type_id) {
             type_info.fields.push(field);
             // Invalidate cached size
@@ -193,7 +199,7 @@ impl TypeRegistry {
 
     /// Get all registered types
     pub fn list_types(&self) -> Vec<(TypeId, String)> {
-        let types = self.types.read().unwrap();
+        let types = match self.types.read() { Ok(g) => g, Err(poison) => poison.into_inner() };
         types
             .iter()
             .map(|(id, info)| (*id, info.name.clone()))
