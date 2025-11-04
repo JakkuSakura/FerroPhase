@@ -3,6 +3,7 @@ use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_optimize::transformations::{HirGenerator, IrTransform};
 use fp_rust::parser::RustParser;
+use fp_rust::normalization::normalize_last_to_ast;
 use std::path::PathBuf;
 
 mod support;
@@ -193,9 +194,17 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
 fn transform_source(source: &str) -> OptimizeResult<hir::Program> {
     let parser = RustParser::new();
     let syn_file = syn::parse_file(source).expect("valid Rust source");
-    let ast_file = parser
+    let mut ast_file = parser
         .parse_file_content(PathBuf::from("<memory>"), syn_file)
         .expect("AST parsing succeeds");
+
+    // Lower builtin macros and normalize intrinsic forms before HIR generation
+    let mut node = fp_core::ast::Node::from(fp_core::ast::NodeKind::File(ast_file));
+    normalize_last_to_ast(&mut node, None);
+    let ast_file = match node.kind() {
+        fp_core::ast::NodeKind::File(f) => f.clone(),
+        _ => unreachable!("expected file node after normalization"),
+    };
 
     let mut generator = HirGenerator::new();
     generator.transform(&ast_file)

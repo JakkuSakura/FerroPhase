@@ -665,17 +665,16 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                 if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
                     // Arguments are already annotated by resolve_function_call
-                    eprintln!(
-                        "[eval_invoke] Resolved function: {}, evaluating {} args",
-                        function.name,
-                        invoke.args.len()
+                    tracing::debug!(
+                        target: DEFAULT_DIAGNOSTIC_CONTEXT,
+                        "resolved function: {} with {} args", function.name, invoke.args.len()
                     );
                     let args = self.evaluate_args(&mut invoke.args);
                     let ret_ty = Self::item_function_ret_ty(&function);
                     self.set_pending_expr_ty(ret_ty);
                     return self.call_function(function, args);
                 } else {
-                    eprintln!("[eval_invoke] Failed to resolve function: {}", locator);
+                    tracing::debug!(target: DEFAULT_DIAGNOSTIC_CONTEXT, "failed to resolve function: {}", locator);
                 }
 
                 let _ = self.evaluate_args(&mut invoke.args);
@@ -1855,7 +1854,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(ty) = local_types.get(&format!("#{}", key)) {
             return Some(ty.clone());
         }
-        eprintln!("[resolve_local_ty] miss key {}", key);
+        tracing::debug!(target: DEFAULT_DIAGNOSTIC_CONTEXT, "resolve_local_ty: missing key {}", key);
         None
     }
 
@@ -2451,12 +2450,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                                         }
                                         self.mark_mutated();
                                     }
-                                    QuotedFragment::Items(items) => {
-                                        for it in items {
-                                            let mut cloned = it.clone();
-                                            self.evaluate_item(&mut cloned);
-                                        }
-                                        self.mark_mutated();
+                                    QuotedFragment::Items(_items) => {
+                                        // Forbid: item splicing inside function bodies is not supported
+                                        // Suggest moving item emission to a module-level const region.
+                                        self.emit_error(
+                                            "item splicing is not allowed inside function bodies; move item emission to a module-level const block",
+                                        );
+                                        // Keep the original statement to avoid silently dropping code.
+                                        new_stmts.push(stmt);
                                     }
                                     QuotedFragment::Expr(e) => {
                                         let mut es = expr_stmt.clone();
