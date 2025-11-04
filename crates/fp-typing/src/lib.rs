@@ -1103,10 +1103,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Err(err);
         }
 
-        let context = self
-            .loop_stack
-            .pop()
-            .expect("loop stack underflow when finishing loop inference");
+        let Some(context) = self.loop_stack.pop() else {
+            let message = "loop stack underflow when finishing loop inference".to_string();
+            self.emit_error(message.clone());
+            return Err(typing_error(message));
+        };
 
         if !context.saw_break {
             self.bind(loop_result_var, TypeTerm::Nothing);
@@ -1134,10 +1135,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Err(err);
         }
 
-        let _context = self
-            .loop_stack
-            .pop()
-            .expect("loop stack underflow when finishing while inference");
+        let Some(_context) = self.loop_stack.pop() else {
+            let message = "loop stack underflow when finishing while inference".to_string();
+            self.emit_error(message.clone());
+            return Err(typing_error(message));
+        };
 
         Ok(loop_unit_var)
     }

@@ -315,7 +315,7 @@ impl Default for InMemoryFileSystem {
 
 impl VirtualFileSystem for InMemoryFileSystem {
     fn read(&self, path: &VirtualPath) -> FsResult<Vec<u8>> {
-        let guard = self.root.lock().unwrap();
+        let guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         match guard.get(path) {
             Some(FsNode::File { contents, .. }) => Ok(contents.clone()),
             Some(FsNode::Directory { .. }) => Err(FsError::Io(std::io::Error::new(
@@ -328,7 +328,7 @@ impl VirtualFileSystem for InMemoryFileSystem {
 
     fn write(&self, path: &VirtualPath, contents: &[u8]) -> FsResult<()> {
         self.ensure_parent_exists(path)?;
-        let mut guard = self.root.lock().unwrap();
+        let mut guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         guard.insert(
             path.clone(),
             FsNode::File {
@@ -340,7 +340,7 @@ impl VirtualFileSystem for InMemoryFileSystem {
     }
 
     fn metadata(&self, path: &VirtualPath) -> FsResult<FileMetadata> {
-        let guard = self.root.lock().unwrap();
+        let guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         match guard.get(path) {
             Some(FsNode::File { metadata, .. }) | Some(FsNode::Directory { metadata, .. }) => {
                 Ok(metadata.clone())
@@ -350,7 +350,7 @@ impl VirtualFileSystem for InMemoryFileSystem {
     }
 
     fn remove(&self, path: &VirtualPath) -> FsResult<()> {
-        let mut guard = self.root.lock().unwrap();
+        let mut guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         if !guard.contains_key(path) {
             return Err(FsError::NotFound(path.clone()));
         }
@@ -366,7 +366,7 @@ impl VirtualFileSystem for InMemoryFileSystem {
     }
 
     fn read_dir(&self, path: &VirtualPath) -> FsResult<Vec<DirEntry>> {
-        let guard = self.root.lock().unwrap();
+        let guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         if !guard.contains_key(path) {
             return Err(FsError::NotFound(path.clone()));
         }
@@ -396,12 +396,12 @@ impl VirtualFileSystem for InMemoryFileSystem {
     }
 
     fn exists(&self, path: &VirtualPath) -> bool {
-        let guard = self.root.lock().unwrap();
+        let guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         guard.contains_key(path)
     }
 
     fn mkdirp(&self, path: &VirtualPath) -> FsResult<()> {
-        let mut guard = self.root.lock().unwrap();
+        let mut guard = match self.root.lock() { Ok(g) => g, Err(poison) => poison.into_inner() };
         let mut segments = VecDeque::from(path.segments.clone());
         let mut current = if path.absolute {
             VirtualPath::new_absolute(Vec::<String>::new())
