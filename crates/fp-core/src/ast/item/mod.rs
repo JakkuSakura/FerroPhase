@@ -56,8 +56,16 @@ common_struct! {
 
 impl std::fmt::Display for Item {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let serializer = get_threadlocal_serializer();
-        write!(f, "{}", serializer.serialize_item(self).unwrap())
+        if let Some(serializer) = try_get_threadlocal_serializer() {
+            match serializer.serialize_item(self) {
+                Ok(text) => write!(f, "{}", text),
+                Err(_) => write!(f, "<item serialization error>"),
+            }
+        } else {
+            // Fallback: do not panic if no serializer is registered.
+            // Use Debug for kind since ItemKind may not implement Display/ToString.
+            write!(f, "<item> {:?}", self.kind())
+        }
     }
 }
 
