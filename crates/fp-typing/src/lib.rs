@@ -2783,7 +2783,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Bound(TypeTerm::Any) | TypeVarKind::Bound(TypeTerm::Unknown) => Ok(()),
             TypeVarKind::Link(next) => self.ensure_bool(next, context),
             other => {
-                eprintln!("ensure_bool failure: context={} type={:?}", context, other);
+                tracing::debug!("ensure_bool failure: context={} type={:?}", context, other);
                 self.emit_error(format!("expected boolean for {}", context));
                 Err(typing_error(format!("expected bool, found {:?}", other)))
             }
