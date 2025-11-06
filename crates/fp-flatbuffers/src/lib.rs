@@ -77,6 +77,7 @@ impl AstSerializer for FlatbuffersSerializer {
 
 fn collect_items(source: &str) -> Vec<Item> {
     let mut items = Vec::new();
+    // Compile a static regex; this should never fail and indicates a developer error if it does
     let re = Regex::new(r"^(table|struct|enum)\s+([A-Za-z0-9_]+)").unwrap();
 
     for line in source.lines() {

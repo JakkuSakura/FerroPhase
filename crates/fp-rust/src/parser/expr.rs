@@ -880,11 +880,12 @@ impl<'a> ExprParser<'a> {
                 return Ok(self.make_logging_literal(level, None));
             }
 
-            if let Some(fmt_index) = args
+            if let Some((fmt_index, fmt_literal)) = args
                 .iter()
-                .rposition(|expr| extract_string_literal(expr).is_some())
+                .enumerate()
+                .rev()
+                .find_map(|(i, expr)| extract_string_literal(expr).map(|s| (i, s)))
             {
-                let fmt_literal = extract_string_literal(&args[fmt_index]).unwrap();
                 let trailing_args = args.iter().skip(fmt_index + 1).cloned().collect::<Vec<_>>();
 
                 let mut parts = parse_format_template(&fmt_literal)?;
@@ -1050,7 +1051,10 @@ impl<'a> ExprParser<'a> {
         }
 
         let mut iter = args.into_iter();
-        let condition_expr = iter.next().unwrap();
+        let condition_expr = match iter.next() {
+            Some(e) => e,
+            None => return self.err("assert! requires a condition", Expr::unit()),
+        };
         let message_args: Vec<_> = iter.collect();
 
         let condition = self.parse_expr(condition_expr)?;

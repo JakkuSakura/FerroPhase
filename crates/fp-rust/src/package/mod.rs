@@ -288,7 +288,10 @@ fn module_path_from_relative(relative: &Path) -> Vec<String> {
         return vec!["lib".to_string()];
     }
 
-    let last = components.pop().unwrap();
+    let last = match components.pop() {
+        Some(s) => s,
+        None => return vec!["lib".to_string()],
+    };
     let mut path = components;
     let stem = Path::new(&last)
         .file_stem()

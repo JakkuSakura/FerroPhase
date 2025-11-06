@@ -318,7 +318,6 @@ impl Display for TypeReference {
         let s = get_threadlocal_serializer()
             .serialize_type(&Ty::Reference(self.clone().into()))
             .unwrap();
-
         f.write_str(&s)
     }
 }

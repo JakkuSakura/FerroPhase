@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::Pattern;
+use fp_core::ast::TypeQuoteToken;
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
@@ -13,7 +14,6 @@ use fp_core::ast::{
     Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::ast::{Ident, Locator};
-use fp_core::ast::TypeQuoteToken;
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
@@ -392,7 +392,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return self.eval_expr(expr);
             }
             ExprKind::Quote(_quote) => {
-                self.emit_error("quote cannot be evaluated directly; use it with splice inside const blocks");
+                self.emit_error(
+                    "quote cannot be evaluated directly; use it with splice inside const blocks",
+                );
                 return Value::undefined();
             }
             ExprKind::Splice(_splice) => {
@@ -855,20 +857,26 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Some(Value::undefined());
             }
 
-            match evaluated.into_iter().next().unwrap() {
-                Value::List(list) => {
-                    self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
-                        ty: Box::new(Ty::Any(TypeAny)),
-                    })));
-                    return Some(Value::List(ValueList::new(list.values)));
-                }
-                other => {
-                    self.emit_error(format!(
-                        "Vec::from expects a list literal during const evaluation, got {:?}",
-                        other
-                    ));
+            match evaluated.into_iter().next() {
+                None => {
+                    self.emit_error("Vec::from expects one argument during const evaluation");
                     return Some(Value::undefined());
                 }
+                Some(val) => match val {
+                    Value::List(list) => {
+                        self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                            ty: Box::new(Ty::Any(TypeAny)),
+                        })));
+                        return Some(Value::List(ValueList::new(list.values)));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "Vec::from expects a list literal during const evaluation, got {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
             }
         }
 
@@ -895,41 +903,59 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Some(Value::undefined());
             }
 
-            match evaluated.into_iter().next().unwrap() {
-                Value::List(list) => {
-                    let mut pairs = Vec::with_capacity(list.values.len());
-                    for entry in list.values {
-                        match entry {
-                            Value::Tuple(tuple) if tuple.values.len() == 2 => {
-                                let mut iter = tuple.values.into_iter();
-                                let key = iter.next().unwrap();
-                                let value = iter.next().unwrap();
-                                pairs.push((key, value));
-                            }
-                            Value::List(inner) if inner.values.len() == 2 => {
-                                let mut iter = inner.values.into_iter();
-                                let key = iter.next().unwrap();
-                                let value = iter.next().unwrap();
-                                pairs.push((key, value));
-                            }
-                            other => {
-                                self.emit_error(format!(
+            match evaluated.into_iter().next() {
+                None => {
+                    self.emit_error(
+                        "HashMap::from expects one iterable argument during const evaluation",
+                    );
+                    return Some(Value::undefined());
+                }
+                Some(val) => match val {
+                    Value::List(list) => {
+                        let mut pairs = Vec::with_capacity(list.values.len());
+                        for entry in list.values {
+                            match entry {
+                                Value::Tuple(tuple) if tuple.values.len() == 2 => {
+                                    let mut iter = tuple.values.into_iter();
+                                    if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                        "HashMap::from tuple entry did not contain two elements",
+                                    );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                Value::List(inner) if inner.values.len() == 2 => {
+                                    let mut iter = inner.values.into_iter();
+                                    if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from list entry did not contain two elements",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                other => {
+                                    self.emit_error(format!(
                                     "HashMap::from expects entries to be tuples or 2-element lists, found {:?}",
                                     other
                                 ));
-                                return Some(Value::undefined());
+                                    return Some(Value::undefined());
+                                }
                             }
                         }
+                        return Some(Value::map(pairs));
                     }
-                    return Some(Value::map(pairs));
-                }
-                other => {
-                    self.emit_error(format!(
+                    other => {
+                        self.emit_error(format!(
                         "HashMap::from expects a list of key/value pairs during const evaluation, got {:?}",
                         other
                     ));
-                    return Some(Value::undefined());
-                }
+                        return Some(Value::undefined());
+                    }
+                },
             }
         }
 
@@ -1433,7 +1459,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         if result.is_empty() {
             result.push_str("specialized_fn");
         }
-        if result.chars().next().unwrap().is_ascii_digit() {
+        if result
+            .chars()
+            .next()
+            .map(|c| c.is_ascii_digit())
+            .unwrap_or(false)
+        {
             result.insert(0, '_');
         }
         result
@@ -1566,7 +1597,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             Ty::Expr(_) => ty.clone(),
             Ty::QuoteToken(qt) => Ty::QuoteToken(Box::new(TypeQuoteToken {
                 kind: qt.kind,
-                inner: qt.inner.as_ref().map(|inner| Box::new(self.substitute_ty(inner.as_ref(), subst))),
+                inner: qt
+                    .inner
+                    .as_ref()
+                    .map(|inner| Box::new(self.substitute_ty(inner.as_ref(), subst))),
             })),
             Ty::Structural(structural) => Ty::Structural(structural.clone()),
             Ty::Enum(enm) => Ty::Enum(enm.clone()),
@@ -2269,8 +2303,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                             *expr = e;
                             self.mark_mutated();
                         }
-                        QuotedFragment::Stmts(_) | QuotedFragment::Items(_) | QuotedFragment::Type(_) => {
-                            self.emit_error("cannot splice non-expression token in expression position");
+                        QuotedFragment::Stmts(_)
+                        | QuotedFragment::Items(_)
+                        | QuotedFragment::Type(_) => {
+                            self.emit_error(
+                                "cannot splice non-expression token in expression position",
+                            );
                         }
                     },
                     _ => {
@@ -2443,34 +2481,36 @@ impl<'ctx> AstInterpreter<'ctx> {
                             new_stmts.push(stmt);
                         } else {
                             match splice.token.kind() {
-                                ExprKind::Quote(q) => match self.build_quoted_fragment(q) {
-                                    QuotedFragment::Stmts(stmts) => {
-                                        for s in stmts {
-                                            new_stmts.push(s.clone());
+                                ExprKind::Quote(q) => {
+                                    match self.build_quoted_fragment(q) {
+                                        QuotedFragment::Stmts(stmts) => {
+                                            for s in stmts {
+                                                new_stmts.push(s.clone());
+                                            }
+                                            self.mark_mutated();
                                         }
-                                        self.mark_mutated();
-                                    }
-                                    QuotedFragment::Items(_items) => {
-                                        // Forbid: item splicing inside function bodies is not supported
-                                        // Suggest moving item emission to a module-level const region.
-                                        self.emit_error(
+                                        QuotedFragment::Items(_items) => {
+                                            // Forbid: item splicing inside function bodies is not supported
+                                            // Suggest moving item emission to a module-level const region.
+                                            self.emit_error(
                                             "item splicing is not allowed inside function bodies; move item emission to a module-level const block",
                                         );
-                                        // Keep the original statement to avoid silently dropping code.
-                                        new_stmts.push(stmt);
+                                            // Keep the original statement to avoid silently dropping code.
+                                            new_stmts.push(stmt);
+                                        }
+                                        QuotedFragment::Expr(e) => {
+                                            let mut es = expr_stmt.clone();
+                                            es.expr = e.into();
+                                            es.semicolon = Some(true);
+                                            new_stmts.push(BlockStmt::Expr(es));
+                                            self.mark_mutated();
+                                        }
+                                        QuotedFragment::Type(_) => {
+                                            self.emit_error("cannot splice a type fragment at statement position");
+                                            new_stmts.push(stmt);
+                                        }
                                     }
-                                    QuotedFragment::Expr(e) => {
-                                        let mut es = expr_stmt.clone();
-                                        es.expr = e.into();
-                                        es.semicolon = Some(true);
-                                        new_stmts.push(BlockStmt::Expr(es));
-                                        self.mark_mutated();
-                                    }
-                                    QuotedFragment::Type(_) => {
-                                        self.emit_error("cannot splice a type fragment at statement position");
-                                        new_stmts.push(stmt);
-                                    }
-                                },
+                                }
                                 _ => {
                                     self.emit_error("splice expects a quote token expression");
                                     new_stmts.push(stmt);
@@ -3140,19 +3180,22 @@ impl<'ctx> AstInterpreter<'ctx> {
         // If only a single expression without preceding statements ⇒ Expr fragment
         let is_only_expr = block.first_stmts().is_empty() && block.last_expr().is_some();
         if is_only_expr {
-            let expr = block.last_expr().unwrap().clone();
-            return QuotedFragment::Expr(expr);
+            if let Some(expr) = block.last_expr() {
+                return QuotedFragment::Expr(expr.clone());
+            }
+            // Defensive fallback: should be unreachable given is_only_expr check
+            return QuotedFragment::Stmts(block.stmts.clone());
         }
         // If contains only items ⇒ Items fragment
-        let only_items = block
-            .stmts
-            .iter()
-            .all(|s| matches!(s, BlockStmt::Item(_)));
+        let only_items = block.stmts.iter().all(|s| matches!(s, BlockStmt::Item(_)));
         if only_items {
             let items: Vec<Item> = block
                 .stmts
                 .iter()
-                .filter_map(|s| match s { BlockStmt::Item(i) => Some((**i).clone()), _ => None })
+                .filter_map(|s| match s {
+                    BlockStmt::Item(i) => Some((**i).clone()),
+                    _ => None,
+                })
                 .collect();
             return QuotedFragment::Items(items);
         }

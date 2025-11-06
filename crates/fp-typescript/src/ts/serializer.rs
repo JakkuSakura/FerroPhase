@@ -28,7 +28,10 @@ impl TypeScriptSerializer {
     }
 
     pub fn take_type_defs(&self) -> Option<String> {
-        self.type_defs.write().unwrap().take()
+        match self.type_defs.write() {
+            Ok(mut w) => w.take(),
+            Err(poison) => poison.into_inner().take(),
+        }
     }
 }
 
@@ -39,7 +42,10 @@ impl AstSerializer for TypeScriptSerializer {
         });
         emitter.visit_node(node)?;
         let (code, defs) = emitter.finish();
-        *self.type_defs.write().unwrap() = defs;
+        match self.type_defs.write() {
+            Ok(mut w) => *w = defs,
+            Err(poison) => *poison.into_inner() = defs,
+        }
         Ok(code)
     }
 }
