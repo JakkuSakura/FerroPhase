@@ -50,7 +50,11 @@ impl LanguageFrontend for FerroFrontend {
             Arc::new(DefaultIntrinsicNormalizer::default());
 
         if let Some(path) = path {
-            let mut parser = self.parser.lock().unwrap();
+            // Avoid panicking on poisoned lock; recover from poison
+            let mut parser = match self.parser.lock() {
+                Ok(g) => g,
+                Err(poison) => poison.into_inner(),
+            };
             parser.clear_diagnostics();
             let file = parser.parse_file(&cleaned, path)?;
             let diagnostics = parser.diagnostics();
@@ -76,7 +80,10 @@ impl LanguageFrontend for FerroFrontend {
         }
 
         let (expr, diagnostics) = {
-            let parser = self.parser.lock().unwrap();
+            let parser = match self.parser.lock() {
+                Ok(g) => g,
+                Err(poison) => poison.into_inner(),
+            };
             parser.clear_diagnostics();
             let expr = parser
                 .try_parse_as_file(&cleaned)

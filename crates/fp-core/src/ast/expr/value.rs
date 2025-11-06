@@ -60,7 +60,6 @@ common_struct! {
 impl Display for ExprInvoke {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_invoke(self).unwrap();
-
         f.write_str(&s)
     }
 }
