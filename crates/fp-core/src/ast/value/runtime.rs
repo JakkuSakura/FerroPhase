@@ -130,7 +130,10 @@ impl RuntimeValue {
             RuntimeValue::Borrowed { value, .. } => value.clone(),
             RuntimeValue::BorrowedMut { value, .. } => value.clone(),
             RuntimeValue::Shared(rc) => rc.borrow().clone(),
-            RuntimeValue::SharedAtomic(arc) => arc.read().unwrap().clone(),
+            RuntimeValue::SharedAtomic(arc) => match arc.read() {
+                Ok(guard) => guard.clone(),
+                Err(poison) => poison.into_inner().clone(),
+            },
             RuntimeValue::Extension(ext) => ext.get_value(),
         }
     }

@@ -145,13 +145,19 @@ fn should_descend(entry: &DirEntry) -> bool {
 
 impl PackageProvider for TypeScriptPackageProvider {
     fn list_packages(&self) -> ProviderResult<Vec<PackageId>> {
-        Ok(self.packages.read().unwrap().keys().cloned().collect())
+        let guard = match self.packages.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        Ok(guard.keys().cloned().collect())
     }
 
     fn load_package(&self, id: &PackageId) -> ProviderResult<Arc<PackageDescriptor>> {
-        self.packages
-            .read()
-            .unwrap()
+        let guard = match self.packages.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
             .get(id)
             .cloned()
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
@@ -207,31 +213,56 @@ impl PackageProvider for TypeScriptPackageProvider {
             modules: module_ids.clone(),
         };
 
-        *self.packages.write().unwrap() =
-            HashMap::from([(package_id.clone(), Arc::new(package_descriptor))]);
-        *self.modules.write().unwrap() = modules
-            .into_iter()
-            .map(|descriptor| (descriptor.id.clone(), Arc::new(descriptor)))
-            .collect();
-        *self.modules_by_package.write().unwrap() = HashMap::from([(package_id, module_ids)]);
+        match self.packages.write() {
+            Ok(mut w) => {
+                *w =
+                    HashMap::from([(package_id.clone(), Arc::new(package_descriptor))])
+            }
+            Err(poison) => {
+                *poison.into_inner() =
+                    HashMap::from([(package_id.clone(), Arc::new(package_descriptor))])
+            }
+        }
+        match self.modules.write() {
+            Ok(mut w) => {
+                *w = modules
+                    .into_iter()
+                    .map(|descriptor| (descriptor.id.clone(), Arc::new(descriptor)))
+                    .collect();
+            }
+            Err(poison) => {
+                *poison.into_inner() = modules
+                    .into_iter()
+                    .map(|descriptor| (descriptor.id.clone(), Arc::new(descriptor)))
+                    .collect();
+            }
+        }
+        match self.modules_by_package.write() {
+            Ok(mut w) => *w = HashMap::from([(package_id, module_ids)]),
+            Err(poison) => *poison.into_inner() = HashMap::from([(package_id, module_ids)]),
+        }
         Ok(())
     }
 }
 
 impl ModuleSource for TypeScriptPackageProvider {
     fn modules_for_package(&self, id: &PackageId) -> ProviderResult<Vec<ModuleId>> {
-        self.modules_by_package
-            .read()
-            .unwrap()
+        let guard = match self.modules_by_package.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
             .get(id)
             .cloned()
             .ok_or_else(|| ProviderError::PackageNotFound(id.clone()))
     }
 
     fn load_module_descriptor(&self, id: &ModuleId) -> ProviderResult<Arc<ModuleDescriptor>> {
-        self.modules
-            .read()
-            .unwrap()
+        let guard = match self.modules.read() {
+            Ok(g) => g,
+            Err(poison) => poison.into_inner(),
+        };
+        guard
             .get(id)
             .cloned()
             .ok_or_else(|| ProviderError::ModuleNotFound(id.clone()))

@@ -76,7 +76,13 @@ impl Serialize for AnyBox {
 }
 impl PartialEq for AnyBox {
     fn eq(&self, other: &Self) -> bool {
-        (self.vtable.equals)(self.value.as_ref(), other.value.as_ref())
+        // Compare only when both boxes were constructed for the same concrete type.
+        // If vtables differ, treat values as not equal rather than panicking on a bad downcast.
+        if Arc::ptr_eq(&self.vtable, &other.vtable) {
+            (self.vtable.equals)(self.value.as_ref(), other.value.as_ref())
+        } else {
+            false
+        }
     }
 }
 impl Eq for AnyBox {}

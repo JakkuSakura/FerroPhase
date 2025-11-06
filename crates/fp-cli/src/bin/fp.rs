@@ -499,7 +499,20 @@ fn setup_logging(verbose: u8, quiet: bool) -> Result<()> {
             0 => EnvFilter::new("info"),
             1 => EnvFilter::new("debug"),
             2 => EnvFilter::new("trace"),
-            _ => EnvFilter::new("trace").add_directive("fp=trace".parse().unwrap()),
+            // For very verbose runs, try to add a more specific directive, but never panic
+            _ => {
+                let base = EnvFilter::new("trace");
+                match "fp=trace".parse() {
+                    Ok(d) => base.add_directive(d),
+                    Err(e) => {
+                        tracing::warn!(
+                            "Failed to parse log directive 'fp=trace': {}; falling back to 'trace'",
+                            e
+                        );
+                        base
+                    }
+                }
+            }
         }
     };
 

@@ -1604,8 +1604,12 @@ impl<'ctx> LirCodegen<'ctx> {
             return "_sym".to_string();
         }
 
-        let first = result.chars().next().unwrap();
-        if !matches!(first, 'a'..='z' | 'A'..='Z' | '_' | '$') {
+        let is_valid_start = result
+            .chars()
+            .next()
+            .map(|c| matches!(c, 'a'..='z' | 'A'..='Z' | '_' | '$'))
+            .unwrap_or(false);
+        if !is_valid_start {
             result.insert(0, '_');
         }
 

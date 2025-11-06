@@ -10,7 +10,11 @@ pub fn format_code(s: &str) -> Result<String> {
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
-    fmt.stdin.take().unwrap().write_all(s.as_bytes())?;
+    if let Some(mut stdin) = fmt.stdin.take() {
+        stdin.write_all(s.as_bytes())?;
+    } else {
+        bail!("failed to open rustfmt stdin for writing")
+    }
     let output = fmt.wait_with_output()?;
     if !output.status.success() {
         bail!(
