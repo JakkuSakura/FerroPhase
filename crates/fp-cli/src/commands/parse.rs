@@ -20,7 +20,7 @@ use tracing::warn;
 /// deserialized later (by design). The Rust frontend currently represents macro definitions
 /// as `ItemKind::Any(RawItemMacro)`. We conservatively drop those items from the snapshot
 /// to ensure snapshots can be reloaded in Stage 1.
-#[allow(dead_code)]
+#[cfg(any(test, feature = "bootstrap"))]
 fn prune_raw_item_macros(file: &mut File) {
     use fp_core::ast::ItemKind;
 
@@ -58,7 +58,7 @@ fn prune_raw_item_macros(file: &mut File) {
 
 /// Replace any expression-level `AnyBox` nodes with a harmless unit value so that
 /// the serialized snapshot contains only portable, deserializable nodes.
-#[allow(dead_code)]
+#[cfg(any(test, feature = "bootstrap"))]
 fn scrub_any_expressions(file: &mut File) {
     use fp_core::ast::{
         BlockStmt, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprCast, ExprClosure, ExprField,

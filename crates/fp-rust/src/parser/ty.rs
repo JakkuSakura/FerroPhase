@@ -233,12 +233,12 @@ pub fn parse_type(t: syn::Type) -> Result<Ty> {
     RustParser::new().parse_type_internal(t)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_type_param_bound(b: syn::TypeParamBound) -> Result<Expr> {
     RustParser::new().parse_type_param_bound_internal(b)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_type_param_bounds(bs: Vec<syn::TypeParamBound>) -> Result<TypeBounds> {
     RustParser::new().parse_type_param_bounds_internal(bs)
 }
