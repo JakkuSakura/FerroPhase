@@ -457,6 +457,11 @@ common_struct! {
     }
 }
 impl ValueEscaped {
+    /// Safety and invariants for ValueEscaped
+    /// - The memory pointed to by `ptr` is allocated using the layout derived from `size` and `align`.
+    /// - The allocation is zero-initialized at creation and freed exactly once in Drop.
+    /// - Callers must uphold type safety when using `as_slice[_mut]` and `drop_in_place<T>`.
+    /// - `size` and `align` must describe a valid layout (alignment is non-zero and a power of two).
     pub fn new(size: i64, align: i64) -> Self {
         let layout = std::alloc::Layout::from_size_align(size as _, align as _).unwrap();
         let ptr = unsafe { std::alloc::alloc_zeroed(layout) };

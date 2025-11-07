@@ -386,28 +386,28 @@ impl RustParser {
     }
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_fn_sig(sig: syn::Signature) -> Result<FunctionSignature> {
     RustParser::new().parse_fn_sig_internal(sig)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_item(parser: &RustParser, item: syn::Item) -> Result<Item> {
     parser.parse_item_internal(item)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_trait_item(parser: &RustParser, item: syn::TraitItem) -> Result<Item> {
     parser.parse_trait_item_internal(item)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_impl_trait(im: syn::TypeImplTrait) -> Result<ImplTraits> {
     let parser = RustParser::new();
     parse_impl_trait_with(&parser, im)
 }
 
-#[allow(dead_code)]
+#[cfg(test)]
 pub fn parse_use(u: syn::ItemUse) -> Result<ItemImport> {
     RustParser::new().parse_item_use_internal(u)
 }

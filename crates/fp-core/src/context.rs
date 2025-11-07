@@ -68,14 +68,14 @@ impl SharedValueSlot {
 }
 pub struct ScopedContext {
     parent: Option<Weak<Self>>,
-    #[allow(dead_code)]
-    ident: Ident,
+    // Identifier for debug/provenance; currently unused outside construction
+    _ident: Ident,
     path: Path,
     storages: ConcurrentMap<Ident, SharedValueSlot>,
     childs: ConcurrentMap<Ident, Arc<Self>>,
     buffer: Mutex<Vec<String>>,
-    #[allow(dead_code)]
-    visibility: Visibility,
+    // Visibility tracking placeholder; reserved for future policy checks
+    _visibility: Visibility,
     access_parent_locals: bool,
     execution_mode: ExecutionMode,
 }
@@ -84,12 +84,12 @@ impl ScopedContext {
     pub fn new() -> Self {
         ScopedContext {
             parent: None,
-            ident: Ident::root(),
+            _ident: Ident::root(),
             path: Path::root(),
             storages: Default::default(),
             childs: Default::default(),
             buffer: Mutex::new(vec![]),
-            visibility: Visibility::Public,
+            _visibility: Visibility::Public,
             access_parent_locals: false,
             execution_mode: ExecutionMode::CompileTime, // Default to compile-time
         }
@@ -98,12 +98,12 @@ impl ScopedContext {
     pub fn new_with_mode(mode: ExecutionMode) -> Self {
         ScopedContext {
             parent: None,
-            ident: Ident::root(),
+            _ident: Ident::root(),
             path: Path::root(),
             storages: Default::default(),
             childs: Default::default(),
             buffer: Mutex::new(vec![]),
-            visibility: Visibility::Public,
+            _visibility: Visibility::Public,
             access_parent_locals: false,
             execution_mode: mode,
         }
@@ -203,12 +203,12 @@ impl SharedScopedContext {
     pub fn child(&self, name: Ident, visibility: Visibility, access_parent_locals: bool) -> Self {
         let child = Self(Arc::new(ScopedContext {
             parent: Some(Arc::downgrade(&self.0)),
-            ident: name.clone(),
+            _ident: name.clone(),
             path: self.path.with_ident(name.clone()),
             storages: Default::default(),
             childs: Default::default(),
             buffer: Mutex::new(vec![]),
-            visibility,
+            _visibility: visibility,
             access_parent_locals,
             execution_mode: self.execution_mode, // Inherit execution mode from parent
         }));
