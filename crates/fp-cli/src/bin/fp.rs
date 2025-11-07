@@ -480,9 +480,11 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Err(e) => {
-            eprintln!("{} {}", style("Error:").red().bold(), e);
+            use tracing::error;
+            // Emit via structured logging rather than printing directly
+            error!(error = %e, "{} {}", style("Error:").red().bold(), e);
             if cli.verbose > 0 {
-                eprintln!("{:?}", e);
+                error!(?e, "detailed error context");
             }
             std::process::exit(1);
         }

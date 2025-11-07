@@ -46,7 +46,7 @@ pub fn parse_path(p: syn::Path) -> Result<Path> {
             .try_collect()?,
     })
 }
-#[allow(dead_code)]
+#[cfg(test)]
 fn parse_locator(p: syn::Path) -> Result<Locator> {
     if let Ok(path) = parse_path(p.clone()) {
         return Ok(Locator::path(path));
