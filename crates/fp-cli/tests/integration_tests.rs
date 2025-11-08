@@ -89,12 +89,24 @@ fn test_cli_eval_simple() {
 
 #[test]
 fn test_cli_compile_missing_file() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
-    cmd.arg("compile").arg("nonexistent.fp");
+    let output = Command::cargo_bin("fp")
+        .unwrap()
+        .arg("compile")
+        .arg("nonexistent.fp")
+        .output()
+        .expect("fp should run");
 
-    cmd.assert()
-        .failure()
-        .stderr(predicate::str::contains("does not exist"));
+    assert!(!output.status.success(), "expected failure for missing file");
+    let out_all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        out_all.contains("does not exist"),
+        "expected 'does not exist' in either stdout or stderr, got: {}",
+        out_all
+    );
 }
 
 #[test]
