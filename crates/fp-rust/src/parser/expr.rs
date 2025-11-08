@@ -17,6 +17,9 @@ use syn::punctuated::Punctuated;
 use syn::LitStr;
 use syn::Token;
 
+mod logging;
+mod assert;
+
 static FOR_LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static MATCH_EXPR_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static ASSERT_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -870,83 +873,7 @@ impl<'a> ExprParser<'a> {
         .into())
     }
 
-    fn parse_logging_macro(&self, mac: &syn::Macro, level: LogLevel) -> Result<Expr> {
-        if mac.tokens.is_empty() {
-            return Ok(self.make_logging_literal(level, None));
-        }
-
-        if let Ok(args) = parse_expr_arguments(mac.tokens.clone()) {
-            if args.is_empty() {
-                return Ok(self.make_logging_literal(level, None));
-            }
-
-            if let Some((fmt_index, fmt_literal)) = args
-                .iter()
-                .enumerate()
-                .rev()
-                .find_map(|(i, expr)| extract_string_literal(expr).map(|s| (i, s)))
-            {
-                let trailing_args = args.iter().skip(fmt_index + 1).cloned().collect::<Vec<_>>();
-
-                let mut parts = parse_format_template(&fmt_literal)?;
-                let prefix = level.prefix();
-                if !prefix.is_empty() {
-                    let mut prefixed = Vec::with_capacity(parts.len() + 1);
-                    prefixed.push(FormatTemplatePart::Literal(prefix.to_string()));
-                    prefixed.extend(parts.into_iter());
-                    parts = prefixed;
-                }
-
-                let parsed_args = trailing_args
-                    .into_iter()
-                    .map(|expr| self.parse_expr(expr))
-                    .collect::<Result<Vec<_>>>()?;
-
-                let template = ExprFormatString {
-                    parts,
-                    args: parsed_args,
-                    kwargs: Vec::new(),
-                };
-
-                if fmt_index > 0 {
-                    let macro_name = mac.path.to_token_stream().to_string();
-                    let message = format!(
-                        "logging macro `{}` structured fields are ignored in lossy mode",
-                        macro_name
-                    );
-                    if self.parser.lossy_mode() {
-                        self.parser
-                            .record_diagnostic(DiagnosticLevel::Warning, message);
-                    } else {
-                        return self.parser.error(
-                            format!(
-                                "logging macro `{}` structured fields are not supported",
-                                macro_name
-                            ),
-                            Expr::unit(),
-                        );
-                    }
-                }
-
-                return Ok(ExprIntrinsicCall::new(
-                    IntrinsicCallKind::Println,
-                    IntrinsicCallPayload::Format { template },
-                )
-                .into());
-            }
-        }
-
-        let macro_name = mac.path.to_token_stream().to_string();
-        let tokens_str = mac.tokens.to_string();
-        let fallback = self.make_logging_literal(level, Some(tokens_str));
-        self.warn_or_error_expr(
-            format!(
-                "logging macro `{}` arguments are not yet supported; emitting literal output",
-                macro_name
-            ),
-            fallback,
-        )
-    }
+    // moved to parser/expr_logging.rs
 
     fn make_logging_literal(&self, level: LogLevel, message: Option<String>) -> Expr {
         let mut literal = String::new();
@@ -1011,24 +938,25 @@ impl<'a> ExprParser<'a> {
         Ok(Expr::block(ExprBlock::new_stmts(stmts)))
     }
 
-    fn parse_assert_macro(&self, mac: &syn::Macro, kind: AssertKind) -> Result<Expr> {
+    #[allow(dead_code)]
+    fn parse_assert_macro_infile(&self, mac: &syn::Macro, kind: AssertKind) -> Result<Expr> {
         let args = parse_expr_arguments(mac.tokens.clone())?;
         let base = match kind {
-            AssertKind::Assert => self.lower_assert_condition(args, "assertion failed")?,
+            AssertKind::Assert => self.lower_assert_condition_infile(args, "assertion failed")?,
             AssertKind::DebugAssert => {
-                self.lower_assert_condition(args, "debug assertion failed")?
+                self.lower_assert_condition_infile(args, "debug assertion failed")?
             }
             AssertKind::AssertEq => {
-                self.lower_assert_eq(args, true, "assertion failed: left != right")?
+                self.lower_assert_eq_infile(args, true, "assertion failed: left != right")?
             }
             AssertKind::DebugAssertEq => {
-                self.lower_assert_eq(args, true, "debug assertion failed: left != right")?
+                self.lower_assert_eq_infile(args, true, "debug assertion failed: left != right")?
             }
             AssertKind::AssertNe => {
-                self.lower_assert_eq(args, false, "assertion failed: left == right")?
+                self.lower_assert_eq_infile(args, false, "assertion failed: left == right")?
             }
             AssertKind::DebugAssertNe => {
-                self.lower_assert_eq(args, false, "debug assertion failed: left == right")?
+                self.lower_assert_eq_infile(args, false, "debug assertion failed: left == right")?
             }
         };
 
@@ -1045,7 +973,8 @@ impl<'a> ExprParser<'a> {
         }
     }
 
-    fn lower_assert_condition(&self, args: Vec<syn::Expr>, default_message: &str) -> Result<Expr> {
+    #[allow(dead_code)]
+    fn lower_assert_condition_infile(&self, args: Vec<syn::Expr>, default_message: &str) -> Result<Expr> {
         if args.is_empty() {
             return self.err("assert! requires a condition", Expr::unit());
         }
@@ -1078,7 +1007,8 @@ impl<'a> ExprParser<'a> {
         Ok(Expr::block(ExprBlock::new_stmts(stmts)))
     }
 
-    fn lower_assert_eq(
+    #[allow(dead_code)]
+    fn lower_assert_eq_infile(
         &self,
         args: Vec<syn::Expr>,
         expect_equal: bool,
@@ -1157,7 +1087,7 @@ impl<'a> ExprParser<'a> {
         Ok(Expr::block(ExprBlock::new_stmts(stmts)))
     }
 
-    fn make_failure_stmts(
+    pub(super) fn make_failure_stmts(
         &self,
         message_args: Vec<syn::Expr>,
         default_print_args: Vec<syn::Expr>,
@@ -1259,7 +1189,7 @@ impl<'a> ExprParser<'a> {
         Ok(None)
     }
 
-    fn debug_assertions_intrinsic(&self) -> Expr {
+    pub(super) fn debug_assertions_intrinsic(&self) -> Expr {
         ExprIntrinsicCall::new(
             IntrinsicCallKind::DebugAssertions,
             IntrinsicCallPayload::Args { args: Vec::new() },
@@ -1690,7 +1620,7 @@ fn extract_string_literal(expr: &syn::Expr) -> Option<String> {
     }
 }
 
-fn make_abort_expr() -> Expr {
+pub(super) fn make_abort_expr() -> Expr {
     let path = Path::new(vec![
         Ident::new("std"),
         Ident::new("process"),
