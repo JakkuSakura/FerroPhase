@@ -20,6 +20,8 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_typing::AstTypeInferencer;
+mod interpreter_splicing;
+mod blocks;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
@@ -2284,7 +2286,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn evaluate_function_body(&mut self, expr: &mut Expr) {
+    #[allow(dead_code)]
+    fn evaluate_function_body_moved(&mut self, expr: &mut Expr) {
         let expr_ty_snapshot = expr.ty().cloned();
         let mut updated_expr_ty: Option<Ty> = None;
 
@@ -2466,7 +2469,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn evaluate_function_block(&mut self, block: &mut ExprBlock) {
+    #[allow(dead_code)]
+    fn evaluate_function_block_moved(&mut self, block: &mut ExprBlock) {
         self.push_scope();
         // Rebuild statements to allow splice expansion
         let mut new_stmts: Vec<BlockStmt> = Vec::with_capacity(block.stmts.len());
@@ -2564,7 +2568,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     // Removed: evaluate_function_stmt was unused and duplicative of evaluate_function_block logic.
 
-    fn evaluate_function_let_stmt(&mut self, stmt_let: &mut StmtLet) {
+    #[allow(dead_code)]
+    fn evaluate_function_let_stmt_moved(&mut self, stmt_let: &mut StmtLet) {
         if let Some(init) = stmt_let.init.as_mut() {
             if Self::expr_is_potential_closure(init) {
                 self.evaluate_closure_initializer(&mut stmt_let.pat, init);
@@ -2576,14 +2581,16 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn expr_is_potential_closure(expr: &Expr) -> bool {
+    #[allow(dead_code)]
+    fn expr_is_potential_closure_moved(expr: &Expr) -> bool {
         expr.ty()
             .map(|ty| matches!(ty, Ty::Function(_)))
             .unwrap_or(false)
             || matches!(expr.kind(), ExprKind::Closure(_))
     }
 
-    fn evaluate_closure_initializer(&mut self, pat: &mut Pattern, init: &mut Expr) {
+    #[allow(dead_code)]
+    fn evaluate_closure_initializer_moved(&mut self, pat: &mut Pattern, init: &mut Expr) {
         let mut expr_clone = init.clone();
         let saved_mutated = self.mutations_applied;
         let saved_pending = self.pending_closure.take();
@@ -3174,34 +3181,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn build_quoted_fragment(&mut self, quote: &fp_core::ast::ExprQuote) -> QuotedFragment {
-        // If kind is explicitly provided, we still infer from block shape to build fragment
-        let block = quote.block.clone();
-        // If only a single expression without preceding statements ⇒ Expr fragment
-        let is_only_expr = block.first_stmts().is_empty() && block.last_expr().is_some();
-        if is_only_expr {
-            if let Some(expr) = block.last_expr() {
-                return QuotedFragment::Expr(expr.clone());
-            }
-            // Defensive fallback: should be unreachable given is_only_expr check
-            return QuotedFragment::Stmts(block.stmts.clone());
-        }
-        // If contains only items ⇒ Items fragment
-        let only_items = block.stmts.iter().all(|s| matches!(s, BlockStmt::Item(_)));
-        if only_items {
-            let items: Vec<Item> = block
-                .stmts
-                .iter()
-                .filter_map(|s| match s {
-                    BlockStmt::Item(i) => Some((**i).clone()),
-                    _ => None,
-                })
-                .collect();
-            return QuotedFragment::Items(items);
-        }
-        // Fallback ⇒ Stmts fragment (keep entire statement list)
-        QuotedFragment::Stmts(block.stmts.clone())
-    }
+    // build_quoted_fragment moved to interpreter_splicing.rs
 }
 
 fn intrinsic_symbol(kind: IntrinsicCallKind) -> Option<&'static str> {
