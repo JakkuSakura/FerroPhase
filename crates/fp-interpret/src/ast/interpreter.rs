@@ -22,6 +22,8 @@ use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnO
 use fp_typing::AstTypeInferencer;
 mod interpreter_splicing;
 mod blocks;
+mod const_regions;
+mod intrinsics;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
@@ -2007,7 +2009,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         result
     }
 
-    fn should_replace_intrinsic_with_value(&self, kind: IntrinsicCallKind, value: &Value) -> bool {
+    #[allow(dead_code)]
+    fn should_replace_intrinsic_with_value_moved(&self, kind: IntrinsicCallKind, value: &Value) -> bool {
         if matches!(value, Value::Undefined(_)) {
             return false;
         }
@@ -2187,7 +2190,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn eval_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Value {
+    #[allow(dead_code)]
+    fn eval_intrinsic_moved(&mut self, call: &mut ExprIntrinsicCall) -> Value {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 match self.render_intrinsic_call(call) {
@@ -2607,7 +2611,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn evaluate_intrinsic_for_function_analysis(&mut self, call: &mut ExprIntrinsicCall) {
+    #[allow(dead_code)]
+    fn evaluate_intrinsic_for_function_analysis_moved(&mut self, call: &mut ExprIntrinsicCall) {
         if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
             let value = self.eval_intrinsic(call);
             if !matches!(value, Value::Undefined(_)) {
@@ -2632,7 +2637,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn render_intrinsic_call(
+    #[allow(dead_code)]
+    fn render_intrinsic_call_moved(
         &mut self,
         call: &mut ExprIntrinsicCall,
     ) -> std::result::Result<String, String> {
@@ -2653,7 +2659,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn render_format_template(
+    #[allow(dead_code)]
+    fn render_format_template_moved(
         &mut self,
         template: &mut ExprFormatString,
     ) -> std::result::Result<String, String> {
