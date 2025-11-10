@@ -865,6 +865,126 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    // === Environment helpers (reintroduced after refactor) ===
+    fn insert_value(&mut self, name: &str, value: Value) {
+        if let Some(scope) = self.value_env.last_mut() {
+            scope.insert(name.to_string(), StoredValue::Plain(value));
+        }
+    }
+
+    fn lookup_value(&self, name: &str) -> Option<Value> {
+        for scope in self.value_env.iter().rev() {
+            match scope.get(name) {
+                Some(StoredValue::Plain(v)) => return Some(v.clone()),
+                Some(StoredValue::Closure(_)) => return None,
+                None => {}
+            }
+        }
+        None
+    }
+
+    fn lookup_closure(&self, name: &str) -> Option<ConstClosure> {
+        for scope in self.value_env.iter().rev() {
+            match scope.get(name) {
+                Some(StoredValue::Closure(closure)) => return Some(closure.clone()),
+                Some(StoredValue::Plain(_)) => return None,
+                None => {}
+            }
+        }
+        None
+    }
+
+    fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
+        if let Some(ident) = pattern.as_ident() {
+            self.insert_value(ident.as_str(), value);
+        } else {
+            // Minimal binding for complex patterns; extend when richer patterns are used in const-eval
+            // For now, drop value if we can't bind a simple identifier.
+        }
+    }
+
+    fn take_pending_closure(&mut self) -> Option<ConstClosure> {
+        self.pending_closure.take()
+    }
+
+    fn set_pending_expr_ty(&mut self, ty: Option<Ty>) {
+        let ty = ty.unwrap_or_else(|| Ty::Unit(TypeUnit));
+        self.pending_expr_ty = Some(ty);
+    }
+
+    fn value_function_ret_ty(function: &ValueFunction) -> Option<Ty> {
+        function.sig.ret_ty.clone()
+    }
+
+    fn item_function_ret_ty(function: &ItemDefFunction) -> Option<Ty> {
+        function.sig.ret_ty.clone().or_else(|| {
+            function
+                .ty
+                .as_ref()
+                .and_then(|ty| Self::type_function_ret_ty(ty))
+        })
+    }
+
+    fn annotate_expr_closure(closure: &mut ExprClosure, fn_sig: &TypeFunction) {
+        for (param, param_ty) in closure.params.iter_mut().zip(fn_sig.params.iter()) {
+            if !matches!(param_ty, Ty::Unknown(_)) {
+                param.set_ty(param_ty.clone());
+            }
+        }
+
+        if let Some(ret_ty) = fn_sig.ret_ty.as_ref() {
+            if !matches!(ret_ty.as_ref(), Ty::Unknown(_)) {
+                closure.body.set_ty(ret_ty.as_ref().clone());
+            }
+        }
+    }
+
+    fn annotate_const_closure(closure: &mut ConstClosure, fn_sig: &TypeFunction) {
+        for (param, param_ty) in closure.params.iter_mut().zip(fn_sig.params.iter()) {
+            if !matches!(param_ty, Ty::Unknown(_)) {
+                param.set_ty(param_ty.clone());
+            }
+        }
+
+        closure.function_ty = Some(Ty::Function(fn_sig.clone()));
+    }
+
+    fn annotate_pending_closure(&mut self, pattern: Option<&mut Pattern>, expr: Option<&mut Expr>) {
+        if self.pending_closure.is_none() {
+            return;
+        }
+
+        let candidate_ty = self
+            .pending_closure
+            .as_ref()
+            .and_then(|pending| pending.function_ty.clone())
+            .or_else(|| expr.as_ref().and_then(|e| e.ty().cloned()))
+            .or_else(|| pattern.as_ref().and_then(|p| p.ty().cloned()));
+
+        let Some(function_ty) = candidate_ty else { return; };
+        if matches!(function_ty, Ty::Unknown(_)) { return; }
+
+        if let Some(expr) = expr {
+            expr.set_ty(function_ty.clone());
+            if let Ty::Function(ref fn_sig) = function_ty {
+                if let ExprKind::Closure(closure) = expr.kind_mut() {
+                    Self::annotate_expr_closure(closure, fn_sig);
+                }
+            }
+        }
+
+        if let Some(pattern) = pattern {
+            pattern.set_ty(function_ty.clone());
+        }
+
+        if let Some(pending) = self.pending_closure.as_mut() {
+            pending.function_ty = Some(function_ty.clone());
+            if let Ty::Function(ref fn_sig) = function_ty {
+                Self::annotate_const_closure(pending, fn_sig);
+            }
+        }
+    }
+
     fn sanitize_symbol(name: &str) -> String {
         let mut result = String::with_capacity(name.len());
         for ch in name.chars() {
@@ -886,6 +1006,175 @@ impl<'ctx> AstInterpreter<'ctx> {
             result.insert(0, '_');
         }
         result
+    }
+
+    // Insert a type binding into the current type scope
+    fn insert_type(&mut self, name: &str, ty: Ty) {
+        if let Some(scope) = self.type_env.last_mut() {
+            scope.insert(name.to_string(), ty);
+        }
+    }
+
+    // === Operators (reintroduced for eval_expr) ===
+    fn evaluate_binop(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
+        match op {
+            BinOpKind::Add | BinOpKind::AddTrait => self.binop_add(lhs, rhs),
+            BinOpKind::Sub => self.binop_sub(lhs, rhs),
+            BinOpKind::Mul => self.binop_mul(lhs, rhs),
+            BinOpKind::Div => self.binop_div(lhs, rhs),
+            BinOpKind::Mod => self.binop_mod(lhs, rhs),
+            BinOpKind::Gt | BinOpKind::Ge | BinOpKind::Lt | BinOpKind::Le => {
+                self.binop_ordering(op, lhs, rhs)
+            }
+            BinOpKind::Eq | BinOpKind::Ne => self.binop_equality(op, lhs, rhs),
+            BinOpKind::Or | BinOpKind::And => self.binop_logical(op, lhs, rhs),
+            BinOpKind::BitAnd | BinOpKind::BitOr | BinOpKind::BitXor => {
+                self.binop_bitwise(op, lhs, rhs)
+            }
+        }
+    }
+
+    fn binop_add(&self, lhs: Value, rhs: Value) -> Result<Value> {
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value + r.value)),
+            (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value + r.value)),
+            (Value::String(l), Value::String(r)) => Ok(Value::string(format!("{}{}", l.value, r.value))),
+            other => Err(interpretation_error(format!(
+                "unsupported operands for '+': {:?}", other
+            ))),
+        }
+    }
+    fn binop_sub(&self, lhs: Value, rhs: Value) -> Result<Value> {
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value - r.value)),
+            (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value - r.value)),
+            other => Err(interpretation_error(format!(
+                "unsupported operands for '-': {:?}", other
+            ))),
+        }
+    }
+    fn binop_mul(&self, lhs: Value, rhs: Value) -> Result<Value> {
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value * r.value)),
+            (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value * r.value)),
+            other => Err(interpretation_error(format!(
+                "unsupported operands for '*': {:?}", other
+            ))),
+        }
+    }
+    fn binop_div(&self, lhs: Value, rhs: Value) -> Result<Value> {
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => {
+                if r.value == 0 {
+                    Err(interpretation_error("division by zero".to_string()))
+                } else if l.value % r.value == 0 {
+                    Ok(Value::int(l.value / r.value))
+                } else {
+                    Ok(Value::decimal(l.value as f64 / r.value as f64))
+                }
+            }
+            (Value::Decimal(l), Value::Decimal(r)) => {
+                if r.value == 0.0 {
+                    Err(interpretation_error("division by zero".to_string()))
+                } else {
+                    Ok(Value::decimal(l.value / r.value))
+                }
+            }
+            other => Err(interpretation_error(format!(
+                "unsupported operands for '/': {:?}", other
+            ))),
+        }
+    }
+    fn binop_mod(&self, lhs: Value, rhs: Value) -> Result<Value> {
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value % r.value)),
+            other => Err(interpretation_error(format!(
+                "unsupported operands for '%': {:?}", other
+            ))),
+        }
+    }
+    fn binop_ordering(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
+        use std::cmp::Ordering;
+        let ordering = match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => l.value.cmp(&r.value),
+            (Value::Decimal(l), Value::Decimal(r)) => l.value.total_cmp(&r.value),
+            (Value::String(l), Value::String(r)) => l.value.cmp(&r.value),
+            other => {
+                return Err(interpretation_error(format!(
+                    "unsupported operands for ordering comparison: {:?}", other
+                )))
+            }
+        };
+        let result = match op {
+            BinOpKind::Gt => ordering == Ordering::Greater,
+            BinOpKind::Ge => ordering != Ordering::Less,
+            BinOpKind::Lt => ordering == Ordering::Less,
+            BinOpKind::Le => ordering != Ordering::Greater,
+            _ => unreachable!(),
+        };
+        Ok(Value::bool(result))
+    }
+    fn binop_equality(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
+        let eq = lhs == rhs;
+        let result = match op {
+            BinOpKind::Eq => eq,
+            BinOpKind::Ne => !eq,
+            _ => unreachable!(),
+        };
+        Ok(Value::bool(result))
+    }
+    fn binop_logical(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
+        let (l, r) = match (lhs, rhs) {
+            (Value::Bool(l), Value::Bool(r)) => (l.value, r.value),
+            other => {
+                return Err(interpretation_error(format!(
+                    "logical operators require booleans, found {:?}", other
+                )))
+            }
+        };
+        let result = match op {
+            BinOpKind::Or => l || r,
+            BinOpKind::And => l && r,
+            _ => unreachable!(),
+        };
+        Ok(Value::bool(result))
+    }
+    fn binop_bitwise(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => {
+                let result = match op {
+                    BinOpKind::BitAnd => l.value & r.value,
+                    BinOpKind::BitOr => l.value | r.value,
+                    BinOpKind::BitXor => l.value ^ r.value,
+                    _ => unreachable!(),
+                };
+                Ok(Value::int(result))
+            }
+            other => Err(interpretation_error(format!(
+                "bitwise operators require integers, found {:?}", other
+            ))),
+        }
+    }
+
+    fn evaluate_unary(&self, op: UnOpKind, value: Value) -> Result<Value> {
+        match op {
+            UnOpKind::Not => match value {
+                Value::Bool(b) => Ok(Value::bool(!b.value)),
+                other => Err(interpretation_error(format!(
+                    "operator '!' requires boolean, found {}", other
+                ))),
+            },
+            UnOpKind::Neg => match value {
+                Value::Int(i) => Ok(Value::int(-i.value)),
+                Value::Decimal(d) => Ok(Value::decimal(-d.value)),
+                other => Err(interpretation_error(format!(
+                    "operator '-' requires numeric operand, found {}", other
+                ))),
+            },
+            UnOpKind::Deref | UnOpKind::Any(_) => Err(interpretation_error(
+                "unsupported unary operator in AST interpretation".to_string(),
+            )),
+        }
     }
 
     fn match_type(
@@ -1423,26 +1712,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         result
     }
 
-    #[allow(dead_code)]
-    fn should_replace_intrinsic_with_value_moved(&self, kind: IntrinsicCallKind, value: &Value) -> bool {
-        if matches!(value, Value::Undefined(_)) {
-            return false;
-        }
-
-        matches!(
-            kind,
-            IntrinsicCallKind::SizeOf
-                | IntrinsicCallKind::FieldCount
-                | IntrinsicCallKind::FieldType
-                | IntrinsicCallKind::StructSize
-                | IntrinsicCallKind::TypeName
-                | IntrinsicCallKind::HasField
-                | IntrinsicCallKind::HasMethod
-                | IntrinsicCallKind::MethodCount
-                | IntrinsicCallKind::ConstBlock
-        )
-    }
-
     fn eval_block(&mut self, block: &mut ExprBlock) -> Value {
         self.push_scope();
         let mut last_value = Value::unit();
@@ -1575,344 +1844,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::undefined()
             }
         }
-    }
-
-    #[allow(dead_code)]
-    fn eval_intrinsic_moved(&mut self, call: &mut ExprIntrinsicCall) -> Value {
-        match call.kind {
-            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                match self.render_intrinsic_call(call) {
-                    Ok(output) => {
-                        if call.kind == IntrinsicCallKind::Print {
-                            if let Some(last) = self.stdout.last_mut() {
-                                last.push_str(&output);
-                    if let Some(expr) = args.first_mut() {
-                        return self.eval_expr(expr);
-                    }
-                }
-                Value::unit()
-            }
-            IntrinsicCallKind::Continue => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
-                {
-                    if !args.is_empty() {
-                        self.emit_error("`continue` does not accept a value in const evaluation");
-                    }
-                }
-                Value::unit()
-            }
-            IntrinsicCallKind::ConstBlock => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
-                {
-                    if let Some(expr) = args.first_mut() {
-                        return self.eval_expr(expr);
-                    }
-                }
-                self.emit_error("const block requires an argument");
-                Value::undefined()
-            }
-            _ => {
-                let intrinsic_name = match intrinsic_symbol(call.kind) {
-                    Some(name) => name,
-                    None => {
-                        self.emit_error(format!(
-                            "intrinsic {:?} is not supported during const evaluation",
-                            call.kind
-                        ));
-                        return Value::undefined();
-                    }
-                };
-
-                let args = match &mut call.payload {
-                    fp_core::intrinsics::IntrinsicCallPayload::Args { args } => args,
-                    fp_core::intrinsics::IntrinsicCallPayload::Format { .. } => {
-                        self.emit_error(
-                            "format-style intrinsics are not supported in const evaluation",
-                        );
-                        return Value::undefined();
-                    }
-                };
-
-                let evaluated: Vec<_> = args.iter_mut().map(|expr| self.eval_expr(expr)).collect();
-                if matches!(call.kind, IntrinsicCallKind::CompileWarning) {
-                    if let Some(Value::String(message)) = evaluated.first() {
-                        self.emit_warning(message.value.clone());
-                    }
-                }
-                match self.intrinsics.get(intrinsic_name) {
-                    Some(function) => match function.call(&evaluated, self.ctx) {
-                        Ok(value) => value,
-                        Err(err) => {
-                            self.emit_error(err.to_string());
-                            Value::undefined()
-                        }
-                    },
-                    None => {
-                        self.emit_error(format!(
-                            "intrinsic '{}' is not registered for const evaluation",
-                            intrinsic_name
-                        ));
-                        Value::undefined()
-                    }
-                }
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn evaluate_function_body_moved(&mut self, expr: &mut Expr) {
-        let expr_ty_snapshot = expr.ty().cloned();
-        let mut updated_expr_ty: Option<Ty> = None;
-
-        match expr.kind_mut() {
-            ExprKind::Quote(_quote) => {
-                // Quoted fragments inside function analysis remain as-is until evaluated (e.g., by splice)
-            }
-            ExprKind::Splice(splice) => {
-                if self.in_const_region == 0 {
-                    self.emit_error("splice is only valid inside const { ... } regions");
-                    return;
-                }
-                match splice.token.kind() {
-                    ExprKind::Quote(q) => match self.build_quoted_fragment(q) {
-                        QuotedFragment::Expr(e) => {
-                            *expr = e;
-                            self.mark_mutated();
-                        }
-                        QuotedFragment::Stmts(_)
-                        | QuotedFragment::Items(_)
-                        | QuotedFragment::Type(_) => {
-                            self.emit_error(
-                                "cannot splice non-expression token in expression position",
-                            );
-                        }
-                    },
-                    _ => {
-                        self.emit_error("splice expects a quote token expression");
-                    }
-                }
-            }
-            ExprKind::IntrinsicContainer(collection) => {
-                let new_expr = collection.clone().into_const_expr();
-                *expr = new_expr;
-                self.evaluate_function_body(expr);
-                return;
-            }
-            ExprKind::Block(block) => self.evaluate_function_block(block),
-            ExprKind::If(if_expr) => {
-                self.evaluate_function_body(if_expr.then.as_mut());
-                if let Some(else_expr) = if_expr.elze.as_mut() {
-                    self.evaluate_function_body(else_expr);
-                }
-                self.evaluate_function_body(if_expr.cond.as_mut());
-            }
-            ExprKind::Loop(loop_expr) => self.evaluate_function_body(loop_expr.body.as_mut()),
-            ExprKind::While(while_expr) => {
-                self.evaluate_function_body(while_expr.cond.as_mut());
-                self.evaluate_function_body(while_expr.body.as_mut());
-            }
-            ExprKind::Match(match_expr) => {
-                for case in match_expr.cases.iter_mut() {
-                    self.evaluate_function_body(case.cond.as_mut());
-                    self.evaluate_function_body(case.body.as_mut());
-                }
-            }
-            ExprKind::Let(expr_let) => self.evaluate_function_body(expr_let.expr.as_mut()),
-            ExprKind::Invoke(invoke) => {
-                if let ExprInvokeTarget::Function(locator_ref) = &invoke.target {
-                    if let Some(ident) = locator_ref.as_ident() {
-                        if self.lookup_closure(ident.as_str()).is_some() {
-    fn binop_ordering(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
-        let ordering = match (lhs, rhs) {
-        match op {
-            UnOpKind::Not => match value {
-                Value::Bool(b) => Ok(Value::bool(!b.value)),
-                other => Err(interpretation_error(format!(
-                    "operator '!' requires boolean, found {}",
-                    other
-                ))),
-            },
-            UnOpKind::Neg => match value {
-                Value::Int(i) => Ok(Value::int(-i.value)),
-                Value::Decimal(d) => Ok(Value::decimal(-d.value)),
-                other => Err(interpretation_error(format!(
-                    "operator '-' requires numeric operand, found {}",
-                    other
-                ))),
-            },
-            UnOpKind::Deref | UnOpKind::Any(_) => Err(interpretation_error(
-                "unsupported unary operator in AST interpretation".to_string(),
-            )),
-        }
-    }
-
-    fn annotate_pending_closure(&mut self, pattern: Option<&mut Pattern>, expr: Option<&mut Expr>) {
-        if self.pending_closure.is_none() {
-            return;
-        }
-
-        let candidate_ty = self
-            .pending_closure
-            .as_ref()
-            .and_then(|pending| pending.function_ty.clone())
-            .or_else(|| expr.as_ref().and_then(|expr| expr.ty().cloned()))
-            .or_else(|| pattern.as_ref().and_then(|pat| pat.ty().cloned()));
-
-        let Some(function_ty) = candidate_ty else {
-            return;
-        };
-
-        if matches!(function_ty, Ty::Unknown(_)) {
-            return;
-        }
-
-        if let Some(expr) = expr {
-            expr.set_ty(function_ty.clone());
-            if let Ty::Function(ref fn_sig) = function_ty {
-                if let ExprKind::Closure(closure) = expr.kind_mut() {
-                    Self::annotate_expr_closure(closure, fn_sig);
-                }
-            }
-        }
-
-        if let Some(pattern) = pattern {
-            pattern.set_ty(function_ty.clone());
-        }
-
-        if let Some(pending) = self.pending_closure.as_mut() {
-            pending.function_ty = Some(function_ty.clone());
-            if let Ty::Function(ref fn_sig) = function_ty {
-                Self::annotate_const_closure(pending, fn_sig);
-            }
-        }
-    }
-
-    fn annotate_expr_closure(closure: &mut ExprClosure, fn_sig: &TypeFunction) {
-        for (param, param_ty) in closure.params.iter_mut().zip(fn_sig.params.iter()) {
-            if !matches!(param_ty, Ty::Unknown(_)) {
-                param.set_ty(param_ty.clone());
-            }
-        }
-
-        if let Some(ret_ty) = fn_sig.ret_ty.as_ref() {
-            if !matches!(ret_ty.as_ref(), Ty::Unknown(_)) {
-                closure.body.set_ty(ret_ty.as_ref().clone());
-            }
-        }
-    }
-
-    fn annotate_const_closure(closure: &mut ConstClosure, fn_sig: &TypeFunction) {
-        for (param, param_ty) in closure.params.iter_mut().zip(fn_sig.params.iter()) {
-            if !matches!(param_ty, Ty::Unknown(_)) {
-                param.set_ty(param_ty.clone());
-            }
-        }
-
-        closure.function_ty = Some(Ty::Function(fn_sig.clone()));
-
-        if let Some(ret_ty) = fn_sig.ret_ty.as_ref() {
-            if !matches!(ret_ty.as_ref(), Ty::Unknown(_)) {
-                closure.body.set_ty(ret_ty.as_ref().clone());
-            }
-        }
-    }
-
-    fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
-        if let Some(ident) = pattern.as_ident() {
-            self.insert_value(ident.as_str(), value);
-        } else {
-            self.emit_error("only simple identifier patterns are supported in const evaluation");
-        }
-    }
-
-    fn insert_value(&mut self, name: &str, value: Value) {
-        if let Some(closure) = self.pending_closure.take() {
-            if let Some(fn_ty) = closure.function_ty.clone() {
-                let key = self.qualified_name(name);
-                self.closure_types.insert(key, fn_ty.clone());
-                self.insert_type(name, fn_ty);
-            }
-            if let Some(scope) = self.value_env.last_mut() {
-                scope.insert(name.to_string(), StoredValue::Closure(closure));
-            }
-            return;
-        }
-
-        if let Some(scope) = self.value_env.last_mut() {
-            scope.insert(name.to_string(), StoredValue::Plain(value));
-        }
-    }
-
-    fn insert_type(&mut self, name: &str, ty: Ty) {
-        if let Some(scope) = self.type_env.last_mut() {
-            scope.insert(name.to_string(), ty.clone());
-        }
-        let qualified = self.qualified_name(name);
-        self.global_types.insert(qualified, ty.clone());
-
-        // Sync with typer
-        if let Some(typer) = self.typer.as_mut() {
-            typer.bind_variable(name, ty);
-        }
-    }
-
-    fn lookup_value(&self, name: &str) -> Option<Value> {
-        for scope in self.value_env.iter().rev() {
-            match scope.get(name) {
-                Some(StoredValue::Plain(value)) => return Some(value.clone()),
-                Some(StoredValue::Closure(_)) => return None,
-                None => {}
-            }
-        }
-        if self.is_printf_symbol(name) {
-            return Some(Value::unit());
-        }
-        if name.contains("printf") {
-            return Some(Value::unit());
-        }
-        None
-    }
-
-    fn lookup_closure(&self, name: &str) -> Option<ConstClosure> {
-        for scope in self.value_env.iter().rev() {
-            match scope.get(name) {
-                Some(StoredValue::Closure(closure)) => return Some(closure.clone()),
-                Some(StoredValue::Plain(_)) => return None,
-                None => {}
-            }
-        }
-        None
-    }
-
-    fn take_pending_closure(&mut self) -> Option<ConstClosure> {
-        self.pending_closure.take()
-    }
-
-    fn set_pending_expr_ty(&mut self, ty: Option<Ty>) {
-        let ty = ty.unwrap_or_else(|| Ty::Unit(TypeUnit));
-        self.pending_expr_ty = Some(ty);
-    }
-
-    fn closure_return_ty(closure: &ConstClosure) -> Option<Ty> {
-        closure.ret_ty.clone().or_else(|| {
-            closure
-                .function_ty
-                .as_ref()
-                .and_then(Self::function_ret_ty_from_ty)
-        })
-    }
-
-    fn item_function_ret_ty(function: &ItemDefFunction) -> Option<Ty> {
-        function.sig.ret_ty.clone().or_else(|| {
-            function
-                .ty
-                .as_ref()
-                .and_then(|ty| Self::type_function_ret_ty(ty))
-        })
-    }
-
-    fn value_function_ret_ty(function: &ValueFunction) -> Option<Ty> {
-        function.sig.ret_ty.clone()
     }
 
     fn function_ret_ty_from_ty(ty: &Ty) -> Option<Ty> {
