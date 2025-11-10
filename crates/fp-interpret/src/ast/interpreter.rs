@@ -24,6 +24,8 @@ mod interpreter_splicing;
 mod blocks;
 mod const_regions;
 mod intrinsics;
+mod eval_expr;
+mod eval_stmt;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
@@ -377,7 +379,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn eval_expr(&mut self, expr: &mut Expr) -> Value {
+    #[allow(dead_code)]
+    fn eval_expr_moved(&mut self, expr: &mut Expr) -> Value {
         let expr_ty_snapshot = expr.ty().cloned();
 
         // Check if we need to specialize a function reference before matching
@@ -599,14 +602,16 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn eval_invoke(&mut self, invoke: &mut ExprInvoke) -> Value {
+    #[allow(dead_code)]
+    fn eval_invoke_moved(&mut self, invoke: &mut ExprInvoke) -> Value {
         match self.mode {
             InterpreterMode::CompileTime => self.eval_invoke_compile_time(invoke),
             InterpreterMode::RunTime => self.eval_invoke_runtime(invoke),
         }
     }
 
-    fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
+    #[allow(dead_code)]
+    fn eval_invoke_compile_time_moved(&mut self, invoke: &mut ExprInvoke) -> Value {
         if let ExprInvokeTarget::Method(select) = &mut invoke.target {
             if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                 let value = self.eval_expr(select.obj.as_mut());
@@ -716,7 +721,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn eval_invoke_runtime(&mut self, invoke: &mut ExprInvoke) -> Value {
+    #[allow(dead_code)]
+    fn eval_invoke_runtime_moved(&mut self, invoke: &mut ExprInvoke) -> Value {
         if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
             if self.is_printf_symbol(&locator.to_string()) {
                 let mut evaluated = Vec::with_capacity(invoke.args.len());
@@ -749,11 +755,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         Value::undefined()
     }
 
-    fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
+    #[allow(dead_code)]
+    fn evaluate_args_moved(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
         args.iter_mut().map(|arg| self.eval_expr(arg)).collect()
     }
 
-    fn evaluate_arg_slice(&mut self, args: &mut [Expr]) -> Vec<Value> {
+    #[allow(dead_code)]
+    fn evaluate_arg_slice_moved(&mut self, args: &mut [Expr]) -> Vec<Value> {
         args.iter_mut().map(|arg| self.eval_expr(arg)).collect()
     }
 
