@@ -10,7 +10,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 // Quoted fragments inside function analysis remain as-is until evaluated (e.g., by splice)
             }
             ExprKind::Splice(splice) => {
-                if self.in_const_region == 0 {
+                if !self.in_const_region() {
                     self.emit_error("splice is only valid inside const { ... } regions");
                     return;
                 }
@@ -113,9 +113,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     // Enter const region and analyze the block body for splices/quotes
                     if let IntrinsicCallPayload::Args { args } = &mut call.payload {
                         if let Some(body) = args.first_mut() {
-                            self.in_const_region += 1;
+                            self.enter_const_region();
                             self.evaluate_function_body(body);
-                            self.in_const_region -= 1;
+                            self.exit_const_region();
                         }
                     }
                 }
@@ -192,7 +192,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 BlockStmt::Expr(expr_stmt) => {
                     // Handle statement-position splice expansion
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                        if self.in_const_region == 0 {
+                        if !self.in_const_region() {
                             self.emit_error("splice is only valid inside const { ... } regions");
                             // Keep original statement to avoid dropping code
                             new_stmts.push(stmt);
@@ -240,9 +240,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                             if let IntrinsicCallPayload::Args { args } = &mut call.payload {
                                 if let Some(body_expr) = args.first_mut() {
                                     if let ExprKind::Block(inner_block) = body_expr.kind_mut() {
-                                        self.in_const_region += 1;
+                                        self.enter_const_region();
                                         self.evaluate_function_block(inner_block);
-                                        self.in_const_region -= 1;
+                                        self.exit_const_region();
                                         for s in inner_block.stmts.clone() {
                                             new_stmts.push(s);
                                         }
