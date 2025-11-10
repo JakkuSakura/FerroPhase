@@ -27,16 +27,20 @@ impl PrettyPrintable for ast::Expr {
                 f,
                 format!("value {}{}", summarize_value(value.as_ref()), suffix),
             ),
+            // ast::ExprKind::Block(block) => {
+            //     let count = block.stmts.len();
+            //     let plural = if count == 1 { "" } else { "s" };
+            //     ctx.writeln(f, format!("block ({} stmt{}){}", count, plural, suffix))?;
+            //     ctx.with_indent(|ctx| {
+            //         for stmt in &block.stmts {
+            //             fmt_block_stmt(stmt, f, ctx)?;
+            //         }
+            //         Ok(())
+            //     })
+            // }
             ast::ExprKind::Block(block) => {
-                let count = block.stmts.len();
-                let plural = if count == 1 { "" } else { "s" };
-                ctx.writeln(f, format!("block ({} stmt{}){}", count, plural, suffix))?;
-                ctx.with_indent(|ctx| {
-                    for stmt in &block.stmts {
-                        fmt_block_stmt(stmt, f, ctx)?;
-                    }
-                    Ok(())
-                })
+                ctx.writeln(f, format!("block{}", suffix))?;
+                ctx.with_indent(|ctx| block.fmt_pretty(f, ctx))
             }
             ast::ExprKind::Match(m) => {
                 ctx.writeln(f, format!("match{}", suffix))?;
@@ -1209,6 +1213,20 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
         | ast::ExprKind::Reference(_)
         | ast::ExprKind::Dereference(_)
         | ast::ExprKind::Any(_) => "<expr>".into(),
+    }
+}
+
+impl PrettyPrintable for ast::ExprBlock {
+    fn fmt_pretty(&self, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fmt::Result {
+        let count = self.stmts.len();
+        let plural = if count == 1 { "" } else { "s" };
+        ctx.writeln(f, format!("block ({} stmt{})", count, plural))?;
+        ctx.with_indent(|ctx| {
+            for stmt in &self.stmts {
+                fmt_block_stmt(stmt, f, ctx)?;
+            }
+            Ok(())
+        })
     }
 }
 
