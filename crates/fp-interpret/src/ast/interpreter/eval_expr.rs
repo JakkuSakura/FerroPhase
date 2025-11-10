@@ -364,4 +364,209 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn evaluate_arg_slice(&mut self, args: &mut [Expr]) -> Vec<Value> {
         args.iter_mut().map(|arg| self.eval_expr(arg)).collect()
     }
+
+    // Helpers moved from interpreter.rs to support const-eval invoke resolution.
+    pub(super) fn lookup_callable_value(&mut self, locator: &Locator) -> Option<Value> {
+        locator
+            .as_ident()
+            .and_then(|ident| self.lookup_value(ident.as_str()))
+    }
+
+    pub(super) fn resolve_function_call(
+        &mut self,
+        locator: &mut Locator,
+        args: &mut [Expr],
+    ) -> Option<ItemDefFunction> {
+        let mut candidate_names = vec![locator.to_string()];
+        if let Some(ident) = locator.as_ident() {
+            let simple = ident.as_str().to_string();
+            if !candidate_names.contains(&simple) {
+                candidate_names.push(simple);
+            }
+        }
+
+        for name in &candidate_names {
+            if let Some(function) = self.functions.get(name).cloned() {
+                // Annotate arguments with expected parameter types
+                self.annotate_invoke_args_slice(args, &function.sig.params);
+                return Some(function);
+            }
+        }
+
+        for name in &candidate_names {
+            if let Some(template) = self.generic_functions.get(name).cloned() {
+                if let Some(function) =
+                    self.instantiate_generic_function(name, template, locator, args)
+                {
+                    // Annotate arguments now that we know the specialized function signature
+                    self.annotate_invoke_args_slice(args, &function.sig.params);
+                    return Some(function);
+                }
+            }
+        }
+
+        // Fallback: find by fully qualified name
+        if let Some(function) = {
+            if let Some(ident) = locator.as_ident() {
+                self.functions.get(ident.as_str()).cloned()
+            } else {
+                None
+            }
+        }.or_else(|| self.functions.get(&locator.to_string()).cloned()) {
+            self.annotate_invoke_args_slice(args, &function.sig.params);
+            Some(function)
+        } else {
+            None
+        }
+    }
+
+    pub(super) fn try_handle_const_collection_invoke(
+        &mut self,
+        locator: &Locator,
+        args: &mut [Expr],
+    ) -> Option<Value> {
+        let segments = Self::locator_segments(locator);
+
+        let ends_with = |suffix: &[&str]| -> bool {
+            if segments.len() < suffix.len() {
+                return false;
+            }
+            segments
+                .iter()
+                .rev()
+                .zip(suffix.iter().rev())
+                .all(|(segment, expected)| segment == expected)
+        };
+
+        if ends_with(&["Vec", "new"]) {
+            if !args.is_empty() {
+                let _ = self.evaluate_arg_slice(args);
+                self.emit_error("Vec::new does not take arguments in const evaluation");
+                return Some(Value::undefined());
+            }
+            self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                ty: Box::new(Ty::Any(TypeAny)),
+            })));
+            return Some(Value::List(ValueList::new(Vec::new())));
+        }
+
+        if ends_with(&["Vec", "with_capacity"]) {
+            let _ = self.evaluate_arg_slice(args);
+            self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                ty: Box::new(Ty::Any(TypeAny)),
+            })));
+            return Some(Value::List(ValueList::new(Vec::new())));
+        }
+
+        if ends_with(&["Vec", "from"]) {
+            let evaluated = self.evaluate_arg_slice(args);
+            if evaluated.len() != 1 {
+                self.emit_error("Vec::from expects a single iterable argument in const evaluation");
+                return Some(Value::undefined());
+            }
+
+            match evaluated.into_iter().next() {
+                None => {
+                    self.emit_error("Vec::from expects one argument during const evaluation");
+                    return Some(Value::undefined());
+                }
+                Some(val) => match val {
+                    Value::List(list) => {
+                        self.set_pending_expr_ty(Some(Ty::Vec(TypeVec {
+                            ty: Box::new(Ty::Any(TypeAny)),
+                        })));
+                        return Some(Value::List(ValueList::new(list.values)));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "Vec::from expects a list literal during const evaluation, got {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+            }
+        }
+
+        if ends_with(&["HashMap", "new"]) {
+            if !args.is_empty() {
+                let _ = self.evaluate_arg_slice(args);
+                self.emit_error("HashMap::new does not take arguments in const evaluation");
+                return Some(Value::undefined());
+            }
+            return Some(Value::map(Vec::new()));
+        }
+
+        if ends_with(&["HashMap", "with_capacity"]) {
+            let _ = self.evaluate_arg_slice(args);
+            return Some(Value::map(Vec::new()));
+        }
+
+        if ends_with(&["HashMap", "from"]) {
+            let evaluated = self.evaluate_arg_slice(args);
+            if evaluated.len() != 1 {
+                self.emit_error(
+                    "HashMap::from expects a single iterable argument in const evaluation",
+                );
+                return Some(Value::undefined());
+            }
+
+            match evaluated.into_iter().next() {
+                None => {
+                    self.emit_error(
+                        "HashMap::from expects one iterable argument during const evaluation",
+                    );
+                    return Some(Value::undefined());
+                }
+                Some(val) => match val {
+                    Value::List(list) => {
+                        let mut pairs = Vec::with_capacity(list.values.len());
+                        for entry in list.values {
+                            match entry {
+                                Value::Tuple(tuple) if tuple.values.len() == 2 => {
+                                    let mut iter = tuple.values.into_iter();
+                                    if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from tuple entry did not contain two elements",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                Value::List(inner) if inner.values.len() == 2 => {
+                                    let mut iter = inner.values.into_iter();
+                                    if let (Some(key), Some(value)) = (iter.next(), iter.next()) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from list entry did not contain two elements",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                other => {
+                                    self.emit_error(format!(
+                                        "HashMap::from expects entries to be tuples or 2-element lists, found {:?}",
+                                        other
+                                    ));
+                                    return Some(Value::undefined());
+                                }
+                            }
+                        }
+                        return Some(Value::map(pairs));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "HashMap::from expects a list of key/value pairs during const evaluation, got {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+            }
+        }
+
+        None
+    }
 }
