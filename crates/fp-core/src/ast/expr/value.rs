@@ -5,6 +5,7 @@ use crate::ast::{
     get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprKind, Ident, Locator, Pattern,
     Ty, Value, ValueFunction,
 };
+use crate::ast::ExprBlock;
 use crate::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::{common_enum, common_struct};
