@@ -5,3 +5,4 @@ edition = "2021"
 
 [dependencies]
 fp-core = { path = "../fp-core" }
+sqlparser = { version = "0.44", default-features = false, features = ["std"] }

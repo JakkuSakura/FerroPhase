@@ -11,6 +11,119 @@ use fp_core::query::{QueryDocument, QuerySerializer};
 
 pub use fp_core::query::SqlDialect;
 
+pub mod ast {
+    pub use sqlparser::ast::*;
+}
+
+pub mod parser {
+    pub use sqlparser::parser::Parser;
+}
+
+pub mod dialect {
+    pub use sqlparser::dialect::ClickHouseDialect;
+}
+
+/// Split a SQL payload into individual statements, respecting quoting rules.
+pub fn split_statements(input: &str) -> Vec<String> {
+    let mut statements = Vec::new();
+    let mut current = String::new();
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut prev_char: Option<char> = None;
+
+    for ch in input.chars() {
+        match ch {
+            '\'' if !in_double && !matches!(prev_char, Some('\\')) => {
+                in_single = !in_single;
+                current.push(ch);
+            }
+            '"' if !in_single && !matches!(prev_char, Some('\\')) => {
+                in_double = !in_double;
+                current.push(ch);
+            }
+            ';' if !in_single && !in_double => {
+                if !current.trim().is_empty() {
+                    statements.push(current.trim().to_string());
+                }
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+        prev_char = Some(ch);
+    }
+
+    if !current.trim().is_empty() {
+        statements.push(current.trim().to_string());
+    }
+
+    statements
+}
+
+/// Strip leading `--` and `/* */` style SQL comments.
+pub fn strip_leading_sql_comments(mut sql: &str) -> &str {
+    loop {
+        let trimmed = sql.trim_start();
+        if trimmed.is_empty() {
+            return trimmed;
+        }
+        if trimmed.starts_with("--") {
+            if let Some(line_end) = trimmed.find('\n') {
+                sql = &trimmed[line_end + 1..];
+                continue;
+            } else {
+                return "";
+            }
+        }
+        if trimmed.starts_with("/*") {
+            if let Some(end_idx) = trimmed.find("*/") {
+                sql = &trimmed[end_idx + 2..];
+                continue;
+            } else {
+                return "";
+            }
+        }
+        return trimmed;
+    }
+}
+
+/// Replace a ClickHouse engine name `MixedMergeTree` (case-insensitive) with another engine.
+pub fn replace_engine_case_insensitive(sql: &str, new_engine: &str) -> String {
+    let lower = sql.to_ascii_lowercase();
+    if let Some(pos) = lower.find("mixedmergetree") {
+        let end = pos + "mixedmergetree".len();
+        let mut result =
+            String::with_capacity(sql.len() - ("mixedmergetree".len()) + new_engine.len());
+        result.push_str(&sql[..pos]);
+        result.push_str(new_engine);
+        result.push_str(&sql[end..]);
+        result
+    } else {
+        sql.to_string()
+    }
+}
+
+/// Ensure a `ENGINE = <engine>` clause exists in a CREATE TABLE.
+pub fn ensure_engine_clause(sql: &str, engine: &str) -> String {
+    if sql.to_ascii_lowercase().contains("engine") {
+        return sql.to_string();
+    }
+
+    let lower = sql.to_ascii_lowercase();
+    if let Some(order_pos) = lower.find("order by") {
+        let (before, after) = sql.split_at(order_pos);
+        format!("{} ENGINE = {} {}", before.trim_end(), engine, after)
+    } else {
+        let trimmed = sql.trim_end();
+        let has_semicolon = trimmed.ends_with(';');
+        let base = trimmed.trim_end_matches(';').trim_end();
+        if has_semicolon {
+            format!("{} ENGINE = {};", base, engine)
+        } else {
+            format!("{} ENGINE = {}", base, engine)
+        }
+    }
+}
+
 /// Canonical language identifier for SQL sources.
 pub const SQL: &str = "sql";
 
