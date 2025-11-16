@@ -93,16 +93,20 @@ flags for informational entries but always surfaces warnings and errors.
 
 ## Multi-Language Frontends
 
-- `FrontendRegistry` maps language identifiers and file extensions to
-  `LanguageFrontend` implementations. The default registry currently ships with:
-  - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`) — produces runtime types and code.
-  - `TypeScriptFrontend` for TypeScript/JavaScript families — also runtime types.
-  - `WitFrontend` for WebAssembly Interface Types — treated as *service IDL* + *type IDL* and lowered into regular items.
-  - `SqlFrontend` for `.sql` sources — produces *query documents*.
-  - `PrqlFrontend` for `.prql` pipelines — also *query documents*.
-  - `JsonSchemaFrontend` for `.jsonschema` files — produces *validation schemas* (see `NodeKind::Schema`).
-  - `FlatbuffersFrontend` for `.fbs` files — treated as *type IDL* and lowered into struct/enum items (runtime types after generation).
-- `NodeKind::Query` carries query documents, while `NodeKind::Schema` captures validation schemas. All other IDL data is normalised into the existing `Item`/`Expr` tree so runtime code generation stays uniform.
+- Frontends are wired through `crates/fp-cli/src/languages/frontend.rs` and simple
+  file-extension detection (e.g. `detect_language_source_by_path`). The CLI re-exports
+  concrete frontends (`FerroFrontend`, `TypeScriptFrontend`, `WitFrontend`, etc.) for
+  use by the pipeline without keeping a runtime registry.
+- Shipped frontends:
+  - `FerroFrontend` for FerroPhase/Rust syntax (`.fp`, `.rs`).
+  - `TypeScriptFrontend` for TypeScript/JavaScript families.
+  - `WitFrontend` for WebAssembly Interface Types (service + type IDL).
+  - `SqlFrontend` for `.sql` sources (query documents).
+  - `PrqlFrontend` for `.prql` pipelines (query documents).
+  - `JsonSchemaFrontend` for `.jsonschema` files (validation schemas → `NodeKind::Schema`).
+  - `FlatbuffersFrontend` for `.fbs` files (type IDL lowered into struct/enum items).
+- `NodeKind::Query` carries query documents, while `NodeKind::Schema` captures validation schemas.
+  All other IDL data is normalised into the existing `Item`/`Expr` tree so runtime code generation stays uniform.
 
 ### Terminology cheat sheet
 
@@ -156,15 +160,10 @@ runtime mode after const evaluation completes.
 
 To add a new source language:
 
-1. Implement `LanguageFrontend` for the language, producing LAST metadata and a
-   serializer.
-2. Register the frontend with `FrontendRegistry` (mapping language key and file
-   extensions).
-3. Ensure the new frontend maps its standard library to the canonical `std`
-   vocabulary before returning the AST.
-4. Optionally persist the LAST snapshot (`FrontendSnapshot::serialized`) for
-   debugging tooling.
+1. Implement `LanguageFrontend` for the language, producing LAST metadata and a serializer.
+2. Add/extend extension detection in `crates/fp-cli/src/languages/frontend.rs` so the CLI can pick it by path.
+3. Ensure the new frontend maps its standard library to the canonical `std` vocabulary before returning the AST.
+4. Optionally persist the LAST snapshot (`FrontendSnapshot::serialized`) for debugging tooling.
 
-With the registry in place, the pipeline automatically detects the language
-based on `PipelineOptions.source_language` or the file extension, and the share-
- nothing driver processes the rest identically.
+With extension detection in place, the pipeline automatically picks the frontend
+based on `PipelineOptions.source_language` (override) or the input file extension.
