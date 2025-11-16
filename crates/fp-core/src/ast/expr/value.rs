@@ -2,8 +2,8 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, Locator,
-    Pattern, Ty, Value, ValueFunction,
+    try_get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident,
+    Locator, Pattern, Ty, Value, ValueFunction,
 };
 use crate::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use crate::ops::{BinOpKind, UnOpKind};
@@ -38,7 +38,10 @@ impl ExprInvokeTarget {
             other => {
                 // Gracefully handle unexpected values by treating them as dynamic expressions.
                 // This avoids panicking in library code paths and keeps the pipeline resilient.
-                tracing::warn!("ExprInvokeTarget::value received unsupported value kind: {}", other);
+                tracing::warn!(
+                    "ExprInvokeTarget::value received unsupported value kind: {}",
+                    other
+                );
                 Self::Expr(Expr::value(other).into())
             }
         }

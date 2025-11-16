@@ -123,8 +123,15 @@ impl Ty {
 }
 impl Display for Ty {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let s = get_threadlocal_serializer().serialize_type(self).unwrap();
-        f.write_str(&s)
+        if let Some(serializer) = try_get_threadlocal_serializer() {
+            match serializer.serialize_type(self) {
+                Ok(s) => f.write_str(&s),
+                Err(_) => write!(f, "{:?}", self),
+            }
+        } else {
+            // Fallback when no serializer is registered
+            write!(f, "{:?}", self)
+        }
     }
 }
 
@@ -203,10 +210,14 @@ impl TypePrimitive {
 }
 impl Display for TypePrimitive {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        let s = get_threadlocal_serializer()
-            .serialize_type(&Ty::Primitive(*self))
-            .unwrap();
-        f.write_str(&s)
+        if let Some(serializer) = try_get_threadlocal_serializer() {
+            match serializer.serialize_type(&Ty::Primitive(*self)) {
+                Ok(s) => f.write_str(&s),
+                Err(_) => write!(f, "{:?}", self),
+            }
+        } else {
+            write!(f, "{:?}", self)
+        }
     }
 }
 
