@@ -1,4 +1,5 @@
-//! Language identifier definitions and utilities for transpilation
+pub mod backend;
+pub mod frontend;
 
 use std::path::Path;
 
@@ -137,40 +138,22 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
     SUPPORTED_LANGUAGES.iter().find(|lang| {
         lang.name == target
             || lang.extensions.contains(&target)
-            || match (lang.name, target) {
-                (TYPESCRIPT, "ts") => true,
-                (JAVASCRIPT, "js") => true,
-                (CSHARP, "cs" | "c#") => true,
-                (PYTHON, "py") => true,
-                (ZIG, "zig") => true,
-                _ => false,
-            }
+            || matches!(
+                (lang.name, target),
+                (TYPESCRIPT, "ts")
+                    | (JAVASCRIPT, "js")
+                    | (CSHARP, "cs" | "c#")
+                    | (PYTHON, "py")
+                    | (ZIG, "zig")
+            )
     })
 }
 
 /// Get file extension for a target language
 pub fn get_target_extension(target: &str) -> Option<&'static str> {
-    match target {
-        TYPESCRIPT | "ts" => Some("ts"),
-        JAVASCRIPT | "js" => Some("js"),
-        CSHARP | "cs" | "c#" => Some("cs"),
-        PYTHON | "py" => Some("py"),
-        GO => Some("go"),
-        ZIG => Some("zig"),
-        RUST => Some("rs"),
-        CPP => Some("cpp"),
-        C => Some("c"),
-        JAVA => Some("java"),
-        KOTLIN => Some("kt"),
-        SWIFT => Some("swift"),
-        FERROPHASE => Some("fp"),
-        WIT => Some("wit"),
-        SQL => Some("sql"),
-        PRQL => Some("prql"),
-        JSONSCHEMA => Some("jsonschema"),
-        FLATBUFFERS => Some("fbs"),
-        _ => None,
-    }
+    backend::parse_transpile_target_str(target)
+        .ok()
+        .map(backend::output_extension_for)
 }
 
 /// Check if a target language is supported for transpilation
