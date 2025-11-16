@@ -151,7 +151,7 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
 
 /// Get file extension for a target language
 pub fn get_target_extension(target: &str) -> Option<&'static str> {
-    backend::parse_transpile_target_str(target)
+    backend::parse_language_target(target)
         .ok()
         .map(backend::output_extension_for)
 }
