@@ -1,7 +1,9 @@
 use fp_core::ast::*;
 use fp_core::error::Result;
 use crate::{AstTypeInferencer, TypeVarId};
-use crate::typing::unify::{TypeTerm, FunctionTerm};
+use crate::typing::unify::TypeTerm;
+use fp_core::ops::{BinOpKind, UnOpKind};
+use crate::typing_error;
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.
 /// - Single trailing expression and no statements => Expr
@@ -251,5 +253,55 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = self.resolve_to_ty(var)?;
         expr.set_ty(ty);
         Ok(var)
+    }
+
+    pub(crate) fn infer_binop(&mut self, binop: &mut ExprBinOp) -> Result<TypeVarId> {
+        let lhs = self.infer_expr(binop.lhs.as_mut())?;
+        let rhs = self.infer_expr(binop.rhs.as_mut())?;
+        match binop.kind {
+            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod => {
+                self.ensure_numeric(lhs, "binary operand")?;
+                self.unify(lhs, rhs)?;
+                Ok(lhs)
+            }
+            BinOpKind::Eq
+            | BinOpKind::Ne
+            | BinOpKind::Lt
+            | BinOpKind::Le
+            | BinOpKind::Gt
+            | BinOpKind::Ge => {
+                self.unify(lhs, rhs)?;
+                let bool_var = self.fresh_type_var();
+                self.bind(bool_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                Ok(bool_var)
+            }
+            BinOpKind::And | BinOpKind::Or => {
+                self.ensure_bool(lhs, "logical operand")?;
+                self.ensure_bool(rhs, "logical operand")?;
+                let bool_var = self.fresh_type_var();
+                self.bind(bool_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                Ok(bool_var)
+            }
+            _ => Ok(lhs),
+        }
+    }
+
+    pub(crate) fn infer_unop(&mut self, unop: &mut ExprUnOp) -> Result<TypeVarId> {
+        let value_var = self.infer_expr(unop.val.as_mut())?;
+        match unop.op {
+            UnOpKind::Not => {
+                self.ensure_bool(value_var, "unary not")?;
+                Ok(value_var)
+            }
+            UnOpKind::Neg => {
+                self.ensure_numeric(value_var, "unary negation")?;
+                Ok(value_var)
+            }
+            UnOpKind::Deref | UnOpKind::Any(_) => {
+                let message = "unsupported unary operator in type inference".to_string();
+                self.emit_error(message.clone());
+                Err(typing_error(message))
+            }
+        }
     }
 }
