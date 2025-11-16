@@ -5,7 +5,7 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, TranspilePreparationOptions},
 };
-use fp_core::ast::Node;
+use fp_core::ast::{Node, AstSerializer};
 use fp_csharp::CSharpSerializer;
 use fp_python::PythonSerializer;
 use fp_rust::printer::RustPrinter;

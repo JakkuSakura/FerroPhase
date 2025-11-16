@@ -22,7 +22,13 @@ pub use parse::parse_command;
 pub use run::run_command;
 pub use transpile::transpile_command;
 // Re-export shared helpers for convenience
-pub use common::{format_value_brief, ownership_label, setup_progress_bar};
+pub use common::{
+    format_value_brief,
+    ownership_label,
+    setup_progress_bar,
+    validate_paths_exist,
+    print_runtime_result,
+};
 
 use crate::{Result, cli::CliConfig};
 

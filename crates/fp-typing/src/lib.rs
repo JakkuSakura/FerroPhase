@@ -664,55 +664,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     // infer_if moved to typing::infer_stmt
 
-    fn infer_binop(&mut self, binop: &mut ExprBinOp) -> Result<TypeVarId> {
-        let lhs = self.infer_expr(binop.lhs.as_mut())?;
-        let rhs = self.infer_expr(binop.rhs.as_mut())?;
-        match binop.kind {
-            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod => {
-                self.ensure_numeric(lhs, "binary operand")?;
-                self.unify(lhs, rhs)?;
-                Ok(lhs)
-            }
-            BinOpKind::Eq
-            | BinOpKind::Ne
-            | BinOpKind::Lt
-            | BinOpKind::Le
-            | BinOpKind::Gt
-            | BinOpKind::Ge => {
-                self.unify(lhs, rhs)?;
-                let bool_var = self.fresh_type_var();
-                self.bind(bool_var, TypeTerm::Primitive(TypePrimitive::Bool));
-                Ok(bool_var)
-            }
-            BinOpKind::And | BinOpKind::Or => {
-                self.ensure_bool(lhs, "logical operand")?;
-                self.ensure_bool(rhs, "logical operand")?;
-                let bool_var = self.fresh_type_var();
-                self.bind(bool_var, TypeTerm::Primitive(TypePrimitive::Bool));
-                Ok(bool_var)
-            }
-            _ => Ok(lhs),
-        }
-    }
+    // infer_binop moved to typing::infer_expr
 
-    fn infer_unop(&mut self, unop: &mut ExprUnOp) -> Result<TypeVarId> {
-        let value_var = self.infer_expr(unop.val.as_mut())?;
-        match unop.op {
-            UnOpKind::Not => {
-                self.ensure_bool(value_var, "unary not")?;
-                Ok(value_var)
-            }
-            UnOpKind::Neg => {
-                self.ensure_numeric(value_var, "unary negation")?;
-                Ok(value_var)
-            }
-            UnOpKind::Deref | UnOpKind::Any(_) => {
-                let message = "unsupported unary operator in type inference".to_string();
-                self.emit_error(message.clone());
-                Err(typing_error(message))
-            }
-        }
-    }
+    // infer_unop moved to typing::infer_expr
 
     // infer_loop moved to typing::infer_stmt
 

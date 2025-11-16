@@ -1318,118 +1318,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         None
     }
 
-    fn capture_closure(&self, closure: &ExprClosure, ty: Option<Ty>) -> ConstClosure {
-        let mut captured = ConstClosure {
-            params: closure.params.clone(),
-            ret_ty: closure.ret_ty.as_ref().map(|ty| (**ty).clone()),
-            body: closure.body.as_ref().clone(),
-            captured_values: self.value_env.clone(),
-            captured_types: self.type_env.clone(),
-            module_stack: self.module_stack.clone(),
-            function_ty: ty,
-        };
+    // moved to closures.rs: capture_closure
 
-        if let Some(fn_sig) = captured.function_ty.as_ref().and_then(|ty| match ty {
-            Ty::Function(fn_sig) => Some(fn_sig.clone()),
-            _ => None,
-        }) {
-            Self::annotate_const_closure(&mut captured, &fn_sig);
-        }
+    // moved to closures.rs: call_const_closure
 
-        captured
-    }
+    // moved to closures.rs: call_function
 
-    fn call_const_closure(&mut self, closure: &ConstClosure, args: Vec<Value>) -> Value {
-        if closure.params.len() != args.len() {
-            self.emit_error(format!(
-                "closure expected {} arguments, found {}",
-                closure.params.len(),
-                args.len()
-            ));
-            return Value::undefined();
-        }
-
-        let saved_values = mem::replace(&mut self.value_env, closure.captured_values.clone());
-        let saved_types = mem::replace(&mut self.type_env, closure.captured_types.clone());
-        let saved_modules = mem::replace(&mut self.module_stack, closure.module_stack.clone());
-
-        self.push_scope();
-        for (pattern, value) in closure.params.iter().zip(args.into_iter()) {
-            self.bind_pattern(pattern, value);
-        }
-
-        let mut body = closure.body.clone();
-        let result = self.eval_expr(&mut body);
-
-        self.pop_scope();
-
-        self.value_env = saved_values;
-        self.type_env = saved_types;
-        self.module_stack = saved_modules;
-
-        result
-    }
-
-    fn call_function(&mut self, function: ItemDefFunction, args: Vec<Value>) -> Value {
-        if !function.sig.generics_params.is_empty() {
-            self.emit_error(format!(
-                "generic functions are not supported in const evaluation: {}",
-                function.name.as_str()
-            ));
-            return Value::undefined();
-        }
-
-        if function.sig.params.len() != args.len() {
-            self.emit_error(format!(
-                "function '{}' expected {} arguments, found {}",
-                function.name.as_str(),
-                function.sig.params.len(),
-                args.len()
-            ));
-            return Value::undefined();
-        }
-
-        self.push_scope();
-        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
-            if let Some(scope) = self.type_env.last_mut() {
-                scope.insert(param.name.as_str().to_string(), param.ty.clone());
-            }
-            self.insert_value(param.name.as_str(), value);
-        }
-
-        let mut body = function.body.as_ref().clone();
-        let result = self.eval_expr(&mut body);
-
-        self.pop_scope();
-
-        result
-    }
-
-    fn call_value_function(&mut self, function: &ValueFunction, args: Vec<Value>) -> Value {
-        if function.sig.params.len() != args.len() {
-            self.emit_error(format!(
-                "function literal expected {} arguments, found {}",
-                function.sig.params.len(),
-                args.len()
-            ));
-            return Value::undefined();
-        }
-
-        self.push_scope();
-        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
-            if let Some(scope) = self.type_env.last_mut() {
-                scope.insert(param.name.as_str().to_string(), param.ty.clone());
-            }
-            self.insert_value(param.name.as_str(), value);
-        }
-
-        let mut body = function.body.as_ref().clone();
-        let result = self.eval_expr(&mut body);
-
-        self.pop_scope();
-
-        result
-    }
+    // moved to closures.rs: call_value_function
 
     fn eval_block(&mut self, block: &mut ExprBlock) -> Value {
         self.push_scope();
