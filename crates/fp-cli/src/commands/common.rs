@@ -1,6 +1,8 @@
 //! Common reusable helpers for CLI commands to avoid duplication.
 
 use indicatif::{ProgressBar, ProgressStyle};
+use std::path::PathBuf;
+use crate::{CliError, Result};
 use fp_core::ast::{RuntimeValue, Value};
 
 /// Create a consistently styled progress bar for command loops.
@@ -47,3 +49,21 @@ pub fn ownership_label(rv: &RuntimeValue) -> &'static str {
     }
 }
 
+/// Validate that all provided paths exist (and optionally are files).
+pub fn validate_paths_exist(inputs: &[PathBuf], must_be_files: bool) -> Result<()> {
+    for input in inputs {
+        if !input.exists() {
+            return Err(CliError::InvalidInput(format!(
+                "Input path does not exist: {}",
+                input.display()
+            )));
+        }
+        if must_be_files && !input.is_file() {
+            return Err(CliError::InvalidInput(format!(
+                "Input path is not a file: {}",
+                input.display()
+            )));
+        }
+    }
+    Ok(())
+}

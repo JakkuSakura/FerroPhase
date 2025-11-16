@@ -4,8 +4,14 @@ use crate::{
     CliError, Result,
     cli::CliConfig,
     pipeline::{Pipeline, TranspilePreparationOptions},
-    transpiler::*,
 };
+use fp_core::ast::Node;
+use fp_csharp::CSharpSerializer;
+use fp_python::PythonSerializer;
+use fp_rust::printer::RustPrinter;
+use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
+use fp_wit::{WitOptions, WitSerializer};
+use fp_zig::ZigSerializer;
 use console::style;
 use fp_core::ast::{Ident, Item, Module as AstModule, NodeKind, Visibility};
 use fp_rust::{parse_cargo_workspace, printer::RustPrinter};
@@ -36,7 +42,7 @@ pub struct TranspileArgs {
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     info!("Starting transpilation to target: {}", args.target);
 
-    validate_transpile_inputs(&args)?;
+    crate::commands::validate_paths_exist(&args.input, false)?;
 
     // Watch mode removed: always perform a single pass
     transpile_once(args, config).await
@@ -96,22 +102,13 @@ async fn transpile_file(
         .map(|name| name.eq_ignore_ascii_case("Cargo.toml"))
         .unwrap_or(false);
 
-    let is_wit_input = input
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| ext.eq_ignore_ascii_case("wit"))
-        .unwrap_or(false);
-
-    let is_typescript_input = input
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|ext| {
-            matches!(
-                ext.to_ascii_lowercase().as_str(),
-                "ts" | "tsx" | "mts" | "cts" | "js" | "jsx" | "mjs"
-            )
-        })
-        .unwrap_or(false);
+    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
+    let detected = detect_language_source_by_path(input);
+    let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
+    let is_typescript_input = matches!(
+        detected,
+        Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
+    );
 
     let mut source_cache: Option<String> = None;
     let module_root_path = package_info
@@ -218,30 +215,14 @@ async fn transpile_file(
         pipeline.prepare_for_transpile(&mut ast, &prep_options)?;
     }
 
-    // Use simplified transpiler
-    let normalized_target = args.target.to_lowercase();
-    let target = match normalized_target.as_str() {
-        "typescript" | "ts" => TranspileTarget::TypeScript,
-        "javascript" | "js" => TranspileTarget::JavaScript,
-        "csharp" | "cs" | "c#" => TranspileTarget::CSharp,
-        "python" | "py" => TranspileTarget::Python,
-        "zig" => TranspileTarget::Zig,
-        "rust" | "rs" => TranspileTarget::Rust,
-        "wit" => TranspileTarget::Wit,
-        _ => {
-            return Err(CliError::InvalidInput(format!(
-                "Unsupported target: {}",
-                args.target
-            )));
-        }
+    // Resolve target using shared backend mapping
+    let target = crate::languages::backend::parse_language_target(&args.target)?;
+    let wit_options = if matches!(target, crate::languages::backend::LanguageTarget::Wit) {
+        Some(build_wit_options(input, package_info.as_ref(), args.single_world))
+    } else {
+        None
     };
-
-    let mut transpiler = Transpiler::new(target, args.type_defs);
-    if matches!(target, TranspileTarget::Wit) {
-        let options = build_wit_options(input, package_info.as_ref(), args.single_world);
-        transpiler = transpiler.with_wit_options(options);
-    }
-    let result = transpiler.transpile(&ast)?;
+    let result = transpile_node(&ast, target, args.type_defs, wit_options)?;
 
     // Write output
     std::fs::write(output, result.code).map_err(|e| CliError::Io(e))?;
@@ -257,6 +238,79 @@ async fn transpile_file(
     info!("Generated: {}", output.display());
 
     Ok(())
+}
+
+// Local backend dispatcher (was previously in languages/backend.rs)
+#[derive(Debug, Default, Clone)]
+struct BackendTranspileResult {
+    code: String,
+    type_defs: Option<String>,
+}
+
+fn transpile_node(
+    node: &Node,
+    target: crate::languages::backend::LanguageTarget,
+    emit_type_defs: bool,
+    wit_options: Option<WitOptions>,
+) -> Result<BackendTranspileResult> {
+    use crate::CliError;
+    match target {
+        crate::languages::backend::LanguageTarget::TypeScript => {
+            let serializer = TypeScriptSerializer::new(emit_type_defs);
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: serializer.take_type_defs(),
+            })
+        }
+        crate::languages::backend::LanguageTarget::JavaScript => {
+            let serializer = JavaScriptSerializer;
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult { code, type_defs: None })
+        }
+        crate::languages::backend::LanguageTarget::CSharp => {
+            let serializer = CSharpSerializer;
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult { code, type_defs: None })
+        }
+        crate::languages::backend::LanguageTarget::Python => {
+            let serializer = PythonSerializer;
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult { code, type_defs: None })
+        }
+        crate::languages::backend::LanguageTarget::Zig => {
+            let serializer = ZigSerializer;
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult { code, type_defs: None })
+        }
+        crate::languages::backend::LanguageTarget::Rust => {
+            let serializer = RustPrinter::new_with_rustfmt();
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult { code, type_defs: None })
+        }
+        crate::languages::backend::LanguageTarget::Wit => {
+            let serializer = match wit_options {
+                Some(options) => WitSerializer::with_options(options),
+                None => WitSerializer::new(),
+            };
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult { code, type_defs: None })
+        }
+    }
 }
 
 // Utility functions
@@ -432,44 +486,12 @@ fn build_module_item(ident: Ident, items: Vec<Item>) -> Item {
     })
 }
 
-fn validate_transpile_inputs(args: &TranspileArgs) -> Result<()> {
-    for input in &args.input {
-        if !input.exists() {
-            return Err(CliError::InvalidInput(format!(
-                "Input file does not exist: {}",
-                input.display()
-            )));
-        }
-    }
-    Ok(())
-}
-
 fn determine_transpile_output_path(
     input: &Path,
     output: Option<&PathBuf>,
     target: &str,
 ) -> Result<PathBuf> {
-    if let Some(output) = output {
-        Ok(output.clone())
-    } else {
-        let normalized = target.to_lowercase();
-        let extension = match normalized.as_str() {
-            "typescript" | "ts" => "ts",
-            "javascript" | "js" => "js",
-            "csharp" | "cs" | "c#" => "cs",
-            "python" | "py" => "py",
-            "zig" => "zig",
-            "rust" | "rs" => "rs",
-            "wit" => "wit",
-            _ => {
-                return Err(CliError::InvalidInput(format!(
-                    "Unknown target: {}",
-                    target
-                )));
-            }
-        };
-        Ok(input.with_extension(extension))
-    }
+    crate::languages::backend::resolve_output_path(input, output, target)
 }
 
 // Progress bar helper moved to commands::common
