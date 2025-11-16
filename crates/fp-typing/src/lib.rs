@@ -1,7 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use fp_core::config;
 
+pub mod typing;
+pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
+
 use fp_core::ast::*;
+use crate::typing::scheme::{TypeScheme, SchemeType};
 use fp_core::ast::{Ident, Locator};
 use fp_core::ast::{Pattern, PatternKind};
 use fp_core::context::SharedScopedContext;
@@ -12,52 +16,13 @@ fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
 }
 
-type TypeVarId = usize;
+pub(crate) type TypeVarId = usize;
 
 fn detect_lossy_mode() -> bool { config::lossy_mode() }
 
-#[derive(Clone, Debug)]
-struct TypeVar {
-    kind: TypeVarKind,
-}
+use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
 
-#[derive(Clone, Debug)]
-enum TypeVarKind {
-    Unbound { level: usize },
-    Link(TypeVarId),
-    Bound(TypeTerm),
-}
-
-#[derive(Clone, Debug)]
-struct FunctionTerm {
-    params: Vec<TypeVarId>,
-    ret: TypeVarId,
-}
-
-#[derive(Clone, Debug)]
-enum TypeTerm {
-    Primitive(TypePrimitive),
-    Unit,
-    Nothing,
-    Tuple(Vec<TypeVarId>),
-    Function(FunctionTerm),
-    Struct(TypeStruct),
-    Structural(TypeStructural),
-    Enum(TypeEnum),
-    Slice(TypeVarId),
-    Vec(TypeVarId),
-    Reference(TypeVarId),
-    Any,
-    Custom(Ty),
-    Unknown,
-}
-
-#[derive(Clone, Debug)]
-struct TypeScheme {
-    #[allow(dead_code)]
-    vars: usize,
-    body: SchemeType,
-}
+// TypeScheme moved to typing/scheme.rs
 
 #[derive(Clone, Debug)]
 struct MethodRecord {
@@ -71,24 +36,7 @@ struct ImplContext {
     self_ty: Ty,
 }
 
-#[derive(Clone, Debug)]
-enum SchemeType {
-    Var(u32),
-    Primitive(TypePrimitive),
-    Unit,
-    Nothing,
-    Tuple(Vec<SchemeType>),
-    Function(Vec<SchemeType>, Box<SchemeType>),
-    Struct(TypeStruct),
-    Structural(TypeStructural),
-    Enum(TypeEnum),
-    Slice(Box<SchemeType>),
-    Vec(Box<SchemeType>),
-    Reference(Box<SchemeType>),
-    Any,
-    Custom(Ty),
-    Unknown,
-}
+// SchemeType moved to typing/scheme.rs
 
 #[derive(Clone)]
 enum EnvEntry {
@@ -125,37 +73,7 @@ impl PatternInfo {
     }
 }
 
-#[derive(Clone, Copy)]
-pub enum TypingDiagnosticLevel {
-    Error,
-    Warning,
-}
-
-pub struct TypingDiagnostic {
-    pub level: TypingDiagnosticLevel,
-    pub message: String,
-}
-
-impl TypingDiagnostic {
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            level: TypingDiagnosticLevel::Error,
-            message: message.into(),
-        }
-    }
-
-    pub fn warning(message: impl Into<String>) -> Self {
-        Self {
-            level: TypingDiagnosticLevel::Warning,
-            message: message.into(),
-        }
-    }
-}
-
-pub struct TypingOutcome {
-    pub diagnostics: Vec<TypingDiagnostic>,
-    pub has_errors: bool,
-}
+// Typing diagnostics/outcome are defined in typing/types.rs and re-exported above.
 
 struct FunctionTypeInfo {
     params: Vec<TypeVarId>,
@@ -740,300 +658,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(ty)
     }
 
-    fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
-        let existing_ty = expr.ty().cloned();
-        let var = match expr.kind_mut() {
-            ExprKind::Quote(quote) => {
-                let kind = match quote.kind {
-                    Some(k) => k,
-                    None => infer_quote_kind(&quote.block),
-                };
-                let inner = if matches!(kind, QuoteFragmentKind::Expr) {
-                    let block_var = self.infer_block(&mut quote.block)?;
-                    Some(self.resolve_to_ty(block_var)?)
-                } else {
-                    None
-                };
-                let ty = Ty::QuoteToken(Box::new(TypeQuoteToken { kind, inner: inner.map(Box::new) }));
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Custom(ty.clone()));
-                expr.set_ty(ty);
-                var
-            }
-            ExprKind::Splice(splice) => {
-                // Expression-position splice must carry an expr token
-                let token_var = self.infer_expr(splice.token.as_mut())?;
-                let token_ty = self.resolve_to_ty(token_var)?;
-                match token_ty {
-                    Ty::QuoteToken(qt) => match qt.kind {
-                        QuoteFragmentKind::Expr => {
-                            if let Some(inner) = qt.inner.clone() {
-                                let var = self.fresh_type_var();
-                                self.bind(var, TypeTerm::Custom((*inner).clone()));
-                                expr.set_ty(*inner);
-                                var
-                            } else {
-                                self.emit_warning(
-                                    "splice expr token lacks inner type; defaulting to any",
-                                );
-                                let any_var = self.fresh_type_var();
-                                self.bind(any_var, TypeTerm::Any);
-                                any_var
-                            }
-                        }
-                        other => {
-                            self.emit_error(format!(
-                                "splice in expression position requires expr token, found {:?}",
-                                other
-                            ));
-                            self.error_type_var()
-                        }
-                    },
-                    _ => {
-                        self.emit_error("splice expects a quote token expression");
-                        self.error_type_var()
-                    }
-                }
-            }
-            ExprKind::IntrinsicContainer(collection) => {
-                let new_expr = collection.clone().into_const_expr();
-                *expr = new_expr;
-                return self.infer_expr(expr);
-            }
-            ExprKind::Value(value) => {
-                if let Value::List(list) = value.as_ref() {
-                    if matches!(existing_ty.as_ref(), Some(Ty::Array(_))) {
-                        self.infer_value(value.as_ref())?
-                    } else {
-                        self.infer_list_value_as_vec(list)?
-                    }
-                } else {
-                    self.infer_value(value.as_ref())?
-                }
-            }
-            ExprKind::Locator(locator) => {
-                if let Some(ty) = existing_ty.as_ref() {
-                    self.type_from_ast_ty(ty)?
-                } else {
-                    self.lookup_locator(locator)?
-                }
-            }
-            ExprKind::Block(block) => self.infer_block(block)?,
-            ExprKind::If(if_expr) => self.infer_if(if_expr)?,
-            ExprKind::BinOp(binop) => self.infer_binop(binop)?,
-            ExprKind::UnOp(unop) => self.infer_unop(unop)?,
-            ExprKind::Assign(assign) => {
-                let target = self.infer_expr(assign.target.as_mut())?;
-                let value = self.infer_expr(assign.value.as_mut())?;
-                self.unify(target, value)?;
-                value
-            }
-            ExprKind::Cast(cast) => {
-                let _ = self.infer_expr(cast.expr.as_mut())?;
-                self.type_from_ast_ty(&cast.ty)?
-            }
-            ExprKind::Let(expr_let) => {
-                let value = self.infer_expr(expr_let.expr.as_mut())?;
-                let pattern_info = self.infer_pattern(expr_let.pat.as_mut())?;
-                self.unify(pattern_info.var, value)?;
-                self.apply_pattern_generalization(&pattern_info)?;
-                value
-            }
-            ExprKind::Invoke(invoke) => self.infer_invoke(invoke)?,
-            ExprKind::Select(select) => {
-                let obj_var = self.infer_expr(select.obj.as_mut())?;
-                self.lookup_struct_field(obj_var, &select.field)?
-            }
-            ExprKind::Struct(struct_expr) => {
-                if let Some(ty) = existing_ty.as_ref() {
-                    if matches!(ty, Ty::Function(_)) {
-                        self.type_from_ast_ty(ty)?
-                    } else {
-                        self.resolve_struct_literal(struct_expr)?
-                    }
-                } else {
-                    self.resolve_struct_literal(struct_expr)?
-                }
-            }
-            ExprKind::Tuple(tuple) => {
-                let mut element_vars = Vec::new();
-                for expr in &mut tuple.values {
-                    element_vars.push(self.infer_expr(expr)?);
-                }
-                let tuple_var = self.fresh_type_var();
-                self.bind(tuple_var, TypeTerm::Tuple(element_vars));
-                tuple_var
-            }
-            ExprKind::Array(array) => {
-                let mut iter = array.values.iter_mut();
-                let elem_var = if let Some(first) = iter.next() {
-                    let first_var = self.infer_expr(first)?;
-                    for value in iter {
-                        let next = self.infer_expr(value)?;
-                        self.unify(first_var, next)?;
-                    }
-                    first_var
-                } else {
-                    self.fresh_type_var()
-                };
-                let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Vec(elem_var));
-                array_var
-            }
-            ExprKind::ArrayRepeat(array_repeat) => {
-                let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
-                let len_var = self.infer_expr(array_repeat.len.as_mut())?;
-                let expected_len = self.fresh_type_var();
-                self.bind(
-                    expected_len,
-                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
-                );
-                self.unify(len_var, expected_len)?;
+    // infer_expr moved to typing::infer_expr
 
-                let elem_ty = self.resolve_to_ty(elem_var)?;
-                let length_expr = array_repeat.len.as_ref().get();
-                let array_ty = Ty::Array(TypeArray {
-                    elem: Box::new(elem_ty.clone()),
-                    len: length_expr.into(),
-                });
-                let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Custom(array_ty.clone()));
-                expr.set_ty(array_ty);
-                array_var
-            }
-            ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
-            ExprKind::FormatString(_) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Primitive(TypePrimitive::String));
-                var
-            }
-            ExprKind::Match(match_expr) => self.infer_match(match_expr)?,
-            ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
-            ExprKind::While(while_expr) => self.infer_while(while_expr)?,
-            ExprKind::Try(try_expr) => self.infer_expr(try_expr.expr.as_mut())?,
-            ExprKind::Reference(reference) => self.infer_reference(reference)?,
-            ExprKind::Dereference(dereference) => self.infer_dereference(dereference)?,
-            ExprKind::Index(index) => self.infer_index(index)?,
-            ExprKind::Closure(closure) => self.infer_closure(closure)?,
-            ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
-            ExprKind::Range(range) => self.infer_range(range)?,
-            ExprKind::Await(await_expr) => self.infer_expr(await_expr.base.as_mut())?,
-            ExprKind::Splat(splat) => self.infer_splat(splat)?,
-            ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
-            ExprKind::Macro(macro_expr) => {
-                self.emit_error(format!(
-                    "macro `{}` was not lowered before type checking",
-                    macro_expr.invocation.path
-                ));
-                self.error_type_var()
-            }
-            ExprKind::Any(_any) => {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                any_var
-            }
-            ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                any_var
-            }
-            ExprKind::Id(_) => {
-                self.emit_error("detached expression identifiers are not supported");
-                self.error_type_var()
-            }
-        };
+    // infer_block moved to typing::infer_stmt
 
-        if let Some(existing_ty) = existing_ty {
-            if !matches!(existing_ty, Ty::Unknown(_)) {
-                let existing_var = self.type_from_ast_ty(&existing_ty)?;
-                self.unify(var, existing_var)?;
-            }
-        }
-
-        let ty = self.resolve_to_ty(var)?;
-        expr.set_ty(ty);
-        Ok(var)
-    }
-
-    fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {
-        self.enter_scope();
-        let mut last = self.fresh_type_var();
-        self.bind(last, TypeTerm::Unit);
-        for stmt in &mut block.stmts {
-            match stmt {
-                BlockStmt::Item(item) => {
-                    self.predeclare_item(item);
-                    self.infer_item(item)?;
-                    last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
-                }
-                BlockStmt::Let(stmt_let) => {
-                    let init_var = if let Some(init) = stmt_let.init.as_mut() {
-                        self.infer_expr(init)?
-                    } else {
-                        let unit = self.fresh_type_var();
-                        self.bind(unit, TypeTerm::Unit);
-                        unit
-                    };
-                    let pattern_info = self.infer_pattern(&mut stmt_let.pat)?;
-                    self.unify(pattern_info.var, init_var)?;
-                    self.apply_pattern_generalization(&pattern_info)?;
-                    last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
-                }
-                BlockStmt::Expr(expr_stmt) => {
-                    // If this is a splice in statement position, enforce stmt token
-                    if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                        let token_var = self.infer_expr(splice.token.as_mut())?;
-                        let token_ty = self.resolve_to_ty(token_var)?;
-                        match token_ty {
-                            Ty::QuoteToken(qt) => {
-                                if !matches!(qt.kind, QuoteFragmentKind::Stmt) {
-                                    self.emit_error(format!(
-                                        "splice in statement position requires stmt token, found {:?}",
-                                        qt.kind
-                                    ));
-                                }
-                            }
-                            _ => self.emit_error("splice expects a quote token expression"),
-                        }
-                        // Statements do not contribute a value
-                        last = self.fresh_type_var();
-                        self.bind(last, TypeTerm::Unit);
-                        continue;
-                    }
-                    let expr_var = self.infer_expr(expr_stmt.expr.as_mut())?;
-                    if expr_stmt.has_value() {
-                        last = expr_var;
-                    } else {
-                        last = self.fresh_type_var();
-                        self.bind(last, TypeTerm::Unit);
-                    }
-                }
-                BlockStmt::Noop => {
-                    last = self.fresh_type_var();
-                    self.bind(last, TypeTerm::Unit);
-                }
-                BlockStmt::Any(_) => {
-                    let unit = self.unit_type_var();
-                    last = unit;
-                }
-            }
-        }
-        self.exit_scope();
-        Ok(last)
-    }
-
-    fn infer_if(&mut self, if_expr: &mut ExprIf) -> Result<TypeVarId> {
-        let cond = self.infer_expr(if_expr.cond.as_mut())?;
-        self.ensure_bool(cond, "if condition")?;
-        let then_ty = self.infer_expr(if_expr.then.as_mut())?;
-        if let Some(elze) = if_expr.elze.as_mut() {
-            let else_ty = self.infer_expr(elze)?;
-            self.unify(then_ty, else_ty)?;
-        }
-        Ok(then_ty)
-    }
+    // infer_if moved to typing::infer_stmt
 
     fn infer_binop(&mut self, binop: &mut ExprBinOp) -> Result<TypeVarId> {
         let lhs = self.infer_expr(binop.lhs.as_mut())?;
@@ -1085,64 +714,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn infer_loop(&mut self, expr_loop: &mut ExprLoop) -> Result<TypeVarId> {
-        let loop_result_var = self.fresh_type_var();
-        self.loop_stack.push(LoopContext::new(loop_result_var));
+    // infer_loop moved to typing::infer_stmt
 
-        let body_var = match self.infer_expr(expr_loop.body.as_mut()) {
-            Ok(var) => var,
-            Err(err) => {
-                self.loop_stack.pop();
-                return Err(err);
-            }
-        };
-
-        let unit_var = self.unit_type_var();
-        if let Err(err) = self.unify(body_var, unit_var) {
-            self.loop_stack.pop();
-            return Err(err);
-        }
-
-        let Some(context) = self.loop_stack.pop() else {
-            let message = "loop stack underflow when finishing loop inference".to_string();
-            self.emit_error(message.clone());
-            return Err(typing_error(message));
-        };
-
-        if !context.saw_break {
-            self.bind(loop_result_var, TypeTerm::Nothing);
-        }
-
-        Ok(loop_result_var)
-    }
-
-    fn infer_while(&mut self, expr_while: &mut ExprWhile) -> Result<TypeVarId> {
-        let cond_var = self.infer_expr(expr_while.cond.as_mut())?;
-        self.ensure_bool(cond_var, "while condition")?;
-        let loop_unit_var = self.unit_type_var();
-        self.loop_stack.push(LoopContext::new(loop_unit_var));
-
-        let body_var = match self.infer_expr(expr_while.body.as_mut()) {
-            Ok(var) => var,
-            Err(err) => {
-                self.loop_stack.pop();
-                return Err(err);
-            }
-        };
-
-        if let Err(err) = self.unify(body_var, loop_unit_var) {
-            self.loop_stack.pop();
-            return Err(err);
-        }
-
-        let Some(_context) = self.loop_stack.pop() else {
-            let message = "loop stack underflow when finishing while inference".to_string();
-            self.emit_error(message.clone());
-            return Err(typing_error(message));
-        };
-
-        Ok(loop_unit_var)
-    }
+    // infer_while moved to typing::infer_stmt
 
     fn infer_reference(&mut self, reference: &mut ExprReference) -> Result<TypeVarId> {
         let inner_var = self.infer_expr(reference.referee.as_mut())?;
@@ -1437,29 +1011,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(closure_var)
     }
 
-    fn infer_match(&mut self, match_expr: &mut ExprMatch) -> Result<TypeVarId> {
-        let mut result_var: Option<TypeVarId> = None;
-
-        for case in &mut match_expr.cases {
-            let cond_var = self.infer_expr(case.cond.as_mut())?;
-            self.ensure_bool(cond_var, "match case condition")?;
-
-            let body_var = self.infer_expr(case.body.as_mut())?;
-            if let Some(existing) = result_var {
-                self.unify(existing, body_var)?;
-            } else {
-                result_var = Some(body_var);
-            }
-        }
-
-        match result_var {
-            Some(var) => Ok(var),
-            None => {
-                self.emit_error("match expression requires at least one case");
-                Ok(self.error_type_var())
-            }
-        }
-    }
+    // infer_match moved to typing::infer_stmt
 
     fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
         if let Some(result) = self.try_infer_collection_call(invoke)? {
@@ -1967,195 +1519,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(())
     }
 
-    fn generalize(&mut self, var: TypeVarId) -> Result<TypeScheme> {
-        let mut mapping = HashMap::new();
-        let mut next = 0u32;
-        let body = self.build_scheme_type(var, &mut mapping, &mut next)?;
-        Ok(TypeScheme {
-            vars: next as usize,
-            body,
-        })
-    }
+    // generalize moved to typing/unify.rs
 
-    fn build_scheme_type(
-        &mut self,
-        var: TypeVarId,
-        mapping: &mut HashMap<TypeVarId, u32>,
-        next: &mut u32,
-    ) -> Result<SchemeType> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { level } => {
-                if level > self.current_level {
-                    if let Some(idx) = mapping.get(&root) {
-                        Ok(SchemeType::Var(*idx))
-                    } else {
-                        let idx = *next;
-                        mapping.insert(root, idx);
-                        *next += 1;
-                        Ok(SchemeType::Var(idx))
-                    }
-                } else {
-                    Ok(SchemeType::Unknown)
-                }
-            }
-            TypeVarKind::Bound(term) => self.scheme_from_term(term, mapping, next),
-            TypeVarKind::Link(next_var) => self.build_scheme_type(next_var, mapping, next),
-        }
-    }
+    // build_scheme_type moved to typing/unify.rs
 
-    fn scheme_from_term(
-        &mut self,
-        term: TypeTerm,
-        mapping: &mut HashMap<TypeVarId, u32>,
-        next: &mut u32,
-    ) -> Result<SchemeType> {
-        Ok(match term {
-            TypeTerm::Primitive(prim) => SchemeType::Primitive(prim),
-            TypeTerm::Unit => SchemeType::Unit,
-            TypeTerm::Nothing => SchemeType::Nothing,
-            TypeTerm::Any => SchemeType::Any,
-            TypeTerm::Struct(struct_ty) => SchemeType::Struct(struct_ty),
-            TypeTerm::Structural(structural) => SchemeType::Structural(structural),
-            TypeTerm::Enum(enum_ty) => SchemeType::Enum(enum_ty),
-            TypeTerm::Custom(ty) => SchemeType::Custom(ty),
-            TypeTerm::Unknown => SchemeType::Unknown,
-            TypeTerm::Tuple(elements) => {
-                let mut converted = Vec::new();
-                for elem in elements {
-                    converted.push(self.build_scheme_type(elem, mapping, next)?);
-                }
-                SchemeType::Tuple(converted)
-            }
-            TypeTerm::Function(function) => {
-                let mut converted = Vec::new();
-                for param in function.params {
-                    converted.push(self.build_scheme_type(param, mapping, next)?);
-                }
-                let ret = self.build_scheme_type(function.ret, mapping, next)?;
-                SchemeType::Function(converted, Box::new(ret))
-            }
-            TypeTerm::Slice(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Slice(Box::new(elem))
-            }
-            TypeTerm::Vec(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Vec(Box::new(elem))
-            }
-            TypeTerm::Reference(elem) => {
-                let elem = self.build_scheme_type(elem, mapping, next)?;
-                SchemeType::Reference(Box::new(elem))
-            }
-        })
-    }
+    // scheme_from_term moved to typing/unify.rs
 
-    fn instantiate_scheme(&mut self, scheme: &TypeScheme) -> TypeVarId {
-        let mut mapping = HashMap::new();
-        self.instantiate_scheme_type(&scheme.body, &mut mapping)
-    }
+    // instantiate_scheme moved to typing/unify.rs
 
-    fn instantiate_scheme_type(
-        &mut self,
-        scheme: &SchemeType,
-        mapping: &mut HashMap<u32, TypeVarId>,
-    ) -> TypeVarId {
-        match scheme {
-            SchemeType::Var(idx) => {
-                if let Some(var) = mapping.get(idx) {
-                    *var
-                } else {
-                    let var = self.fresh_type_var();
-                    mapping.insert(*idx, var);
-                    var
-                }
-            }
-            SchemeType::Primitive(prim) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Primitive(*prim));
-                var
-            }
-            SchemeType::Unit => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Unit);
-                var
-            }
-            SchemeType::Nothing => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Nothing);
-                var
-            }
-            SchemeType::Any => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Any);
-                var
-            }
-            SchemeType::Struct(struct_ty) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                var
-            }
-            SchemeType::Structural(structural) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Structural(structural.clone()));
-                var
-            }
-            SchemeType::Enum(enum_ty) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-                var
-            }
-            SchemeType::Custom(ty) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Custom(ty.clone()));
-                var
-            }
-            SchemeType::Unknown => self.fresh_type_var(),
-            SchemeType::Tuple(elements) => {
-                let mut vars = Vec::new();
-                for elem in elements {
-                    vars.push(self.instantiate_scheme_type(elem, mapping));
-                }
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Tuple(vars));
-                var
-            }
-            SchemeType::Function(params, ret) => {
-                let param_vars: Vec<_> = params
-                    .iter()
-                    .map(|param| self.instantiate_scheme_type(param, mapping))
-                    .collect();
-                let ret_var = self.instantiate_scheme_type(ret, mapping);
-                let var = self.fresh_type_var();
-                self.bind(
-                    var,
-                    TypeTerm::Function(FunctionTerm {
-                        params: param_vars,
-                        ret: ret_var,
-                    }),
-                );
-                var
-            }
-            SchemeType::Slice(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Slice(elem_var));
-                var
-            }
-            SchemeType::Vec(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Vec(elem_var));
-                var
-            }
-            SchemeType::Reference(elem) => {
-                let elem_var = self.instantiate_scheme_type(elem, mapping);
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Reference(elem_var));
-                var
-            }
-        }
-    }
+    // instantiate_scheme_type moved to typing/unify.rs
 
     fn register_generic_param(&mut self, name: &str) -> TypeVarId {
         let var = self.fresh_type_var();
@@ -2205,401 +1577,29 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn fresh_type_var(&mut self) -> TypeVarId {
-        let id = self.type_vars.len();
-        self.type_vars.push(TypeVar {
-            kind: TypeVarKind::Unbound {
-                level: self.current_level,
-            },
-        });
-        id
-    }
+    // fresh_type_var moved to typing/unify.rs
 
-    fn unit_type_var(&mut self) -> TypeVarId {
-        let var = self.fresh_type_var();
-        self.bind(var, TypeTerm::Unit);
-        var
-    }
+    // unit_type_var moved to typing/unify.rs
 
-    fn nothing_type_var(&mut self) -> TypeVarId {
-        let var = self.fresh_type_var();
-        self.bind(var, TypeTerm::Nothing);
-        var
-    }
+    // nothing_type_var moved to typing/unify.rs
 
-    fn bind(&mut self, var: TypeVarId, term: TypeTerm) {
-        let root = self.find(var);
-        self.type_vars[root].kind = TypeVarKind::Bound(term);
-    }
+    // bind moved to typing/unify.rs
 
-    fn find(&mut self, var: TypeVarId) -> TypeVarId {
-        match self.type_vars[var].kind.clone() {
-            TypeVarKind::Link(next) => {
-                let root = self.find(next);
-                self.type_vars[var].kind = TypeVarKind::Link(root);
-                root
-            }
-            _ => var,
-        }
-    }
+    // find moved to typing/unify.rs
 
-    fn unify(&mut self, a: TypeVarId, b: TypeVarId) -> Result<()> {
-        let a_root = self.find(a);
-        let b_root = self.find(b);
-        if a_root == b_root {
-            return Ok(());
-        }
+    // unify moved to typing/unify.rs
 
-        match (
-            self.type_vars[a_root].kind.clone(),
-            self.type_vars[b_root].kind.clone(),
-        ) {
-            (TypeVarKind::Bound(TypeTerm::Unknown), _) => {
-                self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                Ok(())
-            }
-            (_, TypeVarKind::Bound(TypeTerm::Unknown)) => {
-                self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
-                Ok(())
-            }
-            (TypeVarKind::Unbound { .. }, TypeVarKind::Unbound { .. }) => {
-                self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                Ok(())
-            }
-            (TypeVarKind::Unbound { .. }, TypeVarKind::Bound(term)) => {
-                if self.occurs_in_term(a_root, &term) {
-                    return Err(typing_error("occurs check failed".to_string()));
-                }
-                self.type_vars[a_root].kind = TypeVarKind::Bound(term);
-                Ok(())
-            }
-            (TypeVarKind::Bound(term), TypeVarKind::Unbound { .. }) => {
-                if self.occurs_in_term(b_root, &term) {
-                    return Err(typing_error("occurs check failed".to_string()));
-                }
-                self.type_vars[b_root].kind = TypeVarKind::Bound(term);
-                Ok(())
-            }
-            (
-                TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(int_a))),
-                TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(int_b))),
-            ) => {
-                if int_a == int_b {
-                    Ok(())
-                } else if self.literal_ints.remove(&a_root) {
-                    self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
-                    Ok(())
-                } else if self.literal_ints.remove(&b_root) {
-                    self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
-                    Ok(())
-                } else {
-                    Err(typing_error("primitive type mismatch".to_string()))
-                }
-            }
-            (TypeVarKind::Bound(term_a), TypeVarKind::Bound(term_b)) => {
-                self.unify_terms(term_a, term_b)
-            }
-            (TypeVarKind::Link(next), _) => self.unify(next, b_root),
-            (_, TypeVarKind::Link(next)) => self.unify(a_root, next),
-        }
-    }
+    // occurs_in_term moved to typing/unify.rs
 
-    fn occurs_in_term(&mut self, var: TypeVarId, term: &TypeTerm) -> bool {
-        match term {
-            TypeTerm::Tuple(elements) => elements.iter().any(|elem| self.occurs_in(var, *elem)),
-            TypeTerm::Function(func) => {
-                func.params.iter().any(|param| self.occurs_in(var, *param))
-                    || self.occurs_in(var, func.ret)
-            }
-            TypeTerm::Slice(elem) | TypeTerm::Vec(elem) | TypeTerm::Reference(elem) => {
-                self.occurs_in(var, *elem)
-            }
-            _ => false,
-        }
-    }
+    // occurs_in moved to typing/unify.rs
 
-    fn occurs_in(&mut self, needle: TypeVarId, haystack: TypeVarId) -> bool {
-        let root = self.find(haystack);
-        if root == needle {
-            return true;
-        }
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Bound(term) => self.occurs_in_term(needle, &term),
-            TypeVarKind::Link(next) => self.occurs_in(needle, next),
-            _ => false,
-        }
-    }
+    // unify_terms moved to typing/unify.rs
 
-    fn unify_terms(&mut self, a: TypeTerm, b: TypeTerm) -> Result<()> {
-        match (a, b) {
-            (TypeTerm::Primitive(pa), TypeTerm::Primitive(pb)) => {
-                if pa == pb {
-                    Ok(())
-                } else {
-                    Err(typing_error("primitive type mismatch".to_string()))
-                }
-            }
-            (TypeTerm::Unit, TypeTerm::Unit)
-            | (TypeTerm::Nothing, TypeTerm::Nothing)
-            | (TypeTerm::Any, TypeTerm::Any)
-            | (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
-            (TypeTerm::Struct(sa), TypeTerm::Struct(sb)) => {
-                if sa == sb {
-                    Ok(())
-                } else {
-                    Err(typing_error("struct type mismatch".to_string()))
-                }
-            }
-            (TypeTerm::Structural(sa), TypeTerm::Structural(sb)) => {
-                if sa == sb {
-                    Ok(())
-                } else {
-                    Err(typing_error("structural type mismatch".to_string()))
-                }
-            }
-            (TypeTerm::Enum(ae), TypeTerm::Enum(be)) => {
-                if ae == be {
-                    Ok(())
-                } else {
-                    Err(typing_error("enum type mismatch".to_string()))
-                }
-            }
-            (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
-                if a == b {
-                    Ok(())
-                } else if matches!(a, Ty::Array(_)) && matches!(b, Ty::Array(_)) {
-                    if format!("{}", a) == format!("{}", b) {
-                        Ok(())
-                    } else {
-                        Err(typing_error(format!(
-                            "custom type mismatch: {} vs {}",
-                            a, b
-                        )))
-                    }
-                } else {
-                    Err(typing_error(format!(
-                        "custom type mismatch: {} vs {}",
-                        a, b
-                    )))
-                }
-            }
-            (TypeTerm::Tuple(a_elems), TypeTerm::Tuple(b_elems)) => {
-                if a_elems.len() != b_elems.len() {
-                    return Err(typing_error("tuple length mismatch".to_string()));
-                }
-                for (a_elem, b_elem) in a_elems.into_iter().zip(b_elems.into_iter()) {
-                    self.unify(a_elem, b_elem)?;
-                }
-                Ok(())
-            }
-            (TypeTerm::Function(a_func), TypeTerm::Function(b_func)) => {
-                if a_func.params.len() != b_func.params.len() {
-                    return Err(typing_error("function arity mismatch".to_string()));
-                }
-                for (a_param, b_param) in a_func.params.into_iter().zip(b_func.params.into_iter()) {
-                    self.unify(a_param, b_param)?;
-                }
-                self.unify(a_func.ret, b_func.ret)
-            }
-            (TypeTerm::Slice(a), TypeTerm::Slice(b))
-            | (TypeTerm::Vec(a), TypeTerm::Vec(b))
-            | (TypeTerm::Reference(a), TypeTerm::Reference(b)) => self.unify(a, b),
-            (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String)) => {
-                let temp = self.fresh_type_var();
-                self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
-                self.unify(inner, temp)
-            }
-            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Reference(inner)) => {
-                let temp = self.fresh_type_var();
-                self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
-                self.unify(inner, temp)
-            }
-            (TypeTerm::Unknown, other) | (other, TypeTerm::Unknown) => {
-                if let TypeTerm::Unknown = other {
-                    Ok(())
-                } else {
-                    Ok(())
-                }
-            }
-            (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
-            (left, right) => Err(typing_error(format!(
-                "type mismatch: {:?} vs {:?}",
-                left, right
-            ))),
-        }
-    }
+    // resolve_to_ty moved to typing/unify.rs
 
-    fn resolve_to_ty(&mut self, var: TypeVarId) -> Result<Ty> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => Ok(Ty::Unknown(TypeUnknown)),
-            TypeVarKind::Bound(term) => self.term_to_ty(term),
-            TypeVarKind::Link(next) => self.resolve_to_ty(next),
-        }
-    }
+    // term_to_ty moved to typing/unify.rs
 
-    fn term_to_ty(&mut self, term: TypeTerm) -> Result<Ty> {
-        Ok(match term {
-            TypeTerm::Primitive(prim) => Ty::Primitive(prim),
-            TypeTerm::Unit => Ty::Unit(TypeUnit),
-            TypeTerm::Nothing => Ty::Nothing(TypeNothing),
-            TypeTerm::Any => Ty::Any(TypeAny),
-            TypeTerm::Struct(struct_ty) => Ty::Struct(struct_ty),
-            TypeTerm::Structural(structural) => Ty::Structural(structural),
-            TypeTerm::Enum(enum_ty) => Ty::Enum(enum_ty),
-            TypeTerm::Custom(ty) => ty,
-            TypeTerm::Unknown => Ty::Unknown(TypeUnknown),
-            TypeTerm::Tuple(elements) => {
-                let types = elements
-                    .into_iter()
-                    .map(|elem| self.resolve_to_ty(elem))
-                    .collect::<Result<Vec<_>>>()?;
-                Ty::Tuple(TypeTuple { types })
-            }
-            TypeTerm::Function(function) => {
-                let params = function
-                    .params
-                    .into_iter()
-                    .map(|param| self.resolve_to_ty(param))
-                    .collect::<Result<Vec<_>>>()?;
-                let ret = self.resolve_to_ty(function.ret)?;
-                Ty::Function(TypeFunction {
-                    params,
-                    generics_params: Vec::new(),
-                    ret_ty: Some(Box::new(ret)),
-                })
-            }
-            TypeTerm::Slice(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Slice(TypeSlice {
-                    elem: Box::new(elem_ty),
-                })
-            }
-            TypeTerm::Vec(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Vec(TypeVec {
-                    ty: Box::new(elem_ty),
-                })
-            }
-            TypeTerm::Reference(elem) => {
-                let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Reference(TypeReference {
-                    ty: Box::new(elem_ty),
-                    mutability: None,
-                    lifetime: None,
-                })
-            }
-        })
-    }
-
-    fn type_from_ast_ty(&mut self, ty: &Ty) -> Result<TypeVarId> {
-        let var = self.fresh_type_var();
-        match ty {
-            Ty::Primitive(prim) => self.bind(var, TypeTerm::Primitive(*prim)),
-            Ty::Unit(_) => self.bind(var, TypeTerm::Unit),
-            Ty::Nothing(_) => self.bind(var, TypeTerm::Nothing),
-            Ty::Any(_) => self.bind(var, TypeTerm::Any),
-            Ty::Struct(struct_ty) => {
-                self.struct_defs
-                    .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
-                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-            }
-            Ty::Structural(structural) => self.bind(var, TypeTerm::Structural(structural.clone())),
-            Ty::Enum(enum_ty) => self.bind(var, TypeTerm::Enum(enum_ty.clone())),
-            Ty::Function(function) => {
-                let mut params = Vec::new();
-                for param in &function.params {
-                    params.push(self.type_from_ast_ty(param)?);
-                }
-                let ret_var = if let Some(ret) = &function.ret_ty {
-                    self.type_from_ast_ty(ret)?
-                } else {
-                    let unit = self.fresh_type_var();
-                    self.bind(unit, TypeTerm::Unit);
-                    unit
-                };
-                self.bind(
-                    var,
-                    TypeTerm::Function(FunctionTerm {
-                        params,
-                        ret: ret_var,
-                    }),
-                );
-            }
-            Ty::Tuple(tuple) => {
-                let mut vars = Vec::new();
-                for elem in &tuple.types {
-                    vars.push(self.type_from_ast_ty(elem)?);
-                }
-                self.bind(var, TypeTerm::Tuple(vars));
-            }
-            Ty::Slice(slice) => {
-                let elem_var = self.type_from_ast_ty(&slice.elem)?;
-                self.bind(var, TypeTerm::Slice(elem_var));
-            }
-            Ty::Vec(vec_ty) => {
-                let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
-                self.bind(var, TypeTerm::Vec(elem_var));
-            }
-            Ty::Reference(reference) => {
-                let elem_var = self.type_from_ast_ty(&reference.ty)?;
-                self.bind(var, TypeTerm::Reference(elem_var));
-            }
-            Ty::Array(_) => {
-                self.bind(var, TypeTerm::Custom(ty.clone()));
-            }
-            Ty::Expr(expr) => {
-                if let ExprKind::Locator(locator) = expr.kind() {
-                    let locator_name = locator.to_string();
-                    if let Some(ident) = locator.as_ident() {
-                        let ident_name = ident.as_str();
-                        if let Some(primitive) = Self::primitive_from_name(ident_name) {
-                            self.bind(var, TypeTerm::Primitive(primitive));
-                            return Ok(var);
-                        }
-                        if self.generic_name_in_scope(ident_name) {
-                            if let Some(existing) = self.lookup_env_var(ident_name) {
-                                self.unify(var, existing)?;
-                                return Ok(var);
-                            }
-                        }
-                    }
-
-                    if self.generic_name_in_scope(&locator_name) {
-                        if let Some(existing) = self.lookup_env_var(&locator_name) {
-                            self.unify(var, existing)?;
-                            return Ok(var);
-                        }
-                    }
-
-                    if locator_name == "Self" {
-                        if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
-                            if let Ty::Struct(struct_ty) = ctx.self_ty.clone() {
-                                self.bind(var, TypeTerm::Struct(struct_ty));
-                                return Ok(var);
-                            }
-                        }
-                    }
-                    if let Some(struct_def) = self.struct_defs.get(&locator_name).cloned() {
-                        self.bind(var, TypeTerm::Struct(struct_def));
-                        return Ok(var);
-                    }
-                }
-                self.bind(var, TypeTerm::Custom(ty.clone()));
-            }
-            Ty::TypeBounds(_) => self.bind(var, TypeTerm::Any),
-            Ty::ImplTraits(_) => {
-                // Leave the variable unbound and let inference derive the concrete
-                // type from the function body or call sites.
-            }
-            Ty::Type(_) => self.bind(var, TypeTerm::Custom(ty.clone())),
-            Ty::Unknown(_) => self.bind(var, TypeTerm::Unknown),
-            Ty::Value(_) | Ty::AnyBox(_) | Ty::QuoteToken(_) => {
-                self.bind(var, TypeTerm::Custom(ty.clone()));
-            }
-        }
-        Ok(var)
-    }
+    // type_from_ast_ty moved to typing/unify.rs
 
     fn lookup_associated_function(&mut self, locator: &Locator) -> Result<Option<TypeVarId>> {
         if let Locator::Path(path) = locator {
@@ -2748,120 +1748,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(())
     }
 
-    fn ensure_numeric(&mut self, var: TypeVarId, context: &str) -> Result<()> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. }
-            | TypeVarKind::Bound(TypeTerm::Any)
-            | TypeVarKind::Bound(TypeTerm::Unknown)
-            | TypeVarKind::Bound(TypeTerm::Custom(_)) => Ok(()),
-            TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_)))
-            | TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Decimal(_))) => Ok(()),
-            TypeVarKind::Link(next) => self.ensure_numeric(next, context),
-            other => {
-                self.emit_error(format!("expected numeric value for {}", context));
-                Err(typing_error(format!(
-                    "expected numeric type, found {:?}",
-                    other
-                )))
-            }
-        }
-    }
+    // ensure_numeric moved to typing::solver
 
-    fn ensure_bool(&mut self, var: TypeVarId, context: &str) -> Result<()> {
-        if self.lossy_mode {
-            return Ok(());
-        }
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
-                self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Bool));
-                Ok(())
-            }
-            TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Bool)) => Ok(()),
-            TypeVarKind::Bound(TypeTerm::Any) | TypeVarKind::Bound(TypeTerm::Unknown) => Ok(()),
-            TypeVarKind::Link(next) => self.ensure_bool(next, context),
-            other => {
-                tracing::debug!("ensure_bool failure: context={} type={:?}", context, other);
-                self.emit_error(format!("expected boolean for {}", context));
-                Err(typing_error(format!("expected bool, found {:?}", other)))
-            }
-        }
-    }
+    // ensure_bool moved to typing::solver
 
-    fn ensure_integer(&mut self, var: TypeVarId, context: &str) -> Result<()> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
-                self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
-                Ok(())
-            }
-            TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(_))) => Ok(()),
-            TypeVarKind::Link(next) => self.ensure_integer(next, context),
-            other => {
-                self.emit_error(format!("expected integer value for {}", context));
-                Err(typing_error(format!("expected integer, found {:?}", other)))
-            }
-        }
-    }
+    // ensure_integer moved to typing::solver
 
-    fn ensure_function(&mut self, var: TypeVarId, arity: usize) -> Result<FunctionTypeInfo> {
-        let root = self.find(var);
-        match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
-                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
-                let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
-                Ok(FunctionTypeInfo { params, ret })
-            }
-            TypeVarKind::Bound(TypeTerm::Any) => {
-                let params: Vec<_> = (0..arity).map(|_| self.fresh_type_var()).collect();
-                let ret = self.fresh_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
-                Ok(FunctionTypeInfo { params, ret })
-            }
-            TypeVarKind::Bound(TypeTerm::Function(func)) => {
-                if func.params.len() != arity {
-                    self.emit_error(format!(
-                        "function arity mismatch: expected {}, found {}",
-                        arity,
-                        func.params.len()
-                    ));
-                    let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
-                    let ret = self.error_type_var();
-                    self.type_vars[root].kind =
-                        TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                            params: params.clone(),
-                            ret,
-                        }));
-                    return Ok(FunctionTypeInfo { params, ret });
-                }
-                Ok(FunctionTypeInfo {
-                    params: func.params,
-                    ret: func.ret,
-                })
-            }
-            TypeVarKind::Link(next) => self.ensure_function(next, arity),
-            other => {
-                self.emit_error(format!("expected function, found {:?}", other));
-                let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
-                let ret = self.error_type_var();
-                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
-                    params: params.clone(),
-                    ret,
-                }));
-                Ok(FunctionTypeInfo { params, ret })
-            }
-        }
-    }
+    // ensure_function moved to typing::solver
 
     fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var)?;
@@ -3044,35 +1937,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 /// - Single trailing expression and no statements => Expr
 /// - All items at top level => Item
 /// - Otherwise => Stmt
-fn infer_quote_kind(block: &ExprBlock) -> QuoteFragmentKind {
-    let all_items = block
-        .stmts
-        .iter()
-        .all(|s| matches!(s, BlockStmt::Item(_)));
-    let has_non_item_stmt = block
-        .stmts
-        .iter()
-        .any(|s| !matches!(s, BlockStmt::Item(_)));
-
-    if block.stmts.is_empty() {
-        if block.last_expr().is_some() {
-            return QuoteFragmentKind::Expr;
-        }
-        // Empty quote defaults to Stmt
-        return QuoteFragmentKind::Stmt;
-    }
-
-    if all_items {
-        // If there are only items and no trailing expression (or even if there is), it's an item fragment
-        return QuoteFragmentKind::Item;
-    }
-
-    if !has_non_item_stmt && block.last_expr().is_some() {
-        return QuoteFragmentKind::Expr;
-    }
-
-    QuoteFragmentKind::Stmt
-}
+// moved to typing::infer_expr::infer_quote_kind
 
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn infer_expression(&mut self, expr: &mut Expr) -> Result<()> {

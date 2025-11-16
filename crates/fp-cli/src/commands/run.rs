@@ -5,7 +5,7 @@ use crate::pipeline::{Pipeline, PipelineInput, PipelineOutput};
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{RuntimeValue, Value};
-use crate::commands::{format_value_brief, ownership_label};
+use crate::commands::{format_value_brief, print_runtime_result};
 use fp_core::pretty::{PrettyOptions, pretty};
 use std::path::PathBuf;
 use tracing::info;
@@ -124,17 +124,7 @@ fn print_ast_representation(source: &str, runtime: &str) -> Result<()> {
     Ok(())
 }
 
-fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
-    let value = result.get_value();
-    let ownership_info = ownership_label(result);
-    println!(
-        "{} {} [{}]",
-        style("Result:").green().bold(),
-        style(format!("{}", value)).cyan(),
-        style(ownership_info).dim()
-    );
-    Ok(())
-}
+// printing is centralized in commands::common::print_runtime_result
 
 #[cfg(test)]
 mod tests {

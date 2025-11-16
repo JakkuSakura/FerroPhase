@@ -14,8 +14,8 @@ use fp_wit::{WitOptions, WitSerializer};
 use fp_zig::ZigSerializer;
 use console::style;
 use fp_core::ast::{Ident, Item, Module as AstModule, NodeKind, Visibility};
-use fp_rust::{parse_cargo_workspace, printer::RustPrinter};
-use fp_wit::{WitOptions, WorldMode};
+use fp_rust::parse_cargo_workspace;
+use fp_wit::WorldMode;
 use pathdiff::diff_paths;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -54,8 +54,11 @@ async fn transpile_once(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     for input_file in &args.input {
         progress.set_message(format!("Transpiling {}", input_file.display()));
 
-        let output_file =
-            determine_transpile_output_path(input_file, args.output.as_ref(), &args.target)?;
+        let output_file = crate::languages::backend::resolve_output_path(
+            input_file,
+            args.output.as_ref(),
+            &args.target,
+        )?;
         transpile_file(input_file, &output_file, &args, config).await?;
 
         progress.inc(1);
@@ -486,12 +489,6 @@ fn build_module_item(ident: Ident, items: Vec<Item>) -> Item {
     })
 }
 
-fn determine_transpile_output_path(
-    input: &Path,
-    output: Option<&PathBuf>,
-    target: &str,
-) -> Result<PathBuf> {
-    crate::languages::backend::resolve_output_path(input, output, target)
-}
+// determine_transpile_output_path removed; inline resolve_output_path instead
 
 // Progress bar helper moved to commands::common

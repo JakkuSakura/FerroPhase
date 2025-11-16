@@ -4,6 +4,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
 use crate::{CliError, Result};
 use fp_core::ast::{RuntimeValue, Value};
+use console::style;
 
 /// Create a consistently styled progress bar for command loops.
 pub fn setup_progress_bar(total: usize) -> ProgressBar {
@@ -65,5 +66,18 @@ pub fn validate_paths_exist(inputs: &[PathBuf], must_be_files: bool) -> Result<(
             )));
         }
     }
+    Ok(())
+}
+
+/// Print a runtime value in a consistent, user-friendly way with ownership info.
+pub fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
+    let value = result.get_value();
+    let ownership_info = ownership_label(result);
+    println!(
+        "{} {} [{}]",
+        style("Result:").green().bold(),
+        style(format!("{}", value)).cyan(),
+        style(ownership_info).dim()
+    );
     Ok(())
 }
