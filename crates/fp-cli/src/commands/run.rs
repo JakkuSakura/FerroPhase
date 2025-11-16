@@ -5,6 +5,7 @@ use crate::pipeline::{Pipeline, PipelineInput, PipelineOutput};
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::{RuntimeValue, Value};
+use crate::commands::{format_value_brief, ownership_label};
 use fp_core::pretty::{PrettyOptions, pretty};
 use std::path::PathBuf;
 use tracing::info;
@@ -88,7 +89,7 @@ fn handle_pipeline_output(output: PipelineOutput, args: &RunArgs) -> Result<()> 
                 println!(
                     "{} {}",
                     style("Result:").green().bold(),
-                    format_result(&value)
+                    format_value_brief(&value)
                 );
             }
             Ok(())
@@ -125,18 +126,7 @@ fn print_ast_representation(source: &str, runtime: &str) -> Result<()> {
 
 fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
     let value = result.get_value();
-    let ownership_info = if result.is_literal() {
-        "literal"
-    } else if result.is_owned() {
-        "owned"
-    } else if result.is_borrowed() {
-        "borrowed"
-    } else if result.is_shared() {
-        "shared"
-    } else {
-        "extension"
-    };
-
+    let ownership_info = ownership_label(result);
     println!(
         "{} {} [{}]",
         style("Result:").green().bold(),
@@ -144,20 +134,6 @@ fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
         style(ownership_info).dim()
     );
     Ok(())
-}
-
-fn format_result(result: &Value) -> String {
-    match result {
-        Value::Unit(_) => "()".to_string(),
-        Value::Bool(b) => if b.value { "true" } else { "false" }.to_string(),
-        Value::Int(i) => i.value.to_string(),
-        Value::Decimal(f) => f.value.to_string(),
-        Value::String(s) => format!("\"{}\"", s.value),
-        Value::List(list) => format!("[list with {} elements]", list.values.len()),
-        Value::Map(map) => format!("{{map with {} entries}}", map.len()),
-        Value::Struct(s) => format!("struct {}", s.ty.name),
-        _ => format!("{:?}", result),
-    }
 }
 
 #[cfg(test)]

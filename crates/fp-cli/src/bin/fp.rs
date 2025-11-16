@@ -134,10 +134,6 @@ struct CompileArgs {
     #[arg(short, long)]
     exec: bool,
 
-    /// Watch for file changes and recompile
-    #[arg(short, long)]
-    watch: bool,
-
     /// Persist intermediate representations to disk
     #[arg(long)]
     save_intermediates: bool,
@@ -380,7 +376,6 @@ async fn main() -> Result<()> {
                 include: args.include,
                 define: args.define,
                 exec: args.exec,
-                watch: args.watch,
                 error_tolerance: args.error_tolerance,
                 max_errors: args.max_errors,
                 save_intermediates: args.save_intermediates,

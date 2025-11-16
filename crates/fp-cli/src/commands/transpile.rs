@@ -43,7 +43,7 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
 }
 
 async fn transpile_once(args: TranspileArgs, config: &CliConfig) -> Result<()> {
-    let progress = setup_progress_bar(args.input.len());
+    let progress = crate::commands::setup_progress_bar(args.input.len());
 
     for input_file in &args.input {
         progress.set_message(format!("Transpiling {}", input_file.display()));
@@ -472,14 +472,4 @@ fn determine_transpile_output_path(
     }
 }
 
-fn setup_progress_bar(total: usize) -> indicatif::ProgressBar {
-    use indicatif::{ProgressBar, ProgressStyle};
-    let pb = ProgressBar::new(total as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-    pb
-}
+// Progress bar helper moved to commands::common
