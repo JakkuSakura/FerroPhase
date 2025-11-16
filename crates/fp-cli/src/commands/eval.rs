@@ -8,6 +8,7 @@ use crate::{
 };
 use console::style;
 use fp_core::ast::{RuntimeValue, Value};
+use crate::commands::{format_value_brief, ownership_label};
 use tracing::info;
 
 /// Arguments for the eval command
@@ -58,7 +59,11 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     match output {
         PipelineOutput::Value(value) => {
             if args.print_result {
-                print_result(&value)?;
+                println!(
+                    "{} {}",
+                    console::style("Result:").green().bold(),
+                    format_value_brief(&value)
+                );
             }
         }
         PipelineOutput::RuntimeValue(runtime_value) => {
@@ -77,103 +82,14 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
 }
 
 fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
-    // Print the runtime value with ownership information
-    match result {
-        _ => {
-            let value = result.get_value();
-            let ownership_info = if result.is_literal() {
-                "literal"
-            } else if result.is_owned() {
-                "owned"
-            } else if result.is_borrowed() {
-                "borrowed"
-            } else if result.is_shared() {
-                "shared"
-            } else {
-                "extension"
-            };
-
-            println!(
-                "{} {} [{}]",
-                style("Result:").green().bold(),
-                style(format!("{}", value)).cyan(),
-                style(ownership_info).dim()
-            );
-        }
-    }
-    Ok(())
-}
-
-fn print_result(result: &Value) -> Result<()> {
-    // Pretty-print the result based on its type
-    match result {
-        Value::Unit(_) => {
-            println!("{} {}", style("Result:").green().bold(), style("()").dim());
-        }
-        Value::Bool(b) => {
-            let value_str = if b.value { "true" } else { "false" };
-            println!(
-                "{} {}",
-                style("Result:").green().bold(),
-                style(value_str).cyan()
-            );
-        }
-        Value::Int(i) => {
-            println!(
-                "{} {}",
-                style("Result:").green().bold(),
-                style(&i.value.to_string()).cyan()
-            );
-        }
-        Value::Decimal(f) => {
-            println!(
-                "{} {}",
-                style("Result:").green().bold(),
-                style(&f.value.to_string()).cyan()
-            );
-        }
-        Value::String(s) => {
-            println!(
-                "{} {}",
-                style("Result:").green().bold(),
-                style(&format!("\"{}\"", s.value)).cyan()
-            );
-        }
-        Value::List(list) => {
-            println!(
-                "{} {} elements)",
-                style("Result:").green().bold(),
-                style(&format!("[list with {}", list.values.len())).cyan()
-            );
-            for (i, item) in list.values.iter().enumerate() {
-                println!("  [{}]: {:?}", i, item);
-            }
-        }
-        Value::Map(map) => {
-            println!(
-                "{} {} entries)",
-                style("Result:").green().bold(),
-                style(&format!("{{map with {}", map.len())).cyan()
-            );
-            for (idx, entry) in map.entries.iter().enumerate() {
-                println!("  [{}]: {} => {:?}", idx, entry.key, entry.value);
-            }
-        }
-        Value::Struct(s) => {
-            println!(
-                "{} {}",
-                style("Result:").green().bold(),
-                style(&format!("struct {}", s.ty.name)).cyan()
-            );
-            for field in &s.structural.fields {
-                println!("  {}: {:?}", field.name, field.value);
-            }
-        }
-        _ => {
-            println!("{} {:?}", style("Result:").green().bold(), result);
-        }
-    }
-
+    let value = result.get_value();
+    let ownership_info = ownership_label(result);
+    println!(
+        "{} {} [{}]",
+        style("Result:").green().bold(),
+        style(format!("{}", value)).cyan(),
+        style(ownership_info).dim()
+    );
     Ok(())
 }
 
