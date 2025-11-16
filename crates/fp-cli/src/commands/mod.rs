@@ -9,6 +9,7 @@ pub mod init;
 pub mod parse;
 pub mod run;
 pub mod transpile;
+pub mod common;
 
 // Re-export command functions
 pub use check::check_command;
@@ -20,6 +21,8 @@ pub use init::init_command;
 pub use parse::parse_command;
 pub use run::run_command;
 pub use transpile::transpile_command;
+// Re-export shared helpers for convenience
+pub use common::{format_value_brief, ownership_label, setup_progress_bar};
 
 use crate::{Result, cli::CliConfig};
 
