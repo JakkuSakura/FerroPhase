@@ -8,7 +8,7 @@ use crate::{
 };
 use console::style;
 use fp_core::ast::{RuntimeValue, Value};
-use crate::commands::{format_value_brief, ownership_label};
+use crate::commands::{format_value_brief, print_runtime_result};
 use tracing::info;
 
 /// Arguments for the eval command
@@ -81,17 +81,7 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     Ok(())
 }
 
-fn print_runtime_result(result: &RuntimeValue) -> Result<()> {
-    let value = result.get_value();
-    let ownership_info = ownership_label(result);
-    println!(
-        "{} {} [{}]",
-        style("Result:").green().bold(),
-        style(format!("{}", value)).cyan(),
-        style(ownership_info).dim()
-    );
-    Ok(())
-}
+// printing is centralized in commands::common::print_runtime_result
 
 #[cfg(test)]
 mod tests {
