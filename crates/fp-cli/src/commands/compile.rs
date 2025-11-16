@@ -11,7 +11,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Arguments for the compile command
 #[derive(Debug, Clone)]
@@ -101,7 +101,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()> {
     use tokio::time::{Duration, sleep};
 
-    println!("{} Watching for changes...", style("👀").cyan());
+    info!("{} Watching for changes...", style("👀").cyan());
 
     let mut last_modified = std::collections::HashMap::new();
 
@@ -124,7 +124,7 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
         }
 
         if needs_recompile {
-            println!(
+            info!(
                 "{} File changes detected, recompiling...",
                 style("🔄").yellow()
             );
@@ -150,8 +150,8 @@ async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()>
             )
             .await
             {
-                Ok(_) => println!("{} Recompilation successful", style("✓").green()),
-                Err(e) => eprintln!("{} Recompilation failed: {}", style("✗").red(), e),
+                Ok(_) => info!("{} Recompilation successful", style("✓").green()),
+                Err(e) => error!("{} Recompilation failed: {}", style("✗").red(), e),
             }
         }
 
@@ -288,7 +288,7 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
         )));
     }
 
-    println!(
+    info!(
         "{} Executing compiled binary: {}",
         style("🚀").cyan(),
         path.display()

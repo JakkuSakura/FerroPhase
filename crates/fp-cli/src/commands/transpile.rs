@@ -15,7 +15,7 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tracing::{info, info_span};
+use tracing::{error, info, info_span};
 
 /// Arguments for the transpile command
 #[derive(Debug, Clone)]
@@ -28,7 +28,6 @@ pub struct TranspileArgs {
     pub type_defs: bool,
     pub pretty: bool,
     pub source_maps: bool,
-    pub watch: bool,
     pub single_world: bool,
     pub resolve_imports: bool,
 }
@@ -39,11 +38,8 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
 
     validate_transpile_inputs(&args)?;
 
-    if args.watch {
-        transpile_with_watch(args, config).await
-    } else {
-        transpile_once(args, config).await
-    }
+    // Watch mode removed: always perform a single pass
+    transpile_once(args, config).await
 }
 
 async fn transpile_once(args: TranspileArgs, config: &CliConfig) -> Result<()> {
@@ -67,61 +63,6 @@ async fn transpile_once(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     ));
 
     Ok(())
-}
-
-async fn transpile_with_watch(args: TranspileArgs, config: &CliConfig) -> Result<()> {
-    use tokio::time::{Duration, sleep};
-
-    println!("{} Watching for changes...", style("👀").cyan());
-
-    let mut last_modified = std::collections::HashMap::new();
-
-    loop {
-        let mut needs_retranspile = false;
-
-        for input_file in &args.input {
-            if let Ok(metadata) = std::fs::metadata(input_file) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Some(&last_mod) = last_modified.get(input_file) {
-                        if modified > last_mod {
-                            needs_retranspile = true;
-                        }
-                    } else {
-                        needs_retranspile = true;
-                    }
-                    last_modified.insert(input_file.clone(), modified);
-                }
-            }
-        }
-
-        if needs_retranspile {
-            println!("{} Re-transpiling...", style("🔄").yellow());
-
-            match transpile_once(
-                TranspileArgs {
-                    input: args.input.clone(),
-                    target: args.target.clone(),
-                    output: args.output.clone(),
-                    const_eval: args.const_eval,
-                    preserve_structs: args.preserve_structs,
-                    type_defs: args.type_defs,
-                    pretty: args.pretty,
-                    source_maps: args.source_maps,
-                    watch: false,
-                    single_world: args.single_world,
-                    resolve_imports: args.resolve_imports,
-                },
-                config,
-            )
-            .await
-            {
-                Ok(_) => println!("{} Success", style("✓").green()),
-                Err(e) => eprintln!("{} Failed: {}", style("✗").red(), e),
-            }
-        }
-
-        sleep(Duration::from_millis(500)).await;
-    }
 }
 
 async fn transpile_file(
