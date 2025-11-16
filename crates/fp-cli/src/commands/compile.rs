@@ -7,7 +7,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
-use indicatif::{ProgressBar, ProgressStyle};
+use crate::commands::setup_progress_bar;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
@@ -24,7 +24,6 @@ pub struct CompileArgs {
     pub include: Vec<PathBuf>,
     pub define: Vec<String>,
     pub exec: bool,
-    pub watch: bool,
     /// Enable error tolerance (collect multiple errors instead of early exit)
     pub error_tolerance: bool,
     /// Maximum number of errors to collect (0 = unlimited)
@@ -44,11 +43,7 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
     // Validate inputs
     validate_inputs(&args)?;
 
-    if args.watch {
-        compile_with_watch(args, config).await
-    } else {
-        compile_once(args, config).await
-    }
+    compile_once(args, config).await
 }
 
 async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
@@ -98,66 +93,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     Ok(())
 }
 
-async fn compile_with_watch(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    use tokio::time::{Duration, sleep};
-
-    info!("{} Watching for changes...", style("👀").cyan());
-
-    let mut last_modified = std::collections::HashMap::new();
-
-    loop {
-        let mut needs_recompile = false;
-
-        for input_file in &args.input {
-            if let Ok(metadata) = std::fs::metadata(input_file) {
-                if let Ok(modified) = metadata.modified() {
-                    if let Some(&last_mod) = last_modified.get(input_file) {
-                        if modified > last_mod {
-                            needs_recompile = true;
-                        }
-                    } else {
-                        needs_recompile = true;
-                    }
-                    last_modified.insert(input_file.clone(), modified);
-                }
-            }
-        }
-
-        if needs_recompile {
-            info!(
-                "{} File changes detected, recompiling...",
-                style("🔄").yellow()
-            );
-
-            match compile_once(
-                CompileArgs {
-                    input: args.input.clone(),
-                    target: args.target.clone(),
-                    output: args.output.clone(),
-                    opt_level: args.opt_level,
-                    debug: args.debug,
-                    include: args.include.clone(),
-                    define: args.define.clone(),
-                    exec: args.exec,
-                    watch: false, // Prevent recursion
-                    error_tolerance: args.error_tolerance,
-                    max_errors: args.max_errors,
-                    save_intermediates: args.save_intermediates,
-                    source_language: args.source_language.clone(),
-                    release: args.release,
-                },
-                config,
-            )
-            .await
-            {
-                Ok(_) => info!("{} Recompilation successful", style("✓").green()),
-                Err(e) => error!("{} Recompilation failed: {}", style("✗").red(), e),
-            }
-        }
-
-        sleep(Duration::from_millis(500)).await;
-    }
-}
+// Note: former compile watch loop removed intentionally.
 
 async fn compile_file(
     input: &Path,
@@ -392,13 +328,4 @@ fn determine_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -
     }
 }
 
-fn setup_progress_bar(total: usize) -> ProgressBar {
-    let pb = ProgressBar::new(total as u64);
-    pb.set_style(
-        ProgressStyle::default_bar()
-            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} {msg}")
-            .unwrap()
-            .progress_chars("#>-"),
-    );
-    pb
-}
+// Progress bar helper moved to commands::common
