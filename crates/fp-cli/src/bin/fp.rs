@@ -189,10 +189,6 @@ struct TranspileArgs {
     #[arg(long)]
     source_maps: bool,
 
-    /// Watch for file changes and re-transpile
-    #[arg(short, long)]
-    watch: bool,
-
     /// Generate a single WIT world instead of per-package worlds
     #[arg(long)]
     single_world: bool,
@@ -402,7 +398,6 @@ async fn main() -> Result<()> {
                 type_defs: args.type_defs,
                 pretty: args.pretty,
                 source_maps: args.source_maps,
-                watch: args.watch,
                 single_world: args.single_world,
                 resolve_imports: !args.no_resolve,
             };
