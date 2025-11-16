@@ -1,10 +1,9 @@
 use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
-use crate::frontend::{
-    FerroFrontend, FlatbuffersFrontend, FrontendRegistry, FrontendResult, FrontendSnapshot,
-    JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend,
-    WitFrontend,
+use crate::languages::frontend::{
+    FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, JsonSchemaFrontend,
+    LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 #[cfg(feature = "bootstrap")]
@@ -49,38 +48,64 @@ use tokio::task;
 use tracing::{debug, info_span, warn};
 
 // Begin internal submodules extracted for clarity
-mod workspace;
 mod artifacts;
 mod diagnostics;
 mod stages;
+mod workspace;
 use self::diagnostics as diag;
 use artifacts::{BackendArtifacts, LlvmArtifacts};
-use workspace::{determine_main_package_name, WorkspaceLirReplay};
+use workspace::{WorkspaceLirReplay, determine_main_package_name};
 
 #[cfg(feature = "bootstrap")]
 const BOOTSTRAP_ENV_VAR: &str = "FERROPHASE_BOOTSTRAP";
 
 // AST invariant checks
 fn ast_contains_quote_or_splice(node: &Node) -> bool {
-    use fp_core::ast as ast;
+    use fp_core::ast;
     fn expr_has(e: &ast::Expr) -> bool {
         use ast::ExprKind::*;
         match e.kind() {
             Quote(_) | Splice(_) => true,
-            Block(b) => b.stmts.iter().any(stmt_has) || b.last_expr().map(expr_has).unwrap_or(false),
-            If(i) => expr_has(i.cond.as_ref()) || expr_has(i.then.as_ref()) || i.elze.as_ref().map(|x| expr_has(x.as_ref())).unwrap_or(false),
+            Block(b) => {
+                b.stmts.iter().any(stmt_has) || b.last_expr().map(expr_has).unwrap_or(false)
+            }
+            If(i) => {
+                expr_has(i.cond.as_ref())
+                    || expr_has(i.then.as_ref())
+                    || i.elze
+                        .as_ref()
+                        .map(|x| expr_has(x.as_ref()))
+                        .unwrap_or(false)
+            }
             Loop(l) => expr_has(l.body.as_ref()),
             While(w) => expr_has(w.cond.as_ref()) || expr_has(w.body.as_ref()),
-            Match(m) => m.cases.iter().any(|c| expr_has(c.cond.as_ref()) || expr_has(c.body.as_ref())),
+            Match(m) => m
+                .cases
+                .iter()
+                .any(|c| expr_has(c.cond.as_ref()) || expr_has(c.body.as_ref())),
             Let(l) => expr_has(l.expr.as_ref()),
             Assign(a) => expr_has(a.target.as_ref()) || expr_has(a.value.as_ref()),
             Invoke(i) => i.args.iter().any(expr_has),
-            Struct(s) => expr_has(s.name.as_ref()) || s.fields.iter().any(|f| f.value.as_ref().map(expr_has).unwrap_or(false)),
-            Structural(s) => s.fields.iter().any(|f| f.value.as_ref().map(expr_has).unwrap_or(false)),
+            Struct(s) => {
+                expr_has(s.name.as_ref())
+                    || s.fields
+                        .iter()
+                        .any(|f| f.value.as_ref().map(expr_has).unwrap_or(false))
+            }
+            Structural(s) => s
+                .fields
+                .iter()
+                .any(|f| f.value.as_ref().map(expr_has).unwrap_or(false)),
             IntrinsicContainer(c) => match c {
-                ast::ExprIntrinsicContainer::VecElements{elements} => elements.iter().any(expr_has),
-                ast::ExprIntrinsicContainer::VecRepeat{elem,len} => expr_has(elem) || expr_has(len),
-                ast::ExprIntrinsicContainer::HashMapEntries{entries} => entries.iter().any(|e| expr_has(&e.key) || expr_has(&e.value)),
+                ast::ExprIntrinsicContainer::VecElements { elements } => {
+                    elements.iter().any(expr_has)
+                }
+                ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                    expr_has(elem) || expr_has(len)
+                }
+                ast::ExprIntrinsicContainer::HashMapEntries { entries } => entries
+                    .iter()
+                    .any(|e| expr_has(&e.key) || expr_has(&e.value)),
             },
             Array(a) => a.values.iter().any(expr_has),
             ArrayRepeat(r) => expr_has(r.elem.as_ref()) || expr_has(r.len.as_ref()),
@@ -97,13 +122,17 @@ fn ast_contains_quote_or_splice(node: &Node) -> bool {
             Try(t) => expr_has(t.expr.as_ref()),
             Paren(p) => expr_has(p.expr.as_ref()),
             FormatString(fs) => fs.args.iter().any(expr_has),
-            Value(_) | Locator(_) | Id(_) | Item(_) | Any(_) | Await(_) | Range(_) | Splat(_) | SplatDict(_) | IntrinsicCall(_) | Macro(_) => false,
+            Value(_) | Locator(_) | Id(_) | Item(_) | Any(_) | Await(_) | Range(_) | Splat(_)
+            | SplatDict(_) | IntrinsicCall(_) | Macro(_) => false,
         }
     }
     fn stmt_has(s: &ast::BlockStmt) -> bool {
         match s {
             ast::BlockStmt::Expr(e) => expr_has(e.expr.as_ref()),
-            ast::BlockStmt::Let(l) => l.init.as_ref().map(expr_has).unwrap_or(false) || l.diverge.as_ref().map(expr_has).unwrap_or(false),
+            ast::BlockStmt::Let(l) => {
+                l.init.as_ref().map(expr_has).unwrap_or(false)
+                    || l.diverge.as_ref().map(expr_has).unwrap_or(false)
+            }
             ast::BlockStmt::Item(i) => item_has(i),
             ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => false,
         }
@@ -256,7 +285,7 @@ impl IntrinsicsMaterializer {
 }
 
 pub struct Pipeline {
-    frontends: Arc<FrontendRegistry>,
+    frontends: HashMap<String, Arc<dyn LanguageFrontend>>,
     default_runtime: String,
     bootstrap_mode: bool,
     serializer: Option<Arc<dyn AstSerializer>>,
@@ -277,22 +306,29 @@ pub struct TranspilePreparationOptions {
 
 impl Pipeline {
     pub fn new() -> Self {
-        let mut registry = FrontendRegistry::new();
+        let mut frontends: HashMap<String, Arc<dyn LanguageFrontend>> = HashMap::new();
+        let mut register = |fe: Arc<dyn LanguageFrontend>| {
+            let key = fe.language().to_lowercase();
+            frontends.insert(key, fe.clone());
+            for ext in fe.extensions() {
+                frontends.insert(ext.to_lowercase(), fe.clone());
+            }
+        };
         let ferro_frontend: Arc<dyn LanguageFrontend> = Arc::new(FerroFrontend::new());
-        registry.register(ferro_frontend);
+        register(ferro_frontend);
         let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
-        registry.register(wit_frontend);
+        register(wit_frontend);
         let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
         let ts_frontend: Arc<dyn LanguageFrontend> = ts_frontend_concrete.clone();
-        registry.register(ts_frontend);
+        register(ts_frontend);
         let sql_frontend: Arc<dyn LanguageFrontend> = Arc::new(SqlFrontend::new());
-        registry.register(sql_frontend);
+        register(sql_frontend);
         let prql_frontend: Arc<dyn LanguageFrontend> = Arc::new(PrqlFrontend::new());
-        registry.register(prql_frontend);
+        register(prql_frontend);
         let jsonschema_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonSchemaFrontend::new());
-        registry.register(jsonschema_frontend);
+        register(jsonschema_frontend);
         let flatbuffers_frontend: Arc<dyn LanguageFrontend> = Arc::new(FlatbuffersFrontend::new());
-        registry.register(flatbuffers_frontend);
+        register(flatbuffers_frontend);
         let bootstrap_mode = detect_bootstrap_mode();
 
         #[cfg(feature = "bootstrap")]
@@ -301,7 +337,7 @@ impl Pipeline {
         }
 
         Self {
-            frontends: Arc::new(registry),
+            frontends,
             default_runtime: "literal".to_string(),
             bootstrap_mode,
             serializer: None,
@@ -320,27 +356,7 @@ impl Pipeline {
         pipeline
     }
 
-    pub fn with_frontend_registry(registry: Arc<FrontendRegistry>) -> Self {
-        let bootstrap_mode = detect_bootstrap_mode();
-
-        #[cfg(feature = "bootstrap")]
-        if bootstrap_mode {
-            debug!("FERROPHASE_BOOTSTRAP detected; running pipeline in bootstrap mode");
-        }
-
-        Self {
-            frontends: registry,
-            default_runtime: "literal".to_string(),
-            bootstrap_mode,
-            serializer: None,
-            intrinsic_normalizer: None,
-            source_language: None,
-            frontend_snapshot: None,
-            last_const_eval: None,
-            typescript_frontend: None,
-            typescript_parse_mode: TsParseMode::Loose,
-        }
-    }
+    // with_frontend_registry removed; pipeline owns its registered frontends
 
     pub fn set_serializer(&mut self, serializer: Arc<dyn AstSerializer>) {
         register_threadlocal_serializer(serializer.clone());
@@ -418,7 +434,8 @@ impl Pipeline {
         let frontend = self
             .frontends
             .get(language_key)
-            .or_else(|| self.frontends.get(languages::FERROPHASE))
+            .cloned()
+            .or_else(|| self.frontends.get(languages::FERROPHASE).cloned())
             .ok_or_else(|| CliError::Compilation("No suitable frontend registered".to_string()))?;
 
         let FrontendResult {
@@ -475,7 +492,7 @@ impl Pipeline {
         input_path: Option<&PathBuf>,
     ) -> Result<Node, CliError> {
         let language = self.resolve_language(options, input_path);
-        let frontend = self.frontends.get(&language).ok_or_else(|| {
+        let frontend = self.frontends.get(&language).cloned().ok_or_else(|| {
             CliError::Compilation(format!("Unsupported source language: {}", language))
         })?;
 
@@ -1179,10 +1196,6 @@ impl Pipeline {
         }
     }
 
-    
-
-    
-
     fn should_emit_bootstrap_diagnostic(&self, stage: &'static str, message: &str) -> bool {
         if !self.bootstrap_mode {
             return true;
@@ -1195,18 +1208,6 @@ impl Pipeline {
             true
         }
     }
-
-    
-
-    
-
-    
-
-    
-
-    
-
-    
 
     fn save_pretty(
         &self,
@@ -1259,10 +1260,6 @@ impl Pipeline {
         })
     }
 
-    
-
-    
-
     /// Compile a single AST JSON snapshot file into LIR artifacts (blocking, no Tokio required).
     pub(crate) fn compile_snapshot_to_lir_blocking(
         &mut self,
@@ -1285,7 +1282,8 @@ impl Pipeline {
                 let source = std::fs::read_to_string(snapshot_path).map_err(|e| {
                     CliError::Compilation(format!(
                         "failed to read input {}: {}",
-                        snapshot_path.display(), e
+                        snapshot_path.display(),
+                        e
                     ))
                 })?;
                 self.parse_input_source(&options, &source, Some(&snapshot_path.to_path_buf()))?
@@ -1306,7 +1304,14 @@ impl Pipeline {
             STAGE_TYPE_ENRICH,
             &diagnostic_manager,
             &options,
-            |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, &diagnostic_manager, &options),
+            |pipeline| {
+                pipeline.stage_type_check(
+                    &mut ast,
+                    STAGE_TYPE_ENRICH,
+                    &diagnostic_manager,
+                    &options,
+                )
+            },
         )?;
 
         if options.save_intermediates {
@@ -1341,7 +1346,14 @@ impl Pipeline {
             STAGE_RUNTIME_MATERIALIZE,
             &diagnostic_manager,
             &options,
-            |pipeline| pipeline.stage_materialize_runtime_intrinsics(&mut ast, &PipelineTarget::Llvm, &options, &diagnostic_manager),
+            |pipeline| {
+                pipeline.stage_materialize_runtime_intrinsics(
+                    &mut ast,
+                    &PipelineTarget::Llvm,
+                    &options,
+                    &diagnostic_manager,
+                )
+            },
         )?;
 
         if !options.bootstrap_mode {
@@ -1349,7 +1361,14 @@ impl Pipeline {
                 STAGE_TYPE_POST_MATERIALIZE,
                 &diagnostic_manager,
                 &options,
-                |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, &diagnostic_manager, &options),
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_POST_MATERIALIZE,
+                        &diagnostic_manager,
+                        &options,
+                    )
+                },
             )?;
 
             self.run_stage(
@@ -1367,7 +1386,14 @@ impl Pipeline {
                 STAGE_TYPE_POST_CLOSURE,
                 &diagnostic_manager,
                 &options,
-                |pipeline| pipeline.stage_type_check(&mut ast, STAGE_TYPE_POST_CLOSURE, &diagnostic_manager, &options),
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_POST_CLOSURE,
+                        &diagnostic_manager,
+                        &options,
+                    )
+                },
             )?;
         }
 
@@ -1375,14 +1401,29 @@ impl Pipeline {
             STAGE_AST_TO_HIR,
             &diagnostic_manager,
             &options,
-            |pipeline| pipeline.stage_hir_generation(&ast, &options, Some(snapshot_path), &base_path, &diagnostic_manager),
+            |pipeline| {
+                pipeline.stage_hir_generation(
+                    &ast,
+                    &options,
+                    Some(snapshot_path),
+                    &base_path,
+                    &diagnostic_manager,
+                )
+            },
         )?;
 
         self.run_stage(
             STAGE_BACKEND_LOWERING,
             &diagnostic_manager,
             &options,
-            |pipeline| pipeline.stage_backend_lowering(&hir_program, &options, &base_path, &diagnostic_manager),
+            |pipeline| {
+                pipeline.stage_backend_lowering(
+                    &hir_program,
+                    &options,
+                    &base_path,
+                    &diagnostic_manager,
+                )
+            },
         )
     }
 
@@ -1542,7 +1583,8 @@ impl Pipeline {
                 let source = std::fs::read_to_string(snapshot_path).map_err(|e| {
                     CliError::Compilation(format!(
                         "failed to read input {}: {}",
-                        snapshot_path.display(), e
+                        snapshot_path.display(),
+                        e
                     ))
                 })?;
                 self.parse_input_source(&options, &source, Some(&snapshot_path.to_path_buf()))?
@@ -1618,7 +1660,13 @@ impl Pipeline {
                 }
 
                 let merged_lir = workspace::assemble_workspace_lir_program(&workspace, &lir_replay);
-                let llvm = self.generate_llvm_artifacts(&merged_lir, base_path, snapshot_path, true, options)?;
+                let llvm = self.generate_llvm_artifacts(
+                    &merged_lir,
+                    base_path,
+                    snapshot_path,
+                    true,
+                    options,
+                )?;
                 let llvm_ir_path = llvm.ir_path.clone();
 
                 let diagnostic_manager = DiagnosticManager::new();
@@ -1672,8 +1720,15 @@ impl Pipeline {
                             hard_fail.join(", ")
                         )));
                     }
-                    let merged_lir = workspace::assemble_workspace_lir_program(&workspace, &lir_replay);
-                    let llvm = self.generate_llvm_artifacts(&merged_lir, base_path, snapshot_path, false, options)?;
+                    let merged_lir =
+                        workspace::assemble_workspace_lir_program(&workspace, &lir_replay);
+                    let llvm = self.generate_llvm_artifacts(
+                        &merged_lir,
+                        base_path,
+                        snapshot_path,
+                        false,
+                        options,
+                    )?;
                     Ok(PipelineOutput::Code(llvm.ir_text))
                 } else {
                     let replay = replay_workspace_modules_blocking(
@@ -1964,14 +2019,19 @@ fn replay_workspace_modules_lir_blocking(
 
             // Create a per-module base path for intermediates
             let module_name = sanitize_module_identifier(&module.id);
-            let module_base_path = workspace_module_output_path(modules_dir, &module_name, &PipelineTarget::Llvm);
+            let module_base_path =
+                workspace_module_output_path(modules_dir, &module_name, &PipelineTarget::Llvm);
 
             let mut sub = Pipeline::new();
             let mut module_options = options.clone();
             module_options.base_path = Some(module_base_path.clone());
             module_options.target = PipelineTarget::Llvm;
 
-            match sub.compile_snapshot_to_lir_blocking(&module_snapshot_path, module_options, &module_base_path) {
+            match sub.compile_snapshot_to_lir_blocking(
+                &module_snapshot_path,
+                module_options,
+                &module_base_path,
+            ) {
                 Ok(backend) => {
                     modules.push(workspace::WorkspaceLirModule {
                         id: module.id.clone(),
@@ -2030,10 +2090,7 @@ fn assemble_workspace_llvm_ir(workspace: &WorkspaceDocument, replay: &WorkspaceR
         for module in &package.modules {
             module_index.insert(
                 module.id.clone(),
-                (
-                    package.name.clone(),
-                    module.module_path.first().cloned(),
-                ),
+                (package.name.clone(), module.module_path.first().cloned()),
             );
         }
     }
@@ -2131,8 +2188,8 @@ fn assemble_workspace_llvm_ir(workspace: &WorkspaceDocument, replay: &WorkspaceR
                     // Skip entire function body for non-main modules.
                     // Initialize skipping until matching closing brace.
                     skipping_func = true;
-                    brace_depth = line.matches('{').count() as i32
-                        - line.matches('}').count() as i32;
+                    brace_depth =
+                        line.matches('{').count() as i32 - line.matches('}').count() as i32;
                     if brace_depth <= 0 {
                         skipping_func = false;
                         brace_depth = 0;
@@ -2692,7 +2749,9 @@ mod tests {
                     ast::ExprKind::Quote(q) => {
                         for stmt in &q.block.stmts {
                             match stmt {
-                                ast::BlockStmt::Expr(expr_stmt) => self.visit_expr(expr_stmt.expr.as_ref()),
+                                ast::BlockStmt::Expr(expr_stmt) => {
+                                    self.visit_expr(expr_stmt.expr.as_ref())
+                                }
                                 ast::BlockStmt::Let(stmt_let) => {
                                     if let Some(init) = &stmt_let.init {
                                         self.visit_expr(init);

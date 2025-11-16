@@ -7,7 +7,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
-use crate::commands::setup_progress_bar;
+use crate::commands::{setup_progress_bar, validate_paths_exist};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
@@ -253,21 +253,7 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
 }
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
-    for input in &args.input {
-        if !input.exists() {
-            return Err(CliError::InvalidInput(format!(
-                "Input file does not exist: {}",
-                input.display()
-            )));
-        }
-
-        if !input.is_file() {
-            return Err(CliError::InvalidInput(format!(
-                "Input path is not a file: {}",
-                input.display()
-            )));
-        }
-    }
+    validate_paths_exist(&args.input, true)?;
 
     // Validate optimization level
     if args.opt_level > 3 {
