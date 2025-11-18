@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::mem;
+// use std::mem; // removed unused import
 use std::sync::Arc;
 
 use crate::error::interpretation_error;
@@ -90,7 +90,6 @@ struct ConstClosure {
 #[derive(Debug, Clone, PartialEq)]
 enum StoredValue {
     Plain(Value),
-    Closure(ConstClosure),
 }
 
 #[derive(Debug, Clone)]
@@ -457,14 +456,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn apply_callable(&mut self, callee: Value, args: Vec<Value>) -> Value {
-        if matches!(callee, Value::Unit(_)) && args.is_empty() {
-            return Value::unit();
-        }
-
-        self.emit_error("unsupported callable in const evaluation");
-        Value::undefined()
-    }
+    // removed unused apply_callable (no callers)
 
     fn instantiate_generic_function(
         &mut self,
@@ -1460,12 +1452,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn function_ret_ty_from_ty(ty: &Ty) -> Option<Ty> {
-        match ty {
-            Ty::Function(fn_ty) => fn_ty.ret_ty.as_ref().map(|ret| (*ret.clone())),
-            _ => None,
-        }
-    }
+    // removed unused function_ret_ty_from_ty (no callers)
 
     fn type_function_ret_ty(ty: &TypeFunction) -> Option<Ty> {
         ty.ret_ty.as_ref().map(|ret| (*ret.clone()))
