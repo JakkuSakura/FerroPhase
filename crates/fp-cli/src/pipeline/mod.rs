@@ -2344,33 +2344,8 @@ fn workspace_comment_prefix(target: &PipelineTarget) -> &'static str {
     }
 }
 
-fn copy_current_executable(base_path: &Path) -> Result<PathBuf, CliError> {
-    let binary_path = base_path.with_extension(if cfg!(target_os = "windows") {
-        "exe"
-    } else {
-        "out"
-    });
-
-    if let Some(parent) = binary_path.parent() {
-        fs::create_dir_all(parent).map_err(CliError::Io)?;
-    }
-
-    let current = std::env::current_exe().map_err(CliError::Io)?;
-    fs::copy(&current, &binary_path).map_err(CliError::Io)?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(&binary_path)
-            .map_err(CliError::Io)?
-            .permissions()
-            .mode();
-        fs::set_permissions(&binary_path, std::fs::Permissions::from_mode(mode | 0o111))
-            .map_err(CliError::Io)?;
-    }
-
-    Ok(binary_path)
-}
+#[allow(dead_code)]
+// removed unused copy_current_executable helper (was never called)
 
 fn write_workspace_module_output(
     target: &PipelineTarget,

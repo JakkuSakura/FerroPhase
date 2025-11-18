@@ -25,7 +25,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         closure.function_ty = Some(Ty::Function(fn_sig.clone()));
     }
 
-    pub(super) fn annotate_pending_closure(&mut self, pattern: Option<&mut Pattern>, expr: Option<&mut Expr>) {
+    pub(super) fn annotate_pending_closure(
+        &mut self,
+        pattern: Option<&mut Pattern>,
+        expr: Option<&mut Expr>,
+    ) {
         if self.pending_closure.is_none() {
             return;
         }
@@ -37,8 +41,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             .or_else(|| expr.as_ref().and_then(|e| e.ty().cloned()))
             .or_else(|| pattern.as_ref().and_then(|p| p.ty().cloned()));
 
-        let Some(function_ty) = candidate_ty else { return; };
-        if matches!(function_ty, Ty::Unknown(_)) { return; }
+        let Some(function_ty) = candidate_ty else {
+            return;
+        };
+        if matches!(function_ty, Ty::Unknown(_)) {
+            return;
+        }
 
         if let Some(expr) = expr {
             expr.set_ty(function_ty.clone());
@@ -80,31 +88,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         captured
     }
 
-    pub(super) fn call_const_closure(&mut self, closure: &ConstClosure, args: Vec<Value>) -> Value {
-        if closure.params.len() != args.len() {
-            self.emit_error(format!(
-                "closure expected {} arguments, found {}",
-                closure.params.len(),
-                args.len()
-            ));
-            return Value::undefined();
-        }
-        let saved_values = mem::replace(&mut self.value_env, closure.captured_values.clone());
-        let saved_types = mem::replace(&mut self.type_env, closure.captured_types.clone());
-        let saved_modules = mem::replace(&mut self.module_stack, closure.module_stack.clone());
-        self.push_scope();
-        for (pattern, value) in closure.params.iter().zip(args.into_iter()) {
-            self.bind_pattern(pattern, value);
-        }
-        let mut body = closure.body.clone();
-        let result = self.eval_expr(&mut body);
-        self.pop_scope();
-        self.value_env = saved_values;
-        self.type_env = saved_types;
-        self.module_stack = saved_modules;
-        result
-    }
-
     pub(super) fn call_function(&mut self, function: ItemDefFunction, args: Vec<Value>) -> Value {
         if !function.sig.generics_params.is_empty() {
             self.emit_error(format!(
@@ -135,7 +118,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         result
     }
 
-    pub(super) fn call_value_function(&mut self, function: &ValueFunction, args: Vec<Value>) -> Value {
+    pub(super) fn call_value_function(
+        &mut self,
+        function: &ValueFunction,
+        args: Vec<Value>,
+    ) -> Value {
         if function.sig.params.len() != args.len() {
             self.emit_error(format!(
                 "function literal expected {} arguments, found {}",
@@ -157,4 +144,3 @@ impl<'ctx> AstInterpreter<'ctx> {
         result
     }
 }
-
