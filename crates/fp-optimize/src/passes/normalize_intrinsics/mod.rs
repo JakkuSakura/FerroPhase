@@ -131,10 +131,13 @@ fn normalize_expr(expr: &mut Expr, strategy: Option<&dyn IntrinsicNormalizer>) -
         ExprKind::Let(expr_let) => normalize_expr(expr_let.expr.as_mut(), strategy)?,
         ExprKind::Macro(_) => {
             if let ExprKind::Macro(mac) = expr.kind().clone() {
-                // Defer macro lowering to frontend-provided helper
-                let lowered = fp_rust::normalization::lower_macro_for_ast(&mac, None);
-                *expr = lowered;
-                normalize_expr(expr, strategy)?;
+                if let Some(strat) = strategy {
+                    if let Some(lowered) = strat.normalize_macro(&mac)? {
+                        *expr = lowered;
+                        // Re-run normalization on the lowered expression
+                        normalize_expr(expr, strategy)?;
+                    }
+                }
             }
         }
         ExprKind::Assign(assign) => {

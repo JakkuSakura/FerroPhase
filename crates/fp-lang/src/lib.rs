@@ -5,7 +5,7 @@ use fp_core::ast::Node;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_optimize::passes::DefaultIntrinsicNormalizer;
+use fp_rust::normalization::RustIntrinsicNormalizer;
 use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
@@ -47,7 +47,7 @@ impl LanguageFrontend for FerroFrontend {
         let cleaned = self.clean_source(source);
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
-            Arc::new(DefaultIntrinsicNormalizer::default());
+            Arc::new(RustIntrinsicNormalizer::default());
 
         if let Some(path) = path {
             // Avoid panicking on poisoned lock; recover from poison
