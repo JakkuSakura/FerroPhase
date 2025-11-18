@@ -6,7 +6,7 @@
 //! language before we introduce backend-specific resolvers.
 
 use crate::ast::{
-    Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprStruct, ExprStructural, File,
+    Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprMacro, ExprStruct, ExprStructural, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind, Ty, TySlot,
     TypeFunction,
 };
@@ -31,6 +31,13 @@ pub trait IntrinsicNormalizer {
     }
 
     fn normalize_structural(&self, _struct_expr: &ExprStructural) -> Result<Option<Expr>> {
+        Ok(None)
+    }
+
+    /// Language-specific macro lowering hook. When provided by a frontend, the
+    /// shared intrinsic normalizer will delegate `ExprKind::Macro` to this
+    /// implementation. Return `Ok(Some(expr))` to replace the macro with `expr`.
+    fn normalize_macro(&self, _macro_expr: &ExprMacro) -> Result<Option<Expr>> {
         Ok(None)
     }
 }
