@@ -1,7 +1,6 @@
-pub mod codegen;
-pub mod context;
+pub mod llvm;
+pub use llvm::{codegen, context, intrinsics};
 pub mod debug_info;
-pub mod intrinsics;
 pub mod linking;
 pub mod pretty;
 pub mod runtime;
