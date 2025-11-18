@@ -1,8 +1,9 @@
 use fp_core::ast::*;
 use fp_core::error::Result;
-use crate::{AstTypeInferencer, TypeVarId};
-use crate::typing::unify::TypeTerm;
+use crate::{AstTypeInferencer, TypeVarId, EnvEntry, PatternInfo, PatternBinding};
+use crate::typing::unify::{TypeTerm, FunctionTerm};
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use crate::typing_error;
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.
@@ -302,6 +303,715 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.emit_error(message.clone());
                 Err(typing_error(message))
             }
+        }
+    }
+
+    pub(crate) fn infer_reference(&mut self, reference: &mut ExprReference) -> Result<TypeVarId> {
+        let inner_var = self.infer_expr(reference.referee.as_mut())?;
+        let reference_var = self.fresh_type_var();
+        self.bind(reference_var, TypeTerm::Reference(inner_var));
+        Ok(reference_var)
+    }
+
+    pub(crate) fn infer_dereference(&mut self, dereference: &mut ExprDereference) -> Result<TypeVarId> {
+        let target_var = self.infer_expr(dereference.referee.as_mut())?;
+        self.expect_reference(target_var, "dereference expression")
+    }
+
+    pub(crate) fn infer_index(&mut self, index: &mut ExprIndex) -> Result<TypeVarId> {
+        let object_var = self.infer_expr(index.obj.as_mut())?;
+        let idx_var = self.infer_expr(index.index.as_mut())?;
+        self.ensure_integer(idx_var, "index expression")?;
+
+        let elem_vec_var = self.fresh_type_var();
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_vec_var));
+        if self.unify(object_var, vec_var).is_ok() {
+            return Ok(elem_vec_var);
+        }
+
+        let elem_slice_var = self.fresh_type_var();
+        let slice_var = self.fresh_type_var();
+        self.bind(slice_var, TypeTerm::Slice(elem_slice_var));
+        if self.unify(object_var, slice_var).is_err() {
+            self.emit_error("indexing is only supported on vector or slice types");
+            return Ok(self.error_type_var());
+        }
+        Ok(elem_slice_var)
+    }
+
+    pub(crate) fn infer_range(&mut self, range: &mut ExprRange) -> Result<TypeVarId> {
+        let element_var = self.fresh_type_var();
+
+        if let Some(start) = range.start.as_mut() {
+            let start_var = self.infer_expr(start)?;
+            self.unify(element_var, start_var)?;
+        }
+
+        if let Some(end) = range.end.as_mut() {
+            let end_var = self.infer_expr(end)?;
+            self.unify(element_var, end_var)?;
+        }
+
+        if let Some(step) = range.step.as_mut() {
+            let step_var = self.infer_expr(step)?;
+            self.ensure_numeric(step_var, "range step")?;
+        }
+
+        self.ensure_numeric(element_var, "range bounds")?;
+
+        let range_var = self.fresh_type_var();
+        self.bind(range_var, TypeTerm::Vec(element_var));
+        Ok(range_var)
+    }
+
+    pub(crate) fn infer_splat(&mut self, splat: &mut ExprSplat) -> Result<TypeVarId> {
+        self.infer_expr(splat.iter.as_mut())
+    }
+
+    pub(crate) fn infer_splat_dict(&mut self, splat: &mut ExprSplatDict) -> Result<TypeVarId> {
+        self.infer_expr(splat.dict.as_mut())
+    }
+
+    pub(crate) fn infer_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Result<TypeVarId> {
+        let mut arg_vars = Vec::new();
+
+        match &mut call.payload {
+            IntrinsicCallPayload::Args { args } => {
+                for arg in args {
+                    arg_vars.push(self.infer_expr(arg)?);
+                }
+            }
+            IntrinsicCallPayload::Format { template } => {
+                for arg in &mut template.args {
+                    arg_vars.push(self.infer_expr(arg)?);
+                }
+                for kwarg in &mut template.kwargs {
+                    arg_vars.push(self.infer_expr(&mut kwarg.value)?);
+                }
+            }
+        }
+
+        match call.kind {
+            IntrinsicCallKind::ConstBlock => {
+                if let Some(&body_var) = arg_vars.first() {
+                    return Ok(body_var);
+                }
+                self.emit_error("const block intrinsic expects a body expression");
+                return Ok(self.error_type_var());
+            }
+            IntrinsicCallKind::Break => {
+                if arg_vars.len() > 1 {
+                    self.emit_error("`break` accepts at most one value");
+                }
+                let value_var = if let Some(&var) = arg_vars.first() {
+                    var
+                } else {
+                    self.unit_type_var()
+                };
+
+                let loop_var = if let Some(context) = self.loop_stack.last_mut() {
+                    context.saw_break = true;
+                    Some(context.result_var)
+                } else {
+                    None
+                };
+
+                if let Some(result_var) = loop_var {
+                    self.unify(result_var, value_var)?;
+                    return Ok(result_var);
+                }
+
+                self.emit_error("`break` used outside of a loop");
+                return Ok(self.error_type_var());
+            }
+            IntrinsicCallKind::Continue => {
+                if !arg_vars.is_empty() {
+                    self.emit_error("`continue` does not accept a value");
+                }
+                if self.loop_stack.is_empty() {
+                    self.emit_error("`continue` used outside of a loop");
+                    return Ok(self.error_type_var());
+                }
+                return Ok(self.nothing_type_var());
+            }
+            IntrinsicCallKind::Return => {
+                self.emit_error("`return` intrinsic must be lowered before typing");
+                return Ok(self.error_type_var());
+            }
+            _ => {}
+        }
+
+        let result_var = self.fresh_type_var();
+        match call.kind {
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                self.bind(result_var, TypeTerm::Unit);
+            }
+            IntrinsicCallKind::Len
+            | IntrinsicCallKind::SizeOf
+            | IntrinsicCallKind::FieldCount
+            | IntrinsicCallKind::MethodCount
+            | IntrinsicCallKind::StructSize => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)));
+            }
+            IntrinsicCallKind::DebugAssertions
+            | IntrinsicCallKind::HasField
+            | IntrinsicCallKind::HasMethod => {
+                let expected = if matches!(call.kind, IntrinsicCallKind::DebugAssertions) { 0 } else { 2 };
+                if arg_vars.len() != expected {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects {} argument(s), found {}",
+                        call.kind, expected, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+            }
+            IntrinsicCallKind::Input => {
+                if arg_vars.len() > 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects at most 1 argument, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+            }
+            IntrinsicCallKind::TypeName => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+            }
+            IntrinsicCallKind::ReflectFields => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Any);
+            }
+            IntrinsicCallKind::CreateStruct
+            | IntrinsicCallKind::CloneStruct
+            | IntrinsicCallKind::AddField
+            | IntrinsicCallKind::FieldType => {
+                let expected = match call.kind {
+                    IntrinsicCallKind::AddField => 3,
+                    IntrinsicCallKind::FieldType => 2,
+                    _ => 1,
+                };
+                if arg_vars.len() != expected {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects {} argument(s), found {}",
+                        call.kind, expected, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+            }
+            IntrinsicCallKind::GenerateMethod => {
+                if arg_vars.len() != 2 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 2 arguments, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Unit);
+            }
+            IntrinsicCallKind::CompileError => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Nothing);
+            }
+            IntrinsicCallKind::CompileWarning => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind, arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Unit);
+            }
+            _ => {
+                self.bind(result_var, TypeTerm::Any);
+            }
+        }
+
+        Ok(result_var)
+    }
+
+    pub(crate) fn infer_closure(&mut self, closure: &mut ExprClosure) -> Result<TypeVarId> {
+        self.enter_scope();
+        let mut param_vars = Vec::new();
+        for param in &mut closure.params {
+            let info = self.infer_pattern(param)?;
+            param_vars.push(info.var);
+        }
+
+        let body_var = self.infer_expr(closure.body.as_mut())?;
+        let ret_var = if let Some(ret_ty) = &closure.ret_ty {
+            let annot_var = self.type_from_ast_ty(ret_ty)?;
+            self.unify(body_var, annot_var)?;
+            annot_var
+        } else {
+            body_var
+        };
+
+        self.exit_scope();
+
+        let closure_var = self.fresh_type_var();
+        self.bind(
+            closure_var,
+            TypeTerm::Function(FunctionTerm { params: param_vars, ret: ret_var }),
+        );
+        Ok(closure_var)
+    }
+
+    pub(crate) fn infer_invoke(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if let Some(result) = self.try_infer_collection_call(invoke)? {
+            return Ok(result);
+        }
+
+        if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
+            if let Some(ident) = locator.as_ident() {
+                if ident.as_str() == "printf" {
+                    return self.infer_builtin_printf(invoke);
+                }
+            }
+        }
+
+        let func_var = match &mut invoke.target {
+            ExprInvokeTarget::Function(locator) => {
+                if let Some(var) = self.lookup_associated_function(locator)? { var } else { self.lookup_locator(locator)? }
+            }
+            ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
+            ExprInvokeTarget::Closure(_) => {
+                let message = "invoking closure values is not yet supported".to_string();
+                self.emit_error(message.clone());
+                return Ok(self.error_type_var());
+            }
+            ExprInvokeTarget::BinOp(_) => {
+                let message = "invoking binary operators as functions is not supported".to_string();
+                self.emit_error(message.clone());
+                return Ok(self.error_type_var());
+            }
+            ExprInvokeTarget::Type(ty) => self.type_from_ast_ty(ty)?,
+            ExprInvokeTarget::Method(select) => {
+                let obj_var = self.infer_expr(select.obj.as_mut())?;
+                if let Some(result) = self.try_infer_primitive_method(obj_var, &select.field, invoke.args.len())? {
+                    return Ok(result);
+                }
+                if select.field.name.as_str() == "len" && invoke.args.is_empty() {
+                    if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
+                        if Self::is_collection_with_len(&obj_ty) {
+                            let result_var = self.fresh_type_var();
+                            self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                            return Ok(result_var);
+                        }
+                    }
+                }
+                self.lookup_struct_method(obj_var, &select.field)?
+            }
+        };
+
+        let func_info = self.ensure_function(func_var, invoke.args.len())?;
+        for (arg_expr, param_var) in invoke.args.iter_mut().zip(func_info.params.iter()) {
+            let arg_var = self.infer_expr(arg_expr)?;
+            self.unify(*param_var, arg_var)?;
+        }
+        Ok(func_info.ret)
+    }
+
+    fn try_infer_collection_call(&mut self, invoke: &mut ExprInvoke) -> Result<Option<TypeVarId>> {
+        let locator = match &invoke.target {
+            ExprInvokeTarget::Function(locator) => locator,
+            _ => return Ok(None),
+        };
+        if Self::locator_matches_suffix(locator, &["Vec", "new"]) { return self.infer_vec_new(invoke).map(Some); }
+        if Self::locator_matches_suffix(locator, &["Vec", "with_capacity"]) { return self.infer_vec_with_capacity(invoke).map(Some); }
+        if Self::locator_matches_suffix(locator, &["Vec", "from"]) { return self.infer_vec_from(invoke).map(Some); }
+        if Self::locator_matches_suffix(locator, &["HashMap", "new"]) { return self.infer_hashmap_new(invoke).map(Some); }
+        if Self::locator_matches_suffix(locator, &["HashMap", "with_capacity"]) { return self.infer_hashmap_with_capacity(invoke).map(Some); }
+        if Self::locator_matches_suffix(locator, &["HashMap", "from"]) { return self.infer_hashmap_from(invoke).map(Some); }
+        Ok(None)
+    }
+
+    fn infer_vec_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if !invoke.args.is_empty() {
+            for arg in &mut invoke.args { let _ = self.infer_expr(arg); }
+            self.emit_error("Vec::new does not take arguments");
+        }
+        let elem_var = self.fresh_type_var();
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_vec_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args { let _ = self.infer_expr(arg); }
+            self.emit_error("Vec::with_capacity expects a single capacity argument");
+        } else {
+            let capacity_var = self.infer_expr(&mut invoke.args[0])?;
+            let expected = self.fresh_type_var();
+            self.bind(expected, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)));
+            self.unify(capacity_var, expected)?;
+        }
+        let elem_var = self.fresh_type_var();
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_vec_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args { let _ = self.infer_expr(arg); }
+            self.emit_error("Vec::from expects a single iterable argument");
+        } else {
+            let _ = self.infer_expr(&mut invoke.args[0])?;
+        }
+        let elem_var = self.fresh_type_var();
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    fn infer_hashmap_new(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if !invoke.args.is_empty() {
+            for arg in &mut invoke.args { let _ = self.infer_expr(arg); }
+            self.emit_error("HashMap::new does not take arguments");
+        }
+        let map_var = self.fresh_type_var();
+        let map_ty = self.make_hashmap_ty();
+        self.bind(map_var, TypeTerm::Custom(map_ty));
+        Ok(map_var)
+    }
+
+    fn infer_hashmap_with_capacity(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args { let _ = self.infer_expr(arg); }
+            self.emit_error("HashMap::with_capacity expects a single capacity argument");
+        } else {
+            let capacity_var = self.infer_expr(&mut invoke.args[0])?;
+            let expected = self.fresh_type_var();
+            self.bind(expected, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)));
+            self.unify(capacity_var, expected)?;
+        }
+        let map_var = self.fresh_type_var();
+        let map_ty = self.make_hashmap_ty();
+        self.bind(map_var, TypeTerm::Custom(map_ty));
+        Ok(map_var)
+    }
+
+    fn infer_hashmap_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.len() != 1 {
+            for arg in &mut invoke.args { let _ = self.infer_expr(arg); }
+            self.emit_error("HashMap::from expects a single iterable argument");
+        } else {
+            let _ = self.infer_expr(&mut invoke.args[0])?;
+        }
+        let map_var = self.fresh_type_var();
+        let map_ty = self.make_hashmap_ty();
+        self.bind(map_var, TypeTerm::Custom(map_ty));
+        Ok(map_var)
+    }
+
+    fn make_hashmap_ty(&self) -> Ty {
+        Ty::Struct(TypeStruct { name: Ident::new("HashMap"), fields: Vec::new() })
+    }
+
+    fn locator_matches_suffix(locator: &Locator, suffix: &[&str]) -> bool {
+        let segments = Self::locator_segments(locator);
+        if segments.len() < suffix.len() { return false; }
+        segments.iter().rev().zip(suffix.iter().rev()).all(|(segment, expected)| segment == expected)
+    }
+
+    fn locator_segments(locator: &Locator) -> Vec<String> {
+        match locator {
+            Locator::Ident(ident) => vec![ident.as_str().to_string()],
+            Locator::Path(path) => path.segments.iter().map(|s| s.as_str().to_string()).collect(),
+            Locator::ParameterPath(path) => path.segments.iter().map(|seg| seg.ident.as_str().to_string()).collect(),
+        }
+    }
+
+    fn is_collection_with_len(ty: &Ty) -> bool {
+        match ty {
+            Ty::Array(_) | Ty::Slice(_) | Ty::Vec(_) => true,
+            Ty::Struct(struct_ty) => struct_ty.name.as_str() == "HashMap",
+            _ => false,
+        }
+    }
+
+    fn infer_builtin_printf(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        if invoke.args.is_empty() {
+            self.emit_error("printf requires a format string argument");
+            return Ok(self.error_type_var());
+        }
+        let format_var = self.infer_expr(&mut invoke.args[0])?;
+        let expected_format = self.fresh_type_var();
+        self.bind(expected_format, TypeTerm::Primitive(TypePrimitive::String));
+        self.unify(format_var, expected_format)?;
+        for arg in invoke.args.iter_mut().skip(1) { let _ = self.infer_expr(arg)?; }
+        let result_var = self.fresh_type_var();
+        self.bind(result_var, TypeTerm::Unit);
+        Ok(result_var)
+    }
+
+    pub(crate) fn infer_list_value_as_vec(&mut self, list: &ValueList) -> Result<TypeVarId> {
+        let elem_var = if let Some(first) = list.values.first() {
+            let first_var = self.infer_value(first)?;
+            for value in list.values.iter().skip(1) {
+                let next_var = self.infer_value(value)?;
+                self.unify(first_var, next_var)?;
+            }
+            first_var
+        } else {
+            let fresh = self.fresh_type_var();
+            self.bind(fresh, TypeTerm::Any);
+            fresh
+        };
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        Ok(vec_var)
+    }
+
+    pub(crate) fn infer_value(&mut self, value: &Value) -> Result<TypeVarId> {
+        let var = self.fresh_type_var();
+        match value {
+            Value::Int(_) => {
+                self.literal_ints.insert(var);
+                self.bind(var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+            }
+            Value::Bool(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Bool)),
+            Value::Decimal(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
+            Value::String(_) => {
+                let inner = self.fresh_type_var();
+                self.bind(inner, TypeTerm::Primitive(TypePrimitive::String));
+                self.bind(var, TypeTerm::Reference(inner));
+            }
+            Value::List(list) => {
+                let elem_var = if let Some(first) = list.values.first() {
+                    self.infer_value(first)?
+                } else {
+                    let fresh = self.fresh_type_var();
+                    self.bind(fresh, TypeTerm::Any);
+                    fresh
+                };
+                for value in list.values.iter().skip(1) {
+                    let next_var = self.infer_value(value)?;
+                    self.unify(elem_var, next_var)?;
+                }
+                let len = list.values.len() as i64;
+                let elem_ty = self.resolve_to_ty(elem_var)?;
+                let array_ty = Ty::Array(TypeArray { elem: Box::new(elem_ty), len: Expr::value(Value::int(len)).into() });
+                self.bind(var, TypeTerm::Custom(array_ty));
+            }
+            Value::Char(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Char)),
+            Value::Unit(_) => self.bind(var, TypeTerm::Unit),
+            Value::Null(_) | Value::None(_) => self.bind(var, TypeTerm::Nothing),
+            Value::Struct(struct_val) => { self.bind(var, TypeTerm::Struct(struct_val.ty.clone())); }
+            Value::Structural(structural) => {
+                let fields = structural.fields.iter().map(|field| StructuralField::new(field.name.clone(), Ty::Any(TypeAny))).collect();
+                self.bind(var, TypeTerm::Structural(TypeStructural { fields }));
+            }
+            Value::Tuple(tuple) => {
+                let mut vars = Vec::new();
+                for elem in &tuple.values { vars.push(self.infer_value(elem)?); }
+                self.bind(var, TypeTerm::Tuple(vars));
+            }
+            Value::Function(func) => {
+                let fn_ty = self.ty_from_function_signature(&func.sig)?;
+                let fn_var = self.type_from_ast_ty(&fn_ty)?;
+                self.unify(var, fn_var)?;
+            }
+            Value::Type(ty) => {
+                let ty_var = self.type_from_ast_ty(ty)?;
+                self.unify(var, ty_var)?;
+            }
+            Value::Expr(_) => {
+                let message = "embedded expression values are not yet supported".to_string();
+                self.emit_error(message.clone());
+                return Ok(self.error_type_var());
+            }
+            _ => {
+                let message = format!("value {:?} is not supported by type inference", value);
+                self.emit_error(message.clone());
+                return Ok(self.error_type_var());
+            }
+        }
+        Ok(var)
+    }
+
+    pub(crate) fn infer_pattern(&mut self, pattern: &mut Pattern) -> Result<PatternInfo> {
+        let existing_ty = pattern.ty().cloned();
+        let info = match pattern.kind_mut() {
+            PatternKind::Ident(ident) => {
+                let var = self.fresh_type_var();
+                self.insert_env(ident.ident.as_str().to_string(), EnvEntry::Mono(var));
+                PatternInfo::new(var).with_binding(ident.ident.as_str().to_string(), var)
+            }
+            PatternKind::Type(inner) => {
+                let inner_info = self.infer_pattern(inner.pat.as_mut())?;
+                let annot_var = self.type_from_ast_ty(&inner.ty)?;
+                self.unify(inner_info.var, annot_var)?;
+                inner_info
+            }
+            PatternKind::Wildcard(_) => PatternInfo::new(self.fresh_type_var()),
+            PatternKind::Tuple(tuple) => {
+                let mut vars = Vec::new();
+                let mut bindings = Vec::new();
+                for pat in &mut tuple.patterns { let child = self.infer_pattern(pat)?; vars.push(child.var); bindings.extend(child.bindings); }
+                let tuple_var = self.fresh_type_var();
+                self.bind(tuple_var, TypeTerm::Tuple(vars));
+                PatternInfo { var: tuple_var, bindings }
+            }
+            PatternKind::Struct(struct_pat) => {
+                let struct_name = struct_pat.name.as_str().to_string();
+                let struct_var = self.fresh_type_var();
+                if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
+                    self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
+                    let mut bindings = Vec::new();
+                    for field in &mut struct_pat.fields {
+                        if let Some(rename) = field.rename.as_mut() {
+                            let child = self.infer_pattern(rename)?;
+                            bindings.extend(child.bindings);
+                            if let Some(def_field) = struct_def.fields.iter().find(|f| f.name == field.name) {
+                                let expected = self.type_from_ast_ty(&def_field.value)?;
+                                self.unify(child.var, expected)?;
+                            }
+                        } else if let Some(def_field) = struct_def.fields.iter().find(|f| f.name == field.name) {
+                            let var = self.fresh_type_var();
+                            self.insert_env(field.name.as_str().to_string(), EnvEntry::Mono(var));
+                            let expected = self.type_from_ast_ty(&def_field.value)?;
+                            self.unify(var, expected)?;
+                            bindings.push(PatternBinding { name: field.name.as_str().to_string(), var });
+                        }
+                    }
+                    PatternInfo { var: struct_var, bindings }
+                } else {
+                    self.emit_error(format!("unknown struct {} in pattern", struct_name));
+                    PatternInfo::new(self.error_type_var())
+                }
+            }
+            _ => {
+                self.emit_error("pattern is not supported by type inference");
+                PatternInfo::new(self.error_type_var())
+            }
+        };
+        if let Some(ty) = existing_ty.as_ref() {
+            let var = self.type_from_ast_ty(ty)?;
+            self.unify(info.var, var)?;
+        }
+        Ok(info)
+    }
+
+    fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
+        let ty = self.resolve_to_ty(obj_var)?;
+        let resolved_ty = Self::peel_reference(ty.clone());
+        let struct_name = match resolved_ty {
+            Ty::Struct(struct_ty) => struct_ty.name.as_str().to_string(),
+            other => {
+                self.emit_error(format!("cannot call method {} on value of type {}", field, other));
+                return Ok(self.error_type_var());
+            }
+        };
+        let record = self.struct_methods.get(&struct_name).and_then(|methods| methods.get(field.as_str())).cloned();
+        if let Some(record) = record {
+            if let Some(expected) = record.receiver_ty.as_ref() {
+                let receiver_var = self.type_from_ast_ty(expected)?;
+                let expect_ref = matches!(expected, Ty::Reference(_));
+                let actual_ref = matches!(ty, Ty::Reference(_));
+                if !expect_ref || actual_ref { self.unify(obj_var, receiver_var)?; }
+            }
+            if let Some(scheme) = record.scheme.as_ref() { return Ok(self.instantiate_scheme(scheme)); }
+            if let Some(var) = self.lookup_env_var(field.as_str()) { return Ok(var); }
+        }
+        self.emit_error(format!("unknown method {} on struct {}", field, struct_name));
+        Ok(self.error_type_var())
+    }
+
+    fn try_infer_primitive_method(&mut self, obj_var: TypeVarId, field: &Ident, arg_len: usize) -> Result<Option<TypeVarId>> {
+        if field.name.as_str() != "to_string" || arg_len != 0 { return Ok(None); }
+        let obj_ty = match self.resolve_to_ty(obj_var) { Ok(ty) => Self::peel_reference(ty), Err(_) => return Ok(None), };
+        let result_var = self.fresh_type_var();
+        self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+        match obj_ty {
+            Ty::Primitive(TypePrimitive::String)
+            | Ty::Primitive(TypePrimitive::Bool)
+            | Ty::Primitive(TypePrimitive::Char)
+            | Ty::Primitive(TypePrimitive::Int(_))
+            | Ty::Primitive(TypePrimitive::Decimal(_)) => Ok(Some(result_var)),
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn lookup_struct_field(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
+        let ty = self.resolve_to_ty(obj_var)?;
+        let resolved_ty = Self::peel_reference(ty);
+        match resolved_ty {
+            Ty::Struct(struct_ty) => {
+                if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
+                    let var = self.type_from_ast_ty(&def_field.value)?;
+                    Ok(var)
+                } else {
+                    self.emit_error(format!("unknown field {} on struct {}", field, struct_ty.name));
+                    Ok(self.error_type_var())
+                }
+            }
+            Ty::Structural(structural) => {
+                if let Some(def_field) = structural.fields.iter().find(|f| f.name == *field) {
+                    let var = self.type_from_ast_ty(&def_field.value)?;
+                    Ok(var)
+                } else {
+                    self.emit_error(format!("unknown field {}", field));
+                    Ok(self.error_type_var())
+                }
+            }
+            other => {
+                self.emit_error(format!("cannot access field {} on value of type {}", field, other));
+                Ok(self.error_type_var())
+            }
+        }
+    }
+
+    pub(crate) fn resolve_struct_literal(&mut self, struct_expr: &mut ExprStruct) -> Result<TypeVarId> {
+        let struct_name = match self.struct_name_from_expr(&struct_expr.name) {
+            Some(name) => name,
+            None => {
+                self.emit_error("struct literal target could not be resolved");
+                return Ok(self.error_type_var());
+            }
+        };
+        if let Some(def) = self.struct_defs.get(&struct_name).cloned() {
+            let var = self.fresh_type_var();
+            self.bind(var, TypeTerm::Struct(def.clone()));
+            for field in &mut struct_expr.fields {
+                if let Some(value) = field.value.as_mut() {
+                    let value_var = self.infer_expr(value)?;
+                    if let Some(struct_field) = def.fields.iter().find(|f| f.name == field.name) {
+                        let ty_var = self.type_from_ast_ty(&struct_field.value)?;
+                        self.unify(value_var, ty_var)?;
+                    } else {
+                        self.emit_error(format!("unknown field {} on struct {}", field.name, def.name));
+                        return Ok(self.error_type_var());
+                    }
+                }
+            }
+            Ok(var)
+        } else {
+            self.emit_error(format!("unknown struct literal target: {}", struct_name));
+            Ok(self.error_type_var())
         }
     }
 }

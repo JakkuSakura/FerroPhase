@@ -9,25 +9,15 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn lookup_value(&self, name: &str) -> Option<Value> {
         for scope in self.value_env.iter().rev() {
-            match scope.get(name) {
-                Some(StoredValue::Plain(v)) => return Some(v.clone()),
-                Some(StoredValue::Closure(_)) => return None,
-                None => {}
+            if let Some(StoredValue::Plain(v)) = scope.get(name) {
+                return Some(v.clone());
             }
         }
         None
     }
 
-    pub(super) fn lookup_closure(&self, name: &str) -> Option<ConstClosure> {
-        for scope in self.value_env.iter().rev() {
-            match scope.get(name) {
-                Some(StoredValue::Closure(closure)) => return Some(closure.clone()),
-                Some(StoredValue::Plain(_)) => return None,
-                None => {}
-            }
-        }
-        None
-    }
+    // closures are not stored in value_env; pending_closure holds captures for annotation
+    pub(super) fn lookup_closure(&self, _name: &str) -> Option<ConstClosure> { None }
 
     pub(super) fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
         if let Some(ident) = pattern.as_ident() {
@@ -35,9 +25,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    pub(super) fn take_pending_closure(&mut self) -> Option<ConstClosure> {
-        self.pending_closure.take()
-    }
+    // removed unused: take_pending_closure
 
     pub(super) fn set_pending_expr_ty(&mut self, ty: Option<Ty>) {
         let ty = ty.unwrap_or_else(|| Ty::Unit(TypeUnit));
@@ -48,14 +36,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         function.sig.ret_ty.clone()
     }
 
-    pub(super) fn item_function_ret_ty(function: &ItemDefFunction) -> Option<Ty> {
-        function.sig.ret_ty.clone().or_else(|| {
-            function
-                .ty
-                .as_ref()
-                .and_then(|ty| Self::type_function_ret_ty(ty))
-        })
-    }
+    // removed unused: item_function_ret_ty
 
     pub(super) fn insert_type(&mut self, name: &str, ty: Ty) {
         if let Some(scope) = self.type_env.last_mut() {
@@ -63,4 +44,3 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 }
-

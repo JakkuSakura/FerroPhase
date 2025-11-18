@@ -21,7 +21,7 @@ use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
-use tracing::{error, info, info_span};
+use tracing::{info, info_span};
 
 /// Arguments for the transpile command
 #[derive(Debug, Clone)]

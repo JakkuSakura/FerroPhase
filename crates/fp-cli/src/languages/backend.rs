@@ -1,5 +1,4 @@
 use crate::{CliError, Result};
-use fp_wit::WitOptions;
 
 /// Supported output language targets for the CLI.
 #[derive(Debug, Clone, Copy)]

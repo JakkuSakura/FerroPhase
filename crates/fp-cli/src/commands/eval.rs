@@ -6,8 +6,7 @@ use crate::{
     config::PipelineConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
-use console::style;
-use fp_core::ast::{RuntimeValue, Value};
+// remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
 use tracing::info;
 
