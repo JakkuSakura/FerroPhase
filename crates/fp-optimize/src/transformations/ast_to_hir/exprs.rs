@@ -721,15 +721,7 @@ impl HirGenerator {
 
     // ast_expr_to_hir_path moved to helpers.rs
 
-    pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
-        let mut hir_args = Vec::new();
-        for arg in args {
-            let ty = self.transform_type_to_hir(arg)?;
-            hir_args.push(hir::GenericArg::Type(Box::new(ty)));
-        }
-
-        Ok(hir::GenericArgs { args: hir_args })
-    }
+    // convert_generic_args moved to helpers.rs
 
     // canonicalize_segments moved to helpers.rs
 
