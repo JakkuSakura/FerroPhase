@@ -1,6 +1,16 @@
 use super::*;
 
 impl HirGenerator {
+    pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
+        let mut hir_args = Vec::new();
+        for arg in args {
+            let ty = self.transform_type_to_hir(arg)?;
+            hir_args.push(hir::GenericArg::Type(Box::new(ty)));
+        }
+
+        Ok(hir::GenericArgs { args: hir_args })
+    }
+
     pub(super) fn locator_to_hir_path_with_scope(
         &mut self,
         locator: &Locator,

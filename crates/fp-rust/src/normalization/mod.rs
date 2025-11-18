@@ -6,6 +6,7 @@ use fp_core::ast::{
 use fp_core::ast::{Ident, Locator, Path};
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::config;
+use fp_core::intrinsics::IntrinsicNormalizer;
 
 mod macro_lowering;
 
@@ -62,6 +63,17 @@ pub fn lower_macro_for_ast(
     diagnostics: Option<&DiagnosticManager>,
 ) -> Expr {
     macro_lowering::lower_macro_expression(macro_expr, diagnostics)
+}
+
+/// Frontend-provided normalizer that plugs language-specific macro lowering
+/// into the shared intrinsic normalization pass.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct RustIntrinsicNormalizer;
+
+impl IntrinsicNormalizer for RustIntrinsicNormalizer {
+    fn normalize_macro(&self, macro_expr: &ExprMacro) -> fp_core::Result<Option<Expr>> {
+        Ok(Some(macro_lowering::lower_macro_expression(macro_expr, None)))
+    }
 }
 
 fn normalize_item(item: &mut Item, diagnostics: Diagnostics<'_>) {
