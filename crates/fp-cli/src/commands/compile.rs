@@ -11,7 +11,7 @@ use crate::commands::{setup_progress_bar, validate_paths_exist};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 /// Arguments for the compile command
 #[derive(Debug, Clone)]
