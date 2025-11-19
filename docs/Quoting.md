@@ -14,8 +14,7 @@ In FerroPhase, `quote` and `splice` are keywords.
 ## Syntax
 
 - Quote (produces a const QuoteToken):
-  - Kinded forms (explicit): `quote expr { … }`, `quote stmt { … }`, `quote item { … }`, `quote type { … }`
-  - Unkinded form (inferred): `quote { … }`
+  - Supported form: `quote { … }` (kind inferred)
 
 Kind inference for `quote { … }`:
 - If the fragment is a single expression → expr token.
@@ -24,9 +23,9 @@ Kind inference for `quote { … }`:
 - Ambiguous or mixed forms produce a diagnostic suggesting an explicit kind.
 
 - Splice (inserts a QuoteToken according to the surrounding position):
-  - Expression position: `let v = splice EXPR_TOKEN;`
-  - Statement position: `splice STMT_TOKEN;`
-  - Item position: `splice ITEM_TOKEN;`
+  - Expression position: `let v = splice ( EXPR_TOKEN );`
+  - Statement position: `splice ( STMT_TOKEN );`
+  - Item position: `splice ( ITEM_TOKEN );`
 
 Notes
 - Quoted fragments are values at compile time (consts). Tokens carry their
@@ -41,7 +40,7 @@ const CASES = quote item {
     enum E { A, B }
 };
 
-const BODY = quote stmt {
+const BODY = quote {
     if x > 0 { return x; }
 };
 
@@ -111,7 +110,7 @@ const interpreter evaluates splices in topological order respecting dependencies
 
 ## Relation to `emit!`
 
-- `emit! { … }` is a builtin macro that desugars to `splice (quote stmt { … })`.
+- `emit! { … }` is a builtin macro that desugars to `splice ( quote { … } )`.
 - It is only valid inside `const { … }` (enforced by the const interpreter).
 - `emit!` does not change staging rules; it is ergonomics sugar.
 
@@ -191,7 +190,7 @@ Within `quote { … }`, a future anti-quote form may allow inline splicing (e.g.
 ## Alternatives Considered
 
 - `emit` keyword vs `emit!` macro
-  - Decision: keep `emit!` as a builtin macro that desugars to `splice (quote stmt { … })`.
+  - Decision: keep `emit!` as a builtin macro that desugars to `splice ( quote { … } )`.
   - Rationale: `emit!` does not define new staging behaviour; it is ergonomics
     sugar. By keeping staging control in the `quote`/`splice` keywords only,
     we ensure gating is enforced pre-expansion and avoid conflating surface

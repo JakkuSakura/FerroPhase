@@ -9,6 +9,7 @@ use fp_rust::normalization::RustIntrinsicNormalizer;
 use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
+use crate::parser::preprocessor::PreprocessorBuilder;
 
 /// Canonical identifier for the FerroPhase source language.
 pub const FERROPHASE: &str = "ferrophase";
@@ -45,6 +46,9 @@ impl LanguageFrontend for FerroFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
+        // Apply FerroPhase preprocessor to handle `quote`/`splice` sugar.
+        let pre = PreprocessorBuilder::with_default_rules().build();
+        let preprocessed = pre.apply_until_stable(&cleaned, 2);
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(RustIntrinsicNormalizer::default());
@@ -56,7 +60,7 @@ impl LanguageFrontend for FerroFrontend {
                 Err(poison) => poison.into_inner(),
             };
             parser.clear_diagnostics();
-            let file = parser.parse_file(&cleaned, path)?;
+            let file = parser.parse_file(&preprocessed, path)?;
             let diagnostics = parser.diagnostics();
             drop(parser);
 
@@ -86,9 +90,9 @@ impl LanguageFrontend for FerroFrontend {
             };
             parser.clear_diagnostics();
             let expr = parser
-                .try_parse_as_file(&cleaned)
-                .or_else(|_| parser.try_parse_block_expression(&cleaned))
-                .or_else(|_| parser.try_parse_simple_expression(&cleaned))?;
+                .try_parse_as_file(&preprocessed)
+                .or_else(|_| parser.try_parse_block_expression(&preprocessed))
+                .or_else(|_| parser.try_parse_simple_expression(&preprocessed))?;
             let diagnostics = parser.diagnostics();
             (expr, diagnostics)
         };
@@ -118,3 +122,5 @@ mod tests {
         assert_eq!(frontend.language(), FERROPHASE);
     }
 }
+
+pub mod parser;
