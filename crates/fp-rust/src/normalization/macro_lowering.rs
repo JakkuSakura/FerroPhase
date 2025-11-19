@@ -8,7 +8,17 @@ use proc_macro2::{Span, TokenStream};
 use std::str::FromStr;
 
 pub(crate) fn lower_macro_expression(macro_expr: &ExprMacro, diagnostics: Diagnostics<'_>) -> Expr {
-    // Builtin sugar: emit! { … } => splice(quote stmt { … })
+    // FerroPhase macros: fp_quote!( { … } ) → quote { … }
+    if let Some(name) = macro_expr.invocation.path.segments.last() {
+        if name.as_str() == "fp_quote" {
+            return lower_fp_quote(&macro_expr.invocation, diagnostics);
+        }
+        if name.as_str() == "fp_splice" {
+            return lower_fp_splice(&macro_expr.invocation, diagnostics);
+        }
+    }
+
+    // Builtin sugar: emit! { … } => splice(quote { … })
     if let Some(name) = macro_expr.invocation.path.segments.last() {
         if name.as_str() == "emit" {
             return lower_emit_macro(&macro_expr.invocation, diagnostics);
@@ -37,6 +47,90 @@ pub(crate) fn lower_macro_expression(macro_expr: &ExprMacro, diagnostics: Diagno
             Expr::any(RawExprMacro { raw: mac_clone })
         }
     }
+}
+
+fn lower_fp_quote(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) -> Expr {
+    // Expect a block payload: fp_quote!({ ... })
+    let stream = match TokenStream::from_str(&invocation.tokens) {
+        Ok(ts) => ts,
+        Err(err) => {
+            if let Some(manager) = diagnostics {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("failed to parse fp_quote! tokens: {}", err))
+                        .with_source_context(super::NORMALIZATION_CONTEXT),
+                );
+            }
+            TokenStream::new()
+        }
+    };
+    let syn_block = match syn::parse2::<syn::Block>(stream) {
+        Ok(b) => b,
+        Err(err) => {
+            if let Some(manager) = diagnostics {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("fp_quote! expects a block: {}", err))
+                        .with_source_context(super::NORMALIZATION_CONTEXT),
+                );
+            }
+            syn::parse_quote!({})
+        }
+    };
+    let parser = RustParser::new();
+    let ast_block: ExprBlock = match parser.parse_block(syn_block) {
+        Ok(b) => b,
+        Err(err) => {
+            if let Some(manager) = diagnostics {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("failed to lower fp_quote! block: {}", err))
+                        .with_source_context(super::NORMALIZATION_CONTEXT),
+                );
+            }
+            ExprBlock::new_stmts(Vec::new())
+        }
+    };
+    Expr::from(ExprKind::Quote(ExprQuote { block: ast_block, kind: None }))
+}
+
+fn lower_fp_splice(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) -> Expr {
+    // Expect a single expression payload: fp_splice!( expr )
+    let stream = match TokenStream::from_str(&invocation.tokens) {
+        Ok(ts) => ts,
+        Err(err) => {
+            if let Some(manager) = diagnostics {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("failed to parse fp_splice! tokens: {}", err))
+                        .with_source_context(super::NORMALIZATION_CONTEXT),
+                );
+            }
+            TokenStream::new()
+        }
+    };
+    let syn_expr = match syn::parse2::<syn::Expr>(stream) {
+        Ok(e) => e,
+        Err(err) => {
+            if let Some(manager) = diagnostics {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("fp_splice! expects an expression: {}", err))
+                        .with_source_context(super::NORMALIZATION_CONTEXT),
+                );
+            }
+            syn::parse_quote!(())
+        }
+    };
+    let parser = RustParser::new();
+    let token_expr = match parser.parse_expr(syn_expr) {
+        Ok(e) => e,
+        Err(err) => {
+            if let Some(manager) = diagnostics {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("failed to lower fp_splice! expression: {}", err))
+                        .with_source_context(super::NORMALIZATION_CONTEXT),
+                );
+            }
+            Expr::unit()
+        }
+    };
+    Expr::from(ExprKind::Splice(ExprSplice { token: Box::new(token_expr) }))
 }
 
 fn lower_emit_macro(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) -> Expr {
@@ -105,7 +199,7 @@ fn lower_emit_macro(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) 
         }
     };
 
-    let quote = ExprKind::Quote(ExprQuote { block: ast_block, kind: Some(fp_core::ast::QuoteFragmentKind::Stmt) });
+    let quote = ExprKind::Quote(ExprQuote { block: ast_block, kind: None });
     let splice = ExprKind::Splice(ExprSplice { token: Box::new(Expr::from(quote)) });
     Expr::from(splice)
 }

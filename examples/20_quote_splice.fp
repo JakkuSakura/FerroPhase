@@ -6,9 +6,9 @@ fn first_gt(const xs: [i32], ys: [i32]) -> i32 {
     const {
         for (i, x) in xs.iter().enumerate() {
             // Sugar: emit! { if x > ys[i] { return x; } }
-            splice quote stmt {
+            splice ( quote {
                 if x > ys[i] { return x; }
-            };
+            } );
         }
     }
     0
@@ -18,4 +18,3 @@ fn main() {
     // Intended usage once parser is wired
     let _ = first_gt([1, 2, 5], [0, 1, 3]);
 }
-

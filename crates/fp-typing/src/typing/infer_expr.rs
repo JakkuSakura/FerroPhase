@@ -11,32 +11,21 @@ use crate::typing_error;
 /// - All items at top level => Item
 /// - Otherwise => Stmt
 pub(crate) fn infer_quote_kind(block: &ExprBlock) -> QuoteFragmentKind {
+    // Prefer Expr when a trailing expression is present.
+    if block.last_expr().is_some() {
+        return QuoteFragmentKind::Expr;
+    }
+
+    // Only items => Item
     let all_items = block
         .stmts
         .iter()
         .all(|s| matches!(s, BlockStmt::Item(_)));
-    let has_non_item_stmt = block
-        .stmts
-        .iter()
-        .any(|s| !matches!(s, BlockStmt::Item(_)));
-
-    if block.stmts.is_empty() {
-        if block.last_expr().is_some() {
-            return QuoteFragmentKind::Expr;
-        }
-        // Empty quote defaults to Stmt
-        return QuoteFragmentKind::Stmt;
-    }
-
     if all_items {
-        // If there are only items and no trailing expression (or even if there is), it's an item fragment
         return QuoteFragmentKind::Item;
     }
 
-    if !has_non_item_stmt && block.last_expr().is_some() {
-        return QuoteFragmentKind::Expr;
-    }
-
+    // Otherwise => Stmt
     QuoteFragmentKind::Stmt
 }
 

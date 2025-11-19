@@ -11,7 +11,6 @@ use fp_core::{lir, mir};
 use crate::transformations::IrTransform;
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use super::const_eval;
 #[cfg(test)]
 mod tests;
 // Internal submodules; items are used via inherent methods
