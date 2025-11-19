@@ -155,6 +155,75 @@ impl Rule for SpliceRule {
                             i = end + 1; continue;
                         }
                     }
+
+                    // Support no-paren form: `splice fp_quote!(...)` or `splice quote { ... }`
+                    // Case A: already rewritten quote macro: `fp_quote!(...)`
+                    if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
+                        // Capture identifier following splice
+                        let mut k = j + 1; while k < bytes.len() && is_ident_char(bytes[k]) { k += 1; }
+                        let next_ident = &input[j..k];
+                        // Handle `fp_quote!(...)`
+                        if next_ident == "fp_quote" && k < bytes.len() && bytes[k] == b'!' {
+                            let mut p = k + 1; // after '!'
+                            p = skip_ws(bytes, p);
+                            if p < bytes.len() && bytes[p] == b'(' {
+                                if let Some(end) = scan_balanced(bytes, p, b'(', b')') {
+                                    out.push_str("fp_splice!(");
+                                    out.push_str(&input[j..=end]);
+                                    out.push(')');
+                                    i = end + 1; continue;
+                                }
+                            }
+                        }
+
+                        // Case B: raw `quote { ... }` (if QuoteRule didn't run first); rewrite inline
+                        if next_ident == "quote" {
+                            let mut p = k; // after 'quote'
+                            p = skip_ws(bytes, p);
+                            // Optional kind ident (ignored)
+                            if p < bytes.len() && (bytes[p].is_ascii_alphabetic() || bytes[p] == b'_') {
+                                p += 1; while p < bytes.len() && is_ident_char(bytes[p]) { p += 1; }
+                                p = skip_ws(bytes, p);
+                            }
+                            if p < bytes.len() && bytes[p] == b'{' {
+                                if let Some(end) = scan_balanced(bytes, p, b'{', b'}') {
+                                    out.push_str("fp_splice!(");
+                                    out.push_str("fp_quote!(");
+                                    out.push_str(&input[p..=end]);
+                                    out.push_str(")");
+                                    out.push(')');
+                                    i = end + 1; continue;
+                                }
+                            }
+                        }
+
+                        // Case C: simple identifier or path `a::b::TOKEN` → wrap as `fp_splice!(a::b::TOKEN)`
+                        // Capture a path like `seg(::seg)*`
+                        // First segment already parsed to k; reuse
+                        let mut end_path = k;
+                        // Allow successive `::ident` pairs
+                        loop {
+                            let mut r = end_path;
+                            let mut saw_sep = false;
+                            if r + 1 < bytes.len() && bytes[r] == b':' && bytes[r + 1] == b':' {
+                                r += 2; // after '::'
+                                // Next ident
+                                if r < bytes.len() && (bytes[r].is_ascii_alphabetic() || bytes[r] == b'_') {
+                                    let mut s = r + 1;
+                                    while s < bytes.len() && is_ident_char(bytes[s]) { s += 1; }
+                                    end_path = s; // extend path
+                                    saw_sep = true;
+                                }
+                            }
+                            if !saw_sep { break; }
+                        }
+                        if end_path > j {
+                            out.push_str("fp_splice!( ");
+                            out.push_str(&input[j..end_path]);
+                            out.push_str(" )");
+                            i = end_path; continue;
+                        }
+                    }
                     out.push_str(ident); continue;
                 }
                 out.push_str(ident); continue;
@@ -302,6 +371,23 @@ mod tests {
         let src = "fn main() { splice ( some_token ) }";
         let out = pre.apply(src);
         assert!(out.contains("fp_splice!( some_token )"));
+    }
+
+    #[test]
+    fn splice_no_paren_with_quote_is_supported() {
+        let pre = Preprocessor::default();
+        let src = "fn main() { splice quote { let z = 1; } }";
+        let out = pre.apply(src);
+        assert!(out.contains("fp_splice!("), "should rewrite to fp_splice!");
+        assert!(out.contains("fp_quote!("), "inner quote should rewrite to fp_quote!");
+    }
+
+    #[test]
+    fn splice_no_paren_with_identifier_is_supported() {
+        let pre = Preprocessor::default();
+        let src = "fn main() { const TOKEN = quote { 3 }; splice TOKEN; }";
+        let out = pre.apply(src);
+        assert!(out.contains("fp_splice!( TOKEN )"));
     }
 
     #[test]
