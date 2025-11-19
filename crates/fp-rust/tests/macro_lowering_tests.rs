@@ -24,6 +24,20 @@ fn normalize_expr_tree(expr: fp_core::ast::Expr) -> fp_core::ast::Expr {
     }
 }
 
+#[test]
+fn emit_macro_lowers_to_splice_of_quote_without_kind() -> Result<()> {
+    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
+    let expr = normalize_expr_tree(shll_parse_expr! { emit! { let x = 1; } });
+    let ExprKind::Splice(splice) = expr.kind() else {
+        panic!("emit! should lower to a splice expression");
+    };
+    let ExprKind::Quote(q) = splice.token.kind() else {
+        panic!("emit! splice should contain a quote token");
+    };
+    assert!(q.kind.is_none(), "quote kind should be None after refactor to quote-only");
+    Ok(())
+}
+
 fn expect_println_template<'a>(stmt: &'a BlockStmt, expected_prefix: &str) -> &'a ExprFormatString {
     let BlockStmt::Expr(expr_stmt) = stmt else {
         panic!("expected expression statement, found {:?}", stmt);

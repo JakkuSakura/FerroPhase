@@ -833,9 +833,12 @@ dependencies = [
 name = "fp-lang"
 version = "0.1.0"
 dependencies = [
+ "eyre",
  "fp-core",
  "fp-optimize",
  "fp-rust",
+ "tree-sitter",
+ "tree-sitter-rust",
 ]
 
 [[package]]
@@ -2732,6 +2735,16 @@ name = "tree-sitter-language"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4013970217383f67b18aef68f6fb2e8d409bc5755227092d32efb0422ba24b8"
+
+[[package]]
+name = "tree-sitter-rust"
+version = "0.21.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "277690f420bf90741dea984f3da038ace46c4fe6047cba57a66822226cde1c93"
+dependencies = [
+ "cc",
+ "tree-sitter",
+]
 
 [[package]]
 name = "tree-sitter-zig"
