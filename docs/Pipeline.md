@@ -46,7 +46,7 @@ lowerings consume the already-typed structures.
    - Keywords (`const`, `quote`, `splice`) affect staging/behaviour and are
      recognised by the parser.
    - Builtins like `emit!` are sugar only; by this phase they have expanded to
-     equivalent keyword forms (e.g., `splice (quote stmt { … })`).
+     equivalent keyword forms (e.g., `splice ( quote { … } )`).
 
 5. **Typed Projection (ASTᵗ′ → HIRᵗ)**
    - `HirGenerator` consumes the evaluated typed AST and produces a
