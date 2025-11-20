@@ -837,6 +837,7 @@ dependencies = [
  "fp-core",
  "fp-optimize",
  "fp-rust",
+ "thiserror 2.0.17",
  "tree-sitter",
  "tree-sitter-rust",
 ]

@@ -29,7 +29,7 @@ impl FerroPhaseParser {
 
     /// Parse source and produce a tree-sitter parse tree.
     pub fn parse_to_cst(&mut self, source: &str) -> Result<TsTree> {
-        let preprocessed = self.pre.apply_until_stable(source, 2);
+        let preprocessed = self.pre.apply_until_stable(source, 2).map_err(|e| eyre::eyre!(e))?;
         let tree = self
             .ts
             .parse(&preprocessed, None)
