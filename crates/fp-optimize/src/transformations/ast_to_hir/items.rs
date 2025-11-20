@@ -205,4 +205,3 @@ impl HirGenerator {
         result
     }
 }
-

@@ -125,9 +125,7 @@ fn scrub_any_expressions(file: &mut File) {
                     fp_core::ast::ExprInvokeTarget::Method(ExprSelect { obj, .. }) => {
                         scrub_expr(obj.as_mut())
                     }
-                    fp_core::ast::ExprInvokeTarget::Closure(clos) => {
-                        scrub_expr(clos.body.as_mut())
-                    }
+                    fp_core::ast::ExprInvokeTarget::Closure(clos) => scrub_expr(clos.body.as_mut()),
                     _ => {}
                 }
                 for arg in args.iter_mut() {
@@ -193,43 +191,41 @@ fn scrub_any_expressions(file: &mut File) {
             ExprKind::Splice(s) => scrub_expr(s.token.as_mut()),
             ExprKind::Item(item) => scrub_item(item.as_mut()),
             ExprKind::Value(_) => {}
-            ExprKind::IntrinsicCall(call) => {
-                match &mut call.payload {
-                    fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                        for a in args.iter_mut() {
-                            scrub_expr(a);
-                        }
-                    }
-                    fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                        for a in template.args.iter_mut() {
-                            scrub_expr(a);
-                        }
-                        for kw in template.kwargs.iter_mut() {
-                            scrub_expr(&mut kw.value);
-                        }
+            ExprKind::IntrinsicCall(call) => match &mut call.payload {
+                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+                    for a in args.iter_mut() {
+                        scrub_expr(a);
                     }
                 }
-            }
-            ExprKind::IntrinsicContainer(coll) => {
-                match coll {
-                    fp_core::ast::ExprIntrinsicContainer::VecElements { elements } => {
-                        for e in elements.iter_mut() {
-                            scrub_expr(e);
-                        }
+                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                    for a in template.args.iter_mut() {
+                        scrub_expr(a);
                     }
-                    fp_core::ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
-                        scrub_expr(elem.as_mut());
-                        scrub_expr(len.as_mut());
-                    }
-                    fp_core::ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
-                        for entry in entries.iter_mut() {
-                            scrub_expr(&mut entry.key);
-                            scrub_expr(&mut entry.value);
-                        }
+                    for kw in template.kwargs.iter_mut() {
+                        scrub_expr(&mut kw.value);
                     }
                 }
-            }
-            ExprKind::Range(ExprRange { start, end, step, .. }) => {
+            },
+            ExprKind::IntrinsicContainer(coll) => match coll {
+                fp_core::ast::ExprIntrinsicContainer::VecElements { elements } => {
+                    for e in elements.iter_mut() {
+                        scrub_expr(e);
+                    }
+                }
+                fp_core::ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                    scrub_expr(elem.as_mut());
+                    scrub_expr(len.as_mut());
+                }
+                fp_core::ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
+                    for entry in entries.iter_mut() {
+                        scrub_expr(&mut entry.key);
+                        scrub_expr(&mut entry.value);
+                    }
+                }
+            },
+            ExprKind::Range(ExprRange {
+                start, end, step, ..
+            }) => {
                 if let Some(s) = start.as_mut() {
                     scrub_expr(s);
                 }

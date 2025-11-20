@@ -239,7 +239,9 @@ mod tests {
 
     #[test]
     fn vec_from_array_maps_to_elements() {
-        let array = ExprArray { values: vec![Expr::unit(), Expr::unit()] };
+        let array = ExprArray {
+            values: vec![Expr::unit(), Expr::unit()],
+        };
         let invoke = ExprInvoke {
             target: ExprInvokeTarget::Function(ident_path(["Vec", "from"])),
             args: vec![ExprKind::Array(array).into()],
@@ -253,7 +255,10 @@ mod tests {
 
     #[test]
     fn vec_from_repeat_maps_to_repeat_variant() {
-        let repeat = ExprArrayRepeat { elem: Expr::unit().into(), len: Expr::unit().into() };
+        let repeat = ExprArrayRepeat {
+            elem: Expr::unit().into(),
+            len: Expr::unit().into(),
+        };
         let invoke = ExprInvoke {
             target: ExprInvokeTarget::Function(ident_path(["Vec", "from"])),
             args: vec![ExprKind::ArrayRepeat(repeat.clone()).into()],
@@ -267,23 +272,35 @@ mod tests {
 
     #[test]
     fn hashmap_from_array_of_tuples_maps_entries() {
-        let tuple1 = ExprKind::Tuple(ExprTuple { values: vec![Expr::unit(), Expr::unit()] }).into();
-        let tuple2 = ExprKind::Tuple(ExprTuple { values: vec![Expr::unit(), Expr::unit()] }).into();
-        let array = ExprArray { values: vec![tuple1, tuple2] };
+        let tuple1 = ExprKind::Tuple(ExprTuple {
+            values: vec![Expr::unit(), Expr::unit()],
+        })
+        .into();
+        let tuple2 = ExprKind::Tuple(ExprTuple {
+            values: vec![Expr::unit(), Expr::unit()],
+        })
+        .into();
+        let array = ExprArray {
+            values: vec![tuple1, tuple2],
+        };
         let invoke = ExprInvoke {
             target: ExprInvokeTarget::Function(ident_path(["HashMap", "from"])),
             args: vec![ExprKind::Array(array).into()],
         };
         let got = ExprIntrinsicContainer::from_invoke(&invoke);
         match got {
-            Some(ExprIntrinsicContainer::HashMapEntries { entries }) => assert_eq!(entries.len(), 2),
+            Some(ExprIntrinsicContainer::HashMapEntries { entries }) => {
+                assert_eq!(entries.len(), 2)
+            }
             other => panic!("unexpected: {:?}", other),
         }
     }
 
     #[test]
     fn into_const_expr_wraps_vec_from() {
-        let container = ExprIntrinsicContainer::VecElements { elements: vec![Expr::unit()] };
+        let container = ExprIntrinsicContainer::VecElements {
+            elements: vec![Expr::unit()],
+        };
         let expr = container.into_const_expr();
         // Expect an intrinsic const block wrapping a Vec::from(array)
         match expr.kind() {
@@ -291,7 +308,9 @@ mod tests {
                 IntrinsicCallPayload::Args { args } => {
                     assert_eq!(args.len(), 1);
                     let inner = match args[0].kind() {
-                        ExprKind::Block(block) => block.last_expr().cloned().unwrap_or_else(Expr::unit),
+                        ExprKind::Block(block) => {
+                            block.last_expr().cloned().unwrap_or_else(Expr::unit)
+                        }
                         other => args[0].clone(),
                     };
                     match inner.kind() {

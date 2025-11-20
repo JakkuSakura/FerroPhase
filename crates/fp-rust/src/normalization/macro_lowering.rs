@@ -1,7 +1,8 @@
 use super::{lossy_normalization_mode, Diagnostics};
 use crate::{parser::RustParser, RawExprMacro};
 use fp_core::ast::{
-    Expr, ExprBlock, ExprKind, ExprMacro, ExprQuote, ExprSplice, MacroDelimiter, MacroInvocation, Path,
+    Expr, ExprBlock, ExprKind, ExprMacro, ExprQuote, ExprSplice, MacroDelimiter, MacroInvocation,
+    Path,
 };
 use fp_core::diagnostics::Diagnostic;
 use proc_macro2::{Span, TokenStream};
@@ -88,7 +89,10 @@ fn lower_fp_quote(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) ->
             ExprBlock::new_stmts(Vec::new())
         }
     };
-    Expr::from(ExprKind::Quote(ExprQuote { block: ast_block, kind: None }))
+    Expr::from(ExprKind::Quote(ExprQuote {
+        block: ast_block,
+        kind: None,
+    }))
 }
 
 fn lower_fp_splice(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) -> Expr {
@@ -130,22 +134,22 @@ fn lower_fp_splice(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) -
             Expr::unit()
         }
     };
-    Expr::from(ExprKind::Splice(ExprSplice { token: Box::new(token_expr) }))
+    Expr::from(ExprKind::Splice(ExprSplice {
+        token: Box::new(token_expr),
+    }))
 }
 
 fn lower_emit_macro(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) -> Expr {
     // Only brace-delimited form is supported: emit! { … }
-        if !matches!(invocation.delimiter, MacroDelimiter::Brace) {
-            if let Some(manager) = diagnostics {
-                manager.add_diagnostic(
-                    Diagnostic::error(
-                        "emit! expects a brace-delimited block: emit! { … }".to_string(),
-                    )
+    if !matches!(invocation.delimiter, MacroDelimiter::Brace) {
+        if let Some(manager) = diagnostics {
+            manager.add_diagnostic(
+                Diagnostic::error("emit! expects a brace-delimited block: emit! { … }".to_string())
                     .with_source_context(super::NORMALIZATION_CONTEXT),
-                );
-            }
-            return Expr::unit();
+            );
         }
+        return Expr::unit();
+    }
 
     let tokens = match TokenStream::from_str(&invocation.tokens) {
         Ok(ts) => ts,
@@ -166,7 +170,8 @@ fn lower_emit_macro(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) 
         Ok(b) => b,
         Err(_) => {
             // Wrap as block
-            let wrapped = TokenStream::from_str(&format!("{{ {} }}", invocation.tokens)).unwrap_or_default();
+            let wrapped =
+                TokenStream::from_str(&format!("{{ {} }}", invocation.tokens)).unwrap_or_default();
             match syn::parse2::<syn::Block>(wrapped) {
                 Ok(b) => b,
                 Err(err) => {
@@ -199,8 +204,13 @@ fn lower_emit_macro(invocation: &MacroInvocation, diagnostics: Diagnostics<'_>) 
         }
     };
 
-    let quote = ExprKind::Quote(ExprQuote { block: ast_block, kind: None });
-    let splice = ExprKind::Splice(ExprSplice { token: Box::new(Expr::from(quote)) });
+    let quote = ExprKind::Quote(ExprQuote {
+        block: ast_block,
+        kind: None,
+    });
+    let splice = ExprKind::Splice(ExprSplice {
+        token: Box::new(Expr::from(quote)),
+    });
     Expr::from(splice)
 }
 

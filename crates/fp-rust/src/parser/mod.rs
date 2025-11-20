@@ -13,9 +13,9 @@ use fp_core::bail;
 use itertools::Itertools;
 
 use eyre::{eyre, Context};
-use quote::ToTokens;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
+use quote::ToTokens;
 use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Command;
@@ -189,10 +189,7 @@ impl RustParser {
     // Parse an expression from raw tokens; supports semicolon-terminated macro
     // statements by parsing as a statement and extracting the expression or
     // macro invocation without lowering.
-    pub fn parse_expr_tokens(
-        &self,
-        tokens: proc_macro2::TokenStream,
-    ) -> Result<Expr> {
+    pub fn parse_expr_tokens(&self, tokens: proc_macro2::TokenStream) -> Result<Expr> {
         if let Ok(expr) = syn::parse2::<syn::Expr>(tokens.clone()) {
             return self.parse_expr(expr);
         }

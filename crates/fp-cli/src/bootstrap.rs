@@ -1,4 +1,6 @@
-use crate::config::{DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig};
+use crate::config::{
+    DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
+};
 use crate::pipeline::{Pipeline, PipelineOutput};
 use crate::{CliError, Result};
 use std::io::{self, Write};
@@ -74,4 +76,3 @@ pub fn bootstrap_compile(snapshot: &Path, output: Option<&Path>) -> Result<()> {
         ))),
     }
 }
-

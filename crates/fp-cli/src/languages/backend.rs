@@ -24,10 +24,7 @@ pub fn parse_language_target(s: &str) -> Result<LanguageTarget> {
         "rust" | "rs" => LanguageTarget::Rust,
         "wit" => LanguageTarget::Wit,
         _ => {
-            return Err(CliError::InvalidInput(format!(
-                "Unsupported target: {}",
-                s
-            )));
+            return Err(CliError::InvalidInput(format!("Unsupported target: {}", s)));
         }
     };
     Ok(target)
@@ -49,7 +46,11 @@ pub fn output_extension_for(target: LanguageTarget) -> &'static str {
 use std::path::{Path, PathBuf};
 
 /// Resolve the desired output path for a target, respecting explicit output.
-pub fn resolve_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -> Result<PathBuf> {
+pub fn resolve_output_path(
+    input: &Path,
+    output: Option<&PathBuf>,
+    target: &str,
+) -> Result<PathBuf> {
     if let Some(out) = output.cloned() {
         Ok(out)
     } else {

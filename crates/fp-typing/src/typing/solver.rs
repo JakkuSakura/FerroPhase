@@ -1,5 +1,5 @@
-use crate::{AstTypeInferencer, TypeVarId, typing_error};
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
+use crate::{typing_error, AstTypeInferencer, TypeVarId};
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::error::Result;
 
@@ -16,7 +16,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeVarKind::Link(next) => self.ensure_numeric(next, context),
             other => {
                 self.emit_error(format!("expected numeric value for {}", context));
-                Err(typing_error(format!("expected numeric type, found {:?}", other)))
+                Err(typing_error(format!(
+                    "expected numeric type, found {:?}",
+                    other
+                )))
             }
         }
     }
@@ -60,7 +63,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    pub(crate) fn ensure_function(&mut self, var: TypeVarId, arity: usize) -> Result<super::super::FunctionTypeInfo> {
+    pub(crate) fn ensure_function(
+        &mut self,
+        var: TypeVarId,
+        arity: usize,
+    ) -> Result<super::super::FunctionTypeInfo> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
             TypeVarKind::Unbound { .. } => {
@@ -91,21 +98,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                     let ret = self.error_type_var();
                     self.type_vars[root].kind =
-                        TypeVarKind::Bound(TypeTerm::Function(FunctionTerm { params: params.clone(), ret }));
+                        TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
+                            params: params.clone(),
+                            ret,
+                        }));
                     return Ok(super::super::FunctionTypeInfo { params, ret });
                 }
-                Ok(super::super::FunctionTypeInfo { params: func.params, ret: func.ret })
+                Ok(super::super::FunctionTypeInfo {
+                    params: func.params,
+                    ret: func.ret,
+                })
             }
             TypeVarKind::Link(next) => self.ensure_function(next, arity),
             other => {
                 self.emit_error(format!("expected function, found {:?}", other));
                 let params: Vec<_> = (0..arity).map(|_| self.error_type_var()).collect();
                 let ret = self.error_type_var();
-                self.type_vars[root].kind =
-                    TypeVarKind::Bound(TypeTerm::Function(FunctionTerm { params: params.clone(), ret }));
+                self.type_vars[root].kind = TypeVarKind::Bound(TypeTerm::Function(FunctionTerm {
+                    params: params.clone(),
+                    ret,
+                }));
                 Ok(super::super::FunctionTypeInfo { params, ret })
             }
         }
     }
 }
-

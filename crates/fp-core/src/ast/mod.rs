@@ -22,6 +22,7 @@ mod schema;
 mod serialize;
 #[cfg(feature = "bootstrap")]
 pub mod snapshot;
+
 mod value;
 
 pub use attr::*;

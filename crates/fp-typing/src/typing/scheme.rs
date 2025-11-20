@@ -1,4 +1,4 @@
-use fp_core::ast::{TypePrimitive, Ty, TypeEnum, TypeStruct, TypeStructural};
+use fp_core::ast::{Ty, TypeEnum, TypePrimitive, TypeStruct, TypeStructural};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypeScheme {
@@ -25,4 +25,3 @@ pub(crate) enum SchemeType {
     Custom(Ty),
     Unknown,
 }
-

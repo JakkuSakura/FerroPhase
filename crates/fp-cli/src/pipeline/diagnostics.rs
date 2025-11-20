@@ -6,11 +6,14 @@ pub(crate) fn display_options(options: &PipelineOptions) -> DiagnosticDisplayOpt
     DiagnosticDisplayOptions::new(options.debug.verbose)
 }
 
-pub(crate) fn emit(diagnostics: &[Diagnostic], stage_context: Option<&str>, options: &PipelineOptions) {
+pub(crate) fn emit(
+    diagnostics: &[Diagnostic],
+    stage_context: Option<&str>,
+    options: &PipelineOptions,
+) {
     if diagnostics.is_empty() {
         return;
     }
     let opts = display_options(options);
     DiagnosticManager::emit(diagnostics, stage_context, &opts);
 }
-

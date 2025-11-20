@@ -4,8 +4,8 @@ use fp_core::ast::{
     ValueFunction,
 };
 use fp_core::ast::{Ident, Locator, Path};
-use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::config;
+use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::intrinsics::IntrinsicNormalizer;
 
 mod macro_lowering;
@@ -41,7 +41,9 @@ fn report_unhandled_any(kind: &str, diagnostics: Diagnostics<'_>) {
     }
 }
 
-fn lossy_normalization_mode() -> bool { config::lossy_mode() }
+fn lossy_normalization_mode() -> bool {
+    config::lossy_mode()
+}
 
 pub fn normalize_last_to_ast(node: &mut Node, diagnostics: Diagnostics<'_>) {
     match node.kind_mut() {
@@ -72,7 +74,9 @@ pub struct RustIntrinsicNormalizer;
 
 impl IntrinsicNormalizer for RustIntrinsicNormalizer {
     fn normalize_macro(&self, macro_expr: &ExprMacro) -> fp_core::Result<Option<Expr>> {
-        Ok(Some(macro_lowering::lower_macro_expression(macro_expr, None)))
+        Ok(Some(macro_lowering::lower_macro_expression(
+            macro_expr, None,
+        )))
     }
 }
 
