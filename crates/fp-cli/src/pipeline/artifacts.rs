@@ -19,4 +19,3 @@ pub(crate) struct LlvmArtifacts {
 
 #[allow(dead_code)]
 pub(crate) fn _unused_error(_e: CliError) {}
-

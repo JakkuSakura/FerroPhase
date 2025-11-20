@@ -16,4 +16,3 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.in_const_region > 0
     }
 }
-

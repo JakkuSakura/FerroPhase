@@ -7,7 +7,6 @@ edition = "2021"
 fp-core = { path = "../fp-core" }
 fp-optimize = { path = "../fp-optimize" }
 fp-rust = { path = "../fp-rust" }
-tree-sitter = "0.24"
-tree-sitter-rust = "0.21"
 eyre = "0.6"
 thiserror = "2.0.17"
+winnow = "0.6"

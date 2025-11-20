@@ -43,4 +43,3 @@ mod tests {
         assert_eq!(out, "abc");
     }
 }
-

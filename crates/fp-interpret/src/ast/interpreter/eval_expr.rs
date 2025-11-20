@@ -275,7 +275,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => {
-                if let Some(value) = self.try_handle_const_collection_invoke(locator, &mut invoke.args) {
+                if let Some(value) =
+                    self.try_handle_const_collection_invoke(locator, &mut invoke.args)
+                {
                     return value;
                 }
 
@@ -291,10 +293,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return self.call_value_function(&function, evaluated);
                 }
 
-                self.emit_error(format!(
-                    "cannot resolve function '{}'",
-                    locator
-                ));
+                self.emit_error(format!("cannot resolve function '{}'", locator));
                 Value::undefined()
             }
             ExprInvokeTarget::Expr(expr) => {
@@ -305,7 +304,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.call_value_function(&function, evaluated)
                     }
                     _ => {
-                        self.emit_error("attempted to call a non-function value in const evaluation");
+                        self.emit_error(
+                            "attempted to call a non-function value in const evaluation",
+                        );
                         Value::undefined()
                     }
                 }
@@ -412,7 +413,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             } else {
                 None
             }
-        }.or_else(|| self.functions.get(&locator.to_string()).cloned()) {
+        }
+        .or_else(|| self.functions.get(&locator.to_string()).cloned())
+        {
             self.annotate_invoke_args_slice(args, &function.sig.params);
             Some(function)
         } else {

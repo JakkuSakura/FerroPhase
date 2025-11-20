@@ -8,7 +8,11 @@ impl Pipeline {
         options: &PipelineOptions,
         manager: &DiagnosticManager,
     ) -> Result<PathBuf, CliError> {
-        let binary_path = base_path.with_extension(if cfg!(target_os = "windows") { "exe" } else { "out" });
+        let binary_path = base_path.with_extension(if cfg!(target_os = "windows") {
+            "exe"
+        } else {
+            "out"
+        });
 
         if let Some(parent) = binary_path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
@@ -23,15 +27,20 @@ impl Pipeline {
         let clang_available = Command::new("clang").arg("--version").output();
         if matches!(clang_available, Err(_)) {
             manager.add_diagnostic(
-                Diagnostic::error("`clang` not found in PATH; install LLVM toolchain to produce binaries".to_string())
-                    .with_source_context(STAGE_LINK_BINARY),
+                Diagnostic::error(
+                    "`clang` not found in PATH; install LLVM toolchain to produce binaries"
+                        .to_string(),
+                )
+                .with_source_context(STAGE_LINK_BINARY),
             );
             return Err(Self::stage_failure(STAGE_LINK_BINARY));
         }
 
         let mut cmd = Command::new("clang");
         cmd.arg(llvm_ir_path).arg("-o").arg(&binary_path);
-        if options.release { cmd.arg("-O2"); }
+        if options.release {
+            cmd.arg("-O2");
+        }
 
         let output = match cmd.output() {
             Ok(output) => output,
@@ -48,8 +57,12 @@ impl Pipeline {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let mut message = stderr.trim().to_string();
-            if message.is_empty() { message = stdout.trim().to_string(); }
-            if message.is_empty() { message = "clang failed without diagnostics".to_string(); }
+            if message.is_empty() {
+                message = stdout.trim().to_string();
+            }
+            if message.is_empty() {
+                message = "clang failed without diagnostics".to_string();
+            }
             manager.add_diagnostic(
                 Diagnostic::error(format!("clang failed: {}", message))
                     .with_source_context(STAGE_LINK_BINARY),

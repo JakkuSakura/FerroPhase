@@ -10,7 +10,9 @@ impl Pipeline {
             // Always run the shared intrinsic normalization pass, delegating
             // language-specific hooks (e.g., macro lowering) to the provided
             // frontend normalizer.
-            if let Err(err) = fp_optimize::passes::normalize_intrinsics_with(ast, Some(&**normalizer)) {
+            if let Err(err) =
+                fp_optimize::passes::normalize_intrinsics_with(ast, Some(&**normalizer))
+            {
                 manager.add_diagnostic(
                     Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
                         .with_source_context(STAGE_INTRINSIC_NORMALIZE),

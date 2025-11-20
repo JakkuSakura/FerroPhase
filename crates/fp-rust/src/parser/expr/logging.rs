@@ -33,7 +33,11 @@ impl<'a> ExprParser<'a> {
                     .map(|expr| self.parse_expr(expr))
                     .collect::<Result<Vec<_>>>()?;
 
-                let template = ExprFormatString { parts, args: parsed_args, kwargs: Vec::new() };
+                let template = ExprFormatString {
+                    parts,
+                    args: parsed_args,
+                    kwargs: Vec::new(),
+                };
 
                 if fmt_index > 0 {
                     let macro_name = mac.path.to_token_stream().to_string();
@@ -42,7 +46,8 @@ impl<'a> ExprParser<'a> {
                         macro_name
                     );
                     if self.parser.lossy_mode() {
-                        self.parser.record_diagnostic(DiagnosticLevel::Warning, message);
+                        self.parser
+                            .record_diagnostic(DiagnosticLevel::Warning, message);
                     } else {
                         return self.parser.error(
                             format!(

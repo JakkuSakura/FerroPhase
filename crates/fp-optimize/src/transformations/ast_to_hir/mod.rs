@@ -9,10 +9,10 @@ use std::path::Path;
 
 use super::IrTransform;
 
-mod exprs;       // expression lowering
-mod patterns;    // pattern lowering
-mod items;       // item/impl helpers
-mod helpers;     // shared path/locator helpers
+mod exprs; // expression lowering
+mod helpers;
+mod items; // item/impl helpers
+mod patterns; // pattern lowering // shared path/locator helpers
 
 #[cfg(test)]
 mod tests;
