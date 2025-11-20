@@ -1,6 +1,7 @@
 //! Command implementations for the FerroPhase CLI
 
 pub mod check;
+pub mod common;
 pub mod compile;
 pub mod completions;
 pub mod eval;
@@ -9,7 +10,6 @@ pub mod init;
 pub mod parse;
 pub mod run;
 pub mod transpile;
-pub mod common;
 
 // Re-export command functions
 pub use check::check_command;
@@ -23,11 +23,8 @@ pub use run::run_command;
 pub use transpile::transpile_command;
 // Re-export shared helpers for convenience
 pub use common::{
-    format_value_brief,
-    ownership_label,
-    setup_progress_bar,
+    format_value_brief, ownership_label, print_runtime_result, setup_progress_bar,
     validate_paths_exist,
-    print_runtime_result,
 };
 
 use crate::{Result, cli::CliConfig};

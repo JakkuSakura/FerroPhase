@@ -3,6 +3,7 @@
 //! This crate provides the command-line interface for FerroPhase, a meta-compilation
 //! framework that enables multi-language development with advanced compile-time capabilities.
 
+pub mod bootstrap;
 pub mod cli;
 pub mod codegen;
 pub mod commands;
@@ -13,7 +14,6 @@ pub mod languages;
 pub mod pipeline;
 pub mod project;
 pub mod utils;
-pub mod bootstrap;
 
 // Re-export core types for convenience, avoiding conflicts
 pub use fp_core::{Error as CoreError, Result as CoreResult, ast, context, ops, span};

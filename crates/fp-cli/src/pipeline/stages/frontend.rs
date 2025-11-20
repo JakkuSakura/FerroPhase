@@ -10,21 +10,32 @@ impl Pipeline {
         manager: &DiagnosticManager,
     ) -> Result<hir::Program, CliError> {
         let tolerate_fail = self.bootstrap_mode || options.bootstrap_mode;
-        let mut generator = match file_path { Some(path) => HirGenerator::with_file(path), None => HirGenerator::new() };
+        let mut generator = match file_path {
+            Some(path) => HirGenerator::with_file(path),
+            None => HirGenerator::new(),
+        };
 
         if options.error_tolerance.enabled {
             generator.enable_error_tolerance(options.error_tolerance.max_errors);
         }
 
-        if matches!(ast.kind(), NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)) {
+        if matches!(
+            ast.kind(),
+            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
+        ) {
             let message = "Top-level items are not supported; provide a file or expression";
             if tolerate_fail {
                 if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, message) {
                     manager.add_diagnostic(
-                        Diagnostic::warning(message.to_string()).with_source_context(STAGE_AST_TO_HIR),
+                        Diagnostic::warning(message.to_string())
+                            .with_source_context(STAGE_AST_TO_HIR),
                     );
                 }
-                return Ok(hir::Program { items: Vec::new(), def_map: HashMap::new(), next_hir_id: 0 });
+                return Ok(hir::Program {
+                    items: Vec::new(),
+                    def_map: HashMap::new(),
+                    next_hir_id: 0,
+                });
             } else {
                 manager.add_diagnostic(
                     Diagnostic::error(message.to_string()).with_source_context(STAGE_AST_TO_HIR),
@@ -65,7 +76,9 @@ impl Pipeline {
                 for diagnostic in warnings {
                     let message = diagnostic.to_string();
                     if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
-                        manager.add_diagnostic(Diagnostic::warning(message).with_source_context(STAGE_AST_TO_HIR));
+                        manager.add_diagnostic(
+                            Diagnostic::warning(message).with_source_context(STAGE_AST_TO_HIR),
+                        );
                     }
                 }
             } else {
@@ -90,7 +103,11 @@ impl Pipeline {
 
         if transform_failed {
             if tolerate_fail {
-                return Ok(hir::Program { items: Vec::new(), def_map: HashMap::new(), next_hir_id: 0 });
+                return Ok(hir::Program {
+                    items: Vec::new(),
+                    def_map: HashMap::new(),
+                    next_hir_id: 0,
+                });
             }
             return Err(Self::stage_failure(STAGE_AST_TO_HIR));
         }

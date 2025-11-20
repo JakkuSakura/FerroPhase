@@ -1,11 +1,11 @@
 //! Run command implementation - executes FerroPhase files directly through the unified pipeline
 
+use crate::commands::{format_value_brief, print_runtime_result};
 use crate::config::{PipelineOptions, PipelineTarget};
 use crate::pipeline::{Pipeline, PipelineInput, PipelineOutput};
 use crate::{CliError, Result, cli::CliConfig};
 use console::style;
 use fp_core::ast::Value;
-use crate::commands::{format_value_brief, print_runtime_result};
 use fp_core::pretty::{PrettyOptions, pretty};
 use std::path::PathBuf;
 use tracing::info;

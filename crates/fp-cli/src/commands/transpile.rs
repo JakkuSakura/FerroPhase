@@ -5,17 +5,17 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, TranspilePreparationOptions},
 };
-use fp_core::ast::{Node, AstSerializer};
+use console::style;
+use fp_core::ast::{AstSerializer, Node};
+use fp_core::ast::{Ident, Item, Module as AstModule, NodeKind, Visibility};
 use fp_csharp::CSharpSerializer;
 use fp_python::PythonSerializer;
+use fp_rust::parse_cargo_workspace;
 use fp_rust::printer::RustPrinter;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
+use fp_wit::WorldMode;
 use fp_wit::{WitOptions, WitSerializer};
 use fp_zig::ZigSerializer;
-use console::style;
-use fp_core::ast::{Ident, Item, Module as AstModule, NodeKind, Visibility};
-use fp_rust::parse_cargo_workspace;
-use fp_wit::WorldMode;
 use pathdiff::diff_paths;
 use serde_json::Value as JsonValue;
 use std::collections::BTreeMap;
@@ -105,7 +105,7 @@ async fn transpile_file(
         .map(|name| name.eq_ignore_ascii_case("Cargo.toml"))
         .unwrap_or(false);
 
-    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
+    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
@@ -221,7 +221,11 @@ async fn transpile_file(
     // Resolve target using shared backend mapping
     let target = crate::languages::backend::parse_language_target(&args.target)?;
     let wit_options = if matches!(target, crate::languages::backend::LanguageTarget::Wit) {
-        Some(build_wit_options(input, package_info.as_ref(), args.single_world))
+        Some(build_wit_options(
+            input,
+            package_info.as_ref(),
+            args.single_world,
+        ))
     } else {
         None
     };
@@ -273,35 +277,50 @@ fn transpile_node(
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;
-            Ok(BackendTranspileResult { code, type_defs: None })
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
         }
         crate::languages::backend::LanguageTarget::CSharp => {
             let serializer = CSharpSerializer;
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;
-            Ok(BackendTranspileResult { code, type_defs: None })
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
         }
         crate::languages::backend::LanguageTarget::Python => {
             let serializer = PythonSerializer;
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;
-            Ok(BackendTranspileResult { code, type_defs: None })
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
         }
         crate::languages::backend::LanguageTarget::Zig => {
             let serializer = ZigSerializer;
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;
-            Ok(BackendTranspileResult { code, type_defs: None })
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
         }
         crate::languages::backend::LanguageTarget::Rust => {
             let serializer = RustPrinter::new_with_rustfmt();
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;
-            Ok(BackendTranspileResult { code, type_defs: None })
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
         }
         crate::languages::backend::LanguageTarget::Wit => {
             let serializer = match wit_options {
@@ -311,7 +330,10 @@ fn transpile_node(
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;
-            Ok(BackendTranspileResult { code, type_defs: None })
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
         }
     }
 }

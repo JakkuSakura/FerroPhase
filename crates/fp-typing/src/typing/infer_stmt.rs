@@ -1,7 +1,7 @@
+use crate::typing::unify::TypeTerm;
+use crate::{typing_error, AstTypeInferencer, LoopContext, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
-use crate::{AstTypeInferencer, TypeVarId, LoopContext, typing_error};
-use crate::typing::unify::TypeTerm;
 
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {

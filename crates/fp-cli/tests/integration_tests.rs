@@ -96,7 +96,10 @@ fn test_cli_compile_missing_file() {
         .output()
         .expect("fp should run");
 
-    assert!(!output.status.success(), "expected failure for missing file");
+    assert!(
+        !output.status.success(),
+        "expected failure for missing file"
+    );
     let out_all = format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),

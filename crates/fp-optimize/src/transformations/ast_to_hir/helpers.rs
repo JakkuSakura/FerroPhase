@@ -50,7 +50,10 @@ impl HirGenerator {
             resolved = self.lookup_global_res(&canonical, scope);
         }
 
-        Ok(hir::Path { segments, res: resolved })
+        Ok(hir::Path {
+            segments,
+            res: resolved,
+        })
     }
 
     pub(super) fn ast_expr_to_hir_path(
@@ -59,8 +62,7 @@ impl HirGenerator {
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         match expr.kind() {
-            ast::ExprKind::Locator(locator) =>
-                self.locator_to_hir_path_with_scope(locator, scope),
+            ast::ExprKind::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
             ast::ExprKind::Select(select) => {
                 let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
                 let seg = self.make_path_segment(&select.field.name, None);
@@ -70,12 +72,15 @@ impl HirGenerator {
             other => Err(crate::error::optimization_error(format!(
                 "expected path-like expression for type path, found {:?}",
                 other
-            )))
+            ))),
         }
     }
 
     pub(super) fn canonicalize_segments(&self, segments: &[hir::PathSegment]) -> Vec<String> {
-        segments.iter().map(|s| s.name.as_str().to_string()).collect()
+        segments
+            .iter()
+            .map(|s| s.name.as_str().to_string())
+            .collect()
     }
 
     pub(super) fn make_path_segment(
@@ -83,6 +88,9 @@ impl HirGenerator {
         name: &str,
         args: Option<hir::GenericArgs>,
     ) -> hir::PathSegment {
-        hir::PathSegment { name: hir::Symbol::new(name), args }
+        hir::PathSegment {
+            name: hir::Symbol::new(name),
+            args,
+        }
     }
 }

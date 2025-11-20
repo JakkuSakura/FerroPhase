@@ -120,12 +120,24 @@ pub(crate) fn assemble_workspace_lir_program(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::lir::{CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, Linkage, Name, Ty as LirType};
+    use fp_core::lir::{
+        CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
+        Name, Ty as LirType,
+    };
     use fp_core::workspace::{WorkspaceDependency, WorkspaceModule, WorkspacePackage};
 
     fn make_func(name: &str) -> LirFunction {
-        let sig = LirFunctionSignature { params: vec![], return_type: LirType::Void, is_variadic: false };
-        let mut f = LirFunction::new(Name::from(name), sig, CallingConvention::C, Linkage::External);
+        let sig = LirFunctionSignature {
+            params: vec![],
+            return_type: LirType::Void,
+            is_variadic: false,
+        };
+        let mut f = LirFunction::new(
+            Name::from(name),
+            sig,
+            CallingConvention::C,
+            Linkage::External,
+        );
         // Add a dummy block so we can detect body presence
         f.add_basic_block(LirBasicBlock::new(0, None));
         f
@@ -143,7 +155,10 @@ mod tests {
             .map(|(name, modules)| {
                 let mods = modules
                     .iter()
-                    .map(|m| WorkspaceModule::new(format!("{name}::{m}"), format!("{name}/{m}.json")).with_module_path(vec!["bin".to_string()]))
+                    .map(|m| {
+                        WorkspaceModule::new(format!("{name}::{m}"), format!("{name}/{m}.json"))
+                            .with_module_path(vec!["bin".to_string()])
+                    })
                     .collect();
                 WorkspacePackage::new(*name, format!("{name}/Cargo.toml"), format!("{name}"))
                     .with_modules(mods)
@@ -156,7 +171,7 @@ mod tests {
     #[test]
     fn merge_keeps_main_bodies_and_externalizes_others() {
         // Given two packages, main = alpha, with one module each, define the same function name.
-        let ws = workspace_with(&[("fp-cli", &["a"]), ("beta", &["b"]) ]);
+        let ws = workspace_with(&[("fp-cli", &["a"]), ("beta", &["b"])]);
 
         let mut replay = WorkspaceLirReplay::default();
         replay.modules.push(WorkspaceLirModule {
@@ -190,7 +205,10 @@ mod tests {
             }
         }
         let foo = found_foo.expect("foo present");
-        assert!(foo.basic_blocks.len() >= 1, "foo has body from main package");
+        assert!(
+            foo.basic_blocks.len() >= 1,
+            "foo has body from main package"
+        );
         let bar = found_bar.expect("bar present");
         assert!(bar.basic_blocks.is_empty(), "bar is externalized (no body)");
     }

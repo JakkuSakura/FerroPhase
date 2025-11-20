@@ -33,4 +33,3 @@ pub fn detect_language_source_by_path(path: &Path) -> Option<LanguageSource> {
         _ => None,
     }
 }
-

@@ -66,4 +66,3 @@ impl LlvmContext {
         self.current_function.clone()
     }
 }
-

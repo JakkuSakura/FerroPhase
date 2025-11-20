@@ -17,7 +17,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     // closures are not stored in value_env; pending_closure holds captures for annotation
-    pub(super) fn lookup_closure(&self, _name: &str) -> Option<ConstClosure> { None }
+    pub(super) fn lookup_closure(&self, _name: &str) -> Option<ConstClosure> {
+        None
+    }
 
     pub(super) fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
         if let Some(ident) = pattern.as_ident() {

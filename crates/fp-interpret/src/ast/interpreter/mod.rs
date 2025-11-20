@@ -20,15 +20,15 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_typing::AstTypeInferencer;
-mod interpreter_splicing;
 mod blocks;
+mod closures;
 mod const_regions;
-mod intrinsics;
+mod env;
 mod eval_expr;
 mod eval_stmt;
+mod interpreter_splicing;
+mod intrinsics;
 mod operators;
-mod env;
-mod closures;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
@@ -380,7 +380,6 @@ impl<'ctx> AstInterpreter<'ctx> {
             | ItemKind::Any(_) => {}
         }
     }
-
 
     fn cast_value_to_type(&mut self, value: Value, target_ty: &Ty) -> Value {
         match target_ty {

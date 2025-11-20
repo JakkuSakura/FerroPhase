@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use eyre::Result;
 use fp_core::ast::*;
+use fp_core::ast::{ExprKind as AstExprKind, Node, NodeKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_rust::normalization::{lower_macro_for_ast, normalize_last_to_ast};
 use fp_rust::printer::RustPrinter;
 use fp_rust::shll_parse_expr;
-use fp_core::ast::{ExprKind as AstExprKind, Node, NodeKind};
-use fp_rust::normalization::{lower_macro_for_ast, normalize_last_to_ast};
 
 fn normalize_expr_tree(expr: fp_core::ast::Expr) -> fp_core::ast::Expr {
     // First lower the top-level macro if present (shortcut).
@@ -34,7 +34,10 @@ fn emit_macro_lowers_to_splice_of_quote_without_kind() -> Result<()> {
     let ExprKind::Quote(q) = splice.token.kind() else {
         panic!("emit! splice should contain a quote token");
     };
-    assert!(q.kind.is_none(), "quote kind should be None after refactor to quote-only");
+    assert!(
+        q.kind.is_none(),
+        "quote kind should be None after refactor to quote-only"
+    );
     Ok(())
 }
 
@@ -343,7 +346,8 @@ fn env_macros_resolve_at_parse_time() -> Result<()> {
     };
     assert_eq!(s.value, "alpha");
 
-    let expr_option_some = normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_SOME") });
+    let expr_option_some =
+        normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_SOME") });
     let value = match expr_option_some.kind() {
         ExprKind::Value(val) => val.as_ref(),
         other => panic!(
@@ -356,7 +360,8 @@ fn env_macros_resolve_at_parse_time() -> Result<()> {
     };
     assert!(opt.value.is_some(), "expected option_env! to capture value");
 
-    let expr_option_none = normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_NONE") });
+    let expr_option_none =
+        normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_NONE") });
     let value = match expr_option_none.kind() {
         ExprKind::Value(val) => val.as_ref(),
         other => panic!(

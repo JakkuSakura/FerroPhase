@@ -214,10 +214,7 @@ impl PackageProvider for TypeScriptPackageProvider {
         };
 
         match self.packages.write() {
-            Ok(mut w) => {
-                *w =
-                    HashMap::from([(package_id.clone(), Arc::new(package_descriptor))])
-            }
+            Ok(mut w) => *w = HashMap::from([(package_id.clone(), Arc::new(package_descriptor))]),
             Err(poison) => {
                 *poison.into_inner() =
                     HashMap::from([(package_id.clone(), Arc::new(package_descriptor))])
