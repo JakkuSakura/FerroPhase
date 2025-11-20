@@ -1,5 +1,6 @@
 //! Compilation command implementation
 
+use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::{
     CliError, Result,
     cli::CliConfig,
@@ -7,7 +8,6 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
-use crate::commands::{setup_progress_bar, validate_paths_exist};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};

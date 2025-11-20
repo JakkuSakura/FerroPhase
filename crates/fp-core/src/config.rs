@@ -20,4 +20,3 @@ pub fn bootstrap_mode() -> bool {
     static BOOT: OnceLock<bool> = OnceLock::new();
     *BOOT.get_or_init(|| std::env::var_os("FERROPHASE_BOOTSTRAP").is_some())
 }
-

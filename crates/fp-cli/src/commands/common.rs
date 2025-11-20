@@ -1,10 +1,10 @@
 //! Common reusable helpers for CLI commands to avoid duplication.
 
+use crate::{CliError, Result};
+use console::style;
+use fp_core::ast::{RuntimeValue, Value};
 use indicatif::{ProgressBar, ProgressStyle};
 use std::path::PathBuf;
-use crate::{CliError, Result};
-use fp_core::ast::{RuntimeValue, Value};
-use console::style;
 
 /// Create a consistently styled progress bar for command loops.
 pub fn setup_progress_bar(total: usize) -> ProgressBar {

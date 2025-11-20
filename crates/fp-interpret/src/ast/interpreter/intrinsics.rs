@@ -1,7 +1,11 @@
 use super::*;
 
 impl<'ctx> AstInterpreter<'ctx> {
-    pub(super) fn should_replace_intrinsic_with_value(&self, kind: IntrinsicCallKind, value: &Value) -> bool {
+    pub(super) fn should_replace_intrinsic_with_value(
+        &self,
+        kind: IntrinsicCallKind,
+        value: &Value,
+    ) -> bool {
         if matches!(value, Value::Undefined(_)) {
             return false;
         }
@@ -41,7 +45,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             IntrinsicCallKind::DebugAssertions => Value::bool(self.debug_assertions),
             IntrinsicCallKind::Break => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload {
+                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
+                {
                     if args.len() > 1 {
                         self.emit_error("`break` accepts at most one value in const evaluation");
                     }
@@ -52,7 +57,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::unit()
             }
             IntrinsicCallKind::Continue => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload {
+                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
+                {
                     if !args.is_empty() {
                         self.emit_error("`continue` does not accept a value in const evaluation");
                     }
@@ -60,7 +66,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::unit()
             }
             IntrinsicCallKind::ConstBlock => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload {
+                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
+                {
                     if let Some(expr) = args.first_mut() {
                         return self.eval_expr(expr);
                     }
@@ -83,7 +90,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let args = match &mut call.payload {
                     fp_core::intrinsics::IntrinsicCallPayload::Args { args } => args,
                     fp_core::intrinsics::IntrinsicCallPayload::Format { .. } => {
-                        self.emit_error("format-style intrinsics are not supported in const evaluation");
+                        self.emit_error(
+                            "format-style intrinsics are not supported in const evaluation",
+                        );
                         return Value::undefined();
                     }
                 };
@@ -114,7 +123,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    pub(super) fn evaluate_intrinsic_for_function_analysis(&mut self, call: &mut ExprIntrinsicCall) {
+    pub(super) fn evaluate_intrinsic_for_function_analysis(
+        &mut self,
+        call: &mut ExprIntrinsicCall,
+    ) {
         if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
             let value = self.eval_intrinsic(call);
             if !matches!(value, Value::Undefined(_)) {
@@ -144,12 +156,15 @@ impl<'ctx> AstInterpreter<'ctx> {
         call: &mut ExprIntrinsicCall,
     ) -> std::result::Result<String, String> {
         match &mut call.payload {
-            fp_core::intrinsics::IntrinsicCallPayload::Format { template } => self.render_format_template(template),
+            fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+                self.render_format_template(template)
+            }
             fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
                 let mut rendered = Vec::with_capacity(args.len());
                 for expr in args.iter_mut() {
                     let value = self.eval_expr(expr);
-                    let text = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+                    let text =
+                        format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
                     rendered.push(text);
                 }
                 Ok(rendered.join(" "))
@@ -228,4 +243,3 @@ impl<'ctx> AstInterpreter<'ctx> {
         Ok(output)
     }
 }
-

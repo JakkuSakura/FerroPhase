@@ -1,11 +1,11 @@
-use std::collections::{HashMap, HashSet};
 use fp_core::config;
+use std::collections::{HashMap, HashSet};
 
 pub mod typing;
 pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
 
-use fp_core::ast::*;
 use crate::typing::scheme::TypeScheme;
+use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::error::{Error, Result};
@@ -16,7 +16,9 @@ fn typing_error(msg: impl Into<String>) -> Error {
 
 pub(crate) type TypeVarId = usize;
 
-fn detect_lossy_mode() -> bool { config::lossy_mode() }
+fn detect_lossy_mode() -> bool {
+    config::lossy_mode()
+}
 
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
 
@@ -680,8 +682,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     // moved: infer_invoke
 
-
-
     fn apply_pattern_generalization(&mut self, info: &PatternInfo) -> Result<()> {
         for binding in &info.bindings {
             let scheme = self.generalize(binding.var)?;
@@ -902,8 +902,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     // ensure_function moved to typing::solver
 
-
-
     fn ty_from_function_signature(&mut self, sig: &FunctionSignature) -> Result<Ty> {
         let mut params = Vec::new();
         for param in &sig.params {
@@ -937,7 +935,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             _ => None,
         }
     }
-
 }
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.

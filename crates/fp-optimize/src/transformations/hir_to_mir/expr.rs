@@ -2243,9 +2243,7 @@ impl<'a> BodyBuilder<'a> {
                 for impl_item in &impl_block.items {
                     if let hir::ImplItemKind::Method(function) = &impl_item.kind {
                         if function.sig.name.as_str() == name_tail {
-                            let method_ctx = self
-                                .lowering
-                                .make_method_context(&impl_block.self_ty);
+                            let method_ctx = self.lowering.make_method_context(&impl_block.self_ty);
                             let sig = self
                                 .lowering
                                 .lower_function_sig(&function.sig, method_ctx.as_ref());
@@ -2253,10 +2251,7 @@ impl<'a> BodyBuilder<'a> {
                             let operand = mir::Operand::Constant(mir::Constant {
                                 span: callee.span,
                                 user_ty: None,
-                                literal: mir::ConstantKind::Fn(
-                                    mir::Symbol::new(name.clone()),
-                                    ty,
-                                ),
+                                literal: mir::ConstantKind::Fn(mir::Symbol::new(name.clone()), ty),
                             });
                             return Ok((operand, sig, Some(name)));
                         }

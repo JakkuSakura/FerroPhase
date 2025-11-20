@@ -284,10 +284,7 @@ impl PrettyPrintable for ast::Expr {
                 })
             }
             ast::ExprKind::Quote(q) => {
-                let kind = q
-                    .kind
-                    .map(|k| format!(" {:?}", k))
-                    .unwrap_or_default();
+                let kind = q.kind.map(|k| format!(" {:?}", k)).unwrap_or_default();
                 ctx.writeln(f, format!("quote{}{}", kind, suffix))?;
                 ctx.with_indent(|ctx| ast::Expr::block(q.block.clone()).fmt_pretty(f, ctx))
             }
@@ -392,10 +389,7 @@ impl PrettyPrintable for ast::Item {
                     ),
                 )?;
                 ctx.with_indent(|ctx| {
-                    ctx.writeln(
-                        f,
-                        format!("tokens: {}{}", mac.invocation.tokens, suffix),
-                    )
+                    ctx.writeln(f, format!("tokens: {}{}", mac.invocation.tokens, suffix))
                 })
             }
             ast::ItemKind::DefStruct(def) => {

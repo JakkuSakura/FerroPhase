@@ -154,6 +154,9 @@ impl Pipeline {
             }
         }
 
-        Ok(LlvmArtifacts { ir_text, ir_path: llvm_path })
+        Ok(LlvmArtifacts {
+            ir_text,
+            ir_path: llvm_path,
+        })
     }
 }

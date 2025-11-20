@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprStruct, Ident, ItemDefFunction, Locator, Path, Value,
+    BlockStmt, Expr, ExprBlock, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct,
+    Ident, ItemDefFunction, Locator, Path, Value,
 };
 
 fn path_tail_matches(path: &Path, tail: &[&str]) -> bool {
@@ -42,8 +42,8 @@ pub fn maybe_bootstrap_invoke_replacement(invoke: &ExprInvoke) -> Option<Expr> {
     match &invoke.target {
         // std::env::var(_) => ""
         ExprInvokeTarget::Function(locator)
-            if path_matches(locator, &["std", "env", "var"]) ||
-                path_matches(locator, &["env", "var"]) =>
+            if path_matches(locator, &["std", "env", "var"])
+                || path_matches(locator, &["env", "var"]) =>
         {
             return Some(make_empty_string_expr());
         }
@@ -146,9 +146,9 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
             ExprField::new(
                 Ident::new("base_path"),
                 Expr::new(ExprKind::Invoke(ExprInvoke {
-                    target: ExprInvokeTarget::Function(Locator::path(Path::new(vec![
-                        Ident::new("Some"),
-                    ]))),
+                    target: ExprInvokeTarget::Function(Locator::path(Path::new(vec![Ident::new(
+                        "Some",
+                    )]))),
                     args: vec![Expr::new(ExprKind::Value(Box::new(Value::string(
                         output_path.clone(),
                     ))))],
@@ -176,7 +176,9 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
         ]))),
         args: vec![
             Expr::ident(pipeline_ident.clone()),
-            Expr::new(ExprKind::Value(Box::new(Value::string(snapshot_path.clone())))),
+            Expr::new(ExprKind::Value(Box::new(Value::string(
+                snapshot_path.clone(),
+            )))),
             options_expr,
         ],
     }));

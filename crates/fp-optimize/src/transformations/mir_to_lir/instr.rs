@@ -3,12 +3,12 @@
 // gradually split into layout and abi submodules.
 
 // BEGIN ORIGINAL CONTENT
+use crate::transformations::IrTransform;
 use fp_core::error::Result;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
 use fp_core::{lir, mir};
-use crate::transformations::IrTransform;
 use std::collections::{HashMap, HashSet, VecDeque};
 
 #[cfg(test)]
@@ -1499,9 +1499,17 @@ impl LirGenerator {
         // Choose an aggregate type suitable for InsertValue construction.
         // Prefer a real struct/array type; otherwise synthesize a struct from expected fields.
         let agg_construction_ty: Option<lir::LirType> = match aggregate_ty.clone() {
-            Some(lir::LirType::Struct { fields, packed, name }) => {
+            Some(lir::LirType::Struct {
+                fields,
+                packed,
+                name,
+            }) => {
                 if fields.len() == raw_values.len() {
-                    Some(lir::LirType::Struct { fields, packed, name })
+                    Some(lir::LirType::Struct {
+                        fields,
+                        packed,
+                        name,
+                    })
                 } else {
                     Some(lir::LirType::Struct {
                         fields: expected_field_tys.clone(),
@@ -1539,7 +1547,8 @@ impl LirGenerator {
         };
 
         if let Some(agg_ty) = agg_construction_ty {
-            let mut current_value = lir::LirValue::Constant(lir::LirConstant::Undef(agg_ty.clone()));
+            let mut current_value =
+                lir::LirValue::Constant(lir::LirConstant::Undef(agg_ty.clone()));
 
             for (index, value) in raw_values.into_iter().enumerate() {
                 let mut element = value;

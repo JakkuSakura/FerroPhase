@@ -23,9 +23,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value + r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value + r.value)),
-            (Value::String(l), Value::String(r)) => Ok(Value::string(format!("{}{}", l.value, r.value))),
+            (Value::String(l), Value::String(r)) => {
+                Ok(Value::string(format!("{}{}", l.value, r.value)))
+            }
             other => Err(interpretation_error(format!(
-                "unsupported operands for '+': {:?}", other
+                "unsupported operands for '+': {:?}",
+                other
             ))),
         }
     }
@@ -34,7 +37,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value - r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value - r.value)),
             other => Err(interpretation_error(format!(
-                "unsupported operands for '-': {:?}", other
+                "unsupported operands for '-': {:?}",
+                other
             ))),
         }
     }
@@ -43,7 +47,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value * r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value * r.value)),
             other => Err(interpretation_error(format!(
-                "unsupported operands for '*': {:?}", other
+                "unsupported operands for '*': {:?}",
+                other
             ))),
         }
     }
@@ -66,7 +71,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             other => Err(interpretation_error(format!(
-                "unsupported operands for '/': {:?}", other
+                "unsupported operands for '/': {:?}",
+                other
             ))),
         }
     }
@@ -74,7 +80,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value % r.value)),
             other => Err(interpretation_error(format!(
-                "unsupported operands for '%': {:?}", other
+                "unsupported operands for '%': {:?}",
+                other
             ))),
         }
     }
@@ -86,7 +93,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             (Value::String(l), Value::String(r)) => l.value.cmp(&r.value),
             other => {
                 return Err(interpretation_error(format!(
-                    "unsupported operands for ordering comparison: {:?}", other
+                    "unsupported operands for ordering comparison: {:?}",
+                    other
                 )))
             }
         };
@@ -113,7 +121,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             (Value::Bool(l), Value::Bool(r)) => (l.value, r.value),
             other => {
                 return Err(interpretation_error(format!(
-                    "logical operators require booleans, found {:?}", other
+                    "logical operators require booleans, found {:?}",
+                    other
                 )))
             }
         };
@@ -136,7 +145,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Ok(Value::int(result))
             }
             other => Err(interpretation_error(format!(
-                "bitwise operators require integers, found {:?}", other
+                "bitwise operators require integers, found {:?}",
+                other
             ))),
         }
     }
@@ -146,14 +156,16 @@ impl<'ctx> AstInterpreter<'ctx> {
             UnOpKind::Not => match value {
                 Value::Bool(b) => Ok(Value::bool(!b.value)),
                 other => Err(interpretation_error(format!(
-                    "operator '!' requires boolean, found {}", other
+                    "operator '!' requires boolean, found {}",
+                    other
                 ))),
             },
             UnOpKind::Neg => match value {
                 Value::Int(i) => Ok(Value::int(-i.value)),
                 Value::Decimal(d) => Ok(Value::decimal(-d.value)),
                 other => Err(interpretation_error(format!(
-                    "operator '-' requires numeric operand, found {}", other
+                    "operator '-' requires numeric operand, found {}",
+                    other
                 ))),
             },
             UnOpKind::Deref | UnOpKind::Any(_) => Err(interpretation_error(
@@ -162,4 +174,3 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 }
-

@@ -1,15 +1,15 @@
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use crate::parser::FerroPhaseParser;
 use fp_core::ast::Node;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_rust::normalization::RustIntrinsicNormalizer;
 use fp_rust::normalization::normalize_last_to_ast;
+use fp_rust::normalization::RustIntrinsicNormalizer;
 use fp_rust::parser::RustParser;
 use fp_rust::printer::RustPrinter;
-use crate::parser::preprocessor::PreprocessorBuilder;
 
 /// Canonical identifier for the FerroPhase source language.
 pub const FERROPHASE: &str = "ferrophase";
@@ -17,12 +17,14 @@ pub const FERROPHASE: &str = "ferrophase";
 /// Frontend that parses FerroPhase sources using the existing Rust infrastructure.
 pub struct FerroFrontend {
     parser: Mutex<RustParser>,
+    ferro: FerroPhaseParser,
 }
 
 impl FerroFrontend {
     pub fn new() -> Self {
         Self {
             parser: Mutex::new(RustParser::new()),
+            ferro: FerroPhaseParser::new(),
         }
     }
 
@@ -46,10 +48,7 @@ impl LanguageFrontend for FerroFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
-        // Apply FerroPhase preprocessor to handle `quote`/`splice` sugar.
-        let pre = PreprocessorBuilder::with_default_rules().build();
-        // TODO: properly propagate preprocessor errors
-        let preprocessed = pre.apply_until_stable(&cleaned, 2).unwrap_or_else(|_| cleaned.clone());
+        let rewritten = self.ferro.rewrite_to_rust(&cleaned)?;
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(RustIntrinsicNormalizer::default());
@@ -61,7 +60,7 @@ impl LanguageFrontend for FerroFrontend {
                 Err(poison) => poison.into_inner(),
             };
             parser.clear_diagnostics();
-            let file = parser.parse_file(&preprocessed, path)?;
+            let file = parser.parse_file(&rewritten, path)?;
             let diagnostics = parser.diagnostics();
             drop(parser);
 
@@ -91,9 +90,9 @@ impl LanguageFrontend for FerroFrontend {
             };
             parser.clear_diagnostics();
             let expr = parser
-                .try_parse_as_file(&preprocessed)
-                .or_else(|_| parser.try_parse_block_expression(&preprocessed))
-                .or_else(|_| parser.try_parse_simple_expression(&preprocessed))?;
+                .try_parse_as_file(&rewritten)
+                .or_else(|_| parser.try_parse_block_expression(&rewritten))
+                .or_else(|_| parser.try_parse_simple_expression(&rewritten))?;
             let diagnostics = parser.diagnostics();
             (expr, diagnostics)
         };
@@ -125,4 +124,3 @@ mod tests {
 }
 
 pub mod parser;
-pub mod error;

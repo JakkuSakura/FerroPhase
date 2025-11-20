@@ -1,8 +1,8 @@
 // functions/types/values/builder helpers moved to submodules
-use llvm_ir::module::{DataLayout, Linkage};
-use llvm_ir::*;
-use llvm_ir::types::FPType;
 use llvm_ir::constant::Float;
+use llvm_ir::module::{DataLayout, Linkage};
+use llvm_ir::types::FPType;
+use llvm_ir::*;
 use std::path::Path;
 
 /// LLVM compilation context that manages the LLVM module

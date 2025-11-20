@@ -1,5 +1,5 @@
-use crate::{AstTypeInferencer, TypeVarId};
 use crate::typing::scheme::{SchemeType, TypeScheme};
+use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
 
@@ -44,7 +44,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let mut mapping = std::collections::HashMap::new();
         let mut next = 0u32;
         let body = self.build_scheme_type(var, &mut mapping, &mut next)?;
-        Ok(TypeScheme { vars: next as usize, body })
+        Ok(TypeScheme {
+            vars: next as usize,
+            body,
+        })
     }
 
     fn build_scheme_type(
@@ -199,7 +202,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let var = self.fresh_type_var();
                 self.bind(
                     var,
-                    TypeTerm::Function(FunctionTerm { params: param_vars, ret: ret_var }),
+                    TypeTerm::Function(FunctionTerm {
+                        params: param_vars,
+                        ret: ret_var,
+                    }),
                 );
                 var
             }
@@ -226,7 +232,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn fresh_type_var(&mut self) -> TypeVarId {
         let id = self.type_vars.len();
-        self.type_vars.push(TypeVar { kind: TypeVarKind::Unbound { level: self.current_level } });
+        self.type_vars.push(TypeVar {
+            kind: TypeVarKind::Unbound {
+                level: self.current_level,
+            },
+        });
         id
     }
 
@@ -264,7 +274,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if a_root == b_root {
             return Ok(());
         }
-        match (self.type_vars[a_root].kind.clone(), self.type_vars[b_root].kind.clone()) {
+        match (
+            self.type_vars[a_root].kind.clone(),
+            self.type_vars[b_root].kind.clone(),
+        ) {
             (TypeVarKind::Bound(TypeTerm::Unknown), _) => {
                 self.type_vars[a_root].kind = TypeVarKind::Link(b_root);
                 Ok(())
@@ -307,7 +320,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Err(Error::from("primitive type mismatch"))
                 }
             }
-            (TypeVarKind::Bound(term_a), TypeVarKind::Bound(term_b)) => self.unify_terms(term_a, term_b),
+            (TypeVarKind::Bound(term_a), TypeVarKind::Bound(term_b)) => {
+                self.unify_terms(term_a, term_b)
+            }
             (TypeVarKind::Link(next), _) => self.unify(next, b_root),
             (_, TypeVarKind::Link(next)) => self.unify(a_root, next),
         }
@@ -342,40 +357,63 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn unify_terms(&mut self, a: TypeTerm, b: TypeTerm) -> Result<()> {
         match (a, b) {
             (TypeTerm::Primitive(pa), TypeTerm::Primitive(pb)) => {
-                if pa == pb { Ok(()) } else { Err(Error::from("primitive type mismatch")) }
+                if pa == pb {
+                    Ok(())
+                } else {
+                    Err(Error::from("primitive type mismatch"))
+                }
             }
             (TypeTerm::Unit, TypeTerm::Unit)
             | (TypeTerm::Nothing, TypeTerm::Nothing)
             | (TypeTerm::Any, TypeTerm::Any)
             | (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
             (TypeTerm::Struct(sa), TypeTerm::Struct(sb)) => {
-                if sa == sb { Ok(()) } else { Err(Error::from("struct type mismatch")) }
+                if sa == sb {
+                    Ok(())
+                } else {
+                    Err(Error::from("struct type mismatch"))
+                }
             }
             (TypeTerm::Structural(sa), TypeTerm::Structural(sb)) => {
-                if sa == sb { Ok(()) } else { Err(Error::from("structural type mismatch")) }
+                if sa == sb {
+                    Ok(())
+                } else {
+                    Err(Error::from("structural type mismatch"))
+                }
             }
             (TypeTerm::Enum(ae), TypeTerm::Enum(be)) => {
-                if ae == be { Ok(()) } else { Err(Error::from("enum type mismatch")) }
+                if ae == be {
+                    Ok(())
+                } else {
+                    Err(Error::from("enum type mismatch"))
+                }
             }
             (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
                 if a == b {
                     Ok(())
                 } else if matches!(a, Ty::Array(_)) && matches!(b, Ty::Array(_)) {
-                    if format!("{}", a) == format!("{}", b) { Ok(()) } else { Err(Error::from(
-                        format!("custom type mismatch: {} vs {}", a, b))) }
+                    if format!("{}", a) == format!("{}", b) {
+                        Ok(())
+                    } else {
+                        Err(Error::from(format!("custom type mismatch: {} vs {}", a, b)))
+                    }
                 } else {
                     Err(Error::from(format!("custom type mismatch: {} vs {}", a, b)))
                 }
             }
             (TypeTerm::Tuple(a_elems), TypeTerm::Tuple(b_elems)) => {
-                if a_elems.len() != b_elems.len() { return Err(Error::from("tuple length mismatch")); }
+                if a_elems.len() != b_elems.len() {
+                    return Err(Error::from("tuple length mismatch"));
+                }
                 for (a_elem, b_elem) in a_elems.into_iter().zip(b_elems.into_iter()) {
                     self.unify(a_elem, b_elem)?;
                 }
                 Ok(())
             }
             (TypeTerm::Function(a_func), TypeTerm::Function(b_func)) => {
-                if a_func.params.len() != b_func.params.len() { return Err(Error::from("function arity mismatch")); }
+                if a_func.params.len() != b_func.params.len() {
+                    return Err(Error::from("function arity mismatch"));
+                }
                 for (a_param, b_param) in a_func.params.into_iter().zip(b_func.params.into_iter()) {
                     self.unify(a_param, b_param)?;
                 }
@@ -396,7 +434,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Unknown, _other) | (_other, TypeTerm::Unknown) => Ok(()),
             (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
-            (left, right) => Err(Error::from(format!("type mismatch: {:?} vs {:?}", left, right))),
+            (left, right) => Err(Error::from(format!(
+                "type mismatch: {:?} vs {:?}",
+                left, right
+            ))),
         }
     }
 
@@ -434,19 +475,31 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .map(|param| self.resolve_to_ty(param))
                     .collect::<Result<Vec<_>>>()?;
                 let ret = self.resolve_to_ty(function.ret)?;
-                Ty::Function(TypeFunction { params, generics_params: Vec::new(), ret_ty: Some(Box::new(ret)) })
+                Ty::Function(TypeFunction {
+                    params,
+                    generics_params: Vec::new(),
+                    ret_ty: Some(Box::new(ret)),
+                })
             }
             TypeTerm::Slice(elem) => {
                 let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Slice(TypeSlice { elem: Box::new(elem_ty) })
+                Ty::Slice(TypeSlice {
+                    elem: Box::new(elem_ty),
+                })
             }
             TypeTerm::Vec(elem) => {
                 let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Vec(TypeVec { ty: Box::new(elem_ty) })
+                Ty::Vec(TypeVec {
+                    ty: Box::new(elem_ty),
+                })
             }
             TypeTerm::Reference(elem) => {
                 let elem_ty = self.resolve_to_ty(elem)?;
-                Ty::Reference(TypeReference { ty: Box::new(elem_ty), mutability: None, lifetime: None })
+                Ty::Reference(TypeReference {
+                    ty: Box::new(elem_ty),
+                    mutability: None,
+                    lifetime: None,
+                })
             }
         })
     }
@@ -459,7 +512,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Nothing(_) => self.bind(var, TypeTerm::Nothing),
             Ty::Any(_) => self.bind(var, TypeTerm::Any),
             Ty::Struct(struct_ty) => {
-                self.struct_defs.insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
+                self.struct_defs
+                    .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
                 self.bind(var, TypeTerm::Struct(struct_ty.clone()));
             }
             Ty::Structural(structural) => self.bind(var, TypeTerm::Structural(structural.clone())),

@@ -863,12 +863,13 @@ impl<'ctx> LirCodegen<'ctx> {
                         if let (Some(&field_index), Type::StructType { element_types, .. }) =
                             (indices.get(0), &llvm_agg_ty)
                         {
-                            if let Some(expected_ty_ref) = element_types.get(field_index as usize)
-                            {
+                            if let Some(expected_ty_ref) = element_types.get(field_index as usize) {
                                 // Determine current operand type
                                 let current_ty = match &element_operand {
                                     Operand::LocalOperand { ty, .. } => Some(ty.clone()),
-                                    Operand::ConstantOperand(c) => Some(c.get_type(&self.llvm_ctx.module.types)),
+                                    Operand::ConstantOperand(c) => {
+                                        Some(c.get_type(&self.llvm_ctx.module.types))
+                                    }
                                     _ => None,
                                 };
                                 if let Some(cur) = current_ty {
@@ -876,31 +877,32 @@ impl<'ctx> LirCodegen<'ctx> {
                                         // Try a few coercions
                                         let expected = expected_ty_ref.as_ref().clone();
                                         let coerced_name = match (cur.as_ref(), &expected) {
-                                            (Type::IntegerType { .. }, Type::PointerType { .. }) => {
-                                                self.llvm_ctx.build_inttoptr(
-                                                    element_operand.clone(),
-                                                    expected.clone(),
-                                                    &format!("itop_{}", instr_id),
-                                                )?
-                                            }
-                                            (Type::PointerType { .. }, Type::IntegerType { .. }) => {
-                                                self.llvm_ctx.build_ptrtoint(
-                                                    element_operand.clone(),
-                                                    expected.clone(),
-                                                    &format!("ptoi_{}", instr_id),
-                                                )?
-                                            }
-                                            (_, _) => {
-                                                self.llvm_ctx.build_bitcast(
-                                                    element_operand.clone(),
-                                                    expected.clone(),
-                                                    &format!("bitcast_{}", instr_id),
-                                                )?
-                                            }
+                                            (
+                                                Type::IntegerType { .. },
+                                                Type::PointerType { .. },
+                                            ) => self.llvm_ctx.build_inttoptr(
+                                                element_operand.clone(),
+                                                expected.clone(),
+                                                &format!("itop_{}", instr_id),
+                                            )?,
+                                            (
+                                                Type::PointerType { .. },
+                                                Type::IntegerType { .. },
+                                            ) => self.llvm_ctx.build_ptrtoint(
+                                                element_operand.clone(),
+                                                expected.clone(),
+                                                &format!("ptoi_{}", instr_id),
+                                            )?,
+                                            (_, _) => self.llvm_ctx.build_bitcast(
+                                                element_operand.clone(),
+                                                expected.clone(),
+                                                &format!("bitcast_{}", instr_id),
+                                            )?,
                                         };
-                                        element_operand = self
-                                            .llvm_ctx
-                                            .operand_from_name_and_type(coerced_name, expected_ty_ref.as_ref());
+                                        element_operand = self.llvm_ctx.operand_from_name_and_type(
+                                            coerced_name,
+                                            expected_ty_ref.as_ref(),
+                                        );
                                     }
                                 }
                             }
@@ -2106,7 +2108,10 @@ impl<'ctx> LirCodegen<'ctx> {
 
     // convert_lir_constant_to_llvm_mut is now identical to convert_lir_constant_to_llvm
     // and retained for source compatibility.
-    fn convert_lir_constant_to_llvm_mut(&mut self, lir_const: lir::LirConstant) -> Result<ConstantRef> {
+    fn convert_lir_constant_to_llvm_mut(
+        &mut self,
+        lir_const: lir::LirConstant,
+    ) -> Result<ConstantRef> {
         self.convert_lir_constant_to_llvm(lir_const)
     }
 

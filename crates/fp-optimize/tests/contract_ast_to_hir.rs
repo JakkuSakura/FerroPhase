@@ -2,8 +2,8 @@ use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_optimize::transformations::{HirGenerator, IrTransform};
-use fp_rust::parser::RustParser;
 use fp_rust::normalization::normalize_last_to_ast;
+use fp_rust::parser::RustParser;
 use std::path::PathBuf;
 
 mod support;

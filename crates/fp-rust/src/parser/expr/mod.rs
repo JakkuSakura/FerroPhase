@@ -17,8 +17,8 @@ use syn::punctuated::Punctuated;
 use syn::LitStr;
 use syn::Token;
 
-mod logging;
 mod assert;
+mod logging;
 
 static FOR_LOOP_COUNTER: AtomicUsize = AtomicUsize::new(0);
 static MATCH_EXPR_COUNTER: AtomicUsize = AtomicUsize::new(0);
@@ -1328,24 +1328,24 @@ impl<'a> ExprParser<'a> {
             .into_iter()
             .map(|element| self.parse_expr(element))
             .collect::<Result<Vec<_>>>()?;
-        Ok(ExprKind::IntrinsicContainer(
-            ExprIntrinsicContainer::VecElements {
+        Ok(
+            ExprKind::IntrinsicContainer(ExprIntrinsicContainer::VecElements {
                 elements: parsed_elements,
-            },
+            })
+            .into(),
         )
-        .into())
     }
 
     fn make_vec_from_repeat(&self, elem: syn::Expr, len: syn::Expr) -> Result<Expr> {
         let elem_expr = self.parse_expr(elem)?;
         let len_expr = self.parse_expr(len)?;
-        Ok(ExprKind::IntrinsicContainer(
-            ExprIntrinsicContainer::VecRepeat {
+        Ok(
+            ExprKind::IntrinsicContainer(ExprIntrinsicContainer::VecRepeat {
                 elem: elem_expr.into(),
                 len: len_expr.into(),
-            },
+            })
+            .into(),
         )
-        .into())
     }
 }
 
