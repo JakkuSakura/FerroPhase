@@ -61,7 +61,7 @@ mod tests {
         let src = r#"
             fn main() {
                 if true { let _ = quote { splice ( z ); }; }
-                loop { let _ = quote expr { 1 + 2 }; break; }
+                loop { let _ = quote { 1 + 2 }; break; }
                 while false { let _ = splice ( quote { 3 } ); }
             }
         "#;
