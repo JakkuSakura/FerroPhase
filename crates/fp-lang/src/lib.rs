@@ -48,7 +48,8 @@ impl LanguageFrontend for FerroFrontend {
         let cleaned = self.clean_source(source);
         // Apply FerroPhase preprocessor to handle `quote`/`splice` sugar.
         let pre = PreprocessorBuilder::with_default_rules().build();
-        let preprocessed = pre.apply_until_stable(&cleaned, 2);
+        // TODO: properly propagate preprocessor errors
+        let preprocessed = pre.apply_until_stable(&cleaned, 2).unwrap_or_else(|_| cleaned.clone());
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(RustIntrinsicNormalizer::default());
@@ -124,3 +125,4 @@ mod tests {
 }
 
 pub mod parser;
+pub mod error;
