@@ -224,37 +224,21 @@ fn test_complex_expression_parsing() -> Result<()> {
 fn test_parsing_roundtrip() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
 
-    // Test that parsing and printing roundtrips correctly
-    let original_expressions = vec![
-        "42",
-        "true",
-        "\"hello\"",
-        "5 + 3",
-        "10 * 2",
-        "5 == 5",
-        "2 + 3 * 4",
+    let test_cases = vec![
+        ("42\n", shll_parse_expr!(42)),
+        ("true\n", shll_parse_expr!(true)),
+        ("\"hello\"\n", shll_parse_expr!("hello")),
+        ("5 + 3\n", shll_parse_expr!(5 + 3)),
+        ("10 * 2\n", shll_parse_expr!(10 * 2)),
+        ("5 == 5\n", shll_parse_expr!(5 == 5)),
+        ("2 + 3 * 4\n", shll_parse_expr!(2 + 3 * 4)),
     ];
 
-    for original in original_expressions {
-        // Parse the expression
-        let expr = match original {
-            "42" => shll_parse_expr!(42),
-            "true" => shll_parse_expr!(true),
-            "\"hello\"" => shll_parse_expr!("hello"),
-            "5 + 3" => shll_parse_expr!(5 + 3),
-            "10 * 2" => shll_parse_expr!(10 * 2),
-            "5 == 5" => shll_parse_expr!(5 == 5),
-            "2 + 3 * 4" => shll_parse_expr!(2 + 3 * 4),
-            _ => continue,
-        };
-
-        // Convert back to string
+    for (expected_print, expr) in test_cases {
         let printed = expr.to_string();
-
-        // Should be parseable (not necessarily identical due to formatting)
-        assert!(
-            !printed.is_empty(),
-            "Parsed expression should print to non-empty string"
+        assert_eq!(
+            printed, expected_print,
+            "Expression should print consistently"
         );
     }
 
