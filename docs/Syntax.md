@@ -11,12 +11,11 @@ This document outlines the long–term effort to implement a native parser for F
 
 ## Current Status
 
-- `fp-lang::parser::winnow` fully replaces the previous tree-sitter + preprocessor path. Source text is tokenized with winnow combinators, then lowered into `fp_core::cst::CstNode` trees shared with the rest of FerroPhase.
-- The lexer understands raw identifiers (`r#type`), standard/byte/raw string literals (including nested `br##"..."##` forms) and preserves escape sequences so macros like `fp_quote!` round-trip correctly.
-- Parser support for FerroPhase sugar (`quote`, `splice`, `const {}`, `emit!`) is native and covered by inline fixtures derived from `examples/*.fp` instead of runtime file reads.
-- CST rewriting now happens directly on `CstNode`, lowering FerroPhase constructs into `fp_quote!`/`fp_splice!` macros so the existing Rust-based frontend still produces `fp_core::ast::Node` while the new AST path matures.
-- Tests now assert the exact rewritten output for `emit!` and ensure CST nodes capture the richer literal/token surface.
-- A winnow-driven lexer/token stream now feeds a Pratt-style expression parser that directly produces `fp_core::ast::Expr` nodes for `quote`/`splice` fragments (currently covering arithmetic expressions, identifiers, and `let` statements inside blocks). This lays the groundwork for a complete FerroPhase-fronted AST without rewriting through `fp_quote!` macros.
+- `fp-lang` now splits `lexer` from `parser`; the winnow-powered lexer handles whitespace/comments, raw identifiers, escaped/raw string and byte literals, and keyword detection in isolation.
+- CST parsing lives in `parser::cst`, which replaces the old tree-sitter/preprocessor path by lowering source directly into `fp_core::cst::CstNode` with spans from `fp-core`.
+- FerroPhase staging sugar (`quote`, `splice`, `const {}`, `emit!`) is parsed natively and surfaced as explicit CST nodes; inline fixtures derived from the `examples/` directory cover the combinations.
+- Expression parsing is Pratt-style over tokens with support for arithmetic/boolean/comparison/binops, unary refs/derefs/negation, function and method calls, field access, indexing, and assignment in addition to blocks, `let`, `if`/`loop`/`while`, and `quote`/`splice`.
+- CST rewriting still lowers into `fp_quote!`/`fp_splice!` macros for compatibility while the direct CST→AST lowering matures; tests assert rewritten output and CST literal surface.
 
 ## Architecture Sketch
 
