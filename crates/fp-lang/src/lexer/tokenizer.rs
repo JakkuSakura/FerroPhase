@@ -1,4 +1,4 @@
-use super::lex::{
+use super::winnow::{
     backtrack_err, is_ident_continue, is_ident_start, parse_cooked_string_literal,
     parse_raw_identifier, parse_raw_string_literal, ws, MULTI_PUNCT, SINGLE_PUNCT,
 };
