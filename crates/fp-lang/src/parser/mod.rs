@@ -191,6 +191,30 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_calls_fields_and_assignments() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("foo.bar(1, 2)[i] = -baz")
+            .expect("parse complex expr");
+        match expr.kind() {
+            ExprKind::Assign(assign) => {
+                match assign.value.kind() {
+                    ExprKind::UnOp(_) => {}
+                    other => panic!("expected unary rhs, found {:?}", other),
+                }
+                match assign.target.kind() {
+                    ExprKind::Index(index) => match index.obj.kind() {
+                        ExprKind::Invoke(_) => {}
+                        other => panic!("expected invoke on index base, got {:?}", other),
+                    },
+                    other => panic!("expected index as assignment target, got {:?}", other),
+                }
+            }
+            other => panic!("expected assignment expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_supports_let_statements_in_blocks() {
         let parser = FerroPhaseParser::new();
         let expr = parser
