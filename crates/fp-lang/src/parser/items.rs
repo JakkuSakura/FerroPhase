@@ -6,8 +6,8 @@ use thiserror::Error;
 use winnow::error::{ContextError, ErrMode};
 use winnow::ModalResult;
 
+use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
 use super::expr;
-use super::lexer::{self, Keyword, LexerError, Token, TokenKind};
 
 #[derive(Debug, Error)]
 pub enum ItemParseError {
@@ -64,13 +64,13 @@ fn parse_item(input: &mut &[Token]) -> ModalResult<AstItem> {
         let name = Ident::new(expect_ident(input)?);
         expect_symbol(input, "(")?;
         expect_symbol(input, ")")?;
-        let body_block = expr::parse_block_tokens(input)?;
+        let body_block = expr::parse_block(input)?;
         let body_expr: Expr = ExprKind::Block(body_block).into();
         let def = ItemDefFunction::new_simple(name, body_expr.into());
         return Ok(Item::from(ItemKind::DefFunction(def)));
     }
     // Fallback: treat expression as an item expression (useful for tests)
-    let expr_ast = expr::parse_expr_tokens(input)?;
+    let expr_ast = expr::parse_expr_prec(input, 0)?;
     Ok(Item::from(ItemKind::Expr(expr_ast)))
 }
 
@@ -93,10 +93,6 @@ fn parse_use_path(input: &mut &[Token]) -> ModalResult<ItemImportTree> {
         break;
     }
     Ok(ItemImportTree::Path(path))
-}
-
-fn parse_expr_tokens(input: &mut &[Token]) -> ModalResult<Expr> {
-    expr::parse_expr_prec(input, 0)
 }
 
 fn expect_ident(input: &mut &[Token]) -> ModalResult<String> {

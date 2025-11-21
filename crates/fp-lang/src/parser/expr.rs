@@ -9,7 +9,7 @@ use thiserror::Error;
 use winnow::error::{ContextError, ErrMode};
 use winnow::ModalResult;
 
-use super::lexer::{self, Keyword, LexerError, Token, TokenKind};
+use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
 
 #[derive(Debug, Error)]
 pub enum ExprParseError {
@@ -40,14 +40,6 @@ pub fn parse_expression(source: &str) -> Result<Expr, ExprParseError> {
         ));
     }
     Ok(expr)
-}
-
-pub(crate) fn parse_expr_tokens(input: &mut &[Token]) -> ModalResult<Expr> {
-    parse_expr_prec(input, 0)
-}
-
-pub(crate) fn parse_block_tokens(input: &mut &[Token]) -> ModalResult<ExprBlock> {
-    parse_block(input)
 }
 
 pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult<Expr> {
@@ -113,13 +105,13 @@ fn parse_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
 
 fn parse_if(input: &mut &[Token]) -> ModalResult<Expr> {
     let cond = parse_expr_prec(input, 0)?;
-    let then_block = parse_block_tokens(input)?;
+    let then_block = parse_block(input)?;
     let then_expr: Expr = ExprKind::Block(then_block).into();
     let elze = if match_keyword(input, Keyword::Else) {
         if match_keyword(input, Keyword::If) {
             Some(parse_if(input)?.into())
         } else {
-            let block = parse_block_tokens(input)?;
+            let block = parse_block(input)?;
             Some(ExprKind::Block(block).into())
         }
     } else {
@@ -134,7 +126,7 @@ fn parse_if(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_loop(input: &mut &[Token]) -> ModalResult<Expr> {
-    let body = parse_block_tokens(input)?;
+    let body = parse_block(input)?;
     Ok(ExprKind::Loop(ExprLoop {
         label: None,
         body: Box::new(ExprKind::Block(body).into()),
@@ -144,7 +136,7 @@ fn parse_loop(input: &mut &[Token]) -> ModalResult<Expr> {
 
 fn parse_while(input: &mut &[Token]) -> ModalResult<Expr> {
     let cond = parse_expr_prec(input, 0)?;
-    let body = parse_block_tokens(input)?;
+    let body = parse_block(input)?;
     Ok(ExprKind::While(ExprWhile {
         cond: cond.into(),
         body: Box::new(ExprKind::Block(body).into()),
@@ -205,7 +197,7 @@ fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
     .into())
 }
 
-fn parse_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
+pub fn parse_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
     expect_symbol(input, "{")?;
     parse_block_body(input)
 }
