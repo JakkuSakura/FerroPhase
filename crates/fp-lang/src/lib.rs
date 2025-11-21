@@ -124,3 +124,4 @@ mod tests {
 }
 
 pub mod parser;
+pub mod lexer;
