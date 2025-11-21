@@ -1,9 +1,10 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprKind, ExprLoop, ExprQuote,
-    ExprSplice, ExprWhile, Ident, Locator, Path, StmtLet, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprLoop, ExprQuote, ExprSelect, ExprSelectType, ExprSplice,
+    ExprUnOp, ExprWhile, Ident, Locator, Path, StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
-use fp_core::ops::BinOpKind;
+use fp_core::ops::{BinOpKind, UnOpKind};
 use std::str::FromStr;
 use thiserror::Error;
 use winnow::error::{ContextError, ErrMode};
@@ -44,8 +45,9 @@ pub fn parse_expression(source: &str) -> Result<Expr, ExprParseError> {
 
 pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult<Expr> {
     let mut left = parse_prefix(input)?;
+    left = parse_postfix(input, left)?;
     loop {
-        let Some((prec, op)) = peek_binop(input) else {
+        let Some((prec, op, right_assoc)) = peek_binop(input) else {
             break;
         };
         if prec < min_prec {
@@ -53,18 +55,59 @@ pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult
         }
         // consume operator
         advance(input);
-        let right = parse_expr_prec(input, prec + 1)?;
-        left = ExprKind::BinOp(ExprBinOp {
-            kind: op,
-            lhs: Box::new(left),
-            rhs: Box::new(right),
-        })
-        .into();
+        let next_min = if right_assoc { prec } else { prec + 1 };
+        let right = parse_expr_prec(input, next_min)?;
+        left = match op {
+            BinaryOp::Assign => ExprKind::Assign(ExprAssign {
+                target: Box::new(left),
+                value: Box::new(right),
+            })
+            .into(),
+            BinaryOp::Bin(kind) => ExprKind::BinOp(ExprBinOp {
+                kind,
+                lhs: Box::new(left),
+                rhs: Box::new(right),
+            })
+            .into(),
+        };
+        left = parse_postfix(input, left)?;
     }
     Ok(left)
 }
 
 fn parse_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
+    if match_symbol(input, "!") {
+        let expr = parse_expr_prec(input, 30)?;
+        return Ok(ExprKind::UnOp(ExprUnOp {
+            op: UnOpKind::Not,
+            val: Box::new(expr),
+        })
+        .into());
+    }
+    if match_symbol(input, "-") {
+        let expr = parse_expr_prec(input, 30)?;
+        return Ok(ExprKind::UnOp(ExprUnOp {
+            op: UnOpKind::Neg,
+            val: Box::new(expr),
+        })
+        .into());
+    }
+    if match_symbol(input, "*") {
+        let expr = parse_expr_prec(input, 30)?;
+        return Ok(ExprKind::Dereference(fp_core::ast::ExprDereference {
+            referee: Box::new(expr),
+        })
+        .into());
+    }
+    if match_symbol(input, "&") {
+        let mutable = match_keyword(input, Keyword::Mut).then_some(true);
+        let expr = parse_expr_prec(input, 30)?;
+        return Ok(ExprKind::Reference(fp_core::ast::ExprReference {
+            referee: Box::new(expr),
+            mutable,
+        })
+        .into());
+    }
     if match_keyword(input, Keyword::Return) {
         return parse_return(input);
     }
@@ -103,6 +146,58 @@ fn parse_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
     }
 }
 
+fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
+    loop {
+        if match_symbol(input, "(") {
+            let args = parse_argument_list(input)?;
+            expr = ExprKind::Invoke(ExprInvoke {
+                target: ExprInvokeTarget::expr(expr),
+                args,
+            })
+            .into();
+            continue;
+        }
+        if match_symbol(input, ".") {
+            let ident = expect_ident(input)?;
+            // look ahead for method call
+            if match_symbol(input, "(") {
+                let args = parse_argument_list(input)?;
+                let select = ExprSelect {
+                    obj: Box::new(expr),
+                    field: Ident::new(ident),
+                    select: ExprSelectType::Method,
+                };
+                let select_expr: Expr = ExprKind::Select(select).into();
+                expr = ExprKind::Invoke(ExprInvoke {
+                    target: ExprInvokeTarget::expr(select_expr),
+                    args,
+                })
+                .into();
+                continue;
+            }
+            expr = ExprKind::Select(ExprSelect {
+                obj: Box::new(expr),
+                field: Ident::new(ident),
+                select: ExprSelectType::Field,
+            })
+            .into();
+            continue;
+        }
+        if match_symbol(input, "[") {
+            let index = parse_expr_prec(input, 0)?;
+            expect_symbol(input, "]")?;
+            expr = ExprKind::Index(ExprIndex {
+                obj: Box::new(expr),
+                index: Box::new(index),
+            })
+            .into();
+            continue;
+        }
+        break;
+    }
+    Ok(expr)
+}
+
 fn parse_if(input: &mut &[Token]) -> ModalResult<Expr> {
     let cond = parse_expr_prec(input, 0)?;
     let then_block = parse_block(input)?;
@@ -123,6 +218,22 @@ fn parse_if(input: &mut &[Token]) -> ModalResult<Expr> {
         elze: elze.map(Box::new),
     })
     .into())
+}
+
+fn parse_argument_list(input: &mut &[Token]) -> ModalResult<Vec<Expr>> {
+    let mut args = Vec::new();
+    loop {
+        if match_symbol(input, ")") {
+            break;
+        }
+        let expr = parse_expr_prec(input, 0)?;
+        args.push(expr);
+        if match_symbol(input, ")") {
+            break;
+        }
+        expect_symbol(input, ",")?;
+    }
+    Ok(args)
 }
 
 fn parse_loop(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -265,14 +376,33 @@ fn parse_string(token: Token) -> ModalResult<Expr> {
     Ok(Expr::value(Value::string(inner)))
 }
 
-fn peek_binop(input: &[Token]) -> Option<(u8, BinOpKind)> {
+#[derive(Debug, Clone, Copy)]
+enum BinaryOp {
+    Assign,
+    Bin(BinOpKind),
+}
+
+fn peek_binop(input: &[Token]) -> Option<(u8, BinaryOp, bool)> {
     let token = input.first()?;
     match token.kind {
         TokenKind::Symbol => match token.lexeme.as_str() {
-            "+" => Some((10, BinOpKind::Add)),
-            "-" => Some((10, BinOpKind::Sub)),
-            "*" => Some((20, BinOpKind::Mul)),
-            "/" => Some((20, BinOpKind::Div)),
+            "=" => Some((1, BinaryOp::Assign, true)),
+            "||" => Some((4, BinaryOp::Bin(BinOpKind::Or), false)),
+            "&&" => Some((5, BinaryOp::Bin(BinOpKind::And), false)),
+            "|" => Some((6, BinaryOp::Bin(BinOpKind::BitOr), false)),
+            "^" => Some((7, BinaryOp::Bin(BinOpKind::BitXor), false)),
+            "&" => Some((8, BinaryOp::Bin(BinOpKind::BitAnd), false)),
+            "==" => Some((9, BinaryOp::Bin(BinOpKind::Eq), false)),
+            "!=" => Some((9, BinaryOp::Bin(BinOpKind::Ne), false)),
+            "<" => Some((10, BinaryOp::Bin(BinOpKind::Lt), false)),
+            ">" => Some((10, BinaryOp::Bin(BinOpKind::Gt), false)),
+            "<=" => Some((10, BinaryOp::Bin(BinOpKind::Le), false)),
+            ">=" => Some((10, BinaryOp::Bin(BinOpKind::Ge), false)),
+            "+" => Some((11, BinaryOp::Bin(BinOpKind::Add), false)),
+            "-" => Some((11, BinaryOp::Bin(BinOpKind::Sub), false)),
+            "*" => Some((12, BinaryOp::Bin(BinOpKind::Mul), false)),
+            "/" => Some((12, BinaryOp::Bin(BinOpKind::Div), false)),
+            "%" => Some((12, BinaryOp::Bin(BinOpKind::Mod), false)),
             _ => None,
         },
         _ => None,
