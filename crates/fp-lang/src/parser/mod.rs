@@ -12,8 +12,7 @@ use fp_core::cst::{CstKind, CstNode};
 
 mod expr;
 mod items;
-mod lex;
-mod lexer;
+mod cst;
 mod winnow;
 pub use fp_core::cst::{CstError, CstResult};
 
@@ -29,7 +28,7 @@ impl FerroPhaseParser {
 
     /// Parse source and produce a CST.
     pub fn parse_to_cst(&self, source: &str) -> Result<CstNode> {
-        winnow::parse(source).map_err(|err| eyre::eyre!(err))
+        cst::parse(source).map_err(|err| eyre::eyre!(err))
     }
 
     /// Parse a FerroPhase expression directly into an fp-core AST expression.

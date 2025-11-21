@@ -25,7 +25,6 @@
 ### Core data model
 - `fp-core`’s AST/HIR/LIR structures already derive `Serialize`/`Deserialize`. Add a `bootstrap` cargo feature that:
   - switches `DashMap`-backed contexts in `context.rs` to plain `HashMap` + `RefCell`,
-  - gates out `tree-sitter` exports in `cst::ts`,
   - bundles a lightweight `AstSerializer`/`Deserializer` using `serde_json`.
 - Guard the bootstrap runtime path with `FERROPHASE_BOOTSTRAP=1`; when set, the binary should prefer JSON inputs while still executing the full pipeline (type-checking, const-eval, lowering) using prepared metadata.
 - Deliver a `JsonAstLoader` helper (either in `fp-core` or a new `fp-bootstrap` crate) that loads `Node`, `Ty`, and `HIR` representations from JSON files.

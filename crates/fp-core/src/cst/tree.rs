@@ -1,5 +1,7 @@
 use thiserror::Error;
 
+use crate::span::Span;
+
 /// Result type produced by CST operations.
 pub type CstResult<T> = Result<T, CstError>;
 
@@ -33,6 +35,7 @@ pub struct CstNode {
     pub kind: CstKind,
     pub text: Option<String>,
     pub children: Vec<CstNode>,
+    pub span: Option<Span>,
 }
 
 impl CstNode {
@@ -41,6 +44,7 @@ impl CstNode {
             kind: CstKind::Root,
             text: None,
             children,
+            span: None,
         }
     }
 
@@ -49,6 +53,7 @@ impl CstNode {
             kind: CstKind::Block,
             text: None,
             children,
+            span: None,
         }
     }
 
@@ -57,6 +62,7 @@ impl CstNode {
             kind: CstKind::Quote,
             text: None,
             children,
+            span: None,
         }
     }
 
@@ -65,6 +71,7 @@ impl CstNode {
             kind: CstKind::ConstBlock,
             text: None,
             children,
+            span: None,
         }
     }
 
@@ -73,6 +80,7 @@ impl CstNode {
             kind: CstKind::Splice,
             text: None,
             children,
+            span: None,
         }
     }
 
@@ -81,6 +89,12 @@ impl CstNode {
             kind: CstKind::Token,
             text: Some(text.into()),
             children: Vec::new(),
+            span: None,
         }
+    }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
     }
 }

@@ -3,39 +3,39 @@ use winnow::error::{ContextError, ErrMode};
 use winnow::token::{literal, take_till, take_until, take_while};
 use winnow::{ModalResult, Parser};
 
-pub(super) const MULTI_PUNCT: &[&str] = &[
+pub(crate) const MULTI_PUNCT: &[&str] = &[
     "..=", "...", "..", "::", "=>", "->", "==", "!=", "<=", ">=", "&&", "||", "<<", ">>", "+=",
     "-=", "*=", "/=", "%=", "&=", "|=", "^=",
 ];
-pub(super) const SINGLE_PUNCT: &str = "=+-*/%&|^!~@#$?:;,.()[]{}<>";
+pub(crate) const SINGLE_PUNCT: &str = "=+-*/%&|^!~@#$?:;,.()[]{}<>";
 
-pub(super) fn ws(input: &mut &str) -> ModalResult<()> {
+pub(crate) fn ws(input: &mut &str) -> ModalResult<()> {
     repeat::<_, _, (), _, _>(0.., alt((whitespace, line_comment, block_comment)))
         .parse_next(input)?;
     Ok(())
 }
 
-pub(super) fn whitespace(input: &mut &str) -> ModalResult<()> {
+pub(crate) fn whitespace(input: &mut &str) -> ModalResult<()> {
     take_while(1.., char::is_whitespace)
         .map(|_| ())
         .parse_next(input)
 }
 
-pub(super) fn line_comment(input: &mut &str) -> ModalResult<()> {
+pub(crate) fn line_comment(input: &mut &str) -> ModalResult<()> {
     literal("//").parse_next(input)?;
     take_till(0.., |c: char| c == '\n').parse_next(input)?;
     opt(literal("\n")).parse_next(input)?;
     Ok(())
 }
 
-pub(super) fn block_comment(input: &mut &str) -> ModalResult<()> {
+pub(crate) fn block_comment(input: &mut &str) -> ModalResult<()> {
     literal("/*").parse_next(input)?;
     cut_err(take_until(0.., "*/")).parse_next(input)?;
     literal("*/").parse_next(input)?;
     Ok(())
 }
 
-pub(super) fn parse_cooked_string_literal(input: &mut &str, prefix: &str) -> ModalResult<String> {
+pub(crate) fn parse_cooked_string_literal(input: &mut &str, prefix: &str) -> ModalResult<String> {
     if !input.starts_with(prefix) {
         return Err(backtrack_err());
     }
@@ -64,7 +64,7 @@ pub(super) fn parse_cooked_string_literal(input: &mut &str, prefix: &str) -> Mod
     Err(ErrMode::Cut(ContextError::new()))
 }
 
-pub(super) fn parse_raw_string_literal(input: &mut &str, byte: bool) -> ModalResult<String> {
+pub(crate) fn parse_raw_string_literal(input: &mut &str, byte: bool) -> ModalResult<String> {
     let slice = *input;
     if slice.is_empty() {
         return Err(backtrack_err());
@@ -106,7 +106,7 @@ pub(super) fn parse_raw_string_literal(input: &mut &str, byte: bool) -> ModalRes
     Err(ErrMode::Cut(ContextError::new()))
 }
 
-pub(super) fn parse_raw_identifier(input: &mut &str) -> ModalResult<String> {
+pub(crate) fn parse_raw_identifier(input: &mut &str) -> ModalResult<String> {
     if let Some(rest) = input.strip_prefix("r#") {
         let mut chars = rest.char_indices();
         if let Some((_, first)) = chars.next() {
@@ -128,19 +128,19 @@ pub(super) fn parse_raw_identifier(input: &mut &str) -> ModalResult<String> {
     Err(backtrack_err())
 }
 
-pub(super) fn is_ident_start(ch: char) -> bool {
+pub(crate) fn is_ident_start(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphabetic()
 }
 
-pub(super) fn is_ident_continue(ch: char) -> bool {
+pub(crate) fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
 
-pub(super) fn is_delimiter(ch: char) -> bool {
+pub(crate) fn is_delimiter(ch: char) -> bool {
     "{}()[];,+-*/=:.".contains(ch)
 }
 
-pub(super) fn backtrack_err() -> ErrMode<ContextError> {
+pub(crate) fn backtrack_err() -> ErrMode<ContextError> {
     ErrMode::Backtrack(ContextError::new())
 }
 
