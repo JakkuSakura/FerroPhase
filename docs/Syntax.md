@@ -11,10 +11,10 @@ This document outlines the long–term effort to implement a native parser for F
 
 ## Current Status
 
-- `fp-lang` now splits `lexer` from `parser`; the winnow-powered lexer handles whitespace/comments, raw identifiers, escaped/raw string and byte literals, and keyword detection in isolation.
+- `fp-lang` now splits `lexer` from `parser`; the winnow-powered lexer handles whitespace/comments, raw identifiers, escaped/raw string and byte literals, and keyword detection in isolation while emitting `TokenKind` directly (no intermediate raw token layer) with original lexemes preserved.
 - CST parsing lives in `parser::cst`, which replaces the old tree-sitter/preprocessor path by lowering source directly into `fp_core::cst::CstNode` with spans from `fp-core`.
 - FerroPhase staging sugar (`quote`, `splice`, `const {}`, `emit!`) is parsed natively and surfaced as explicit CST nodes; inline fixtures derived from the `examples/` directory cover the combinations.
-- Expression parsing is Pratt-style over tokens with support for arithmetic/boolean/comparison/binops, unary refs/derefs/negation, function and method calls, field access, indexing, and assignment in addition to blocks, `let`, `if`/`loop`/`while`, and `quote`/`splice`.
+- Expression parsing is Pratt-style over tokens with support for arithmetic/boolean/comparison/binops, unary refs/derefs/negation, function and method calls, field access, indexing, assignment, and `match` in addition to blocks, `let`, `if`/`loop`/`while`, and `quote`/`splice`.
 - CST rewriting still lowers into `fp_quote!`/`fp_splice!` macros for compatibility while the direct CST→AST lowering matures; tests assert rewritten output and CST literal surface.
 
 ## Architecture Sketch
