@@ -107,25 +107,12 @@ pub(crate) fn parse_raw_string_literal(input: &mut &str, byte: bool) -> ModalRes
 }
 
 pub(crate) fn parse_raw_identifier(input: &mut &str) -> ModalResult<String> {
-    if let Some(rest) = input.strip_prefix("r#") {
-        let mut chars = rest.char_indices();
-        if let Some((_, first)) = chars.next() {
-            if is_ident_start(first) {
-                let mut end = first.len_utf8();
-                for (offset, ch) in chars {
-                    if is_ident_continue(ch) {
-                        end = offset + ch.len_utf8();
-                    } else {
-                        break;
-                    }
-                }
-                let literal = input[..2 + end].to_string();
-                *input = &input[2 + end..];
-                return Ok(literal);
-            }
-        }
-    }
-    Err(backtrack_err())
+    let original = *input;
+    literal("r#").parse_next(input)?;
+    take_while(1.., is_ident_start).parse_next(input)?;
+    take_while(0.., is_ident_continue).parse_next(input)?;
+    let consumed = original.len() - input.len();
+    Ok(original[..consumed].to_string())
 }
 
 pub(crate) fn is_ident_start(ch: char) -> bool {

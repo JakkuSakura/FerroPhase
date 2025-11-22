@@ -191,6 +191,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_match() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("match x { a => 1, _ => 2 }")
+            .expect("parse match expr");
+        match expr.kind() {
+            ExprKind::Match(m) => {
+                assert_eq!(m.cases.len(), 2);
+            }
+            other => panic!("expected match expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_calls_fields_and_assignments() {
         let parser = FerroPhaseParser::new();
         let expr = parser
