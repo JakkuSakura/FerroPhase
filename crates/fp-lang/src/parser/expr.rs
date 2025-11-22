@@ -1,16 +1,19 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprLoop, ExprQuote, ExprSelect, ExprSelectType, ExprSplice,
-    ExprUnOp, ExprWhile, Ident, Locator, Path, StmtLet, Value,
+    ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprSelect,
+    ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident, Locator, Path, StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use std::str::FromStr;
 use thiserror::Error;
+use winnow::combinator::{alt, delimited, peek, separated};
 use winnow::error::{ContextError, ErrMode};
 use winnow::ModalResult;
+use winnow::Parser;
 
 use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
+use crate::lexer::winnow::backtrack_err;
 
 #[derive(Debug, Error)]
 pub enum ExprParseError {
@@ -76,6 +79,32 @@ pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult
 }
 
 fn parse_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
+    alt((parse_control_prefix, parse_unary_or_atom)).parse_next(input)
+}
+
+fn parse_control_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
+    if match_keyword(input, Keyword::Return) {
+        return parse_return(input);
+    }
+    if match_keyword(input, Keyword::Break) {
+        return parse_break(input);
+    }
+    if match_keyword(input, Keyword::Continue) {
+        return parse_continue(input);
+    }
+    if match_keyword(input, Keyword::If) {
+        return parse_if(input);
+    }
+    if match_keyword(input, Keyword::Loop) {
+        return parse_loop(input);
+    }
+    if match_keyword(input, Keyword::While) {
+        return parse_while(input);
+    }
+    Err(backtrack_err())
+}
+
+fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     if match_symbol(input, "!") {
         let expr = parse_expr_prec(input, 30)?;
         return Ok(ExprKind::UnOp(ExprUnOp {
@@ -108,34 +137,22 @@ fn parse_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
         })
         .into());
     }
-    if match_keyword(input, Keyword::Return) {
-        return parse_return(input);
-    }
-    if match_keyword(input, Keyword::Break) {
-        return parse_break(input);
-    }
-    if match_keyword(input, Keyword::Continue) {
-        return parse_continue(input);
-    }
-    if match_keyword(input, Keyword::If) {
-        return parse_if(input);
-    }
-    if match_keyword(input, Keyword::Loop) {
-        return parse_loop(input);
-    }
-    if match_keyword(input, Keyword::While) {
-        return parse_while(input);
-    }
     if match_keyword(input, Keyword::Quote) {
         return parse_quote_body(input);
     }
     if match_keyword(input, Keyword::Splice) {
         return parse_splice_body(input);
     }
+    if match_keyword(input, Keyword::Match) {
+        return parse_match(input);
+    }
     if match_symbol(input, "(") {
-        let expr = parse_expr_prec(input, 0)?;
-        expect_symbol(input, ")")?;
-        return Ok(expr);
+        return delimited(
+            symbol_parser("("),
+            |i: &mut &[Token]| parse_expr_prec(i, 0),
+            symbol_parser(")"),
+        )
+        .parse_next(input);
     }
     let token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     match token.kind {
@@ -148,7 +165,7 @@ fn parse_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
 
 fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
     loop {
-        if match_symbol(input, "(") {
+        if matches_symbol(input.first(), "(") {
             let args = parse_argument_list(input)?;
             expr = ExprKind::Invoke(ExprInvoke {
                 target: ExprInvokeTarget::expr(expr),
@@ -160,7 +177,7 @@ fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
         if match_symbol(input, ".") {
             let ident = expect_ident(input)?;
             // look ahead for method call
-            if match_symbol(input, "(") {
+            if matches_symbol(input.first(), "(") {
                 let args = parse_argument_list(input)?;
                 let select = ExprSelect {
                     obj: Box::new(expr),
@@ -221,19 +238,12 @@ fn parse_if(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_argument_list(input: &mut &[Token]) -> ModalResult<Vec<Expr>> {
-    let mut args = Vec::new();
-    loop {
-        if match_symbol(input, ")") {
-            break;
-        }
-        let expr = parse_expr_prec(input, 0)?;
-        args.push(expr);
-        if match_symbol(input, ")") {
-            break;
-        }
-        expect_symbol(input, ",")?;
-    }
-    Ok(args)
+    delimited(
+        symbol_parser("("),
+        separated(0.., |i: &mut &[Token]| parse_expr_prec(i, 0), symbol_parser(",")),
+        symbol_parser(")"),
+    )
+    .parse_next(input)
 }
 
 fn parse_loop(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -296,8 +306,8 @@ fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
         expr
     } else if match_keyword(input, Keyword::Quote) {
         parse_quote_body(input)?
-    } else if match_symbol(input, "{") {
-        let block = parse_block_body(input)?;
+    } else if peek(symbol_parser("{")).parse_next(input).is_ok() {
+        let block = parse_block(input)?;
         Expr::from(ExprKind::Block(block))
     } else {
         parse_expr_prec(input, 0)?
@@ -308,22 +318,53 @@ fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
     .into())
 }
 
+fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
+    let scrutinee = parse_expr_prec(input, 0)?;
+    symbol_parser("{").parse_next(input)?;
+    let mut cases = Vec::new();
+    loop {
+        if match_symbol(input, "}") {
+            break;
+        }
+        let arm_cond_raw = parse_expr_prec(input, 0)?;
+        let arm_cond = ExprKind::BinOp(ExprBinOp {
+            kind: BinOpKind::Eq,
+            lhs: Box::new(scrutinee.clone()),
+            rhs: Box::new(arm_cond_raw),
+        })
+        .into();
+        expect_symbol(input, "=>")?;
+        let arm_body = if peek(symbol_parser("{")).parse_next(input).is_ok() {
+            let block = parse_block(input)?;
+            ExprKind::Block(block).into()
+        } else {
+            parse_expr_prec(input, 0)?
+        };
+        cases.push(ExprMatchCase {
+            cond: Box::new(arm_cond),
+            body: Box::new(arm_body),
+        });
+        match_symbol(input, ",");
+    }
+    Ok(ExprKind::Match(ExprMatch { cases }).into())
+}
+
 pub fn parse_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
-    expect_symbol(input, "{")?;
-    parse_block_body(input)
+    delimited(symbol_parser("{"), parse_block_body, symbol_parser("}"))
+        .parse_next(input)
 }
 
 fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
     let mut stmts = Vec::new();
     loop {
-        if match_symbol(input, "}") {
+        if peek(symbol_parser("}")).parse_next(input).is_ok() {
             break;
         }
         if input.is_empty() {
             return Err(ErrMode::Cut(ContextError::new()));
         }
         if peek_keyword(input, Keyword::Let) {
-            match_keyword(input, Keyword::Let);
+            keyword_parser(Keyword::Let).parse_next(input)?;
             let stmt = parse_let_stmt(input)?;
             expect_symbol(input, ";")?;
             stmts.push(BlockStmt::Let(stmt));
@@ -334,7 +375,7 @@ fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
         let stmt = BlockStmt::Expr(BlockStmtExpr::new(expr).with_semicolon(has_semicolon));
         stmts.push(stmt);
         if !has_semicolon {
-            expect_symbol(input, "}")?;
+            // trailing expression; stop before closing brace
             break;
         }
     }
@@ -410,12 +451,7 @@ fn peek_binop(input: &[Token]) -> Option<(u8, BinaryOp, bool)> {
 }
 
 fn match_keyword(input: &mut &[Token], keyword: Keyword) -> bool {
-    if peek_keyword(input, keyword) {
-        *input = &input[1..];
-        true
-    } else {
-        false
-    }
+    keyword_parser(keyword).parse_next(input).is_ok()
 }
 
 fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
@@ -428,13 +464,8 @@ fn peek_keyword(input: &[Token], keyword: Keyword) -> bool {
     )
 }
 
-fn match_symbol(input: &mut &[Token], symbol: &str) -> bool {
-    if matches_symbol(input.first(), symbol) {
-        *input = &input[1..];
-        true
-    } else {
-        false
-    }
+fn match_symbol<'a>(input: &mut &'a [Token], symbol: &'a str) -> bool {
+    symbol_parser(symbol).parse_next(input).is_ok()
 }
 
 fn matches_symbol(token: Option<&Token>, symbol: &str) -> bool {
@@ -448,16 +479,53 @@ fn matches_symbol(token: Option<&Token>, symbol: &str) -> bool {
     )
 }
 
-fn expect_symbol(input: &mut &[Token], symbol: &str) -> ModalResult<()> {
-    if match_symbol(input, symbol) {
-        Ok(())
-    } else {
-        Err(ErrMode::Cut(ContextError::new()))
+fn expect_symbol<'a>(input: &mut &'a [Token], symbol: &'a str) -> ModalResult<()> {
+    symbol_parser(symbol)
+        .parse_next(input)
+        .map_err(|_| ErrMode::Cut(ContextError::new()))
+}
+
+fn symbol_parser<'a>(symbol: &'a str) -> impl Parser<&'a [Token], (), ContextError> {
+    let sym = symbol.to_string();
+    move |input: &mut &[Token]| {
+        if matches_symbol(input.first(), &sym) {
+            *input = &input[1..];
+            Ok(())
+        } else {
+            Err(backtrack_err())
+        }
     }
 }
 
 fn expect_ident(input: &mut &[Token]) -> ModalResult<String> {
-    match input.first() {
+    ident_parser()
+        .parse_next(input)
+        .map_err(|_| ErrMode::Cut(ContextError::new()))
+}
+
+fn advance(input: &mut &[Token]) -> Option<Token> {
+    let token = input.first().cloned()?;
+    *input = &input[1..];
+    Some(token)
+}
+
+fn keyword_parser<'a>(keyword: Keyword) -> impl Parser<&'a [Token], (), ContextError> {
+    move |input: &mut &[Token]| {
+        match input.first() {
+            Some(Token {
+                kind: TokenKind::Keyword(k),
+                ..
+            }) if *k == keyword => {
+                *input = &input[1..];
+                Ok(())
+            }
+            _ => Err(backtrack_err()),
+        }
+    }
+}
+
+fn ident_parser<'a>() -> impl Parser<&'a [Token], String, ContextError> {
+    move |input: &mut &[Token]| match input.first() {
         Some(Token {
             kind: TokenKind::Ident,
             lexeme,
@@ -467,12 +535,6 @@ fn expect_ident(input: &mut &[Token]) -> ModalResult<String> {
             *input = &input[1..];
             Ok(ident)
         }
-        _ => Err(ErrMode::Cut(ContextError::new())),
+        _ => Err(backtrack_err()),
     }
-}
-
-fn advance(input: &mut &[Token]) -> Option<Token> {
-    let token = input.first().cloned()?;
-    *input = &input[1..];
-    Some(token)
 }

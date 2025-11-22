@@ -5,6 +5,7 @@ use super::winnow::{
 use thiserror::Error;
 use winnow::combinator::alt;
 use winnow::error::{ContextError, ErrMode};
+use winnow::token::take_while;
 use winnow::{ModalResult, Parser};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -113,14 +114,14 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
             break;
         }
         let start = source.len() - input.len();
-        let kind = match next_raw_token(&mut input) {
+        let kind = match token_parser().parse_next(&mut input) {
             Ok(kind) => kind,
-            Err(err) => return Err(err),
+            Err(err) => return Err(LexerError::from(err)),
         };
         let end = source.len() - input.len();
         let mut lexeme = source[start..end].to_string();
         let kind = match kind {
-            RawTokenKind::Ident => {
+            TokenKind::Ident => {
                 if let Some(keyword) = Keyword::from_lexeme(&lexeme) {
                     TokenKind::Keyword(keyword)
                 } else {
@@ -130,9 +131,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
                     TokenKind::Ident
                 }
             }
-            RawTokenKind::Number => TokenKind::Number,
-            RawTokenKind::StringLiteral => TokenKind::StringLiteral,
-            RawTokenKind::Symbol => TokenKind::Symbol,
+            other => other,
         };
         tokens.push(Token {
             kind,
@@ -143,11 +142,7 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
     Ok(tokens)
 }
 
-fn next_raw_token(input: &mut &str) -> Result<RawTokenKind, LexerError> {
-    token_parser().parse_next(input).map_err(LexerError::from)
-}
-
-fn token_parser<'a>() -> impl Parser<&'a str, RawTokenKind, ContextError> {
+fn token_parser<'a>() -> impl Parser<&'a str, TokenKind, ContextError> {
     alt((
         raw_byte_string_token,
         raw_string_token,
@@ -160,86 +155,64 @@ fn token_parser<'a>() -> impl Parser<&'a str, RawTokenKind, ContextError> {
     ))
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RawTokenKind {
-    Ident,
-    Number,
-    StringLiteral,
-    Symbol,
+fn string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_cooked_string_literal(input, "").map(|_| TokenKind::StringLiteral)
 }
 
-fn string_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    parse_cooked_string_literal(input, "").map(|_| RawTokenKind::StringLiteral)
+fn byte_string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_cooked_string_literal(input, "b").map(|_| TokenKind::StringLiteral)
 }
 
-fn byte_string_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    parse_cooked_string_literal(input, "b").map(|_| RawTokenKind::StringLiteral)
+fn raw_string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_raw_string_literal(input, false).map(|_| TokenKind::StringLiteral)
 }
 
-fn raw_string_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    parse_raw_string_literal(input, false).map(|_| RawTokenKind::StringLiteral)
+fn raw_byte_string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_raw_string_literal(input, true).map(|_| TokenKind::StringLiteral)
 }
 
-fn raw_byte_string_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    parse_raw_string_literal(input, true).map(|_| RawTokenKind::StringLiteral)
+fn raw_identifier_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_raw_identifier(input).map(|_| TokenKind::Ident)
 }
 
-fn raw_identifier_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    parse_raw_identifier(input).map(|_| RawTokenKind::Ident)
+fn number_token(input: &mut &str) -> ModalResult<TokenKind> {
+    (
+        take_while(1.., |c: char| c.is_ascii_digit()),
+        take_while(0.., |c: char| c.is_ascii_digit() || c == '_'),
+    )
+        .map(|_| TokenKind::Number)
+        .parse_next(input)
 }
 
-fn number_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    let mut chars = input.char_indices();
-    let Some((mut idx, ch)) = chars.next() else {
-        return Err(backtrack_err());
-    };
-    if !ch.is_ascii_digit() {
-        return Err(backtrack_err());
-    }
-    idx += ch.len_utf8();
-    while let Some((next_idx, ch)) = chars.next() {
-        if ch.is_ascii_digit() || ch == '_' {
-            idx = next_idx + ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    *input = &input[idx..];
-    Ok(RawTokenKind::Number)
+fn ident_token(input: &mut &str) -> ModalResult<TokenKind> {
+    (
+        take_while(1.., is_ident_start),
+        take_while(0.., is_ident_continue),
+    )
+        .parse_next(input)
+        .map(|_| TokenKind::Ident)
 }
 
-fn ident_token(input: &mut &str) -> ModalResult<RawTokenKind> {
-    let mut chars = input.char_indices();
-    let Some((mut idx, ch)) = chars.next() else {
-        return Err(backtrack_err());
-    };
-    if !is_ident_start(ch) {
-        return Err(backtrack_err());
-    }
-    idx += ch.len_utf8();
-    while let Some((next_idx, ch)) = chars.next() {
-        if is_ident_continue(ch) {
-            idx = next_idx + ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    *input = &input[idx..];
-    Ok(RawTokenKind::Ident)
+fn symbol_token(input: &mut &str) -> ModalResult<TokenKind> {
+    alt((
+        multi_punct_token.map(|_| TokenKind::Symbol),
+        single_punct_token.map(|_| TokenKind::Symbol),
+    ))
+    .parse_next(input)
 }
 
-fn symbol_token(input: &mut &str) -> ModalResult<RawTokenKind> {
+fn multi_punct_token(input: &mut &str) -> ModalResult<&'static str> {
     for sym in MULTI_PUNCT {
         if let Some(rest) = input.strip_prefix(sym) {
             *input = rest;
-            return Ok(RawTokenKind::Symbol);
-        }
-    }
-    if let Some(ch) = input.chars().next() {
-        if SINGLE_PUNCT.contains(ch) {
-            *input = &input[ch.len_utf8()..];
-            return Ok(RawTokenKind::Symbol);
+            return Ok(*sym);
         }
     }
     Err(backtrack_err())
+}
+
+fn single_punct_token(input: &mut &str) -> ModalResult<char> {
+    take_while(1..=1, |c: char| SINGLE_PUNCT.contains(c))
+        .map(|s: &str| s.chars().next().unwrap())
+        .parse_next(input)
 }
