@@ -1,8 +1,8 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange,
-    ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident, Locator,
-    Path, StmtLet, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprIf, ExprIndex,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote,
+    ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident,
+    Locator, Path, Pattern, PatternIdent, PatternKind, StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -113,6 +113,10 @@ fn parse_control_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
+    if matches_symbol(input.first(), "|") {
+        match_symbol(input, "|");
+        return parse_closure(input);
+    }
     if match_symbol(input, "!") {
         let expr = parse_expr_prec(input, 30)?;
         return Ok(ExprKind::UnOp(ExprUnOp {
@@ -305,6 +309,36 @@ fn control_flow_call(kind: IntrinsicCallKind, expr: Option<Expr>) -> Expr {
 fn parse_quote_body(input: &mut &[Token]) -> ModalResult<Expr> {
     let block = parse_block(input)?;
     Ok(ExprKind::Quote(ExprQuote { block, kind: None }).into())
+}
+
+fn parse_closure(input: &mut &[Token]) -> ModalResult<Expr> {
+    let mut params = Vec::new();
+    if match_symbol(input, "|") {
+        // no parameters
+    } else {
+        loop {
+            let name = expect_ident(input)?;
+            let pat = Pattern::from(PatternKind::Ident(PatternIdent::new(Ident::new(name))));
+            params.push(pat);
+            if match_symbol(input, "|") {
+                break;
+            }
+            expect_symbol(input, ",")?;
+        }
+    }
+    let body_expr = if peek(symbol_parser("{")).parse_next(input).is_ok() {
+        let block = parse_block(input)?;
+        ExprKind::Block(block).into()
+    } else {
+        parse_expr_prec(input, 0)?
+    };
+    Ok(ExprKind::Closure(ExprClosure {
+        params,
+        ret_ty: None,
+        movability: None,
+        body: Box::new(body_expr),
+    })
+    .into())
 }
 
 fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
