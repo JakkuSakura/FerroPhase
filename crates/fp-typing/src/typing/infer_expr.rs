@@ -199,6 +199,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprKind::Match(match_expr) => self.infer_match(match_expr)?,
             ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
+            ExprKind::For(for_expr) => {
+                let _pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
+                let _iter_ty = self.infer_expr(for_expr.iter.as_mut())?;
+                // For now, treat `for` as producing unit.
+                let unit_var = self.fresh_type_var();
+                self.bind(unit_var, TypeTerm::Unit);
+                self.infer_expr(for_expr.body.as_mut())?;
+                unit_var
+            }
             ExprKind::While(while_expr) => self.infer_while(while_expr)?,
             ExprKind::Try(try_expr) => self.infer_expr(try_expr.expr.as_mut())?,
             ExprKind::Reference(reference) => self.infer_reference(reference)?,
@@ -208,6 +217,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
             ExprKind::Range(range) => self.infer_range(range)?,
             ExprKind::Await(await_expr) => self.infer_expr(await_expr.base.as_mut())?,
+            ExprKind::Async(async_expr) => self.infer_expr(async_expr.expr.as_mut())?,
             ExprKind::Splat(splat) => self.infer_splat(splat)?,
             ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
             ExprKind::Macro(macro_expr) => {

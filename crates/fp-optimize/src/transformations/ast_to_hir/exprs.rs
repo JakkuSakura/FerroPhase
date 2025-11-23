@@ -77,6 +77,48 @@ impl HirGenerator {
                     ));
                 }
             }
+            ExprKind::Async(async_expr) => {
+                let inner_expr = self.transform_expr_to_hir(async_expr.expr.as_ref())?;
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "async lowering is lossy during bootstrap; treating as passthrough"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: inner_expr.kind,
+                        span,
+                    });
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "`async` lowering not implemented",
+                    ));
+                }
+            }
+            ExprKind::For(for_expr) => {
+                let inner_expr = self.transform_expr_to_hir(for_expr.body.as_ref())?;
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "`for` loop lowering is lossy during bootstrap; treating body as expression"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: inner_expr.kind,
+                        span,
+                    });
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "`for` loop lowering not implemented",
+                    ));
+                }
+            }
             ExprKind::Closure(_closure) => {
                 if self.error_tolerance {
                     self.add_warning(

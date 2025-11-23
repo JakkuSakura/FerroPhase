@@ -7,11 +7,12 @@ use syn::LitStr;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp, ExprBlock,
-    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFormatString, ExprIf, ExprIndex,
-    ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
-    ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
+    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFormatString, ExprFor, ExprIf,
+    ExprIndex, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
+    ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
     ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple,
-    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, StmtLet,
+    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, PatternKind,
+    StmtLet,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -60,6 +61,8 @@ impl RustPrinter {
             ExprKind::Array(n) => self.print_expr_array(n),
             ExprKind::ArrayRepeat(n) => self.print_expr_array_repeat(n),
             ExprKind::Await(n) => self.print_expr_await(n),
+            ExprKind::Async(n) => self.print_expr(&n.expr),
+            ExprKind::For(n) => self.print_expr_for(n),
             ExprKind::IntrinsicContainer(n) => self.print_intrinsic_container(n),
             ExprKind::IntrinsicCall(n) => self.print_intrinsic_call(n),
             ExprKind::Quote(_n) => Ok(quote!({ /* quote */ })),
@@ -73,6 +76,18 @@ impl RustPrinter {
             ExprKind::Item(item) => self.print_expr_item(item),
             ExprKind::Cast(n) => self.print_expr_cast(n),
         }
+    }
+
+    fn print_expr_for(&self, for_expr: &ExprFor) -> Result<TokenStream> {
+        // Emit a straightforward Rust-style `for` loop.
+        // Note: pattern printing is limited to simple identifiers here.
+        let pat_ts = match for_expr.pat.kind() {
+            PatternKind::Ident(id) => self.print_ident(&id.ident),
+            _ => quote!(_),
+        };
+        let iter = self.print_expr(&for_expr.iter)?;
+        let body = self.print_expr(&for_expr.body)?;
+        Ok(quote!(for #pat_ts in #iter { #body }))
     }
 
     fn print_intrinsic_container(
