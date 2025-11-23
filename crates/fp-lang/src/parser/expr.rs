@@ -1,9 +1,9 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprIf, ExprIndex,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase, ExprQuote,
-    ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident,
-    Locator, MacroDelimiter, MacroInvocation, Path, Pattern, PatternIdent, PatternKind, StmtLet,
-    Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprIf,
+    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase,
+    ExprQuote, ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile,
+    Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern, PatternIdent, PatternKind,
+    StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -117,6 +117,9 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     if matches_symbol(input.first(), "|") {
         match_symbol(input, "|");
         return parse_closure(input);
+    }
+    if match_keyword(input, Keyword::Await) {
+        return parse_await(input);
     }
     if match_symbol(input, "!") {
         let expr = parse_expr_prec(input, 30)?;
@@ -347,6 +350,11 @@ fn parse_closure(input: &mut &[Token]) -> ModalResult<Expr> {
         body: Box::new(body_expr),
     })
     .into())
+}
+
+fn parse_await(input: &mut &[Token]) -> ModalResult<Expr> {
+    let base = parse_expr_prec(input, 30)?;
+    Ok(ExprKind::Await(ExprAwait { base: Box::new(base) }).into())
 }
 
 fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
