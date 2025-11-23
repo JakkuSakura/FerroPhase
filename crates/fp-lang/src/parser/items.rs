@@ -1,6 +1,7 @@
 use fp_core::ast::{
-    Expr, ExprKind, Ident, Item, Item as AstItem, ItemDefFunction, ItemDefStruct, ItemImport,
-    ItemImportPath, ItemImportTree, ItemKind, Path, StructuralField, Ty, Visibility,
+    AttrMeta, AttrStyle, Attribute, Expr, ExprKind, Ident, Item, Item as AstItem, ItemDefFunction,
+    ItemDefStruct, ItemImport, ItemImportPath, ItemImportTree, ItemKind, ItemMacro,
+    MacroDelimiter, MacroInvocation, Path, StructuralField, Ty, Visibility,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -39,14 +40,27 @@ pub fn parse_items(source: &str) -> Result<Vec<AstItem>, ItemParseError> {
             input = &input[1..];
             continue;
         }
-        let item = parse_item(&mut input).map_err(ItemParseError::from)?;
+        let attrs = parse_outer_attrs(&mut input)?;
+        let mut item = parse_item(&mut input).map_err(ItemParseError::from)?;
+        if !attrs.is_empty() {
+            if let ItemKind::DefFunction(def) = item.kind_mut() {
+                def.attrs = attrs;
+            }
+        }
         items.push(item);
     }
     Ok(items)
 }
 
 fn parse_item(input: &mut &[Token]) -> ModalResult<AstItem> {
-    alt((parse_use_item, parse_struct_item, parse_fn_item, parse_expr_item)).parse_next(input)
+    alt((
+        parse_use_item,
+        parse_struct_item,
+        parse_fn_item,
+        parse_item_macro,
+        parse_expr_item,
+    ))
+    .parse_next(input)
 }
 
 fn parse_use_item(input: &mut &[Token]) -> ModalResult<AstItem> {
@@ -133,6 +147,101 @@ fn parse_use_path(input: &mut &[Token]) -> ModalResult<ItemImportTree> {
         break;
     }
     Ok(ItemImportTree::Path(path))
+}
+
+fn parse_item_macro(input: &mut &[Token]) -> ModalResult<AstItem> {
+    // Look for a leading path followed by '!'
+    // We reuse the type-path parser but require a trailing '!'.
+    let snapshot = *input;
+    let mut segments = Vec::new();
+    if let Ok(seg) = expect_type_ident_segment(input) {
+        segments.push(seg);
+    } else {
+        *input = snapshot;
+        return Err(backtrack_err());
+    }
+    while match_symbol(input, "::") {
+        segments.push(expect_type_ident_segment(input)?);
+    }
+
+    if !match_symbol(input, "!") {
+        *input = snapshot;
+        return Err(backtrack_err());
+    }
+
+    let path = Path::new(segments);
+    // Determine delimiter and capture body similarly to expression macros
+    let next = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    let (delimiter, open, close) = match next.kind {
+        TokenKind::Symbol => match next.lexeme.as_str() {
+            "(" => (MacroDelimiter::Parenthesis, "(", ")"),
+            "[" => (MacroDelimiter::Bracket, "[", "]"),
+            "{" => (MacroDelimiter::Brace, "{", "}"),
+            _ => return Err(ErrMode::Cut(ContextError::new())),
+        },
+        _ => return Err(ErrMode::Cut(ContextError::new())),
+    };
+
+    let mut depth = 1i32;
+    let mut pieces = Vec::new();
+    while depth > 0 {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        if let TokenKind::Symbol = tok.kind {
+            if tok.lexeme == open {
+                depth += 1;
+                pieces.push(tok.lexeme);
+                continue;
+            }
+            if tok.lexeme == close {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                pieces.push(tok.lexeme);
+                continue;
+            }
+        }
+        pieces.push(tok.lexeme);
+    }
+    let tokens = pieces.join(" ");
+    let invocation = MacroInvocation::new(path, delimiter, tokens);
+    Ok(Item::from(ItemKind::Macro(ItemMacro::new(invocation))))
+}
+
+fn parse_outer_attrs(input: &mut &[Token]) -> ModalResult<Vec<Attribute>> {
+    let mut attrs = Vec::new();
+    loop {
+        // Look for '#[' pattern
+        match input.split_first() {
+            Some((Token { kind: TokenKind::Symbol, lexeme, .. }, rest)) if lexeme == "#" => {
+                if let Some(Token { kind: TokenKind::Symbol, lexeme: l2, .. }) = rest.first() {
+                    if l2 != "[" {
+                        break;
+                    }
+                } else {
+                    break;
+                }
+            }
+            _ => break,
+        }
+
+        // consume '#' and '['
+        expect_symbol(input, "#")?;
+        expect_symbol(input, "[")?;
+
+        // parse simple path meta: #[foo::bar]
+        let mut segments = Vec::new();
+        segments.push(expect_type_ident_segment(input)?);
+        while match_symbol(input, "::") {
+            segments.push(expect_type_ident_segment(input)?);
+        }
+        let path = Path::new(segments);
+        expect_symbol(input, "]")?;
+
+        let meta = AttrMeta::Path(path);
+        attrs.push(Attribute { style: AttrStyle::Outer, meta });
+    }
+    Ok(attrs)
 }
 
 fn parse_type(input: &mut &[Token]) -> ModalResult<Ty> {
