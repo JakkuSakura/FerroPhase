@@ -2,9 +2,9 @@ use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp,
     ExprBlock, ExprClosure, ExprField, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind,
     ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit,
-    ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprTry, ExprTuple, ExprUnOp, ExprWhile,
-    Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern, PatternIdent, PatternKind,
-    PatternType, StmtLet, Ty, Value,
+    ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple,
+    ExprUnOp, ExprWhile, Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern,
+    PatternIdent, PatternKind, PatternType, StmtLet, Ty, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -179,6 +179,14 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     if match_keyword(input, Keyword::Match) {
         return parse_match(input);
     }
+    if match_keyword(input, Keyword::Struct) {
+        return parse_structural_literal(input);
+    }
+    // Bare block expression `{ ... }`.
+    if matches_symbol(input.first(), "{") {
+        let block = parse_block(input)?;
+        return Ok(ExprKind::Block(block).into());
+    }
     if match_symbol(input, "[") {
         return parse_array_literal(input);
     }
@@ -240,28 +248,7 @@ fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
         }
         // Struct literal: Path { field: value, ... }
         if match_symbol(input, "{") {
-            let mut fields = Vec::new();
-            if matches_symbol(input.first(), "}") {
-                advance(input);
-            } else {
-                loop {
-                    let field_name = expect_ident(input)?;
-                    let name_ident = Ident::new(field_name.clone());
-                    let value_expr = if match_symbol(input, ":") {
-                        parse_expr_prec(input, 0)?
-                    } else {
-                        // Shorthand: `name` => value is a locator with same name.
-                        let locator = Locator::Ident(Ident::new(field_name));
-                        Expr::locator(locator)
-                    };
-                    let field = ExprField::new(name_ident, value_expr);
-                    fields.push(field);
-                    if match_symbol(input, "}") {
-                        break;
-                    }
-                    expect_symbol(input, ",")?;
-                }
-            }
+            let fields = parse_struct_fields(input)?;
             let struct_expr = ExprStruct {
                 name: expr.into(),
                 fields,
@@ -343,20 +330,9 @@ fn parse_while(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_for(input: &mut &[Token]) -> ModalResult<Expr> {
-    // Desugar `for pat in iter { body }` into
-    //
-    // {
-    //     let __fp_iter = iter.into_iter();
-    //     loop {
-    //         let __fp_next = __fp_iter.next();
-    //         let pat = match __fp_next { Some(v) => v, None => break };
-    //         body
-    //     }
-    // }
-
     // Parse loop variable identifier as a simple binding pattern.
     let pat_ident = Ident::new(expect_ident(input)?);
-    let pat = Pattern::from(PatternKind::Ident(PatternIdent::new(pat_ident.clone())));
+    let pat = Pattern::from(PatternKind::Ident(PatternIdent::new(pat_ident)));
 
     // Expect `in` keyword
     keyword_parser(Keyword::In)
@@ -368,94 +344,14 @@ fn parse_for(input: &mut &[Token]) -> ModalResult<Expr> {
 
     // Parse loop body block
     let body_block = parse_block(input)?;
+    let body_expr: Expr = ExprKind::Block(body_block).into();
 
-    // Construct `iter_expr.into_iter()` call: a select on the
-    // iterator and an invoke with no arguments.
-    let into_iter_select = ExprKind::Select(ExprSelect {
-        obj: Box::new(iter_expr),
-        field: Ident::new("into_iter".to_string()),
-        select: ExprSelectType::Method,
-    })
-    .into();
-    let into_iter_call = ExprKind::Invoke(ExprInvoke {
-        target: ExprInvokeTarget::expr(into_iter_select),
-        args: Vec::new(),
-    })
-    .into();
-
-    // let __fp_iter = iter_expr.into_iter();
-    let iter_ident = Ident::new("__fp_for_iter".to_string());
-    let iter_pat = Pattern::from(PatternKind::Ident(PatternIdent::new(iter_ident.clone())));
-    let iter_let = ExprKind::Let(ExprLet {
-        pat: Box::new(iter_pat),
-        expr: Box::new(into_iter_call),
-    })
-    .into();
-
-    // Build loop body:
-    // let __fp_next = __fp_iter.next();
-    // let pat = match __fp_next { Some(v) => v, None => break };
-    // body
-    let mut loop_stmts = Vec::new();
-
-    // __fp_iter.next()
-    let iter_locator = Expr::locator(Locator::Ident(iter_ident.clone()));
-    let next_select = ExprKind::Select(ExprSelect {
-        obj: Box::new(iter_locator),
-        field: Ident::new("next".to_string()),
-        select: ExprSelectType::Method,
-    })
-    .into();
-    let next_call = ExprKind::Invoke(ExprInvoke {
-        target: ExprInvokeTarget::expr(next_select),
-        args: Vec::new(),
-    })
-    .into();
-
-    // let __fp_next = __fp_iter.next();
-    let next_ident = Ident::new("__fp_for_next".to_string());
-    let next_let = ExprKind::Let(ExprLet {
-        pat: Box::new(Pattern::from(PatternKind::Ident(PatternIdent::new( 
-            next_ident.clone(),
-        )))),
-        expr: Box::new(next_call),
-    })
-    .into();
-    loop_stmts.push(BlockStmt::Expr(BlockStmtExpr::new(next_let)));
-
-    // let pat = match __fp_next { Some(v) => v, None => break };
-    let next_locator = Expr::locator(Locator::Ident(next_ident));
-    let match_expr = ExprKind::Match(ExprMatch {
-        cases: vec![
-            ExprMatchCase {
-                cond: Box::new(next_locator.clone()),
-                body: Box::new(Expr::unit()),
-            },
-        ],
-    })
-    .into();
-    let bind_let = ExprKind::Let(ExprLet {
+    Ok(ExprKind::For(ExprFor {
         pat: Box::new(pat),
-        expr: Box::new(match_expr),
+        iter: Box::new(iter_expr),
+        body: Box::new(body_expr),
     })
-    .into();
-    loop_stmts.push(BlockStmt::Expr(BlockStmtExpr::new(bind_let)));
-
-    // Append original body statements
-    loop_stmts.extend(body_block.stmts);
-
-    let loop_block = ExprBlock::new_stmts(loop_stmts);
-    let loop_expr = ExprKind::Loop(ExprLoop {
-        label: None,
-        body: Box::new(ExprKind::Block(loop_block).into()),
-    })
-    .into();
-
-    // Wrap iterator binding and loop in an outer block
-    let mut stmts = Vec::new();
-    stmts.push(BlockStmt::Expr(BlockStmtExpr::new(iter_let)));
-    stmts.push(BlockStmt::Expr(BlockStmtExpr::new(loop_expr)));
-    Ok(ExprKind::Block(ExprBlock::new_stmts(stmts)).into())
+    .into())
 }
 
 fn parse_return(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -488,11 +384,8 @@ fn control_flow_call(kind: IntrinsicCallKind, expr: Option<Expr>) -> Expr {
 }
 
 fn parse_async(input: &mut &[Token]) -> ModalResult<Expr> {
-    // For now, `async` is parsed as a syntactic marker and we
-    // simply return the inner expression. This keeps the surface
-    // syntax accepted while the lowering pipeline remains in
-    // charge of introducing any async-specific semantics.
-    parse_expr_prec(input, 0)
+    let inner = parse_expr_prec(input, 0)?;
+    Ok(ExprKind::Async(ExprAsync { expr: Box::new(inner) }).into())
 }
 
 fn parse_quote_body(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -621,6 +514,44 @@ fn parse_array_literal(input: &mut &[Token]) -> ModalResult<Expr> {
     expect_symbol(input, "]")?;
     let array = ExprArray { values };
     Ok(ExprKind::Array(array).into())
+}
+
+fn parse_struct_fields(input: &mut &[Token]) -> ModalResult<Vec<ExprField>> {
+    let mut fields = Vec::new();
+    if matches_symbol(input.first(), "}") {
+        // Empty `{}`
+        advance(input);
+        return Ok(fields);
+    }
+
+    loop {
+        let field_name = expect_ident(input)?;
+        let name_ident = Ident::new(field_name.clone());
+        let value_expr = if match_symbol(input, ":") {
+            // Explicit value: `field: expr`
+            parse_expr_prec(input, 0)?
+        } else {
+            // Shorthand: `field` => locator with same name.
+            let locator = Locator::Ident(Ident::new(field_name));
+            Expr::locator(locator)
+        };
+        let field = ExprField::new(name_ident, value_expr);
+        fields.push(field);
+        if match_symbol(input, "}") {
+            break;
+        }
+        expect_symbol(input, ",")?;
+    }
+
+    Ok(fields)
+}
+
+fn parse_structural_literal(input: &mut &[Token]) -> ModalResult<Expr> {
+    // We have consumed the `struct` keyword. Expect a field list in braces.
+    expect_symbol(input, "{")?;
+    let fields = parse_struct_fields(input)?;
+    let structural = ExprStructural { fields };
+    Ok(ExprKind::Structural(structural).into())
 }
 
 fn parse_paren_or_tuple(input: &mut &[Token]) -> ModalResult<Expr> {

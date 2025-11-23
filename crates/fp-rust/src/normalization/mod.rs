@@ -137,6 +137,10 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
             }
         }
         ExprKind::Loop(expr_loop) => normalize_bexpr(&mut expr_loop.body, diagnostics),
+        ExprKind::For(expr_for) => {
+            normalize_bexpr(&mut expr_for.iter, diagnostics);
+            normalize_bexpr(&mut expr_for.body, diagnostics);
+        }
         ExprKind::While(expr_while) => {
             normalize_bexpr(&mut expr_while.cond, diagnostics);
             normalize_bexpr(&mut expr_while.body, diagnostics);
@@ -185,6 +189,7 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
             }
         }
         ExprKind::Try(expr_try) => normalize_bexpr(&mut expr_try.expr, diagnostics),
+        ExprKind::Async(async_expr) => normalize_bexpr(&mut async_expr.expr, diagnostics),
         ExprKind::Let(expr_let) => normalize_bexpr(&mut expr_let.expr, diagnostics),
         ExprKind::Closure(closure) => normalize_bexpr(&mut closure.body, diagnostics),
         ExprKind::Array(array) => {

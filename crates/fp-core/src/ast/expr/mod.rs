@@ -44,6 +44,8 @@ common_enum! {
         Dereference(ExprDereference),
         Tuple(ExprTuple),
         Try(ExprTry),
+        For(ExprFor),
+        Async(ExprAsync),
         Let(ExprLet),
         Closure(ExprClosure),
         Array(ExprArray),
