@@ -1,9 +1,10 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprIf,
-    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMacro, ExprMatch,
-    ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice,
-    ExprUnOp, ExprWhile, Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern,
-    PatternIdent, PatternKind, PatternType, StmtLet, Ty, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp,
+    ExprBlock, ExprClosure, ExprField, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind,
+    ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit,
+    ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprTry, ExprTuple, ExprUnOp, ExprWhile,
+    Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern, PatternIdent, PatternKind,
+    PatternType, StmtLet, Ty, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -16,6 +17,7 @@ use winnow::Parser;
 
 use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
 use crate::lexer::winnow::backtrack_err;
+use crate::parser::items::parse_path_as_ty;
 
 #[derive(Debug, Error)]
 pub enum ExprParseError {
@@ -177,13 +179,11 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     if match_keyword(input, Keyword::Match) {
         return parse_match(input);
     }
+    if match_symbol(input, "[") {
+        return parse_array_literal(input);
+    }
     if match_symbol(input, "(") {
-        return delimited(
-            symbol_parser("("),
-            |i: &mut &[Token]| parse_expr_prec(i, 0),
-            symbol_parser(")"),
-        )
-        .parse_next(input);
+        return parse_paren_or_tuple(input);
     }
     let token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     match token.kind {
@@ -238,6 +238,37 @@ fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
             .into();
             continue;
         }
+        // Struct literal: Path { field: value, ... }
+        if match_symbol(input, "{") {
+            let mut fields = Vec::new();
+            if matches_symbol(input.first(), "}") {
+                advance(input);
+            } else {
+                loop {
+                    let field_name = expect_ident(input)?;
+                    let name_ident = Ident::new(field_name.clone());
+                    let value_expr = if match_symbol(input, ":") {
+                        parse_expr_prec(input, 0)?
+                    } else {
+                        // Shorthand: `name` => value is a locator with same name.
+                        let locator = Locator::Ident(Ident::new(field_name));
+                        Expr::locator(locator)
+                    };
+                    let field = ExprField::new(name_ident, value_expr);
+                    fields.push(field);
+                    if match_symbol(input, "}") {
+                        break;
+                    }
+                    expect_symbol(input, ",")?;
+                }
+            }
+            let struct_expr = ExprStruct {
+                name: expr.into(),
+                fields,
+            };
+            expr = ExprKind::Struct(struct_expr).into();
+            continue;
+        }
         if match_symbol(input, "[") {
             let index = parse_expr_prec(input, 0)?;
             expect_symbol(input, "]")?;
@@ -246,6 +277,14 @@ fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
                 index: Box::new(index),
             })
             .into();
+            continue;
+        }
+        // Try operator: `expr?`
+        if match_symbol(input, "?") {
+            let try_expr = ExprTry {
+                expr: Box::new(expr),
+            };
+            expr = ExprKind::Try(try_expr).into();
             continue;
         }
         break;
@@ -534,52 +573,94 @@ fn parse_closure_param(input: &mut &[Token]) -> ModalResult<Pattern> {
 
     // Optional type annotation: `: Type`.
     if match_symbol(input, ":") {
-        let ty = parse_type_like(input)?;
+        let (_path, ty) = parse_path_as_ty(input)?;
         pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
     }
 
     Ok(pat)
 }
 
-fn parse_type_like(input: &mut &[Token]) -> ModalResult<Ty> {
-    let mut segments = Vec::new();
-    segments.push(expect_type_ident_segment(input)?);
-    while match_symbol(input, "::") {
-        segments.push(expect_type_ident_segment(input)?);
+fn parse_array_literal(input: &mut &[Token]) -> ModalResult<Expr> {
+    // We are called after the leading '[' has already been consumed.
+    // Handle `[]`, `[a, b, c]` and `[elem; len]`.
+
+    // Empty array: `[]`.
+    if matches_symbol(input.first(), "]") {
+        advance(input);
+        let array = ExprArray { values: Vec::new() };
+        return Ok(ExprKind::Array(array).into());
     }
-    let path = Path::new(segments);
-    Ok(Ty::path(path))
+
+    // Parse the first element expression.
+    let first = parse_expr_prec(input, 0)?;
+
+    // Repeat form: `[elem; len]`.
+    if match_symbol(input, ";") {
+        let len = parse_expr_prec(input, 0)?;
+        expect_symbol(input, "]")?;
+        let repeat = ExprArrayRepeat {
+            elem: Box::new(first),
+            len: Box::new(len),
+        };
+        return Ok(ExprKind::ArrayRepeat(repeat).into());
+    }
+
+    // Element list form: `[a, b, c]` (with optional trailing comma).
+    let mut values = Vec::new();
+    values.push(first);
+
+    while match_symbol(input, ",") {
+        if matches_symbol(input.first(), "]") {
+            // Trailing comma before closing bracket.
+            break;
+        }
+        let next = parse_expr_prec(input, 0)?;
+        values.push(next);
+    }
+
+    expect_symbol(input, "]")?;
+    let array = ExprArray { values };
+    Ok(ExprKind::Array(array).into())
 }
 
-fn expect_type_ident_segment(input: &mut &[Token]) -> ModalResult<Ident> {
-    match input.first() {
-        Some(Token {
-            kind: TokenKind::Ident,
-            lexeme,
-            ..
-        }) => {
-            let name = lexeme.clone();
-            *input = &input[1..];
-            Ok(Ident::new(name))
-        }
-        Some(Token {
-            kind: TokenKind::Keyword(Keyword::Crate),
-            ..
-        }) => {
-            *input = &input[1..];
-            Ok(Ident::new("crate".to_string()))
-        }
-        Some(Token {
-            kind: TokenKind::Keyword(Keyword::Super),
-            ..
-        }) => {
-            *input = &input[1..];
-            Ok(Ident::new("super".to_string()))
-        }
-        _ => Err(ErrMode::Cut(ContextError::new())),
-    }
-}
+fn parse_paren_or_tuple(input: &mut &[Token]) -> ModalResult<Expr> {
+    // We are called after the leading '(' has already been consumed.
+    // Distinguish between:
+    // - `()`           -> unit expression
+    // - `(expr)`       -> grouped expression
+    // - `(a, b, ..)`   -> tuple expression
 
+    // Empty parens: unit.
+    if matches_symbol(input.first(), ")") {
+        advance(input);
+        return Ok(Expr::unit());
+    }
+
+    // Parse first element/expression.
+    let first = parse_expr_prec(input, 0)?;
+
+    // Tuple if there is a comma following the first expression.
+    if match_symbol(input, ",") {
+        let mut values = Vec::new();
+        values.push(first);
+
+        while !matches_symbol(input.first(), ")") {
+            let next = parse_expr_prec(input, 0)?;
+            values.push(next);
+            if !match_symbol(input, ",") {
+                break;
+            }
+        }
+
+        expect_symbol(input, ")")?;
+        let tuple = ExprTuple { values };
+        return Ok(ExprKind::Tuple(tuple).into());
+    }
+
+    // No comma: plain grouping.
+    expect_symbol(input, ")")?;
+    Ok(first)
+}
 fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
     let scrutinee = parse_expr_prec(input, 0)?;
     symbol_parser("{").parse_next(input)?;
