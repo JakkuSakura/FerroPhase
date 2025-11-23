@@ -353,6 +353,33 @@ mod tests {
         assert!(saw_struct && saw_fn);
     }
 
+    #[test]
+    fn parse_items_supports_fn_attributes() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("#[test_attr] fn f() { return }")
+            .expect("parse attrs");
+        let func = items
+            .into_iter()
+            .find_map(|it| match it.kind() {
+                ItemKind::DefFunction(def) => Some(def.clone()),
+                _ => None,
+            })
+            .expect("expected function item");
+        assert_eq!(func.attrs.len(), 1);
+    }
+
+    #[test]
+    fn parse_items_supports_item_macro() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("foo! { x, y }")
+            .expect("parse item macro");
+        assert!(items
+            .iter()
+            .any(|it| matches!(it.kind(), ItemKind::Macro(_))));
+    }
+
     fn count_kind(node: &CstNode, kind: CstKind) -> usize {
         (node.kind == kind) as usize
             + node
