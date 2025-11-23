@@ -54,6 +54,37 @@ impl LanguageFrontend for FerroFrontend {
             Arc::new(RustIntrinsicNormalizer::default());
 
         if let Some(path) = path {
+            // File mode: first attempt to parse items directly using the
+            // FerroPhase winnow-based parser. If that fails (due to
+            // incomplete grammar coverage), fall back to the legacy
+            // rewrite-to-Rust pipeline.
+            self.ferro.clear_diagnostics();
+            if let Ok(items) = self.ferro.parse_items_ast(&cleaned) {
+                let file = fp_core::ast::File {
+                    path: path.to_path_buf(),
+                    items,
+                };
+                let diagnostics = self.ferro.diagnostics();
+
+                let last = Node::file(file);
+                let mut ast = last.clone();
+                normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
+                let snapshot = FrontendSnapshot {
+                    language: self.language().to_string(),
+                    description: format!("FerroPhase LAST for {}", path.display()),
+                    serialized: None,
+                };
+
+                return Ok(FrontendResult {
+                    last,
+                    ast,
+                    serializer,
+                    intrinsic_normalizer: Some(intrinsic_normalizer.clone()),
+                    snapshot: Some(snapshot),
+                    diagnostics,
+                });
+            }
+
             let rewritten = self.ferro.rewrite_to_rust(&cleaned)?;
             // Avoid panicking on poisoned lock; recover from poison
             let mut parser = match self.parser.lock() {

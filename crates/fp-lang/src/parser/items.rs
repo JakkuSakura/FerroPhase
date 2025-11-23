@@ -16,6 +16,51 @@ use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
 use crate::lexer::winnow::backtrack_err;
 use super::expr;
 
+/// Parse a simple path-like type (`foo::bar::Baz`) into both a
+/// `Path` and a `Ty` that wraps that path. This helper is shared
+/// between item parsing and expression-level constructs such as
+/// closure parameter type annotations to keep the surface type
+/// grammar consistent.
+pub(crate) fn parse_path_as_ty(input: &mut &[Token]) -> ModalResult<(Path, Ty)> {
+    let mut segments = Vec::new();
+    segments.push(expect_type_ident_segment(input)?);
+    while match_symbol(input, "::") {
+        segments.push(expect_type_ident_segment(input)?);
+    }
+    let path = Path::new(segments);
+    let ty = Ty::path(path.clone());
+    Ok((path, ty))
+}
+
+pub(crate) fn expect_type_ident_segment(input: &mut &[Token]) -> ModalResult<Ident> {
+    match input.first() {
+        Some(Token {
+            kind: TokenKind::Ident,
+            lexeme,
+            ..
+        }) => {
+            let name = lexeme.clone();
+            *input = &input[1..];
+            Ok(Ident::new(name))
+        }
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Crate),
+            ..
+        }) => {
+            *input = &input[1..];
+            Ok(Ident::new("crate".to_string()))
+        }
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Super),
+            ..
+        }) => {
+            *input = &input[1..];
+            Ok(Ident::new("super".to_string()))
+        }
+        _ => Err(ErrMode::Cut(ContextError::new())),
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum ItemParseError {
     #[error("lex error: {0}")]
@@ -752,49 +797,8 @@ fn parse_outer_attrs(input: &mut &[Token]) -> ModalResult<Vec<Attribute>> {
 }
 
 fn parse_type(input: &mut &[Token]) -> ModalResult<Ty> {
-    let (path, ty) = parse_path_as_ty(input)?;
-    let _ = path; // path is currently unused for plain types
+    let (_path, ty) = parse_path_as_ty(input)?;
     Ok(ty)
-}
-
-fn parse_path_as_ty(input: &mut &[Token]) -> ModalResult<(Path, Ty)> {
-    let mut segments = Vec::new();
-    segments.push(expect_type_ident_segment(input)?);
-    while match_symbol(input, "::") {
-        segments.push(expect_type_ident_segment(input)?);
-    }
-    let path = Path::new(segments);
-    let ty = Ty::path(path.clone());
-    Ok((path, ty))
-}
-
-fn expect_type_ident_segment(input: &mut &[Token]) -> ModalResult<Ident> {
-    match input.first() {
-        Some(Token {
-            kind: TokenKind::Ident,
-            lexeme,
-            ..
-        }) => {
-            let name = lexeme.clone();
-            *input = &input[1..];
-            Ok(Ident::new(name))
-        }
-        Some(Token {
-            kind: TokenKind::Keyword(Keyword::Crate),
-            ..
-        }) => {
-            *input = &input[1..];
-            Ok(Ident::new("crate".to_string()))
-        }
-        Some(Token {
-            kind: TokenKind::Keyword(Keyword::Super),
-            ..
-        }) => {
-            *input = &input[1..];
-            Ok(Ident::new("super".to_string()))
-        }
-        _ => Err(ErrMode::Cut(ContextError::new())),
-    }
 }
 
 fn expect_ident(input: &mut &[Token]) -> ModalResult<String> {
