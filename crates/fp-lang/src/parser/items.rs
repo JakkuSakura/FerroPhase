@@ -1,6 +1,6 @@
 use fp_core::ast::{
     Expr, ExprKind, Ident, Item, Item as AstItem, ItemDefFunction, ItemDefStruct, ItemImport,
-    ItemImportPath, ItemImportTree, ItemKind, Visibility,
+    ItemImportPath, ItemImportTree, ItemKind, Path, StructuralField, Ty, Visibility,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -63,10 +63,23 @@ fn parse_use_item(input: &mut &[Token]) -> ModalResult<AstItem> {
 fn parse_struct_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     keyword_parser(Keyword::Struct).parse_next(input)?;
     let name = Ident::new(expect_ident(input)?);
-    // struct fields skipped for now; accept empty body
     expect_symbol(input, "{")?;
-    expect_symbol(input, "}")?;
-    let def = ItemDefStruct::new(name.clone(), Vec::new());
+    let mut fields = Vec::new();
+    if matches_symbol(input.first(), "}") {
+        expect_symbol(input, "}")?;
+    } else {
+        loop {
+            let field_name = expect_ident(input)?;
+            expect_symbol(input, ":")?;
+            let ty = parse_type(input)?;
+            fields.push(StructuralField::new(Ident::new(field_name), ty));
+            if match_symbol(input, "}") {
+                break;
+            }
+            expect_symbol(input, ",")?;
+        }
+    }
+    let def = ItemDefStruct::new(name.clone(), fields);
     Ok(Item::from(ItemKind::DefStruct(def)))
 }
 
@@ -74,10 +87,24 @@ fn parse_fn_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     keyword_parser(Keyword::Fn).parse_next(input)?;
     let name = Ident::new(expect_ident(input)?);
     expect_symbol(input, "(")?;
-    expect_symbol(input, ")")?;
+    let mut params = Vec::new();
+    if matches_symbol(input.first(), ")") {
+        expect_symbol(input, ")")?;
+    } else {
+        loop {
+            let param_name = expect_ident(input)?;
+            expect_symbol(input, ":")?;
+            let ty = parse_type(input)?;
+            params.push((Ident::new(param_name), ty));
+            if match_symbol(input, ")") {
+                break;
+            }
+            expect_symbol(input, ",")?;
+        }
+    }
     let body_block = expr::parse_block(input)?;
     let body_expr: Expr = ExprKind::Block(body_block).into();
-    let def = ItemDefFunction::new_simple(name, body_expr.into());
+    let def = ItemDefFunction::new_simple(name, body_expr.into()).with_params(params);
     Ok(Item::from(ItemKind::DefFunction(def)))
 }
 
@@ -106,6 +133,45 @@ fn parse_use_path(input: &mut &[Token]) -> ModalResult<ItemImportTree> {
         break;
     }
     Ok(ItemImportTree::Path(path))
+}
+
+fn parse_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    let mut segments = Vec::new();
+    segments.push(expect_type_ident_segment(input)?);
+    while match_symbol(input, "::") {
+        segments.push(expect_type_ident_segment(input)?);
+    }
+    let path = Path::new(segments);
+    Ok(Ty::path(path))
+}
+
+fn expect_type_ident_segment(input: &mut &[Token]) -> ModalResult<Ident> {
+    match input.first() {
+        Some(Token {
+            kind: TokenKind::Ident,
+            lexeme,
+            ..
+        }) => {
+            let name = lexeme.clone();
+            *input = &input[1..];
+            Ok(Ident::new(name))
+        }
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Crate),
+            ..
+        }) => {
+            *input = &input[1..];
+            Ok(Ident::new("crate".to_string()))
+        }
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Super),
+            ..
+        }) => {
+            *input = &input[1..];
+            Ok(Ident::new("super".to_string()))
+        }
+        _ => Err(ErrMode::Cut(ContextError::new())),
+    }
 }
 
 fn expect_ident(input: &mut &[Token]) -> ModalResult<String> {
