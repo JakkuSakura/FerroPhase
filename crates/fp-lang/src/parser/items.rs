@@ -1,6 +1,6 @@
 use fp_core::ast::{
     Expr, ExprKind, Ident, Item, Item as AstItem, ItemDefFunction, ItemDefStruct, ItemImport,
-    ItemImportPath, ItemImportTree, ItemKind, StructuralField, Ty, Visibility,
+    ItemImportPath, ItemImportTree, ItemKind, Visibility,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -63,24 +63,10 @@ fn parse_use_item(input: &mut &[Token]) -> ModalResult<AstItem> {
 fn parse_struct_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     keyword_parser(Keyword::Struct).parse_next(input)?;
     let name = Ident::new(expect_ident(input)?);
+    // struct fields skipped for now; accept empty body
     expect_symbol(input, "{")?;
-    let mut fields = Vec::new();
-    loop {
-        if match_symbol(input, "}") {
-            break;
-        }
-        let field_name = expect_ident(input)?;
-        fields.push(StructuralField::new(Ident::new(field_name), Ty::any()));
-        if match_symbol(input, ",") {
-            continue;
-        }
-        if match_symbol(input, "}") {
-            break;
-        } else {
-            return Err(ErrMode::Cut(ContextError::new()));
-        }
-    }
-    let def = ItemDefStruct::new(name.clone(), fields);
+    expect_symbol(input, "}")?;
+    let def = ItemDefStruct::new(name.clone(), Vec::new());
     Ok(Item::from(ItemKind::DefStruct(def)))
 }
 
@@ -88,21 +74,10 @@ fn parse_fn_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     keyword_parser(Keyword::Fn).parse_next(input)?;
     let name = Ident::new(expect_ident(input)?);
     expect_symbol(input, "(")?;
-    let mut params = Vec::new();
-    loop {
-        if match_symbol(input, ")") {
-            break;
-        }
-        let param_name = expect_ident(input)?;
-        params.push((Ident::new(param_name), Ty::any()));
-        if match_symbol(input, ")") {
-            break;
-        }
-        expect_symbol(input, ",")?;
-    }
+    expect_symbol(input, ")")?;
     let body_block = expr::parse_block(input)?;
     let body_expr: Expr = ExprKind::Block(body_block).into();
-    let def = ItemDefFunction::new_simple(name, body_expr.into()).with_params(params);
+    let def = ItemDefFunction::new_simple(name, body_expr.into());
     Ok(Item::from(ItemKind::DefFunction(def)))
 }
 
