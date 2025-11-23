@@ -264,6 +264,110 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_async_block() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("async { 1 + 2 }")
+            .expect("parse async block expr");
+        // For now, `async` is treated as a syntactic
+        // marker only and the inner block is returned.
+        match expr.kind() {
+            ExprKind::Block(block) => {
+                assert_eq!(block.stmts.len(), 1);
+                if let BlockStmt::Expr(block_expr) = &block.stmts[0] {
+                    match block_expr.expr.kind() {
+                        ExprKind::BinOp(bin) => {
+                            assert!(matches!(bin.kind, BinOpKind::Add));
+                        }
+                        other => panic!("expected binary op in async block, found {:?}", other),
+                    }
+                } else {
+                    panic!("async block should contain expression statement");
+                }
+            }
+            other => panic!("expected block expr from async, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_expr_ast_handles_for_loop_syntax() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("for i in 0..10 { i }")
+            .expect("parse for loop expr");
+        // For now, `for` is desugared into a block containing
+        // an iterator binding and a loop expression.
+        match expr.kind() {
+            ExprKind::Block(block) => {
+                assert!(block.stmts.len() >= 2);
+            }
+            other => panic!("expected block expr from for, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_const_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("const FOO: i64 = 42;")
+            .expect("parse const item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::DefConst(def) => {
+                assert_eq!(def.name.as_str(), "FOO");
+                assert!(def.ty.is_some());
+            }
+            other => panic!("expected const item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_static_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("static BAR: i64 = 1;")
+            .expect("parse static item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::DefStatic(def) => {
+                assert_eq!(def.name.as_str(), "BAR");
+            }
+            other => panic!("expected static item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_type_alias() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("type MyInt = i64;")
+            .expect("parse type alias item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::DefType(def) => {
+                assert_eq!(def.name.as_str(), "MyInt");
+            }
+            other => panic!("expected type alias item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_enum_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("enum Color { Red, Green: i64, Blue }")
+            .expect("parse enum item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::DefEnum(def) => {
+                assert_eq!(def.name.as_str(), "Color");
+                assert_eq!(def.value.variants.len(), 3);
+            }
+            other => panic!("expected enum item, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_macro_invocation() {
         let parser = FerroPhaseParser::new();
         let expr = parser
