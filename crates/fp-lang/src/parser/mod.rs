@@ -327,6 +327,32 @@ mod tests {
             .any(|it| matches!(it.kind(), ItemKind::DefFunction(_))));
     }
 
+    #[test]
+    fn parse_items_supports_typed_params_and_fields() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast(
+                "struct S { x: Foo, y: crate::bar::Baz } fn f(a: Foo, b: crate::bar::Baz) { return }",
+            )
+            .expect("parse typed items");
+        let mut saw_struct = false;
+        let mut saw_fn = false;
+        for it in items {
+            match it.kind() {
+                ItemKind::DefStruct(def) => {
+                    saw_struct = true;
+                    assert_eq!(def.value.fields.len(), 2);
+                }
+                ItemKind::DefFunction(def) => {
+                    saw_fn = true;
+                    assert_eq!(def.sig.params.len(), 2);
+                }
+                _ => {}
+            }
+        }
+        assert!(saw_struct && saw_fn);
+    }
+
     fn count_kind(node: &CstNode, kind: CstKind) -> usize {
         (node.kind == kind) as usize
             + node
