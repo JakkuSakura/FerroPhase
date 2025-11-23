@@ -87,14 +87,15 @@ impl LanguageFrontend for FerroFrontend {
         // Expression-only mode (no resolved file path). Prefer the
         // winnow CST + lowering pipeline when possible, with a
         // fallback to the legacy Rust-based parser.
+        self.ferro.clear_diagnostics();
         if let Ok(cst) = self.ferro.parse_to_cst(&cleaned) {
             if let Some(expr_ast) = lower_expr_from_cst(&cst) {
                 let last = Node::expr(expr_ast.clone());
                 let mut ast = last.clone();
 
-                // No Rust diagnostics are available on this path; use
-                // an empty diagnostic manager for now.
-                let diagnostics = Arc::new(fp_core::diagnostics::DiagnosticManager::new());
+                // Use diagnostics collected by the winnow-based parser
+                // for this path.
+                let diagnostics = self.ferro.diagnostics();
                 normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
 
                 return Ok(FrontendResult {

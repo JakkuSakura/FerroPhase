@@ -1,6 +1,10 @@
-use fp_core::ast::{BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprQuote, ExprSplice,
-                   QuoteFragmentKind, Value};
+use fp_core::ast::{
+    BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprIntrinsicCall, ExprKind, ExprQuote, ExprSplice,
+    Ident, Locator, QuoteFragmentKind, Value,
+};
 use fp_core::cst::{CstKind, CstNode};
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use crate::lexer::winnow::{is_ident_start, is_ident_continue};
 
 /// Lower a CST node directly into an fp-core AST expression.
 ///
@@ -12,11 +16,20 @@ use fp_core::cst::{CstKind, CstNode};
 /// frontend falls back to the legacy `cst_to_source` pipeline.
 pub fn lower_expr_from_cst(cst: &CstNode) -> Option<Expr> {
     match cst.kind {
+        CstKind::Root => {
+            // If the root wraps a single child, attempt to
+            // lower that child directly.
+            if cst.children.len() == 1 {
+                lower_expr_from_cst(&cst.children[0])
+            } else {
+                None
+            }
+        }
         CstKind::Quote => Some(lower_quote(cst)),
         CstKind::Splice => Some(lower_splice(cst)),
         CstKind::Block => Some(lower_block(cst)),
         CstKind::Token => lower_token(cst),
-        CstKind::Root | CstKind::ConstBlock => None,
+        CstKind::ConstBlock => Some(lower_const_block(cst)),
     }
 }
 
@@ -38,6 +51,19 @@ fn lower_splice(cst: &CstNode) -> Expr {
         Expr::unit()
     };
     ExprKind::Splice(ExprSplice { token: Box::new(token_expr) }).into()
+}
+
+fn lower_const_block(cst: &CstNode) -> Expr {
+    // Lower `const { ... }` into an intrinsic const-block call that
+    // carries the inner block as its single argument, mirroring the
+    // Rust-based parser's behaviour.
+    let block = lower_block_child(cst).unwrap_or_else(ExprBlock::new);
+    let block_expr = Expr::block(block);
+    let call = ExprIntrinsicCall::new(
+        IntrinsicCallKind::ConstBlock,
+        IntrinsicCallPayload::Args { args: vec![block_expr] },
+    );
+    ExprKind::IntrinsicCall(call).into()
 }
 
 fn lower_block(cst: &CstNode) -> Expr {
@@ -71,13 +97,24 @@ fn lower_block_to_block(cst: &CstNode) -> ExprBlock {
 
 fn lower_token(cst: &CstNode) -> Option<Expr> {
     let text = cst.text.as_ref()?;
-    // Very minimal literal lowering: integers and bare identifiers.
+    // Integers
     if let Ok(value) = text.parse::<i64>() {
         return Some(Expr::value(Value::int(value)));
     }
-    // For now, treat other tokens as opaque; in the quote surface
-    // they will typically be wrapped in a block and interpreted
-    // later.
+    // String literals – very approximate handling: strip quotes.
+    if text.starts_with('"') && text.ends_with('"') && text.len() >= 2 {
+        let inner = text.trim_matches('"').to_string();
+        return Some(Expr::value(Value::string(inner)));
+    }
+    // Bare identifiers
+    let mut chars = text.chars();
+    if let Some(first) = chars.next() {
+        if is_ident_start(first) && chars.all(is_ident_continue) {
+            let ident = Ident::new(text.clone());
+            let locator = Locator::Ident(ident);
+            return Some(Expr::locator(locator));
+        }
+    }
+    // Otherwise, treat as opaque for now.
     None
 }
-

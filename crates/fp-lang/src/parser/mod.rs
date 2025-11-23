@@ -8,6 +8,7 @@
 
 use eyre::Result;
 use fp_core::ast::Expr;
+use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::cst::{CstKind, CstNode};
 
 mod expr;
@@ -17,9 +18,20 @@ mod winnow;
 pub mod lower;
 pub use fp_core::cst::{CstError, CstResult};
 
+const FERRO_CONTEXT: &str = "ferrophase.parser";
+
 /// Parser for the FerroPhase language backed by winnow.
-#[derive(Default)]
-pub struct FerroPhaseParser;
+pub struct FerroPhaseParser {
+    diagnostics: std::sync::Arc<DiagnosticManager>,
+}
+
+impl Default for FerroPhaseParser {
+    fn default() -> Self {
+        Self {
+            diagnostics: std::sync::Arc::new(DiagnosticManager::new()),
+        }
+    }
+}
 
 impl FerroPhaseParser {
     /// Create a new parser instance.
@@ -27,14 +39,52 @@ impl FerroPhaseParser {
         Self::default()
     }
 
+    /// Access the diagnostics collected by the winnow-based parser.
+    pub fn diagnostics(&self) -> std::sync::Arc<DiagnosticManager> {
+        self.diagnostics.clone()
+    }
+
+    /// Clear any previously collected diagnostics.
+    pub fn clear_diagnostics(&self) {
+        self.diagnostics.clear();
+    }
+
+    fn record_diagnostic(&self, level: DiagnosticLevel, message: impl Into<String>) {
+        let message = message.into();
+        let diagnostic = match level {
+            DiagnosticLevel::Error => Diagnostic::error(message),
+            DiagnosticLevel::Warning => Diagnostic::warning(message),
+            DiagnosticLevel::Info => Diagnostic::info(message),
+        }
+        .with_source_context(FERRO_CONTEXT.to_string());
+
+        self.diagnostics.add_diagnostic(diagnostic);
+    }
+
+    fn record_error(&self, message: impl Into<String>) {
+        self.record_diagnostic(DiagnosticLevel::Error, message);
+    }
+
     /// Parse source and produce a CST.
     pub fn parse_to_cst(&self, source: &str) -> Result<CstNode> {
-        cst::parse(source).map_err(|err| eyre::eyre!(err))
+        match cst::parse(source) {
+            Ok(cst) => Ok(cst),
+            Err(err) => {
+                self.record_error(format!("failed to parse CST: {}", err));
+                Err(eyre::eyre!(err))
+            }
+        }
     }
 
     /// Parse a FerroPhase expression directly into an fp-core AST expression.
     pub fn parse_expr_ast(&self, source: &str) -> Result<Expr> {
-        expr::parse_expression(source).map_err(|err| eyre::eyre!(err))
+        match expr::parse_expression(source) {
+            Ok(expr) => Ok(expr),
+            Err(err) => {
+                self.record_error(format!("failed to parse expression: {}", err));
+                Err(eyre::eyre!(err))
+            }
+        }
     }
 
     /// Parse source to CST and immediately lower into an fp-core AST expression.
@@ -44,7 +94,13 @@ impl FerroPhaseParser {
             Ok(expr)
         } else {
             let src = cst_to_source(&cst);
-            expr::parse_expression(&src).map_err(|err| eyre::eyre!(err))
+            match expr::parse_expression(&src) {
+                Ok(expr) => Ok(expr),
+                Err(err) => {
+                    self.record_error(format!("failed to lower CST to expression: {}", err));
+                    Err(eyre::eyre!(err))
+                }
+            }
         }
     }
 
@@ -56,7 +112,13 @@ impl FerroPhaseParser {
 
     /// Parse a sequence of items into fp-core AST items.
     pub fn parse_items_ast(&self, source: &str) -> Result<Vec<fp_core::ast::Item>> {
-        items::parse_items(source).map_err(|err| eyre::eyre!(err))
+        match items::parse_items(source) {
+            Ok(items) => Ok(items),
+            Err(err) => {
+                self.record_error(format!("failed to parse items: {}", err));
+                Err(eyre::eyre!(err))
+            }
+        }
     }
 }
 
@@ -64,11 +126,13 @@ impl FerroPhaseParser {
 mod tests {
     use super::*;
     use fp_core::ast::{BlockStmt, ExprKind, ItemKind, MacroDelimiter};
+    use fp_core::intrinsics::IntrinsicCallKind;
     use fp_core::ops::BinOpKind;
 
     #[test]
     fn parses_rust_like_source() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let cst = parser
             .parse_to_cst("fn main() { println!(\"hi\"); }")
             .unwrap();
@@ -78,6 +142,7 @@ mod tests {
     #[test]
     fn rewrites_quote_and_splice() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_cst_to_ast("quote { splice ( token ) }")
             .unwrap();
@@ -93,6 +158,7 @@ mod tests {
     #[test]
     fn rewrite_emit_macro_matches_expected_output() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let src = "fn main() { emit! { let generated = 42; generated } }";
         let rewritten = parser.rewrite_to_rust(src).unwrap();
         assert_eq!(
@@ -104,6 +170,7 @@ mod tests {
     #[test]
     fn nested_quote_splice_and_control_flow() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let src = r#"
             fn main() {
                 if true { let _ = quote { splice ( z ); }; }
@@ -125,6 +192,7 @@ mod tests {
     #[test]
     fn parser_handles_raw_identifiers_and_strings() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let src = r####"
             fn r#type() {
                 let cooked = "hi\nthere";
@@ -160,6 +228,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_builds_quote_ast() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser.parse_expr_ast("quote { 1 + 2 }").unwrap();
         match expr.kind() {
             ExprKind::Quote(quote) => {
@@ -183,6 +252,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_handles_splice_of_quote() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("splice ( quote { 3 } )")
             .expect("parse splice expr");
@@ -198,6 +268,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_handles_match() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("match x { a => 1, _ => 2 }")
             .expect("parse match expr");
@@ -212,6 +283,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_handles_match_guard_and_wildcard() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let src = "match x { y if cond => 1, _ => 2 }";
         let expr = parser
             .parse_expr_ast(src)
@@ -227,6 +299,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_handles_range() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("0..10")
             .expect("parse range expr");
@@ -242,6 +315,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_handles_closure() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("|x, y| x + y")
             .expect("parse closure expr");
@@ -254,8 +328,39 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_typed_and_mut_closure_params() {
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let expr = parser
+            .parse_expr_ast("|mut x: Foo, _: crate::bar::Baz| x")
+            .expect("parse typed closure expr");
+        match expr.kind() {
+            ExprKind::Closure(c) => {
+                assert_eq!(c.params.len(), 2);
+                // First param should be a mutable ident pattern possibly wrapped in a type.
+                let first = &c.params[0];
+                assert!(first.ty().is_some());
+                if let fp_core::ast::PatternKind::Type(pattern_type) = first.kind() {
+                    assert!(pattern_type.pat.ty().is_none());
+                    assert_eq!(
+                        pattern_type.pat.as_ident().expect("ident pattern").as_str(),
+                        "x"
+                    );
+                } else {
+                    panic!("expected typed pattern for first closure param");
+                }
+                // Second param is `_ : crate::bar::Baz`; we only check that a type is present.
+                let second = &c.params[1];
+                assert!(second.ty().is_some());
+            }
+            other => panic!("expected closure expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_await() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("await foo")
             .expect("parse await expr");
@@ -269,8 +374,32 @@ mod tests {
     }
 
     #[test]
+    fn parse_cst_to_ast_lowers_const_block() {
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let expr = parser
+            .parse_cst_to_ast("const { 1 + 2 }")
+            .expect("parse const block expr");
+        match expr.kind() {
+            ExprKind::IntrinsicCall(call) => {
+                assert!(matches!(call.kind, IntrinsicCallKind::ConstBlock));
+                if let IntrinsicCallKind::ConstBlock = call.kind {
+                    // We expect exactly one argument carrying the lowered block.
+                    let args = match &call.payload {
+                        fp_core::intrinsics::IntrinsicCallPayload::Args { args } => args,
+                        _ => panic!("expected args payload for const block intrinsic"),
+                    };
+                    assert_eq!(args.len(), 1);
+                }
+            }
+            other => panic!("expected intrinsic const block, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_async_block() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("async { 1 + 2 }")
             .expect("parse async block expr");
@@ -297,6 +426,7 @@ mod tests {
     #[test]
     fn parse_expr_ast_handles_for_loop_syntax() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let expr = parser
             .parse_expr_ast("for i in 0..10 { i }")
             .expect("parse for loop expr");
@@ -313,6 +443,7 @@ mod tests {
     #[test]
     fn parse_items_ast_handles_const_item() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("const FOO: i64 = 42;")
             .expect("parse const item");
@@ -329,6 +460,7 @@ mod tests {
     #[test]
     fn parse_items_ast_handles_static_item() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("static BAR: i64 = 1;")
             .expect("parse static item");
@@ -344,6 +476,7 @@ mod tests {
     #[test]
     fn parse_items_ast_handles_type_alias() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("type MyInt = i64;")
             .expect("parse type alias item");
@@ -359,8 +492,9 @@ mod tests {
     #[test]
     fn parse_items_ast_handles_enum_item() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
-            .parse_items_ast("enum Color { Red, Green: i64, Blue }")
+            .parse_items_ast("enum Color { Red = 1, Green(i64, i64), Blue: i64 = 3 }")
             .expect("parse enum item");
         assert_eq!(items.len(), 1);
         match items[0].kind() {
@@ -375,6 +509,7 @@ mod tests {
     #[test]
     fn parse_items_ast_handles_module_item() {
         let parser = FerroPhaseParser::new();
+         parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("mod foo { fn bar() {} }")
             .expect("parse module item");
@@ -392,12 +527,14 @@ mod tests {
     fn parse_items_ast_handles_trait_item() {
         let parser = FerroPhaseParser::new();
         let items = parser
-            .parse_items_ast("trait Foo {}")
+            .parse_items_ast("trait Foo<T>: Bar + Baz { fn bar(x: T); type T; const N: i64; }")
             .expect("parse trait item");
         assert_eq!(items.len(), 1);
         match items[0].kind() {
             ItemKind::DefTrait(def) => {
                 assert_eq!(def.name.as_str(), "Foo");
+                assert_eq!(def.bounds.bounds.len(), 2);
+                assert_eq!(def.items.len(), 3);
             }
             other => panic!("expected trait item, got {:?}", other),
         }
@@ -412,6 +549,22 @@ mod tests {
         assert_eq!(items.len(), 1);
         match items[0].kind() {
             ItemKind::Impl(impl_item) => {
+                assert!(!impl_item.items.is_empty());
+            }
+            other => panic!("expected impl item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_trait_impl_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("impl<T> Foo<T> for Bar<T> { fn baz() {} }")
+            .expect("parse trait impl item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::Impl(impl_item) => {
+                assert!(impl_item.trait_ty.is_some());
                 assert!(!impl_item.items.is_empty());
             }
             other => panic!("expected impl item, got {:?}", other),
@@ -498,6 +651,7 @@ mod tests {
     #[test]
     fn parse_items_supports_fn_struct_and_use() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("use foo::bar; struct S {} fn main() { return }")
             .expect("parse items");
@@ -513,8 +667,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_items_ast_handles_generic_fn_with_where() {
+        let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
+        let items = parser
+            .parse_items_ast("fn foo<T>(x: T) -> i64 where T: Clone { 0 }")
+            .expect("parse generic fn item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::DefFunction(def) => {
+                assert_eq!(def.sig.generics_params.len(), 1);
+                assert_eq!(def.sig.params.len(), 1);
+                assert!(def.sig.ret_ty.is_some());
+            }
+            other => panic!("expected function item, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_items_supports_typed_params_and_fields() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast(
                 "struct S { x: Foo, y: crate::bar::Baz } fn f(a: Foo, b: crate::bar::Baz) { return }",
@@ -541,6 +714,7 @@ mod tests {
     #[test]
     fn parse_items_supports_fn_attributes() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("#[test_attr] fn f() { return }")
             .expect("parse attrs");
@@ -557,6 +731,7 @@ mod tests {
     #[test]
     fn parse_items_supports_item_macro() {
         let parser = FerroPhaseParser::new();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("foo! { x, y }")
             .expect("parse item macro");
