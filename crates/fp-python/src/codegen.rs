@@ -567,6 +567,7 @@ impl PythonEmitter {
             | Ty::Unknown(_)
             | Ty::Value(_)
             | Ty::Expr(_)
+            | Ty::TypeBinaryOp(_)
             | Ty::AnyBox(_)
             | Ty::Type(_) => {
                 self.needs_typing_any = true;
