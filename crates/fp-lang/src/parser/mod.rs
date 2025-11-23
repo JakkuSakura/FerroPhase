@@ -205,6 +205,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_range() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("0..10")
+            .expect("parse range expr");
+        match expr.kind() {
+            ExprKind::Range(r) => {
+                assert!(r.start.is_some());
+                assert!(r.end.is_some());
+            }
+            other => panic!("expected range expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_calls_fields_and_assignments() {
         let parser = FerroPhaseParser::new();
         let expr = parser
