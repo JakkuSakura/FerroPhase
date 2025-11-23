@@ -1,7 +1,8 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprIf, ExprIndex, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprSelect,
-    ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident, Locator, Path, StmtLet, Value,
+    ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange,
+    ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident, Locator,
+    Path, StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -64,6 +65,13 @@ pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult
             BinaryOp::Assign => ExprKind::Assign(ExprAssign {
                 target: Box::new(left),
                 value: Box::new(right),
+            })
+            .into(),
+            BinaryOp::Range(limit) => ExprKind::Range(ExprRange {
+                start: Some(Box::new(left)),
+                limit,
+                end: Some(Box::new(right)),
+                step: None,
             })
             .into(),
             BinaryOp::Bin(kind) => ExprKind::BinOp(ExprBinOp {
@@ -417,9 +425,10 @@ fn parse_string(token: Token) -> ModalResult<Expr> {
     Ok(Expr::value(Value::string(inner)))
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum BinaryOp {
     Assign,
+    Range(ExprRangeLimit),
     Bin(BinOpKind),
 }
 
@@ -428,6 +437,8 @@ fn peek_binop(input: &[Token]) -> Option<(u8, BinaryOp, bool)> {
     match token.kind {
         TokenKind::Symbol => match token.lexeme.as_str() {
             "=" => Some((1, BinaryOp::Assign, true)),
+            ".." => Some((3, BinaryOp::Range(ExprRangeLimit::Exclusive), false)),
+            "..=" | "..." => Some((3, BinaryOp::Range(ExprRangeLimit::Inclusive), false)),
             "||" => Some((4, BinaryOp::Bin(BinOpKind::Or), false)),
             "&&" => Some((5, BinaryOp::Bin(BinOpKind::And), false)),
             "|" => Some((6, BinaryOp::Bin(BinOpKind::BitOr), false)),
