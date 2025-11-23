@@ -385,7 +385,9 @@ fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
             break;
         }
         let arm_pattern = parse_expr_prec(input, 0)?;
-        let mut cond_base = if is_wildcard_pattern(&arm_pattern) {
+        let mut cond_base = if is_wildcard_pattern(&arm_pattern)
+            || is_binding_pattern(&arm_pattern)
+        {
             Expr::value(Value::bool(true))
         } else {
             ExprKind::BinOp(ExprBinOp {
@@ -473,6 +475,16 @@ fn parse_macro_invocation(path: Path, input: &mut &[Token]) -> ModalResult<Expr>
 fn is_wildcard_pattern(expr: &Expr) -> bool {
     match expr.kind() {
         ExprKind::Locator(loc) => loc.as_ident().map(|id| id.as_str() == "_").unwrap_or(false),
+        _ => false,
+    }
+}
+
+fn is_binding_pattern(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::Locator(loc) => loc
+            .as_ident()
+            .map(|id| id.as_str() != "_")
+            .unwrap_or(false),
         _ => false,
     }
 }
