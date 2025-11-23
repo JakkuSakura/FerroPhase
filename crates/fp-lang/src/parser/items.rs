@@ -4,7 +4,8 @@ use fp_core::ast::{
     ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic,
     ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportPath,
     ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
-    StructuralField, Ty, TypeBounds, TypeEnum, TypeTuple, Visibility,
+    StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum, TypeStructural,
+    TypeTuple, Visibility,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -797,8 +798,83 @@ fn parse_outer_attrs(input: &mut &[Token]) -> ModalResult<Vec<Attribute>> {
 }
 
 fn parse_type(input: &mut &[Token]) -> ModalResult<Ty> {
+    parse_type_prec(input, 0)
+}
+
+fn parse_type_prec(input: &mut &[Token], min_prec: u8) -> ModalResult<Ty> {
+    let mut left = parse_type_atom(input)?;
+    loop {
+        let (prec, op) = match peek_type_binop(input) {
+            Some(info) => info,
+            None => break,
+        };
+        if prec < min_prec {
+            break;
+        }
+        // consume operator symbol (currently only "+")
+        match_symbol(input, "+");
+        let right = parse_type_prec(input, prec + 1)?;
+        left = apply_type_binop(op, left, right);
+    }
+    Ok(left)
+}
+
+fn parse_type_atom(input: &mut &[Token]) -> ModalResult<Ty> {
+    // Structural type literal: `struct { field: Ty, ... }`
+    if match_keyword(input, Keyword::Struct) {
+        expect_symbol(input, "{")?;
+        let mut fields = Vec::new();
+        if matches_symbol(input.first(), "}") {
+            expect_symbol(input, "}")?;
+        } else {
+            loop {
+                let field_name = expect_ident(input)?;
+                expect_symbol(input, ":")?;
+                let field_ty = parse_type(input)?;
+                fields.push(StructuralField::new(Ident::new(field_name), field_ty));
+                if match_symbol(input, "}") {
+                    break;
+                }
+                expect_symbol(input, ",")?;
+            }
+        }
+        let structural = TypeStructural { fields };
+        return Ok(Ty::Structural(structural));
+    }
+
+    // Fallback: path-like type
     let (_path, ty) = parse_path_as_ty(input)?;
     Ok(ty)
+}
+
+fn peek_type_binop(input: &[Token]) -> Option<(u8, TypeBinaryOpKind)> {
+    let token = input.first()?;
+    match token.kind {
+        TokenKind::Symbol => match token.lexeme.as_str() {
+            "+" => {
+                // Precedence for `+` in type expressions.
+                Some((10, TypeBinaryOpKind::Add))
+            }
+            "&" => {
+                // Intersection of struct-like types.
+                Some((10, TypeBinaryOpKind::Intersect))
+            }
+            "-" => {
+                // Field removal from a struct-like type.
+                Some((10, TypeBinaryOpKind::Subtract))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn apply_type_binop(kind: TypeBinaryOpKind, lhs: Ty, rhs: Ty) -> Ty {
+    Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
+        kind,
+        lhs: Box::new(lhs),
+        rhs: Box::new(rhs),
+    }))
 }
 
 fn expect_ident(input: &mut &[Token]) -> ModalResult<String> {

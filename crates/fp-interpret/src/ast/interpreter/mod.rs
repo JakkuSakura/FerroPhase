@@ -1021,7 +1021,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             })),
             Ty::Structural(structural) => Ty::Structural(structural.clone()),
             Ty::Enum(enm) => Ty::Enum(enm.clone()),
-            Ty::ImplTraits(_) | Ty::TypeBounds(_) | Ty::Type(_) | Ty::Value(_) | Ty::AnyBox(_) => {
+            Ty::ImplTraits(_)
+            | Ty::TypeBounds(_)
+            | Ty::Type(_)
+            | Ty::Value(_)
+            | Ty::TypeBinaryOp(_)
+            | Ty::AnyBox(_) => {
                 ty.clone()
             }
         }

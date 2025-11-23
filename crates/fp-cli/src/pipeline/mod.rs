@@ -3249,23 +3249,12 @@ fn main() {
 
         pipeline
             .stage_normalize_intrinsics(&mut ast, &diagnostics)
-            .expect("normalization should run before type arithmetic fails");
+            .expect("normalization for type arithmetic example should succeed");
 
         let result = pipeline.stage_type_check_for_tests(&mut ast, &diagnostics);
-        assert!(result.is_err(), "type arithmetic is not yet implemented");
-
-        let messages: Vec<_> = diagnostics
-            .get_diagnostics()
-            .iter()
-            .map(|diag| diag.message.clone())
-            .collect();
-        assert!(
-            messages
-                .iter()
-                .any(|msg| msg.contains("type inference for item not implemented")),
-            "expected placeholder diagnostics for type arithmetic, got {:?}",
-            messages
-        );
+        if let Err(err) = result {
+            panic!("type arithmetic example failed to type-check: {}", err);
+        }
     }
 
     #[test]
