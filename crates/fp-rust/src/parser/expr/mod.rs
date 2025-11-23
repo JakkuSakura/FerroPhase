@@ -267,15 +267,11 @@ impl<'a> ExprParser<'a> {
     }
 
     fn parse_expr_async(&self, expr: syn::ExprAsync) -> Result<Expr> {
-        let message = "async blocks are not fully supported";
-        if self.parser.lossy_mode() {
-            self.parser
-                .record_diagnostic(DiagnosticLevel::Warning, message.to_string());
-            return Ok(Expr::any(RawExpr {
-                raw: syn::Expr::Async(expr),
-            }));
-        }
-        self.parser.error(message, Expr::unit())
+        // Parse `async { .. }` into an AST-level ExprAsync node so that
+        // later stages can decide how to lower async semantics.
+        let block = self.parse_block(expr.block)?;
+        let inner = Expr::block(block);
+        Ok(ExprKind::Async(ExprAsync { expr: inner.into() }).into())
     }
 
     fn unsupported_expr_macro(&self, mac: &syn::ExprMacro) -> Result<Expr> {

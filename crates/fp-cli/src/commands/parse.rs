@@ -176,6 +176,11 @@ fn scrub_any_expressions(file: &mut File) {
             ExprKind::Splat(s) => scrub_expr(s.iter.as_mut()),
             ExprKind::SplatDict(s) => scrub_expr(s.dict.as_mut()),
             ExprKind::Try(ExprTry { expr: e }) => scrub_expr(e.as_mut()),
+            ExprKind::Async(ExprAsync { expr: e }) => scrub_expr(e.as_mut()),
+            ExprKind::For(for_expr) => {
+                scrub_expr(for_expr.iter.as_mut());
+                scrub_expr(for_expr.body.as_mut());
+            }
             ExprKind::Closure(ExprClosure { body, .. }) => scrub_expr(body.as_mut()),
             ExprKind::Closured(inner) => scrub_expr(inner.expr.as_mut()),
             ExprKind::Paren(ExprParen { expr: e }) => scrub_expr(e.as_mut()),

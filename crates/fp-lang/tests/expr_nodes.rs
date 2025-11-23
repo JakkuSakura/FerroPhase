@@ -58,6 +58,30 @@ fn parens_still_group_not_tuple() {
 }
 
 #[test]
+fn parses_block_expression() {
+    let fe = FerroFrontend::new();
+    let res = fe
+        .parse("{ let x = 1; x }", None)
+        .expect("parse");
+    let e = unwrap_expr(&res.ast);
+    match e.kind() {
+        ExprKind::Block(block) => {
+            assert!(block.last_expr().is_some(), "block should have trailing expr");
+        }
+        other => panic!("expected ExprKind::Block, found {:?}", other),
+    }
+}
+
+#[test]
+fn parses_async_block_expression() {
+    let fe = FerroFrontend::new();
+    let res = fe.parse("async { 1 }", None).expect("parse");
+    let e = unwrap_expr(&res.ast);
+    // `async` is currently syntax sugar; ensure we still get a block.
+    assert!(matches!(e.kind(), ExprKind::Block(_)));
+}
+
+#[test]
 fn parses_struct_literal_with_explicit_values() {
     let fe = FerroFrontend::new();
     let res = fe.parse("Point { x: 1, y: 2 }", None).expect("parse");
@@ -83,6 +107,34 @@ fn parses_struct_literal_with_shorthand_fields() {
     assert_eq!(s.fields.len(), 2);
     assert_eq!(s.fields[0].name.as_str(), "x");
     assert_eq!(s.fields[1].name.as_str(), "y");
+}
+
+#[test]
+fn parses_structural_literal_with_explicit_and_shorthand_fields() {
+    let fe = FerroFrontend::new();
+    let res = fe
+        .parse("struct { x: 1, y }", None)
+        .expect("parse");
+    let e = unwrap_expr(&res.ast);
+    let s = match e.kind() {
+        ExprKind::Structural(st) => st,
+        other => panic!("expected ExprKind::Structural, found {:?}", other),
+    };
+    assert_eq!(s.fields.len(), 2);
+    assert_eq!(s.fields[0].name.as_str(), "x");
+    assert_eq!(s.fields[1].name.as_str(), "y");
+}
+
+#[test]
+fn parses_empty_structural_literal() {
+    let fe = FerroFrontend::new();
+    let res = fe.parse("struct {}", None).expect("parse");
+    let e = unwrap_expr(&res.ast);
+    let s = match e.kind() {
+        ExprKind::Structural(st) => st,
+        other => panic!("expected ExprKind::Structural, found {:?}", other),
+    };
+    assert_eq!(s.fields.len(), 0);
 }
 
 #[test]
