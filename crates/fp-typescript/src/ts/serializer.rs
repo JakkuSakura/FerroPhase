@@ -849,6 +849,8 @@ fn render_bin_op(kind: &fp_core::ops::BinOpKind) -> &'static str {
         BitAnd => "&",
         BitOr => "|",
         BitXor => "^",
+        Shl => "<<",
+        Shr => ">>",
         _ => "/* op */",
     }
 }

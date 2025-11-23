@@ -724,6 +724,8 @@ fn render_bin_op(kind: &fp_core::ops::BinOpKind) -> &'static str {
         Mul => "*",
         Div => "/",
         Mod => "%",
+        Shl => "<<",
+        Shr => ">>",
         And => "and",
         Or => "or",
         BitAnd => "&",
