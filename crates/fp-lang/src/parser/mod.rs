@@ -249,6 +249,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_await() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("await foo")
+            .expect("parse await expr");
+        match expr.kind() {
+            ExprKind::Await(a) => {
+                // base should be a locator for `foo`
+                assert!(matches!(a.base.kind(), ExprKind::Locator(_)));
+            }
+            other => panic!("expected await expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_macro_invocation() {
         let parser = FerroPhaseParser::new();
         let expr = parser
