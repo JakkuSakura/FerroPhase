@@ -16,6 +16,31 @@ common_struct! {
         pub inner: Option<Box<Ty>>,
     }
 }
+
+common_enum! {
+    /// Binary type-level operator (e.g. A + B).
+    #[derive(Copy)]
+    pub enum TypeBinaryOpKind {
+        Add,
+        /// Intersection of struct-like types (common fields only).
+        Intersect,
+        /// Field removal from a struct-like type.
+        Subtract,
+    }
+}
+
+common_struct! {
+    /// Symbolic type-level binary operation over types.
+    ///
+    /// This is represented directly in the `Ty` enum via
+    /// `Ty::TypeBinaryOp` and interpreted by later phases that
+    /// understand how to combine the operand types.
+    pub struct TypeBinaryOp {
+        pub kind: TypeBinaryOpKind,
+        pub lhs: BType,
+        pub rhs: BType,
+    }
+}
 common_enum! {
     /// TypeValue is a solid type value
     pub enum Ty {
@@ -39,6 +64,7 @@ common_enum! {
         Slice(TypeSlice),
         Expr(BExpr),
         QuoteToken(Box<TypeQuoteToken>),
+        TypeBinaryOp(Box<TypeBinaryOp>),
         AnyBox(AnyBox),
     }
 
