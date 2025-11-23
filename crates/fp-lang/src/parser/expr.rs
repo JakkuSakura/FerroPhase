@@ -376,13 +376,29 @@ fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
         if match_symbol(input, "}") {
             break;
         }
-        let arm_cond_raw = parse_expr_prec(input, 0)?;
-        let arm_cond = ExprKind::BinOp(ExprBinOp {
-            kind: BinOpKind::Eq,
-            lhs: Box::new(scrutinee.clone()),
-            rhs: Box::new(arm_cond_raw),
-        })
-        .into();
+        let arm_pattern = parse_expr_prec(input, 0)?;
+        let mut cond_base = if is_wildcard_pattern(&arm_pattern) {
+            Expr::value(Value::bool(true))
+        } else {
+            ExprKind::BinOp(ExprBinOp {
+                kind: BinOpKind::Eq,
+                lhs: Box::new(scrutinee.clone()),
+                rhs: Box::new(arm_pattern),
+            })
+            .into()
+        };
+
+        if match_keyword(input, Keyword::If) {
+            let guard = parse_expr_prec(input, 0)?;
+            cond_base = ExprKind::BinOp(ExprBinOp {
+                kind: BinOpKind::And,
+                lhs: Box::new(cond_base),
+                rhs: Box::new(guard),
+            })
+            .into();
+        }
+
+        let arm_cond = cond_base;
         expect_symbol(input, "=>")?;
         let arm_body = if peek(symbol_parser("{")).parse_next(input).is_ok() {
             let block = parse_block(input)?;
@@ -444,6 +460,13 @@ fn parse_macro_invocation(path: Path, input: &mut &[Token]) -> ModalResult<Expr>
     let tokens = pieces.join(" ");
     let invocation = MacroInvocation::new(path, delimiter, tokens);
     Ok(ExprKind::Macro(ExprMacro::new(invocation)).into())
+}
+
+fn is_wildcard_pattern(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::Locator(loc) => loc.as_ident().map(|id| id.as_str() == "_").unwrap_or(false),
+        _ => false,
+    }
 }
 
 pub fn parse_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
