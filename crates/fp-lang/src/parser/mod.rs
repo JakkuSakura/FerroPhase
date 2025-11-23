@@ -220,6 +220,20 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_closure() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("|x, y| x + y")
+            .expect("parse closure expr");
+        match expr.kind() {
+            ExprKind::Closure(c) => {
+                assert_eq!(c.params.len(), 2);
+            }
+            other => panic!("expected closure expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_calls_fields_and_assignments() {
         let parser = FerroPhaseParser::new();
         let expr = parser
