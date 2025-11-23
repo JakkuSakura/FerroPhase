@@ -1,7 +1,8 @@
 use fp_core::ast::{
-    AttrMeta, AttrStyle, Attribute, Expr, ExprKind, Ident, Item, Item as AstItem, ItemDefFunction,
-    ItemDefStruct, ItemImport, ItemImportPath, ItemImportTree, ItemKind, ItemMacro,
-    MacroDelimiter, MacroInvocation, Path, StructuralField, Ty, Visibility,
+    AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, Ident, Item,
+    Item as AstItem, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
+    ItemDefType, ItemImport, ItemImportPath, ItemImportTree, ItemKind, ItemMacro, MacroDelimiter,
+    MacroInvocation, Path, StructuralField, Ty, TypeEnum, Visibility,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -56,6 +57,10 @@ fn parse_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     alt((
         parse_use_item,
         parse_struct_item,
+        parse_enum_item,
+        parse_type_item,
+        parse_const_item,
+        parse_static_item,
         parse_fn_item,
         parse_item_macro,
         parse_expr_item,
@@ -95,6 +100,106 @@ fn parse_struct_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     }
     let def = ItemDefStruct::new(name.clone(), fields);
     Ok(Item::from(ItemKind::DefStruct(def)))
+}
+
+fn parse_const_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Const).parse_next(input)?;
+    let name = Ident::new(expect_ident(input)?);
+
+    let ty = if match_symbol(input, ":") {
+        Some(parse_type(input)?)
+    } else {
+        None
+    };
+
+    expect_symbol(input, "=")?;
+    let value_expr: Expr = expr::parse_expr_prec(input, 0)?;
+    expect_symbol(input, ";")?;
+
+    let mut def = ItemDefConst {
+        ty_annotation: None,
+        visibility: Visibility::Public,
+        name,
+        ty,
+        value: Box::new(value_expr),
+    };
+
+    Ok(Item::from(ItemKind::DefConst(def)))
+}
+
+fn parse_static_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Static).parse_next(input)?;
+    let name = Ident::new(expect_ident(input)?);
+    expect_symbol(input, ":")?;
+    let ty = parse_type(input)?;
+    expect_symbol(input, "=")?;
+    let value_expr: Expr = expr::parse_expr_prec(input, 0)?;
+    expect_symbol(input, ";")?;
+
+    let def = ItemDefStatic {
+        ty_annotation: None,
+        visibility: Visibility::Public,
+        name,
+        ty,
+        value: Box::new(value_expr),
+    };
+
+    Ok(Item::from(ItemKind::DefStatic(def)))
+}
+
+fn parse_type_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Type).parse_next(input)?;
+    let name = Ident::new(expect_ident(input)?);
+    expect_symbol(input, "=")?;
+    let ty = parse_type(input)?;
+    expect_symbol(input, ";")?;
+
+    let def = ItemDefType {
+        visibility: Visibility::Public,
+        name,
+        value: ty,
+    };
+
+    Ok(Item::from(ItemKind::DefType(def)))
+}
+
+fn parse_enum_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Enum).parse_next(input)?;
+    let name = Ident::new(expect_ident(input)?);
+    expect_symbol(input, "{")?;
+
+    let mut variants = Vec::new();
+    if matches_symbol(input.first(), "}") {
+        expect_symbol(input, "}")?;
+    } else {
+        loop {
+            let variant_name = Ident::new(expect_ident(input)?);
+            let ty = if match_symbol(input, ":") {
+                parse_type(input)?
+            } else {
+                Ty::any()
+            };
+            let variant = EnumTypeVariant {
+                name: variant_name,
+                value: ty,
+                discriminant: None,
+            };
+            variants.push(variant);
+            if match_symbol(input, "}") {
+                break;
+            }
+            expect_symbol(input, ",")?;
+        }
+    }
+
+    let type_enum = TypeEnum { name: name.clone(), variants };
+    let def = ItemDefEnum {
+        visibility: Visibility::Public,
+        name,
+        value: type_enum,
+    };
+
+    Ok(Item::from(ItemKind::DefEnum(def)))
 }
 
 fn parse_fn_item(input: &mut &[Token]) -> ModalResult<AstItem> {

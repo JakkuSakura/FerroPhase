@@ -249,7 +249,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let lhs = self.infer_expr(binop.lhs.as_mut())?;
         let rhs = self.infer_expr(binop.rhs.as_mut())?;
         match binop.kind {
-            BinOpKind::Add | BinOpKind::Sub | BinOpKind::Mul | BinOpKind::Div | BinOpKind::Mod => {
+            BinOpKind::Add
+            | BinOpKind::Sub
+            | BinOpKind::Mul
+            | BinOpKind::Div
+            | BinOpKind::Mod
+            | BinOpKind::Shl
+            | BinOpKind::Shr => {
                 self.ensure_numeric(lhs, "binary operand")?;
                 self.unify(lhs, rhs)?;
                 Ok(lhs)

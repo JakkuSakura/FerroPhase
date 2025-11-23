@@ -1,9 +1,9 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprAwait, ExprBinOp, ExprBlock, ExprClosure, ExprIf,
-    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase,
-    ExprQuote, ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile,
-    Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern, PatternIdent, PatternKind,
-    StmtLet, Value,
+    ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMacro, ExprMatch,
+    ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice,
+    ExprUnOp, ExprWhile, Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern,
+    PatternIdent, PatternKind, StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -110,6 +110,9 @@ fn parse_control_prefix(input: &mut &[Token]) -> ModalResult<Expr> {
     if match_keyword(input, Keyword::While) {
         return parse_while(input);
     }
+    if match_keyword(input, Keyword::For) {
+        return parse_for(input);
+    }
     Err(backtrack_err())
 }
 
@@ -120,6 +123,9 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     }
     if match_keyword(input, Keyword::Await) {
         return parse_await(input);
+    }
+    if match_keyword(input, Keyword::Async) {
+        return parse_async(input);
     }
     if match_symbol(input, "!") {
         let expr = parse_expr_prec(input, 30)?;
@@ -288,6 +294,121 @@ fn parse_while(input: &mut &[Token]) -> ModalResult<Expr> {
     .into())
 }
 
+fn parse_for(input: &mut &[Token]) -> ModalResult<Expr> {
+    // Desugar `for pat in iter { body }` into
+    //
+    // {
+    //     let __fp_iter = iter.into_iter();
+    //     loop {
+    //         let __fp_next = __fp_iter.next();
+    //         let pat = match __fp_next { Some(v) => v, None => break };
+    //         body
+    //     }
+    // }
+
+    // Parse loop variable identifier as a simple binding pattern.
+    let pat_ident = Ident::new(expect_ident(input)?);
+    let pat = Pattern::from(PatternKind::Ident(PatternIdent::new(pat_ident.clone())));
+
+    // Expect `in` keyword
+    keyword_parser(Keyword::In)
+        .parse_next(input)
+        .map_err(|_| ErrMode::Cut(ContextError::new()))?;
+
+    // Parse iterable expression
+    let iter_expr = parse_expr_prec(input, 0)?;
+
+    // Parse loop body block
+    let body_block = parse_block(input)?;
+
+    // Construct `iter_expr.into_iter()` call: a select on the
+    // iterator and an invoke with no arguments.
+    let into_iter_select = ExprKind::Select(ExprSelect {
+        obj: Box::new(iter_expr),
+        field: Ident::new("into_iter".to_string()),
+        select: ExprSelectType::Method,
+    })
+    .into();
+    let into_iter_call = ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::expr(into_iter_select),
+        args: Vec::new(),
+    })
+    .into();
+
+    // let __fp_iter = iter_expr.into_iter();
+    let iter_ident = Ident::new("__fp_for_iter".to_string());
+    let iter_let = ExprKind::Let(ExprLet {
+        pat: Box::new(pat.clone()),
+        expr: Box::new(into_iter_call),
+    })
+    .into();
+
+    // Build loop body:
+    // let __fp_next = __fp_iter.next();
+    // let pat = match __fp_next { Some(v) => v, None => break };
+    // body
+    let mut loop_stmts = Vec::new();
+
+    // __fp_iter.next()
+    let iter_locator = Expr::locator(Locator::Ident(iter_ident.clone()));
+    let next_select = ExprKind::Select(ExprSelect {
+        obj: Box::new(iter_locator),
+        field: Ident::new("next".to_string()),
+        select: ExprSelectType::Method,
+    })
+    .into();
+    let next_call = ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::expr(next_select),
+        args: Vec::new(),
+    })
+    .into();
+
+    // let __fp_next = __fp_iter.next();
+    let next_ident = Ident::new("__fp_for_next".to_string());
+    let next_let = ExprKind::Let(ExprLet {
+        pat: Box::new(Pattern::from(PatternKind::Ident(PatternIdent::new( 
+            next_ident.clone(),
+        )))),
+        expr: Box::new(next_call),
+    })
+    .into();
+    loop_stmts.push(BlockStmt::Expr(BlockStmtExpr::new(next_let)));
+
+    // let pat = match __fp_next { Some(v) => v, None => break };
+    let next_locator = Expr::locator(Locator::Ident(next_ident));
+    let match_expr = ExprKind::Match(ExprMatch {
+        cases: vec![
+            ExprMatchCase {
+                cond: Box::new(next_locator.clone()),
+                body: Box::new(Expr::unit()),
+            },
+        ],
+    })
+    .into();
+    let bind_let = ExprKind::Let(ExprLet {
+        pat: Box::new(pat),
+        expr: Box::new(match_expr),
+    })
+    .into();
+    loop_stmts.push(BlockStmt::Expr(BlockStmtExpr::new(bind_let)));
+
+    // Append original body statements
+    loop_stmts.extend(body_block.stmts);
+
+    let loop_block = ExprBlock::new_stmts(loop_stmts);
+    let loop_expr = ExprKind::Loop(ExprLoop {
+        label: None,
+        body: Box::new(ExprKind::Block(loop_block).into()),
+    })
+    .into();
+
+    // Wrap iterator binding and loop in an outer block
+    let mut stmts = Vec::new();
+    stmts.push(BlockStmt::Expr(BlockStmtExpr::new(iter_let)));
+    stmts.push(BlockStmt::Expr(BlockStmtExpr::new(loop_expr)));
+    Ok(ExprKind::Block(ExprBlock::new_stmts(stmts)).into())
+}
+
 fn parse_return(input: &mut &[Token]) -> ModalResult<Expr> {
     let expr = if matches_symbol(input.first(), ";") || matches_symbol(input.first(), "}") {
         None
@@ -315,6 +436,14 @@ fn control_flow_call(kind: IntrinsicCallKind, expr: Option<Expr>) -> Expr {
         args: expr.into_iter().collect(),
     };
     ExprKind::IntrinsicCall(IntrinsicCall::new(kind, payload)).into()
+}
+
+fn parse_async(input: &mut &[Token]) -> ModalResult<Expr> {
+    // For now, `async` is parsed as a syntactic marker and we
+    // simply return the inner expression. This keeps the surface
+    // syntax accepted while the lowering pipeline remains in
+    // charge of introducing any async-specific semantics.
+    parse_expr_prec(input, 0)
 }
 
 fn parse_quote_body(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -515,8 +644,20 @@ fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
         let stmt = BlockStmt::Expr(BlockStmtExpr::new(expr).with_semicolon(has_semicolon));
         stmts.push(stmt);
         if !has_semicolon {
-            // trailing expression; stop before closing brace
-            break;
+            // If this is a control-like expression (if/loop/while/match) and we're
+            // not at the end of the block yet, treat it as a statement even
+            // without a semicolon. Otherwise, treat it as the trailing expr.
+            let last_expr = match &stmts.last() {
+                Some(BlockStmt::Expr(e)) => &e.expr,
+                _ => unreachable!(),
+            };
+            let control_like = matches!(
+                last_expr.kind(),
+                ExprKind::If(_) | ExprKind::Loop(_) | ExprKind::While(_) | ExprKind::Match(_)
+            );
+            if !(control_like && !matches_symbol(input.first(), "}")) {
+                break;
+            }
         }
     }
     Ok(ExprBlock::new_stmts(stmts))
@@ -582,11 +723,13 @@ fn peek_binop(input: &[Token]) -> Option<(u8, BinaryOp, bool)> {
             ">" => Some((10, BinaryOp::Bin(BinOpKind::Gt), false)),
             "<=" => Some((10, BinaryOp::Bin(BinOpKind::Le), false)),
             ">=" => Some((10, BinaryOp::Bin(BinOpKind::Ge), false)),
-            "+" => Some((11, BinaryOp::Bin(BinOpKind::Add), false)),
-            "-" => Some((11, BinaryOp::Bin(BinOpKind::Sub), false)),
-            "*" => Some((12, BinaryOp::Bin(BinOpKind::Mul), false)),
-            "/" => Some((12, BinaryOp::Bin(BinOpKind::Div), false)),
-            "%" => Some((12, BinaryOp::Bin(BinOpKind::Mod), false)),
+            "<<" => Some((11, BinaryOp::Bin(BinOpKind::Shl), false)),
+            ">>" => Some((11, BinaryOp::Bin(BinOpKind::Shr), false)),
+            "+" => Some((12, BinaryOp::Bin(BinOpKind::Add), false)),
+            "-" => Some((12, BinaryOp::Bin(BinOpKind::Sub), false)),
+            "*" => Some((13, BinaryOp::Bin(BinOpKind::Mul), false)),
+            "/" => Some((13, BinaryOp::Bin(BinOpKind::Div), false)),
+            "%" => Some((13, BinaryOp::Bin(BinOpKind::Mod), false)),
             _ => None,
         },
         _ => None,

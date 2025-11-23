@@ -553,6 +553,8 @@ impl HirGenerator {
             BinOpKind::Mul => hir::BinOp::Mul,
             BinOpKind::Div => hir::BinOp::Div,
             BinOpKind::Mod => hir::BinOp::Rem,
+            BinOpKind::Shl => hir::BinOp::Shl,
+            BinOpKind::Shr => hir::BinOp::Shr,
             BinOpKind::Eq => hir::BinOp::Eq,
             BinOpKind::Ne => hir::BinOp::Ne,
             BinOpKind::Lt => hir::BinOp::Lt,
