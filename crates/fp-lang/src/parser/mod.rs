@@ -14,6 +14,7 @@ mod expr;
 mod items;
 mod cst;
 mod winnow;
+pub mod lower;
 pub use fp_core::cst::{CstError, CstResult};
 
 /// Parser for the FerroPhase language backed by winnow.
@@ -39,8 +40,12 @@ impl FerroPhaseParser {
     /// Parse source to CST and immediately lower into an fp-core AST expression.
     pub fn parse_cst_to_ast(&self, source: &str) -> Result<Expr> {
         let cst = self.parse_to_cst(source)?;
-        let src = cst_to_source(&cst);
-        expr::parse_expression(&src).map_err(|err| eyre::eyre!(err))
+        if let Some(expr) = lower::lower_expr_from_cst(&cst) {
+            Ok(expr)
+        } else {
+            let src = cst_to_source(&cst);
+            expr::parse_expression(&src).map_err(|err| eyre::eyre!(err))
+        }
     }
 
     /// Rewrite source code into Rust-compatible macros.
@@ -364,6 +369,52 @@ mod tests {
                 assert_eq!(def.value.variants.len(), 3);
             }
             other => panic!("expected enum item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_module_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("mod foo { fn bar() {} }")
+            .expect("parse module item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::Module(module) => {
+                assert_eq!(module.name.as_str(), "foo");
+                assert!(!module.items.is_empty());
+            }
+            other => panic!("expected module item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_trait_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("trait Foo {}")
+            .expect("parse trait item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::DefTrait(def) => {
+                assert_eq!(def.name.as_str(), "Foo");
+            }
+            other => panic!("expected trait item, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_items_ast_handles_impl_item() {
+        let parser = FerroPhaseParser::new();
+        let items = parser
+            .parse_items_ast("impl MyType { fn foo() {} }")
+            .expect("parse impl item");
+        assert_eq!(items.len(), 1);
+        match items[0].kind() {
+            ItemKind::Impl(impl_item) => {
+                assert!(!impl_item.items.is_empty());
+            }
+            other => panic!("expected impl item, got {:?}", other),
         }
     }
 

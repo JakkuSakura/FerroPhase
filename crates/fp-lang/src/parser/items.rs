@@ -1,8 +1,9 @@
 use fp_core::ast::{
     AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, Ident, Item,
-    Item as AstItem, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
-    ItemDefType, ItemImport, ItemImportPath, ItemImportTree, ItemKind, ItemMacro, MacroDelimiter,
-    MacroInvocation, Path, StructuralField, Ty, TypeEnum, Visibility,
+    Item as AstItem, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum,
+    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
+    ItemImportPath, ItemImportTree, ItemKind, ItemMacro, MacroDelimiter, MacroInvocation, Module,
+    Path, StructuralField, Ty, TypeBounds, TypeEnum, Visibility,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -56,6 +57,9 @@ pub fn parse_items(source: &str) -> Result<Vec<AstItem>, ItemParseError> {
 fn parse_item(input: &mut &[Token]) -> ModalResult<AstItem> {
     alt((
         parse_use_item,
+        parse_mod_item,
+        parse_trait_item,
+        parse_impl_item,
         parse_struct_item,
         parse_enum_item,
         parse_type_item,
@@ -66,6 +70,142 @@ fn parse_item(input: &mut &[Token]) -> ModalResult<AstItem> {
         parse_expr_item,
     ))
     .parse_next(input)
+}
+
+fn parse_mod_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Mod).parse_next(input)?;
+    let name = Ident::new(expect_ident(input)?);
+
+    // Handle `mod foo;` as an empty module for now.
+    if match_symbol(input, ";") {
+        let module = Module {
+            name,
+            items: Vec::new(),
+            visibility: Visibility::Public,
+        };
+        return Ok(Item::from(ItemKind::Module(module)));
+    }
+
+    expect_symbol(input, "{")?;
+    let mut items = Vec::new();
+    loop {
+        if matches_symbol(input.first(), "}") {
+            expect_symbol(input, "}")?;
+            break;
+        }
+        if input.is_empty() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        if matches_symbol(input.first(), ";") {
+            // Skip stray semicolons inside modules.
+            advance(input);
+            continue;
+        }
+
+        let attrs = parse_outer_attrs(input)?;
+        let mut item = parse_item(input)?;
+        if !attrs.is_empty() {
+            if let ItemKind::DefFunction(def) = item.kind_mut() {
+                def.attrs = attrs;
+            }
+        }
+        items.push(item);
+    }
+
+    let module = Module {
+        name,
+        items,
+        visibility: Visibility::Public,
+    };
+    Ok(Item::from(ItemKind::Module(module)))
+}
+
+fn parse_trait_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Trait).parse_next(input)?;
+    let name = Ident::new(expect_ident(input)?);
+
+    // Supertrait bounds like `trait Foo: Bar` are currently
+    // ignored and treated as unconstrained.
+    if match_symbol(input, ":") {
+        // Skip tokens until we reach '{' or end-of-input.
+        while !matches_symbol(input.first(), "{") {
+            if advance(input).is_none() {
+                return Err(ErrMode::Cut(ContextError::new()));
+            }
+        }
+    }
+
+    // Parse (and ignore) trait body for now; we record an empty
+    // item list to keep the AST shape compatible.
+    if match_symbol(input, "{") {
+        let mut depth = 1i32;
+        while depth > 0 {
+            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            if let TokenKind::Symbol = tok.kind {
+                if tok.lexeme == "{" {
+                    depth += 1;
+                } else if tok.lexeme == "}" {
+                    depth -= 1;
+                }
+            }
+        }
+    } else {
+        // No body – invalid trait syntax
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+
+    let def = ItemDefTrait {
+        name,
+        bounds: TypeBounds::any(),
+        items: Vec::new(),
+        visibility: Visibility::Public,
+    };
+    Ok(Item::from(ItemKind::DefTrait(def)))
+}
+
+fn parse_impl_item(input: &mut &[Token]) -> ModalResult<AstItem> {
+    keyword_parser(Keyword::Impl).parse_next(input)?;
+
+    // For now, only inherent impls like `impl Type { ... }` are
+    // supported. Trait impls with `for` are rejected.
+    let self_ty = parse_type(input)?;
+    if match_keyword(input, Keyword::For) {
+        // Trait impls not yet supported in the winnow parser.
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+
+    expect_symbol(input, "{")?;
+    let mut items = Vec::new();
+    loop {
+        if matches_symbol(input.first(), "}") {
+            expect_symbol(input, "}")?;
+            break;
+        }
+        if input.is_empty() {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        if matches_symbol(input.first(), ";") {
+            advance(input);
+            continue;
+        }
+
+        let attrs = parse_outer_attrs(input)?;
+        let mut item = parse_item(input)?;
+        if !attrs.is_empty() {
+            if let ItemKind::DefFunction(def) = item.kind_mut() {
+                def.attrs = attrs;
+            }
+        }
+        items.push(item);
+    }
+
+    let impl_item = ItemImpl {
+        trait_ty: None,
+        self_ty: Expr::value(self_ty.into()),
+        items,
+    };
+
+    Ok(Item::from(ItemKind::Impl(impl_item)))
 }
 
 fn parse_use_item(input: &mut &[Token]) -> ModalResult<AstItem> {
@@ -316,22 +456,30 @@ fn parse_item_macro(input: &mut &[Token]) -> ModalResult<AstItem> {
 fn parse_outer_attrs(input: &mut &[Token]) -> ModalResult<Vec<Attribute>> {
     let mut attrs = Vec::new();
     loop {
-        // Look for '#[' pattern
-        match input.split_first() {
-            Some((Token { kind: TokenKind::Symbol, lexeme, .. }, rest)) if lexeme == "#" => {
-                if let Some(Token { kind: TokenKind::Symbol, lexeme: l2, .. }) = rest.first() {
-                    if l2 != "[" {
-                        break;
+        // Look for '#[' (outer) or '#![' (inner) pattern
+        let (is_attr, is_inner) = match input {
+            [Token { kind: TokenKind::Symbol, lexeme, .. }, rest @ ..] if lexeme == "#" => {
+                match rest {
+                    [Token { kind: TokenKind::Symbol, lexeme: l2, .. }, ..] if l2 == "[" => {
+                        (true, false)
                     }
-                } else {
-                    break;
+                    [Token { kind: TokenKind::Symbol, lexeme: l2, .. }, Token { kind: TokenKind::Symbol, lexeme: l3, .. }, ..]
+                        if l2 == "!" && l3 == "[" =>
+                    {
+                        (true, true)
+                    }
+                    _ => (false, false),
                 }
             }
-            _ => break,
+            _ => (false, false),
+        };
+        if !is_attr {
+            break;
         }
 
-        // consume '#' and '['
+        // consume '#' and optional '!' then '['
         expect_symbol(input, "#")?;
+        let inner = match_symbol(input, "!");
         expect_symbol(input, "[")?;
 
         // parse simple path meta: #[foo::bar]
@@ -344,7 +492,12 @@ fn parse_outer_attrs(input: &mut &[Token]) -> ModalResult<Vec<Attribute>> {
         expect_symbol(input, "]")?;
 
         let meta = AttrMeta::Path(path);
-        attrs.push(Attribute { style: AttrStyle::Outer, meta });
+        let style = if is_inner || inner {
+            AttrStyle::Inner
+        } else {
+            AttrStyle::Outer
+        };
+        attrs.push(Attribute { style, meta });
     }
     Ok(attrs)
 }
