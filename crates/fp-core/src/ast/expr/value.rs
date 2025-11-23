@@ -383,6 +383,27 @@ common_struct! {
     }
 }
 
+common_struct! {
+    /// Async expression wrapper. Semantics are provided by later
+    /// lowering/normalization passes; at the AST level this acts
+    /// as a marker around an inner expression.
+    pub struct ExprAsync {
+        pub expr: BExpr,
+    }
+}
+
+common_struct! {
+    /// High-level `for` loop expression: `for pat in iter { body }`.
+    ///
+    /// Lowering into concrete control-flow constructs is handled in
+    /// later passes; the AST captures the pattern, iterator and body.
+    pub struct ExprFor {
+        pub pat: BPattern,
+        pub iter: BExpr,
+        pub body: BExpr,
+    }
+}
+
 common_enum! {
     pub enum ControlFlow {
         Continue,

@@ -118,6 +118,10 @@ fn normalize_expr(expr: &mut Expr, strategy: Option<&dyn IntrinsicNormalizer>) -
             }
         }
         ExprKind::Loop(expr_loop) => normalize_expr(expr_loop.body.as_mut(), strategy)?,
+        ExprKind::For(expr_for) => {
+            normalize_expr(expr_for.iter.as_mut(), strategy)?;
+            normalize_expr(expr_for.body.as_mut(), strategy)?;
+        }
         ExprKind::While(expr_while) => {
             normalize_expr(expr_while.cond.as_mut(), strategy)?;
             normalize_expr(expr_while.body.as_mut(), strategy)?;
@@ -212,6 +216,7 @@ fn normalize_expr(expr: &mut Expr, strategy: Option<&dyn IntrinsicNormalizer>) -
         ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut(), strategy)?,
         ExprKind::SplatDict(splat) => normalize_expr(splat.dict.as_mut(), strategy)?,
         ExprKind::Try(expr_try) => normalize_expr(expr_try.expr.as_mut(), strategy)?,
+        ExprKind::Async(async_expr) => normalize_expr(async_expr.expr.as_mut(), strategy)?,
         ExprKind::Closure(closure) => normalize_expr(closure.body.as_mut(), strategy)?,
         ExprKind::Closured(closured) => normalize_expr(closured.expr.as_mut(), strategy)?,
         ExprKind::Paren(paren) => normalize_expr(paren.expr.as_mut(), strategy)?,

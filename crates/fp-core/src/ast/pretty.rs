@@ -118,6 +118,19 @@ impl PrettyPrintable for ast::Expr {
                     ctx.with_indent(|ctx| binop.rhs.fmt_pretty(f, ctx))
                 })
             }
+            ast::ExprKind::For(for_expr) => {
+                ctx.writeln(f, format!("for{}", suffix))?;
+                ctx.with_indent(|ctx| {
+                    ctx.writeln(f, "iter:")?;
+                    ctx.with_indent(|ctx| for_expr.iter.fmt_pretty(f, ctx))?;
+                    ctx.writeln(f, "body:")?;
+                    ctx.with_indent(|ctx| for_expr.body.fmt_pretty(f, ctx))
+                })
+            }
+            ast::ExprKind::Async(async_expr) => {
+                ctx.writeln(f, format!("async{}", suffix))?;
+                ctx.with_indent(|ctx| async_expr.expr.fmt_pretty(f, ctx))
+            }
             ast::ExprKind::UnOp(unop) => {
                 ctx.writeln(f, format!("unop {}{}", unop.op, suffix))?;
                 ctx.with_indent(|ctx| {
@@ -1195,6 +1208,8 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             format!("{}..{}", start, end)
         }
         ast::ExprKind::FormatString(template) => render_format_template(template),
+        ast::ExprKind::Async(_) => "async <expr>".into(),
+        ast::ExprKind::For(_) => "for <expr>".into(),
         ast::ExprKind::Macro(mac) => format!("macro {}", mac.invocation.path),
         ast::ExprKind::Block(_)
         | ast::ExprKind::Match(_)
