@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet, ExprLoop, ExprMacro, ExprMatch,
     ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice,
     ExprUnOp, ExprWhile, Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern,
-    PatternIdent, PatternKind, StmtLet, Value,
+    PatternIdent, PatternKind, PatternType, StmtLet, Ty, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -39,7 +39,16 @@ impl From<ErrMode<ContextError>> for ExprParseError {
 pub fn parse_expression(source: &str) -> Result<Expr, ExprParseError> {
     let tokens = lexer::lex(source)?;
     let mut slice: &[Token] = tokens.as_slice();
-    let expr = parse_expr_prec(&mut slice, 0).map_err(ExprParseError::from)?;
+    let expr = match parse_expr_prec(&mut slice, 0) {
+        Ok(e) => e,
+        Err(_) => {
+            let msg = match slice.first() {
+                Some(tok) => format!("failed to parse expression starting at token '{}'", tok.lexeme),
+                None => "failed to parse expression at end of input".to_string(),
+            };
+            return Err(ExprParseError::Parse(msg));
+        }
+    };
     if let Some(token) = slice.first() {
         return Err(ExprParseError::UnexpectedTrailingToken(
             token.lexeme.clone(),
@@ -337,8 +346,9 @@ fn parse_for(input: &mut &[Token]) -> ModalResult<Expr> {
 
     // let __fp_iter = iter_expr.into_iter();
     let iter_ident = Ident::new("__fp_for_iter".to_string());
+    let iter_pat = Pattern::from(PatternKind::Ident(PatternIdent::new(iter_ident.clone())));
     let iter_let = ExprKind::Let(ExprLet {
-        pat: Box::new(pat.clone()),
+        pat: Box::new(iter_pat),
         expr: Box::new(into_iter_call),
     })
     .into();
@@ -457,8 +467,7 @@ fn parse_closure(input: &mut &[Token]) -> ModalResult<Expr> {
         // no parameters
     } else {
         loop {
-            let name = expect_ident(input)?;
-            let pat = Pattern::from(PatternKind::Ident(PatternIdent::new(Ident::new(name))));
+            let pat = parse_closure_param(input)?;
             params.push(pat);
             if match_symbol(input, "|") {
                 break;
@@ -503,6 +512,72 @@ fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
         token: Box::new(target),
     })
     .into())
+}
+
+fn parse_closure_param(input: &mut &[Token]) -> ModalResult<Pattern> {
+    // Optional `mut` before the binding name.
+    let is_mut = match_keyword(input, Keyword::Mut);
+
+    let name = expect_ident(input)?;
+
+    // Treat `_` specially as a wildcard pattern.
+    let mut pat = if name == "_" {
+        Pattern::from(PatternKind::Wildcard(fp_core::ast::PatternWildcard {}))
+    } else {
+        let ident = PatternIdent::new(Ident::new(name));
+        Pattern::from(PatternKind::Ident(ident))
+    };
+
+    if is_mut {
+        pat.make_mut();
+    }
+
+    // Optional type annotation: `: Type`.
+    if match_symbol(input, ":") {
+        let ty = parse_type_like(input)?;
+        pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
+    }
+
+    Ok(pat)
+}
+
+fn parse_type_like(input: &mut &[Token]) -> ModalResult<Ty> {
+    let mut segments = Vec::new();
+    segments.push(expect_type_ident_segment(input)?);
+    while match_symbol(input, "::") {
+        segments.push(expect_type_ident_segment(input)?);
+    }
+    let path = Path::new(segments);
+    Ok(Ty::path(path))
+}
+
+fn expect_type_ident_segment(input: &mut &[Token]) -> ModalResult<Ident> {
+    match input.first() {
+        Some(Token {
+            kind: TokenKind::Ident,
+            lexeme,
+            ..
+        }) => {
+            let name = lexeme.clone();
+            *input = &input[1..];
+            Ok(Ident::new(name))
+        }
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Crate),
+            ..
+        }) => {
+            *input = &input[1..];
+            Ok(Ident::new("crate".to_string()))
+        }
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Super),
+            ..
+        }) => {
+            *input = &input[1..];
+            Ok(Ident::new("super".to_string()))
+        }
+        _ => Err(ErrMode::Cut(ContextError::new())),
+    }
 }
 
 fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -631,6 +706,13 @@ fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
         }
         if input.is_empty() {
             return Err(ErrMode::Cut(ContextError::new()));
+        }
+        // Treat stray semicolons as no-op statements to keep
+        // block parsing resilient in the presence of extra `;`.
+        if matches_symbol(input.first(), ";") {
+            advance(input);
+            stmts.push(BlockStmt::Noop);
+            continue;
         }
         if peek_keyword(input, Keyword::Let) {
             keyword_parser(Keyword::Let).parse_next(input)?;
