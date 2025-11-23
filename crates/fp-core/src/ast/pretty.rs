@@ -858,6 +858,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
                 format!("QuoteToken<{}>", kind)
             }
         }
+        ast::Ty::TypeBinaryOp(_) => "TypeBinaryOp".into(),
         ast::Ty::AnyBox(_) => "AnyBox".into(),
     }
 }
