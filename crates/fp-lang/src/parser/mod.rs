@@ -205,6 +205,21 @@ mod tests {
     }
 
     #[test]
+    fn parse_expr_ast_handles_match_guard_and_wildcard() {
+        let parser = FerroPhaseParser::new();
+        let src = "match x { y if cond => 1, _ => 2 }";
+        let expr = parser
+            .parse_expr_ast(src)
+            .expect("parse guarded match expr");
+        match expr.kind() {
+            ExprKind::Match(m) => {
+                assert_eq!(m.cases.len(), 2);
+            }
+            other => panic!("expected match expr, got {:?}", other),
+        }
+    }
+
+    #[test]
     fn parse_expr_ast_handles_range() {
         let parser = FerroPhaseParser::new();
         let expr = parser
