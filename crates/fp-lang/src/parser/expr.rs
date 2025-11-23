@@ -1,8 +1,9 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprClosure, ExprIf, ExprIndex,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase, ExprQuote,
     ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprUnOp, ExprWhile, Ident,
-    Locator, Path, Pattern, PatternIdent, PatternKind, StmtLet, Value,
+    Locator, MacroDelimiter, MacroInvocation, Path, Pattern, PatternIdent, PatternKind, StmtLet,
+    Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -177,6 +178,13 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
 
 fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
     loop {
+        // macro invocation: path! { ... } / path!(...) / path![...]
+        if matches_symbol(input.first(), "!") {
+            if let Some(path) = locator_path_from_expr(&expr) {
+                expr = parse_macro_invocation(path, input)?;
+                continue;
+            }
+        }
         if matches_symbol(input.first(), "(") {
             let args = parse_argument_list(input)?;
             expr = ExprKind::Invoke(ExprInvoke {
@@ -389,6 +397,53 @@ fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
         match_symbol(input, ",");
     }
     Ok(ExprKind::Match(ExprMatch { cases }).into())
+}
+
+fn locator_path_from_expr(expr: &Expr) -> Option<Path> {
+    match expr.kind() {
+        ExprKind::Locator(loc) => Some(loc.to_path()),
+        _ => None,
+    }
+}
+
+fn parse_macro_invocation(path: Path, input: &mut &[Token]) -> ModalResult<Expr> {
+    // consume '!'
+    match_symbol(input, "!");
+    let next = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    let (delimiter, open, close) = match next.kind {
+        TokenKind::Symbol => match next.lexeme.as_str() {
+            "(" => (MacroDelimiter::Parenthesis, "(", ")"),
+            "[" => (MacroDelimiter::Bracket, "[", "]"),
+            "{" => (MacroDelimiter::Brace, "{", "}"),
+            _ => return Err(ErrMode::Cut(ContextError::new())),
+        },
+        _ => return Err(ErrMode::Cut(ContextError::new())),
+    };
+
+    let mut depth = 1i32;
+    let mut pieces = Vec::new();
+    while depth > 0 {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        if let TokenKind::Symbol = tok.kind {
+            if tok.lexeme == open {
+                depth += 1;
+                pieces.push(tok.lexeme);
+                continue;
+            }
+            if tok.lexeme == close {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                pieces.push(tok.lexeme);
+                continue;
+            }
+        }
+        pieces.push(tok.lexeme);
+    }
+    let tokens = pieces.join(" ");
+    let invocation = MacroInvocation::new(path, delimiter, tokens);
+    Ok(ExprKind::Macro(ExprMacro::new(invocation)).into())
 }
 
 pub fn parse_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {

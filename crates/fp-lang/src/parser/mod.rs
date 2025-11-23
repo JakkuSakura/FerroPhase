@@ -58,7 +58,7 @@ impl FerroPhaseParser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fp_core::ast::{BlockStmt, ExprKind, ItemKind};
+    use fp_core::ast::{BlockStmt, ExprKind, ItemKind, MacroDelimiter};
     use fp_core::ops::BinOpKind;
 
     #[test]
@@ -230,6 +230,21 @@ mod tests {
                 assert_eq!(c.params.len(), 2);
             }
             other => panic!("expected closure expr, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_expr_ast_handles_macro_invocation() {
+        let parser = FerroPhaseParser::new();
+        let expr = parser
+            .parse_expr_ast("foo!(x, y)")
+            .expect("parse macro expr");
+        match expr.kind() {
+            ExprKind::Macro(m) => {
+                assert_eq!(m.invocation.delimiter, MacroDelimiter::Parenthesis);
+                assert!(m.invocation.tokens.contains("x"));
+            }
+            other => panic!("expected macro expr, got {:?}", other),
         }
     }
 
