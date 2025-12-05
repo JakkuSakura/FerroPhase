@@ -3,11 +3,11 @@ use winnow::combinator::{alt, repeat};
 use winnow::token::take_while;
 use winnow::{ModalResult, Parser};
 
+use super::winnow::{keyword, map_err_mode, offset, span as make_span, symbol, try_parse};
 use crate::lexer::winnow::{
     backtrack_err, is_delimiter, parse_cooked_string_literal, parse_raw_identifier,
     parse_raw_string_literal, ws, MULTI_PUNCT, SINGLE_PUNCT,
 };
-use super::winnow::{keyword, map_err_mode, offset, span as make_span, symbol, try_parse};
 
 pub fn parse(source: &str) -> CstResult<CstNode> {
     let mut input = source;

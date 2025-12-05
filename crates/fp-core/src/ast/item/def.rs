@@ -18,6 +18,7 @@ impl ItemDefStruct {
             visibility: Visibility::Public,
             value: TypeStruct {
                 name: name.clone(),
+                generics_params: Vec::new(),
                 fields,
             },
             name,

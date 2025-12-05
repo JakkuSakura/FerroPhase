@@ -253,7 +253,7 @@ impl WitEmitter {
                     .add_function(
                         &def.sig,
                         &def.name,
-                        def.visibility,
+                        def.visibility.clone(),
                         docs,
                         receiver_ctx.as_ref(),
                         current_package.as_deref(),
@@ -669,7 +669,9 @@ impl InterfaceBuilder {
                 current_package,
                 receiver_ctx,
             ),
-            Ty::Any(_) | Ty::TypeBinaryOp(_) | Ty::AnyBox(_) | Ty::Unknown(_) | Ty::Nothing(_) => "json".to_string(),
+            Ty::Any(_) | Ty::TypeBinaryOp(_) | Ty::AnyBox(_) | Ty::Unknown(_) | Ty::Nothing(_) => {
+                "json".to_string()
+            }
             Ty::Type(_) | Ty::TypeBounds(_) | Ty::ImplTraits(_) => "json".to_string(),
             Ty::Value(_) => "json".to_string(),
             Ty::Function(_) => "func".to_string(),

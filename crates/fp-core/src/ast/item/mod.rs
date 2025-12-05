@@ -261,9 +261,10 @@ common_struct! {
 common_enum! {
     /// Visibility is a label to an item
     /// The exact semantic is dependent on the language and context
-    #[derive(Copy)]
     pub enum Visibility {
         Public,
+        Crate,
+        Restricted(ItemImportPath),
         Private,
         Inherited,
     }
@@ -273,6 +274,8 @@ common_struct! {
     pub struct ItemImpl {
         pub trait_ty: Option<Locator>,
         pub self_ty: Expr,
+        #[serde(default)]
+        pub generics_params: Vec<GenericParam>,
         pub items: ItemChunk,
     }
 }
@@ -282,6 +285,7 @@ impl ItemImpl {
         Self {
             trait_ty: None,
             self_ty: Expr::ident(self_ty).into(),
+            generics_params: Vec::new(),
             items,
         }
     }
@@ -289,6 +293,7 @@ impl ItemImpl {
         Self {
             trait_ty,
             self_ty,
+            generics_params: Vec::new(),
             items,
         }
     }

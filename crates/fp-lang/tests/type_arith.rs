@@ -32,6 +32,71 @@ fn parses_type_binary_plus_alias() {
             // We don't inspect the operator here; we just ensure the
             // parser produced a symbolic type-level operator node.
         }
-        other => panic!("expected Ty::TypeBinaryOp for type binary op, found {:?}", other),
+        other => panic!(
+            "expected Ty::TypeBinaryOp for type binary op, found {:?}",
+            other
+        ),
     }
+}
+
+#[test]
+fn parses_type_union() {
+    let def = parse_single_type_alias("type T = A | B;");
+    match def.value {
+        Ty::TypeBinaryOp(bin) => {
+            assert!(matches!(bin.kind, TypeBinaryOpKind::Union));
+        }
+        other => panic!("expected type union, found {:?}", other),
+    }
+}
+
+#[test]
+fn parses_type_union_then_subtract() {
+    let def = parse_single_type_alias("type T = (A | B) - C;");
+    match def.value {
+        Ty::TypeBinaryOp(bin) => {
+            assert!(matches!(bin.kind, TypeBinaryOpKind::Subtract));
+            match bin.lhs.as_ref() {
+                Ty::TypeBinaryOp(inner) => assert!(matches!(inner.kind, TypeBinaryOpKind::Union)),
+                other => panic!("expected inner union, found {:?}", other),
+            }
+        }
+        other => panic!("expected type binary op, found {:?}", other),
+    }
+}
+
+#[test]
+fn parses_bare_structural_type_literal() {
+    let def = parse_single_type_alias("type A = { x: i64, y: i64 };");
+    match def.value {
+        Ty::Structural(ts) => {
+            assert_eq!(ts.fields.len(), 2);
+            assert_eq!(ts.fields[0].name.as_str(), "x");
+            assert_eq!(ts.fields[1].name.as_str(), "y");
+        }
+        other => panic!("expected TypeStructural, found {:?}", other),
+    }
+}
+
+// -------- 反例：类型代数语法错误应报错 --------
+
+fn expect_type_parse_err(src: &str) {
+    let parser = FerroPhaseParser::new();
+    let res = parser.parse_items_ast(src);
+    assert!(res.is_err(), "expected parse error for source:\n{src}");
+}
+
+#[test]
+fn type_union_missing_rhs_errors() {
+    expect_type_parse_err("type T = A | ;");
+}
+
+#[test]
+fn type_union_starts_with_operator_errors() {
+    expect_type_parse_err("type T = | A;");
+}
+
+#[test]
+fn bare_structural_literal_missing_colon_errors() {
+    expect_type_parse_err("type A = { x i64 };");
 }

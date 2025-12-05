@@ -7,7 +7,7 @@ use syn::LitStr;
 
 use fp_core::ast::{
     BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp, ExprBlock,
-    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFormatString, ExprFor, ExprIf,
+    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFor, ExprFormatString, ExprIf,
     ExprIndex, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
     ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
     ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple,
@@ -343,6 +343,8 @@ impl RustPrinter {
                     BinOpKind::BitOr => quote!(#(#args) | *),
                     BinOpKind::BitAnd => quote!(#(#args) & *),
                     BinOpKind::BitXor => quote!(#(#args) ^ *),
+                    BinOpKind::Shl => quote!(#(#args) << *),
+                    BinOpKind::Shr => quote!(#(#args) >> *),
                 };
                 return Ok(ret);
             }
@@ -470,6 +472,8 @@ impl RustPrinter {
             BinOpKind::BitOr => quote!(|),
             BinOpKind::BitAnd => quote!(&),
             BinOpKind::BitXor => quote!(^),
+            BinOpKind::Shl => quote!(<<),
+            BinOpKind::Shr => quote!(>>),
         }
     }
     pub fn print_un_op_kind(&self, op: &UnOpKind) -> TokenStream {

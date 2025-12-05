@@ -92,6 +92,7 @@ fn collect_items(source: &str) -> Vec<Item> {
                         name: ident.clone(),
                         value: TypeEnum {
                             name: ident,
+                            generics_params: Vec::new(),
                             variants: Vec::new(),
                         },
                     };

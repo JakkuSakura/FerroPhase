@@ -102,6 +102,7 @@ fn build_function_decl_item(
         receiver: None,
         params,
         generics_params: Vec::new(),
+        is_const: false,
         ret_ty: Some(ret_ty),
     };
 

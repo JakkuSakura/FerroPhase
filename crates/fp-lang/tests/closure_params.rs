@@ -5,9 +5,7 @@ use fp_lang::FerroFrontend;
 #[test]
 fn closure_param_typed_simple_path() {
     let fe = FerroFrontend::new();
-    let res = fe
-        .parse("let f = |x: foo::Bar| x;", None)
-        .expect("parse");
+    let res = fe.parse("let f = |x: foo::Bar| x;", None).expect("parse");
 
     let expr = match res.ast.kind() {
         NodeKind::Expr(e) => e,
@@ -46,4 +44,3 @@ fn closure_param_typed_with_crate_super_segments() {
 
     assert_eq!(closure.params.len(), 1);
 }
-

@@ -514,130 +514,134 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::TypeBinaryOp(op) => {
                 let op = op.as_ref();
                 match op.kind {
-                        TypeBinaryOpKind::Add => {
-                            // Resolve both operand types first so that aliases
-                            // and other indirections are taken into account.
-                            let lhs_var = self.type_from_ast_ty(&op.lhs)?;
-                            let rhs_var = self.type_from_ast_ty(&op.rhs)?;
-                            let lhs_ty = self.resolve_to_ty(lhs_var)?;
-                            let rhs_ty = self.resolve_to_ty(rhs_var)?;
+                    TypeBinaryOpKind::Add => {
+                        // Resolve both operand types first so that aliases
+                        // and other indirections are taken into account.
+                        let lhs_var = self.type_from_ast_ty(&op.lhs)?;
+                        let rhs_var = self.type_from_ast_ty(&op.rhs)?;
+                        let lhs_ty = self.resolve_to_ty(lhs_var)?;
+                        let rhs_ty = self.resolve_to_ty(rhs_var)?;
 
-                            let lhs_fields = match lhs_ty {
-                                Ty::Struct(ref s) => s.fields.clone(),
-                                Ty::Structural(ref st) => st.fields.clone(),
-                                _ => {
-                                    // Unsupported operand kinds fall back to a
-                                    // symbolic custom type for now.
-                                    self.bind(var, TypeTerm::Custom(ty.clone()));
-                                    return Ok(var);
-                                }
-                            };
-                            let rhs_fields = match rhs_ty {
-                                Ty::Struct(ref s) => s.fields.clone(),
-                                Ty::Structural(ref st) => st.fields.clone(),
-                                _ => {
-                                    self.bind(var, TypeTerm::Custom(ty.clone()));
-                                    return Ok(var);
-                                }
-                            };
+                        let lhs_fields = match lhs_ty {
+                            Ty::Struct(ref s) => s.fields.clone(),
+                            Ty::Structural(ref st) => st.fields.clone(),
+                            _ => {
+                                // Unsupported operand kinds fall back to a
+                                // symbolic custom type for now.
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                return Ok(var);
+                            }
+                        };
+                        let rhs_fields = match rhs_ty {
+                            Ty::Struct(ref s) => s.fields.clone(),
+                            Ty::Structural(ref st) => st.fields.clone(),
+                            _ => {
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                return Ok(var);
+                            }
+                        };
 
-                            // Merge fields, requiring that any overlapping
-                            // names have identical types. When both sides are
-                            // compatible, produce a structural type.
-                            let mut merged = lhs_fields;
-                            for rhs_field in rhs_fields {
-                                if let Some(existing) = merged
-                                    .iter()
-                                    .find(|f| f.name.as_str() == rhs_field.name.as_str())
-                                {
-                                    if existing.value != rhs_field.value {
-                                        return Err(Error::from(format!(
+                        // Merge fields, requiring that any overlapping
+                        // names have identical types. When both sides are
+                        // compatible, produce a structural type.
+                        let mut merged = lhs_fields;
+                        for rhs_field in rhs_fields {
+                            if let Some(existing) = merged
+                                .iter()
+                                .find(|f| f.name.as_str() == rhs_field.name.as_str())
+                            {
+                                if existing.value != rhs_field.value {
+                                    return Err(Error::from(format!(
                                             "cannot merge struct fields: field '{}' has incompatible types",
                                             rhs_field.name
                                         )));
-                                    }
-                                } else {
-                                    merged.push(rhs_field);
                                 }
+                            } else {
+                                merged.push(rhs_field);
                             }
-                            self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
                         }
-                        TypeBinaryOpKind::Intersect => {
-                            let lhs_var = self.type_from_ast_ty(&op.lhs)?;
-                            let rhs_var = self.type_from_ast_ty(&op.rhs)?;
-                            let lhs_ty = self.resolve_to_ty(lhs_var)?;
-                            let rhs_ty = self.resolve_to_ty(rhs_var)?;
+                        self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
+                    }
+                    TypeBinaryOpKind::Intersect => {
+                        let lhs_var = self.type_from_ast_ty(&op.lhs)?;
+                        let rhs_var = self.type_from_ast_ty(&op.rhs)?;
+                        let lhs_ty = self.resolve_to_ty(lhs_var)?;
+                        let rhs_ty = self.resolve_to_ty(rhs_var)?;
 
-                            let lhs_fields = match lhs_ty {
-                                Ty::Struct(ref s) => s.fields.clone(),
-                                Ty::Structural(ref st) => st.fields.clone(),
-                                _ => {
-                                    self.bind(var, TypeTerm::Custom(ty.clone()));
-                                    return Ok(var);
-                                }
-                            };
-                            let rhs_fields = match rhs_ty {
-                                Ty::Struct(ref s) => s.fields.clone(),
-                                Ty::Structural(ref st) => st.fields.clone(),
-                                _ => {
-                                    self.bind(var, TypeTerm::Custom(ty.clone()));
-                                    return Ok(var);
-                                }
-                            };
+                        let lhs_fields = match lhs_ty {
+                            Ty::Struct(ref s) => s.fields.clone(),
+                            Ty::Structural(ref st) => st.fields.clone(),
+                            _ => {
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                return Ok(var);
+                            }
+                        };
+                        let rhs_fields = match rhs_ty {
+                            Ty::Struct(ref s) => s.fields.clone(),
+                            Ty::Structural(ref st) => st.fields.clone(),
+                            _ => {
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                return Ok(var);
+                            }
+                        };
 
-                            let mut merged = Vec::new();
-                            for lhs_field in lhs_fields {
-                                if let Some(rhs_field) = rhs_fields
-                                    .iter()
-                                    .find(|f| f.name.as_str() == lhs_field.name.as_str())
-                                {
-                                    if lhs_field.value != rhs_field.value {
-                                        return Err(Error::from(format!(
+                        let mut merged = Vec::new();
+                        for lhs_field in lhs_fields {
+                            if let Some(rhs_field) = rhs_fields
+                                .iter()
+                                .find(|f| f.name.as_str() == lhs_field.name.as_str())
+                            {
+                                if lhs_field.value != rhs_field.value {
+                                    return Err(Error::from(format!(
                                             "cannot intersect struct fields: field '{}' has incompatible types",
                                             lhs_field.name
                                         )));
-                                    }
-                                    merged.push(lhs_field.clone());
                                 }
+                                merged.push(lhs_field.clone());
                             }
-
-                            self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
                         }
-                        TypeBinaryOpKind::Subtract => {
-                            let lhs_var = self.type_from_ast_ty(&op.lhs)?;
-                            let rhs_var = self.type_from_ast_ty(&op.rhs)?;
-                            let lhs_ty = self.resolve_to_ty(lhs_var)?;
-                            let rhs_ty = self.resolve_to_ty(rhs_var)?;
 
-                            let lhs_fields = match lhs_ty {
-                                Ty::Struct(ref s) => s.fields.clone(),
-                                Ty::Structural(ref st) => st.fields.clone(),
-                                _ => {
-                                    self.bind(var, TypeTerm::Custom(ty.clone()));
-                                    return Ok(var);
-                                }
-                            };
-                            let rhs_fields = match rhs_ty {
-                                Ty::Struct(ref s) => s.fields.clone(),
-                                Ty::Structural(ref st) => st.fields.clone(),
-                                _ => {
-                                    self.bind(var, TypeTerm::Custom(ty.clone()));
-                                    return Ok(var);
-                                }
-                            };
+                        self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
+                    }
+                    TypeBinaryOpKind::Union => {
+                        // Keep union symbolic; later phases may lower to sums.
+                        self.bind(var, TypeTerm::Custom(ty.clone()));
+                    }
+                    TypeBinaryOpKind::Subtract => {
+                        let lhs_var = self.type_from_ast_ty(&op.lhs)?;
+                        let rhs_var = self.type_from_ast_ty(&op.rhs)?;
+                        let lhs_ty = self.resolve_to_ty(lhs_var)?;
+                        let rhs_ty = self.resolve_to_ty(rhs_var)?;
 
-                            let to_remove: std::collections::HashSet<String> = rhs_fields
-                                .iter()
-                                .map(|f| f.name.as_str().to_string())
-                                .collect();
+                        let lhs_fields = match lhs_ty {
+                            Ty::Struct(ref s) => s.fields.clone(),
+                            Ty::Structural(ref st) => st.fields.clone(),
+                            _ => {
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                return Ok(var);
+                            }
+                        };
+                        let rhs_fields = match rhs_ty {
+                            Ty::Struct(ref s) => s.fields.clone(),
+                            Ty::Structural(ref st) => st.fields.clone(),
+                            _ => {
+                                self.bind(var, TypeTerm::Custom(ty.clone()));
+                                return Ok(var);
+                            }
+                        };
 
-                            let merged: Vec<StructuralField> = lhs_fields
-                                .into_iter()
-                                .filter(|f| !to_remove.contains(f.name.as_str()))
-                                .collect();
+                        let to_remove: std::collections::HashSet<String> = rhs_fields
+                            .iter()
+                            .map(|f| f.name.as_str().to_string())
+                            .collect();
 
-                            self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
-                        }
+                        let merged: Vec<StructuralField> = lhs_fields
+                            .into_iter()
+                            .filter(|f| !to_remove.contains(f.name.as_str()))
+                            .collect();
+
+                        self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
+                    }
                 }
             }
             Ty::AnyBox(_) => {
@@ -674,8 +678,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Vec(inner));
             }
             other => {
-                // Fallback for types not yet covered
-                self.bind(var, TypeTerm::Custom(other.clone()));
+                // 直接报错，防止错误被吞，便于调试。
+                return Err(Error::from(format!(
+                    "unsupported AST type in type_from_ast_ty: {:?}",
+                    other
+                )));
             }
         }
         Ok(var)
@@ -691,10 +698,16 @@ mod tests {
         let mut typer = AstTypeInferencer::new();
 
         let lhs = Ty::Structural(TypeStructural {
-            fields: vec![StructuralField::new(Ident::new("a".to_string()), Ty::Primitive(TypePrimitive::Int(TypeInt::I64)))],
+            fields: vec![StructuralField::new(
+                Ident::new("a".to_string()),
+                Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+            )],
         });
         let rhs = Ty::Structural(TypeStructural {
-            fields: vec![StructuralField::new(Ident::new("b".to_string()), Ty::Primitive(TypePrimitive::Int(TypeInt::I64)))],
+            fields: vec![StructuralField::new(
+                Ident::new("b".to_string()),
+                Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+            )],
         });
         let op = Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
             kind: TypeBinaryOpKind::Add,
@@ -720,10 +733,16 @@ mod tests {
         let mut typer = AstTypeInferencer::new();
 
         let lhs = Ty::Structural(TypeStructural {
-            fields: vec![StructuralField::new(Ident::new("x".to_string()), Ty::Primitive(TypePrimitive::Int(TypeInt::I64)))],
+            fields: vec![StructuralField::new(
+                Ident::new("x".to_string()),
+                Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+            )],
         });
         let rhs = Ty::Structural(TypeStructural {
-            fields: vec![StructuralField::new(Ident::new("x".to_string()), Ty::Primitive(TypePrimitive::Int(TypeInt::I32)))],
+            fields: vec![StructuralField::new(
+                Ident::new("x".to_string()),
+                Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+            )],
         });
         let op = Ty::TypeBinaryOp(Box::new(TypeBinaryOp {
             kind: TypeBinaryOpKind::Add,
@@ -732,7 +751,10 @@ mod tests {
         }));
 
         let result = typer.type_from_ast_ty(&op);
-        assert!(result.is_err(), "expected error for conflicting field types");
+        assert!(
+            result.is_err(),
+            "expected error for conflicting field types"
+        );
     }
 
     #[test]

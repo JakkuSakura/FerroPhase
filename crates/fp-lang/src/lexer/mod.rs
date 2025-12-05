@@ -3,4 +3,4 @@
 pub mod tokenizer;
 pub mod winnow;
 
-pub use tokenizer::{Keyword, LexerError, Span, Token, TokenKind, lex};
+pub use tokenizer::{lex, Keyword, LexerError, Span, Token, TokenKind};

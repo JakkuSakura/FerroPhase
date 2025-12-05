@@ -545,6 +545,8 @@ impl<'a> ExprParser<'a> {
             syn::BinOp::Lt(_) => BinOpKind::Lt,
             syn::BinOp::Eq(_) => BinOpKind::Eq,
             syn::BinOp::Ne(_) => BinOpKind::Ne,
+            syn::BinOp::Shl(_) => BinOpKind::Shl,
+            syn::BinOp::Shr(_) => BinOpKind::Shr,
             syn::BinOp::BitOr(_) => BinOpKind::BitOr,
             syn::BinOp::BitAnd(_) => BinOpKind::BitAnd,
             syn::BinOp::BitXor(_) => BinOpKind::BitXor,

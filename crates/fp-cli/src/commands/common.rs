@@ -50,18 +50,21 @@ pub fn ownership_label(rv: &RuntimeValue) -> &'static str {
     }
 }
 
-/// Validate that all provided paths exist (and optionally are files).
-pub fn validate_paths_exist(inputs: &[PathBuf], must_be_files: bool) -> Result<()> {
+/// Validate that all provided paths exist (and optionally are files), with a
+/// caller-provided context label for consistent diagnostics.
+pub fn validate_paths_exist(inputs: &[PathBuf], must_be_files: bool, ctx: &str) -> Result<()> {
     for input in inputs {
         if !input.exists() {
             return Err(CliError::InvalidInput(format!(
-                "Input path does not exist: {}",
+                "{}: path does not exist: {}",
+                ctx,
                 input.display()
             )));
         }
         if must_be_files && !input.is_file() {
             return Err(CliError::InvalidInput(format!(
-                "Input path is not a file: {}",
+                "{}: path is not a file: {}",
+                ctx,
                 input.display()
             )));
         }

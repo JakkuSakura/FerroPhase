@@ -30,7 +30,10 @@ fn parses_array_literal_repeat() {
         ExprKind::ArrayRepeat(repeat) => {
             // Just ensure both sides are present; detailed semantics are
             // validated in downstream passes.
-            assert!(matches!(repeat.len.kind(), ExprKind::Value(_) | ExprKind::BinOp(_)));
+            assert!(matches!(
+                repeat.len.kind(),
+                ExprKind::Value(_) | ExprKind::BinOp(_)
+            ));
         }
         other => panic!("expected ExprKind::ArrayRepeat, found {:?}", other),
     }
@@ -60,13 +63,14 @@ fn parens_still_group_not_tuple() {
 #[test]
 fn parses_block_expression() {
     let fe = FerroFrontend::new();
-    let res = fe
-        .parse("{ let x = 1; x }", None)
-        .expect("parse");
+    let res = fe.parse("{ let x = 1; x }", None).expect("parse");
     let e = unwrap_expr(&res.ast);
     match e.kind() {
         ExprKind::Block(block) => {
-            assert!(block.last_expr().is_some(), "block should have trailing expr");
+            assert!(
+                block.last_expr().is_some(),
+                "block should have trailing expr"
+            );
         }
         other => panic!("expected ExprKind::Block, found {:?}", other),
     }
@@ -110,11 +114,36 @@ fn parses_struct_literal_with_shorthand_fields() {
 }
 
 #[test]
-fn parses_structural_literal_with_explicit_and_shorthand_fields() {
+fn parses_struct_literal_single_field_without_trailing_comma() {
+    let fe = FerroFrontend::new();
+    let res = fe.parse("Foo { x }", None).expect("parse");
+    let e = unwrap_expr(&res.ast);
+    let s = match e.kind() {
+        ExprKind::Struct(st) => st,
+        other => panic!("expected ExprKind::Struct, found {:?}", other),
+    };
+    assert_eq!(s.fields.len(), 1);
+    assert_eq!(s.fields[0].name.as_str(), "x");
+}
+
+#[test]
+fn block_in_if_else_not_misparsed_as_struct_literal() {
     let fe = FerroFrontend::new();
     let res = fe
-        .parse("struct { x: 1, y }", None)
+        .parse("if a > b { a } else { b }", None)
         .expect("parse");
+    let e = unwrap_expr(&res.ast);
+    assert!(
+        matches!(e.kind(), ExprKind::If(_)),
+        "should parse as if-expression, got {:?}",
+        e.kind()
+    );
+}
+
+#[test]
+fn parses_structural_literal_with_explicit_and_shorthand_fields() {
+    let fe = FerroFrontend::new();
+    let res = fe.parse("struct { x: 1, y }", None).expect("parse");
     let e = unwrap_expr(&res.ast);
     let s = match e.kind() {
         ExprKind::Structural(st) => st,
@@ -135,6 +164,24 @@ fn parses_empty_structural_literal() {
         other => panic!("expected ExprKind::Structural, found {:?}", other),
     };
     assert_eq!(s.fields.len(), 0);
+}
+
+// 反例：结构化/结构体字面量的错误语法应报错
+
+fn expect_parse_err(src: &str) {
+    let fe = FerroFrontend::new();
+    let res = fe.parse(src, None);
+    assert!(res.is_err(), "expected parse error for source:\n{src}");
+}
+
+#[test]
+fn struct_literal_missing_colon_errors() {
+    expect_parse_err("Point { x 1 }");
+}
+
+#[test]
+fn structural_literal_missing_field_name_errors() {
+    expect_parse_err("struct { : i32 }");
 }
 
 #[test]

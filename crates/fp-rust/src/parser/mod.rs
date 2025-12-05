@@ -61,7 +61,7 @@ fn parse_locator(p: syn::Path) -> Result<Locator> {
 fn parse_vis(v: syn::Visibility) -> Visibility {
     match v {
         syn::Visibility::Public(_) => Visibility::Public,
-        syn::Visibility::Restricted(_) => Visibility::Public,
+        syn::Visibility::Restricted(_) => Visibility::Crate,
         syn::Visibility::Inherited => Visibility::Private,
     }
 }

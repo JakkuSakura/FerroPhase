@@ -1,4 +1,5 @@
 use crate::{Result, cli::CliConfig, pipeline::Pipeline};
+use clap::{ArgAction, Args, ValueEnum, ValueHint};
 use fp_core::{
     ast::{File, Item, ItemKind, Module, Node},
     package::provider::{ModuleSource, PackageProvider},
@@ -61,10 +62,10 @@ fn prune_raw_item_macros(file: &mut File) {
 #[cfg(any(test, feature = "bootstrap"))]
 fn scrub_any_expressions(file: &mut File) {
     use fp_core::ast::{
-        BlockStmt, Expr, ExprAssign, ExprBinOp, ExprBlock, ExprCast, ExprClosure, ExprField,
-        ExprIf, ExprIndex, ExprInvoke, ExprKind, ExprLet, ExprMatch, ExprParen, ExprRange,
-        ExprReference, ExprSelect, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprUnOp,
-        ItemKind, Value,
+        BlockStmt, Expr, ExprAssign, ExprAsync, ExprBinOp, ExprBlock, ExprCast, ExprClosure,
+        ExprField, ExprIf, ExprIndex, ExprInvoke, ExprKind, ExprLet, ExprMatch, ExprParen,
+        ExprRange, ExprReference, ExprSelect, ExprStruct, ExprStructural, ExprTry, ExprTuple,
+        ExprUnOp, ItemKind, Value,
     };
 
     fn scrub_block(block: &mut ExprBlock) {
@@ -274,17 +275,37 @@ fn scrub_any_expressions(file: &mut File) {
     }
 }
 
-#[derive(Debug)]
+#[derive(Copy, Clone, Debug, ValueEnum)]
+pub enum ParseModeArg {
+    Strict,
+    Loose,
+}
+
+impl From<ParseModeArg> for TsParseMode {
+    fn from(value: ParseModeArg) -> Self {
+        match value {
+            ParseModeArg::Strict => TsParseMode::Strict,
+            ParseModeArg::Loose => TsParseMode::Loose,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Args)]
 pub struct ParseArgs {
     /// Expression to parse
+    #[arg(short, long, conflicts_with = "files")]
     pub expr: Option<String>,
     /// Files containing code to parse
+    #[arg(value_hint = ValueHint::FilePath)]
     pub files: Vec<PathBuf>,
     /// Parse mode for TypeScript sources
-    pub parse_mode: TsParseMode,
-    /// Resolve and parse imported modules recursively
+    #[arg(long = "parse-mode", default_value_t = ParseModeArg::Strict, value_enum)]
+    pub parse_mode: ParseModeArg,
+    /// Resolve and parse imported modules recursively (disable with --no-resolve)
+    #[arg(long = "no-resolve", action = ArgAction::SetFalse, default_value_t = true)]
     pub resolve_imports: bool,
     /// Path to persist the parsed AST snapshot as JSON
+    #[arg(long, value_hint = ValueHint::FilePath)]
     pub snapshot: Option<PathBuf>,
 }
 
@@ -310,7 +331,7 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
             ));
         }
         let mut pipeline = Pipeline::new();
-        pipeline.set_typescript_parse_mode(args.parse_mode);
+        pipeline.set_typescript_parse_mode(args.parse_mode.into());
         return parse_expression(&mut pipeline, expr, args.snapshot.take());
     }
 
@@ -320,15 +341,17 @@ pub async fn parse_command(mut args: ParseArgs, _config: &CliConfig) -> Result<(
         ));
     }
 
+    crate::commands::validate_paths_exist(&args.files, true, "parse")?;
+
     let mut pipeline = Pipeline::new();
-    pipeline.set_typescript_parse_mode(args.parse_mode);
+    pipeline.set_typescript_parse_mode(args.parse_mode.into());
     let mut snapshot = args.snapshot.take();
     for (index, path) in args.files.into_iter().enumerate() {
         let snapshot_for_file = if index == 0 { snapshot.take() } else { None };
         parse_path(
             &path,
             &mut pipeline,
-            args.parse_mode,
+            args.parse_mode.into(),
             args.resolve_imports,
             snapshot_for_file,
         )?;

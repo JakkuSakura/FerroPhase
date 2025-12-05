@@ -8,6 +8,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             BinOpKind::Mul => self.binop_mul(lhs, rhs),
             BinOpKind::Div => self.binop_div(lhs, rhs),
             BinOpKind::Mod => self.binop_mod(lhs, rhs),
+            BinOpKind::Shl | BinOpKind::Shr => self.binop_shift(op, lhs, rhs),
             BinOpKind::Gt | BinOpKind::Ge | BinOpKind::Lt | BinOpKind::Le => {
                 self.binop_ordering(op, lhs, rhs)
             }
@@ -146,6 +147,24 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             other => Err(interpretation_error(format!(
                 "bitwise operators require integers, found {:?}",
+                other
+            ))),
+        }
+    }
+
+    fn binop_shift(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
+        // 移位仅对整数定义；对齐 bitwise 的约束风格
+        match (lhs, rhs) {
+            (Value::Int(l), Value::Int(r)) => {
+                let result = match op {
+                    BinOpKind::Shl => l.value << r.value,
+                    BinOpKind::Shr => l.value >> r.value,
+                    _ => unreachable!(),
+                };
+                Ok(Value::int(result))
+            }
+            other => Err(interpretation_error(format!(
+                "shift operators require integers, found {:?}",
                 other
             ))),
         }

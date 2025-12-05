@@ -36,6 +36,7 @@ fn test_parse_fn() -> Result<()> {
                     Ty::Primitive(TypePrimitive::i64())
                 )],
                 generics_params: vec![],
+                is_const: false,
                 ret_ty: Some(Ty::Primitive(TypePrimitive::i64()))
             },
             body: block.into(),
@@ -199,6 +200,7 @@ fn test_parse_impl_for() -> Result<()> {
         ItemKind::Impl(ItemImpl {
             trait_ty: Some(Locator::Ident("Foo".into())),
             self_ty: Expr::ident("Bar".into()),
+            generics_params: vec![],
             items: vec![shll_parse_item! {
                 fn foo(a: i64) -> i64 {
                     a + 1
@@ -249,6 +251,7 @@ fn test_parse_fn_self() -> Result<()> {
                 receiver: Some(FunctionParamReceiver::Ref),
                 params: vec![],
                 generics_params: vec![],
+                is_const: false,
                 ret_ty: None
             },
             body: Expr::block(ExprBlock::new()).into(),
@@ -272,6 +275,7 @@ fn test_parse_fn_self() -> Result<()> {
                 receiver: Some(FunctionParamReceiver::RefStatic),
                 params: vec![],
                 generics_params: vec![],
+                is_const: false,
                 ret_ty: None
             },
             body: Expr::block(ExprBlock::new()).into(),

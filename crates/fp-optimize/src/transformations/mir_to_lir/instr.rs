@@ -11,8 +11,6 @@ use fp_core::mir::ty::{
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
-#[cfg(test)]
-mod tests;
 // Internal submodules; items are used via inherent methods
 
 /// Generator for transforming MIR to LIR (Low-level IR)

@@ -481,6 +481,8 @@ impl HirGenerator {
     fn map_visibility(&self, visibility: &ast::Visibility) -> hir::Visibility {
         match visibility {
             ast::Visibility::Public => hir::Visibility::Public,
+            ast::Visibility::Crate => hir::Visibility::Private,
+            ast::Visibility::Restricted(_) => hir::Visibility::Private,
             ast::Visibility::Inherited => hir::Visibility::Private,
             ast::Visibility::Private => hir::Visibility::Private,
         }

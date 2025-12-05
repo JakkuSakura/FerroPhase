@@ -305,9 +305,11 @@ impl RustPrinter {
         }
     }
 
-    pub fn print_vis(&self, vis: Visibility) -> TokenStream {
+    pub fn print_vis(&self, vis: &Visibility) -> TokenStream {
         match vis {
             Visibility::Public => quote!(pub),
+            Visibility::Crate => quote!(pub(crate)),
+            Visibility::Restricted(_) => quote!(pub(crate)),
             Visibility::Private => quote!(),
             Visibility::Inherited => quote!(),
         }
@@ -327,7 +329,7 @@ impl RustPrinter {
         &self,
         sig: &FunctionSignature,
         body: &Expr,
-        vis: Visibility,
+        vis: &Visibility,
     ) -> Result<TokenStream> {
         let name = if let Some(name) = &sig.name {
             self.print_ident(name)
@@ -380,7 +382,7 @@ impl RustPrinter {
     pub fn print_value_function(
         &self,
         fun: &ValueFunction,
-        vis: Visibility,
+        vis: &Visibility,
     ) -> Result<TokenStream> {
         let sig = &fun.sig;
         let body = &fun.body;
@@ -400,7 +402,7 @@ impl RustPrinter {
         }
     }
     pub fn print_func_value(&self, fun: &ValueFunction) -> Result<TokenStream> {
-        self.print_value_function(fun, Visibility::Private)
+        self.print_value_function(fun, &Visibility::Private)
     }
     pub fn print_func_type(&self, fun: &TypeFunction) -> Result<TokenStream> {
         let args: Vec<_> = fun
@@ -426,7 +428,7 @@ impl RustPrinter {
     pub fn print_import(&self, node: &ItemImport) -> Result<TokenStream> {
         let import: syn::UseTree =
             syn::parse_str(&node.tree.to_string()).map_err(|e| eyre::eyre!(e.to_string()))?;
-        let vis = self.print_vis(node.visibility);
+        let vis = self.print_vis(&node.visibility);
 
         Ok(quote!(#vis use #import;))
     }
@@ -575,7 +577,7 @@ impl AstSerializer for RustPrinter {
     }
 
     fn serialize_value_function(&self, node: &ValueFunction) -> fp_core::error::Result<String> {
-        self.print_value_function(node, Visibility::Private)
+        self.print_value_function(node, &Visibility::Private)
             .and_then(|x| self.maybe_rustfmt_token_stream(&x))
     }
     fn serialize_def_function(&self, node: &ItemDefFunction) -> fp_core::error::Result<String> {

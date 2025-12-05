@@ -80,6 +80,7 @@ impl RustParser {
             receiver,
             params,
             generics_params,
+            is_const: sig.constness.is_some(),
             ret_ty: match sig.output {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => Some(self.parse_type(*ty)?),
@@ -204,6 +205,7 @@ impl RustParser {
                 .transpose()?
                 .map(Locator::path),
             self_ty: Expr::value(self.parse_type(*im.self_ty.clone())?.into()),
+            generics_params: parse_generics_params_simple(&im.generics),
             items: im
                 .items
                 .into_iter()
@@ -215,6 +217,7 @@ impl RustParser {
     fn parse_item_enum_internal(&self, e: syn::ItemEnum) -> Result<ItemDefEnum> {
         let visibility = parse_vis(e.vis.clone());
         let ident = parse_ident(e.ident.clone());
+        let generics_params = parse_generics_params_simple(&e.generics);
         let variants: Vec<EnumTypeVariant> = e
             .variants
             .into_iter()
@@ -259,6 +262,7 @@ impl RustParser {
             name: ident.clone(),
             value: TypeEnum {
                 name: ident.clone(),
+                generics_params,
                 variants,
             },
             visibility,
@@ -419,8 +423,10 @@ pub fn parse_impl_trait_with(parser: &RustParser, im: syn::TypeImplTrait) -> Res
 }
 
 pub fn parse_type_struct(s: syn::ItemStruct) -> Result<TypeStruct> {
+    let generics_params = parse_generics_params_simple(&s.generics);
     Ok(TypeStruct {
         name: parse_ident(s.ident),
+        generics_params,
         fields: s
             .fields
             .into_iter()
@@ -428,4 +434,21 @@ pub fn parse_type_struct(s: syn::ItemStruct) -> Result<TypeStruct> {
             .map(|(i, f)| parse_struct_field(i, f))
             .try_collect()?,
     })
+}
+
+fn parse_generics_params_simple(generics: &syn::Generics) -> Vec<GenericParam> {
+    generics
+        .params
+        .iter()
+        .filter_map(|p| {
+            if let syn::GenericParam::Type(tp) = p {
+                Some(GenericParam {
+                    name: parse_ident(tp.ident.clone()),
+                    bounds: TypeBounds::any(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
 }

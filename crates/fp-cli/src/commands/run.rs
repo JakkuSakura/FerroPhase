@@ -4,6 +4,7 @@ use crate::commands::{format_value_brief, print_runtime_result};
 use crate::config::{PipelineOptions, PipelineTarget};
 use crate::pipeline::{Pipeline, PipelineInput, PipelineOutput};
 use crate::{CliError, Result, cli::CliConfig};
+use clap::Args;
 use console::style;
 use fp_core::ast::Value;
 use fp_core::pretty::{PrettyOptions, pretty};
@@ -11,10 +12,18 @@ use std::path::PathBuf;
 use tracing::info;
 
 /// Arguments for the run command
+#[derive(Debug, Clone, Args)]
 pub struct RunArgs {
+    /// FerroPhase file to run
     pub file: PathBuf,
+    /// Print the AST representation
+    #[arg(long)]
     pub print_ast: bool,
+    /// Print optimization passes
+    #[arg(long)]
     pub print_passes: bool,
+    /// Runtime to use (literal, rust)
+    #[arg(long, default_value = "literal")]
     pub runtime: Option<String>, // Runtime to use (literal, rust)
 }
 
@@ -22,6 +31,8 @@ pub struct RunArgs {
 /// uses, stopping at the interpretation stage.
 pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
     info!("Running file '{}'", args.file.display());
+
+    crate::commands::validate_paths_exist(&[args.file.clone()], true, "run")?;
 
     let runtime = args.runtime.as_deref().unwrap_or("literal").to_string();
     validate_runtime(&runtime)?;

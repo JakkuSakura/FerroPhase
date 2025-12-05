@@ -57,6 +57,7 @@ macro_rules! plain_value {
 plain_value! {
     ValueInt: i64
 }
+// TODO: 数值后缀仅在解析阶段保留，当前存储仍为 i64；未按后缀做位宽/溢出校验。
 plain_value! {
     ValueBool: bool
 }
@@ -65,6 +66,7 @@ plain_value! {
 pub struct ValueDecimal {
     pub value: f64,
 }
+// TODO: 浮点后缀目前未反映到存储/校验，仅保留在解析侧元数据。
 impl PartialEq for ValueDecimal {
     fn eq(&self, other: &Self) -> bool {
         self.value.total_cmp(&other.value) == std::cmp::Ordering::Equal
@@ -92,6 +94,7 @@ impl ValueDecimal {
         Self { value: v }
     }
 }
+// TODO: emit! 当前仅作为语法糖重写为 splice(quote)，未限制使用场景；若需语义约束，请在解析/语义阶段补诊断。
 impl ToJson for ValueDecimal {
     fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(self.value))
@@ -653,6 +656,8 @@ common_struct! {
         pub ty_annotation: TySlot,
         pub name: Ident,
         pub ty: Ty,
+        #[serde(default)]
+        pub is_const: bool,
         pub default: Option<Value>,
         /// in Python, *args
         pub as_tuple: bool,
@@ -670,6 +675,7 @@ impl FunctionParam {
             ty_annotation: None,
             name,
             ty,
+            is_const: false,
             default: None,
             as_tuple: false,
             as_dict: false,
@@ -705,6 +711,8 @@ common_struct! {
         pub receiver: Option<FunctionParamReceiver>,
         pub params: Vec<FunctionParam>,
         pub generics_params: Vec<GenericParam>,
+        #[serde(default)]
+        pub is_const: bool,
         pub ret_ty: Option<Ty>,
     }
 }
@@ -715,6 +723,7 @@ impl FunctionSignature {
             receiver: None,
             params: vec![],
             generics_params: vec![],
+            is_const: false,
             ret_ty: None,
         }
     }

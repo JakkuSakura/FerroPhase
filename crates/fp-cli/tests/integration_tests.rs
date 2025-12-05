@@ -140,7 +140,6 @@ async fn compile_example(example_name: &str) {
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
-        watch: false,
         error_tolerance: false,
         max_errors: 0,
         save_intermediates: false,

@@ -159,7 +159,11 @@ fn parse_enum_decl(
     let def = ItemDefEnum {
         visibility,
         name: name.clone(),
-        value: fp_core::ast::TypeEnum { name, variants },
+        value: fp_core::ast::TypeEnum {
+            name,
+            generics_params: Vec::new(),
+            variants,
+        },
     };
     Ok(Item::new(ItemKind::DefEnum(def)))
 }

@@ -378,11 +378,8 @@ impl PrettyPrintable for ast::Item {
 
         match &self.kind {
             ast::ItemKind::Module(module) => {
-                let mut header = format!(
-                    "{}module {}",
-                    visibility_prefix(module.visibility),
-                    module.name
-                );
+                let mut header =
+                    format!("{}module {}", visibility_prefix(&module.visibility), module.name);
                 header.push_str(&suffix);
                 ctx.writeln(f, format!("{} {{", header))?;
                 ctx.with_indent(|ctx| {
@@ -410,7 +407,7 @@ impl PrettyPrintable for ast::Item {
                     f,
                     format!(
                         "{}struct {}{} {{",
-                        visibility_prefix(def.visibility),
+                        visibility_prefix(&def.visibility),
                         def.name,
                         suffix
                     ),
@@ -431,7 +428,7 @@ impl PrettyPrintable for ast::Item {
                     f,
                     format!(
                         "{}structural {}{}",
-                        visibility_prefix(def.visibility),
+                        visibility_prefix(&def.visibility),
                         def.name,
                         suffix
                     ),
@@ -451,7 +448,7 @@ impl PrettyPrintable for ast::Item {
                     f,
                     format!(
                         "{}enum {}{} {{",
-                        visibility_prefix(def.visibility),
+                        visibility_prefix(&def.visibility),
                         def.name,
                         suffix
                     ),
@@ -476,7 +473,7 @@ impl PrettyPrintable for ast::Item {
                 f,
                 format!(
                     "{}type {} = {}{}",
-                    visibility_prefix(def.visibility),
+                    visibility_prefix(&def.visibility),
                     def.name,
                     render_ty_brief(&def.value),
                     suffix
@@ -487,7 +484,7 @@ impl PrettyPrintable for ast::Item {
                     .ty_annotation()
                     .or(def.ty.as_ref())
                     .map(|ty| render_ty_brief(ty));
-                let mut line = format!("{}const {}", visibility_prefix(def.visibility), def.name);
+                let mut line = format!("{}const {}", visibility_prefix(&def.visibility), def.name);
                 if let Some(ty) = ty_display {
                     line.push_str(": ");
                     line.push_str(&ty);
@@ -503,7 +500,7 @@ impl PrettyPrintable for ast::Item {
                     .unwrap_or_else(|| render_ty_brief(&def.ty));
                 let line = format!(
                     "{}static {}: {}{}",
-                    visibility_prefix(def.visibility),
+                    visibility_prefix(&def.visibility),
                     def.name,
                     ty_display,
                     suffix
@@ -516,7 +513,7 @@ impl PrettyPrintable for ast::Item {
                 write!(
                     &mut header,
                     "{}{}{}",
-                    visibility_prefix(def.visibility),
+                    visibility_prefix(&def.visibility),
                     if def.attrs.is_empty() { "" } else { "[attrs] " },
                     render_function_signature(&def.sig)
                 )
@@ -531,7 +528,8 @@ impl PrettyPrintable for ast::Item {
             }
             ast::ItemKind::DefTrait(def) => {
                 let bounds = render_type_bounds(&def.bounds);
-                let mut header = format!("{}trait {}", visibility_prefix(def.visibility), def.name);
+                let mut header =
+                    format!("{}trait {}", visibility_prefix(&def.visibility), def.name);
                 if !bounds.is_empty() {
                     header.push_str(": ");
                     header.push_str(&bounds);
@@ -598,18 +596,23 @@ impl PrettyPrintable for ast::Item {
                 f,
                 format!(
                     "{}import {}{}",
-                    visibility_prefix(import.visibility),
+                    visibility_prefix(&import.visibility),
                     import.tree,
                     suffix
                 ),
             ),
             ast::ItemKind::Impl(item_impl) => {
+                let generics = render_generic_params(&item_impl.generics_params);
                 let trait_part = item_impl
                     .trait_ty
                     .as_ref()
                     .map(|locator| locator.to_string())
                     .unwrap_or_default();
-                let mut header = String::from("impl ");
+                let mut header = if generics.is_empty() {
+                    String::from("impl ")
+                } else {
+                    format!("impl{} ", generics)
+                };
                 if !trait_part.is_empty() {
                     header.push_str(&trait_part);
                     header.push_str(" for ");
@@ -1040,11 +1043,15 @@ fn render_function_signature(sig: &ast::FunctionSignature) -> String {
         .as_ref()
         .map(|ty| format!(" -> {}", render_ty_brief(ty)))
         .unwrap_or_default();
-    format!("fn{} {}({}){}", generics, name, params, ret)
+    let const_prefix = if sig.is_const { "const " } else { "" };
+    format!("{}fn{} {}({}){}", const_prefix, generics, name, params, ret)
 }
 
 fn render_function_param(param: &ast::FunctionParam) -> String {
     let mut parts = String::new();
+    if param.is_const {
+        parts.push_str("const ");
+    }
     if param.as_tuple {
         parts.push('*');
     }
@@ -1481,9 +1488,11 @@ fn render_format_arg_ref(arg_ref: &ast::FormatArgRef) -> String {
     }
 }
 
-fn visibility_prefix(vis: ast::Visibility) -> &'static str {
+fn visibility_prefix(vis: &ast::Visibility) -> &'static str {
     match vis {
         ast::Visibility::Public => "pub ",
+        ast::Visibility::Crate => "pub(crate) ",
+        ast::Visibility::Restricted(_) => "pub(in …) ",
         ast::Visibility::Private => "priv ",
         ast::Visibility::Inherited => "",
     }

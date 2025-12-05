@@ -798,6 +798,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn make_hashmap_ty(&self) -> Ty {
         Ty::Struct(TypeStruct {
             name: Ident::new("HashMap"),
+            generics_params: Vec::new(),
             fields: Vec::new(),
         })
     }

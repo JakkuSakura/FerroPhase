@@ -182,6 +182,7 @@ impl<'a> Lowering<'a> {
         match &typedef.kind {
             TypeDefKind::Record(record) => Ok(Ty::Struct(TypeStruct {
                 name: type_name_or_fallback(typedef, type_id),
+                generics_params: Vec::new(),
                 fields: self.lower_record_fields(record)?,
             })),
             TypeDefKind::Tuple(tuple) => Ok(Ty::Tuple(TypeTuple {
@@ -193,6 +194,7 @@ impl<'a> Lowering<'a> {
             })),
             TypeDefKind::Flags(flags) => Ok(Ty::Struct(TypeStruct {
                 name: type_name_or_fallback(typedef, type_id),
+                generics_params: Vec::new(),
                 fields: flags
                     .flags
                     .iter()
@@ -207,6 +209,7 @@ impl<'a> Lowering<'a> {
             TypeDefKind::Variant(variant) => self.lower_variant(typedef, type_id, variant),
             TypeDefKind::Enum(enum_) => Ok(Ty::Enum(TypeEnum {
                 name: type_name_or_fallback(typedef, type_id),
+                generics_params: Vec::new(),
                 variants: enum_
                     .cases
                     .iter()
@@ -219,6 +222,7 @@ impl<'a> Lowering<'a> {
             })),
             TypeDefKind::Option(inner) => Ok(Ty::Enum(TypeEnum {
                 name: type_name_or_fallback(typedef, type_id),
+                generics_params: Vec::new(),
                 variants: vec![
                     EnumTypeVariant {
                         name: make_ident("none"),
@@ -246,6 +250,7 @@ impl<'a> Lowering<'a> {
 
                 Ok(Ty::Enum(TypeEnum {
                     name: type_name_or_fallback(typedef, type_id),
+                    generics_params: Vec::new(),
                     variants: vec![
                         EnumTypeVariant {
                             name: make_ident("ok"),
@@ -316,6 +321,7 @@ impl<'a> Lowering<'a> {
 
         Ok(Ty::Enum(TypeEnum {
             name: type_name_or_fallback(typedef, type_id),
+            generics_params: Vec::new(),
             variants,
         }))
     }

@@ -1,8 +1,8 @@
 use eyre::ContextCompat;
 use fp_core::ast::{
-    FunctionSignature, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic, ItemDeclType,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefStructural,
-    ItemDefTrait, ItemDefType, ItemImpl, ItemKind, Ty,
+    FunctionSignature, GenericParam, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic,
+    ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
+    ItemDefStructural, ItemDefTrait, ItemDefType, ItemImpl, ItemKind, Ty,
 };
 use fp_core::{Error, Result};
 use itertools::Itertools;
@@ -22,7 +22,7 @@ impl RustPrinter {
     }
 
     pub fn print_def_struct(&self, def: &ItemDefStruct) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let fields: Vec<_> = def
             .value
@@ -37,7 +37,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_def_structural(&self, def: &ItemDefStructural) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let fields: Vec<_> = def
             .value
@@ -52,7 +52,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_def_type(&self, def: &ItemDefType) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let ty = self.print_type(&def.value)?;
         return Ok(quote!(
@@ -60,7 +60,7 @@ impl RustPrinter {
         ));
     }
     pub fn print_def_enum(&self, def: &ItemDefEnum) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let variants: Vec<_> = def
             .value
@@ -92,7 +92,7 @@ impl RustPrinter {
         ))
     }
     pub fn print_def_const(&self, def: &ItemDefConst) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let ty = self.print_type(&def.ty.as_ref().context("No type")?.clone())?;
         let value = self.print_expr(&def.value)?;
@@ -101,7 +101,7 @@ impl RustPrinter {
         ));
     }
     pub fn print_def_static(&self, def: &ItemDefStatic) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let ty = self.print_type(&def.ty)?;
         let value = self.print_expr(&def.value)?;
@@ -140,7 +140,7 @@ impl RustPrinter {
         self.print_function_decl(&decl.sig)
     }
     pub fn print_def_trait(&self, def: &ItemDefTrait) -> Result<TokenStream> {
-        let vis = self.print_vis(def.visibility);
+        let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
         let ty = self.print_type_bounds(&def.bounds)?;
         let items = self.print_items_chunk(&def.items)?;
@@ -154,15 +154,22 @@ impl RustPrinter {
     pub fn print_impl(&self, impl_: &ItemImpl) -> Result<TokenStream> {
         let name = self.print_expr(&impl_.self_ty)?;
         let methods = self.print_items_chunk(&impl_.items)?;
+        let generics = self.print_generics_params(&impl_.generics_params)?;
+        let trait_part = if let Some(trait_ty) = &impl_.trait_ty {
+            let trait_tokens = self.print_locator(trait_ty)?;
+            quote!(#trait_tokens for)
+        } else {
+            quote!()
+        };
         Ok(quote!(
-            impl #name {
+            impl #generics #trait_part #name {
                 #methods
             }
         ))
     }
     pub fn print_def_function(&self, func: &ItemDefFunction) -> Result<TokenStream> {
         let attrs = self.print_attrs(&func.attrs)?;
-        let func = self.print_function(&func.sig, &func.body, func.visibility)?;
+        let func = self.print_function(&func.sig, &func.body, &func.visibility)?;
         Ok(quote!(
             #attrs
             #func
@@ -229,5 +236,17 @@ impl RustPrinter {
         Ok(quote!(extern "Rust" {
             fn #name #generics(#(#params_iter),*) #ret;
         }))
+    }
+
+    fn print_generics_params(&self, params: &[GenericParam]) -> Result<TokenStream> {
+        if params.is_empty() {
+            return Ok(quote!());
+        }
+        let idents: Vec<_> = params.iter().map(|p| self.print_ident(&p.name)).collect();
+        let bounds: Vec<_> = params
+            .iter()
+            .map(|p| self.print_type_bounds(&p.bounds))
+            .try_collect()?;
+        Ok(quote!(<#(#idents: #bounds), *>))
     }
 }
