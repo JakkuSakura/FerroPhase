@@ -1026,9 +1026,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::Type(_)
             | Ty::Value(_)
             | Ty::TypeBinaryOp(_)
-            | Ty::AnyBox(_) => {
-                ty.clone()
-            }
+            | Ty::AnyBox(_) => ty.clone(),
         }
     }
 
@@ -1459,7 +1457,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     // removed unused function_ret_ty_from_ty (no callers)
 
     fn type_function_ret_ty(ty: &TypeFunction) -> Option<Ty> {
-        ty.ret_ty.as_ref().map(|ret| (*ret.clone()))
+        ty.ret_ty.as_ref().map(|ret| *ret.clone())
     }
 
     fn lookup_type(&self, name: &str) -> Option<Ty> {

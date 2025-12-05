@@ -1,5 +1,13 @@
 use super::*;
-use fp_core::{mir::Symbol as MirSymbol, span::Span};
+use fp_core::{
+    lir,
+    mir::{
+        self,
+        ty::{IntTy, Ty},
+        Symbol as MirSymbol,
+    },
+    span::Span,
+};
 use std::collections::HashMap;
 
 fn local_decl(ty: Ty) -> mir::LocalDecl {

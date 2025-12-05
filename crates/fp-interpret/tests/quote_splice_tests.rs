@@ -44,7 +44,7 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         },
     )));
 
-    let mut fn_body = ExprBlock::new_stmts(vec![
+    let fn_body = ExprBlock::new_stmts(vec![
         BlockStmt::Expr(BlockStmtExpr::new(const_block_expr).with_semicolon(true)),
         BlockStmt::Expr(BlockStmtExpr::new(Expr::value(Value::int(0)))),
     ]);
@@ -53,7 +53,7 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body.clone()).into());
     func.sig.ret_ty = Some(i32_ty());
 
-    let mut file = File {
+    let file = File {
         path: PathBuf::from("quote_splice.fp"),
         items: vec![Item::from(ItemKind::DefFunction(func))],
     };

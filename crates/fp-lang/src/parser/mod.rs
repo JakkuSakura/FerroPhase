@@ -8,14 +8,14 @@
 
 use eyre::Result;
 use fp_core::ast::Expr;
-use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::cst::{CstKind, CstNode};
+use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 
+mod cst;
 mod expr;
 mod items;
-mod cst;
-mod winnow;
 pub mod lower;
+mod winnow;
 pub use fp_core::cst::{CstError, CstResult};
 
 const FERRO_CONTEXT: &str = "ferrophase.parser";
@@ -300,9 +300,7 @@ mod tests {
     fn parse_expr_ast_handles_range() {
         let parser = FerroPhaseParser::new();
         parser.clear_diagnostics();
-        let expr = parser
-            .parse_expr_ast("0..10")
-            .expect("parse range expr");
+        let expr = parser.parse_expr_ast("0..10").expect("parse range expr");
         match expr.kind() {
             ExprKind::Range(r) => {
                 assert!(r.start.is_some());
@@ -403,20 +401,24 @@ mod tests {
         let expr = parser
             .parse_expr_ast("async { 1 + 2 }")
             .expect("parse async block expr");
-        // For now, `async` is treated as a syntactic
-        // marker only and the inner block is returned.
         match expr.kind() {
-            ExprKind::Block(block) => {
-                assert_eq!(block.stmts.len(), 1);
-                if let BlockStmt::Expr(block_expr) = &block.stmts[0] {
-                    match block_expr.expr.kind() {
-                        ExprKind::BinOp(bin) => {
-                            assert!(matches!(bin.kind, BinOpKind::Add));
+            ExprKind::Async(async_expr) => {
+                if let ExprKind::Block(block) = async_expr.expr.kind() {
+                    assert_eq!(block.stmts.len(), 1);
+                    if let BlockStmt::Expr(block_expr) = &block.stmts[0] {
+                        match block_expr.expr.kind() {
+                            ExprKind::BinOp(bin) => {
+                                assert!(matches!(bin.kind, BinOpKind::Add));
+                            }
+                            other => {
+                                panic!("expected binary op in async block, found {:?}", other)
+                            }
                         }
-                        other => panic!("expected binary op in async block, found {:?}", other),
+                    } else {
+                        panic!("async block should contain expression statement");
                     }
                 } else {
-                    panic!("async block should contain expression statement");
+                    panic!("async should wrap a block expression");
                 }
             }
             other => panic!("expected block expr from async, got {:?}", other),
@@ -430,11 +432,10 @@ mod tests {
         let expr = parser
             .parse_expr_ast("for i in 0..10 { i }")
             .expect("parse for loop expr");
-        // For now, `for` is desugared into a block containing
-        // an iterator binding and a loop expression.
         match expr.kind() {
-            ExprKind::Block(block) => {
-                assert!(block.stmts.len() >= 2);
+            ExprKind::For(for_expr) => {
+                assert!(for_expr.pat.as_ident().is_some());
+                assert!(matches!(for_expr.iter.kind(), ExprKind::Range(_)));
             }
             other => panic!("expected block expr from for, got {:?}", other),
         }
@@ -509,7 +510,7 @@ mod tests {
     #[test]
     fn parse_items_ast_handles_module_item() {
         let parser = FerroPhaseParser::new();
-         parser.clear_diagnostics();
+        parser.clear_diagnostics();
         let items = parser
             .parse_items_ast("mod foo { fn bar() {} }")
             .expect("parse module item");

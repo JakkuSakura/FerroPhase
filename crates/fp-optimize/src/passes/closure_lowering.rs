@@ -179,6 +179,7 @@ impl ClosureLowering {
         }
         let struct_decl = TypeStruct {
             name: struct_ident.clone(),
+            generics_params: Vec::new(),
             fields: struct_fields,
         };
         let env_struct_ty = Ty::Struct(struct_decl.clone());
@@ -355,6 +356,11 @@ impl ClosureLowering {
                     self.rewrite_in_expr(case.body.as_mut())?;
                 }
             }
+            ExprKind::For(expr_for) => {
+                // 遍历迭代器与循环体，保持与 While/Loop 相同的处理深度
+                self.rewrite_in_expr(expr_for.iter.as_mut())?;
+                self.rewrite_in_expr(expr_for.body.as_mut())?;
+            }
             ExprKind::Let(expr_let) => self.rewrite_in_expr(expr_let.expr.as_mut())?,
             ExprKind::Macro(_) => {}
             ExprKind::Quote(q) => {
@@ -411,6 +417,10 @@ impl ClosureLowering {
             }
             ExprKind::Await(await_expr) => {
                 self.rewrite_in_expr(await_expr.base.as_mut())?;
+            }
+            ExprKind::Async(async_expr) => {
+                // async 作为语法标记，继续深入内部表达式
+                self.rewrite_in_expr(async_expr.expr.as_mut())?;
             }
             ExprKind::Assign(assign) => {
                 self.rewrite_in_expr(assign.target.as_mut())?;
@@ -675,6 +685,10 @@ impl CaptureCollector {
             ExprKind::Await(await_expr) => {
                 self.visit(await_expr.base.as_ref());
             }
+            ExprKind::Async(async_expr) => {
+                // async 仅作标记，这里继续下钻内部表达式
+                self.visit(async_expr.expr.as_ref());
+            }
             ExprKind::BinOp(binop) => {
                 self.visit(binop.lhs.as_ref());
                 self.visit(binop.rhs.as_ref());
@@ -728,6 +742,11 @@ impl CaptureCollector {
             ExprKind::While(expr_while) => {
                 self.visit(expr_while.cond.as_ref());
                 self.visit(expr_while.body.as_ref());
+            }
+            ExprKind::For(expr_for) => {
+                // 遍历 for 的迭代器与循环体，保持与其它控制流一致
+                self.visit(expr_for.iter.as_ref());
+                self.visit(expr_for.body.as_ref());
             }
             ExprKind::Match(expr_match) => {
                 for case in &expr_match.cases {
@@ -895,6 +914,10 @@ impl CaptureReplacer {
             ExprKind::Await(await_expr) => {
                 self.visit(await_expr.base.as_mut());
             }
+            ExprKind::Async(async_expr) => {
+                // async 仅作标记，继续下钻内部表达式
+                self.visit(async_expr.expr.as_mut());
+            }
             ExprKind::Select(select) => self.visit(select.obj.as_mut()),
             ExprKind::Assign(assign) => {
                 self.visit(assign.target.as_mut());
@@ -952,6 +975,11 @@ impl CaptureReplacer {
             ExprKind::While(expr_while) => {
                 self.visit(expr_while.cond.as_mut());
                 self.visit(expr_while.body.as_mut());
+            }
+            ExprKind::For(expr_for) => {
+                // 遍历 for 的迭代器与循环体
+                self.visit(expr_for.iter.as_mut());
+                self.visit(expr_for.body.as_mut());
             }
             ExprKind::Match(expr_match) => {
                 for case in &mut expr_match.cases {

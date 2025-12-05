@@ -1,10 +1,10 @@
+use crate::lexer::winnow::{is_ident_continue, is_ident_start};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprIntrinsicCall, ExprKind, ExprQuote, ExprSplice,
-    Ident, Locator, QuoteFragmentKind, Value,
+    Ident, Locator, Value,
 };
 use fp_core::cst::{CstKind, CstNode};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-use crate::lexer::winnow::{is_ident_start, is_ident_continue};
 
 /// Lower a CST node directly into an fp-core AST expression.
 ///
@@ -38,7 +38,7 @@ fn lower_quote(cst: &CstNode) -> Expr {
     // grammar. We translate it into an ExprQuote with a block
     // expression body.
     let block = lower_block_child(cst).unwrap_or_else(ExprBlock::new);
-    ExprKind::Quote(ExprQuote { block, kind: Some(QuoteFragmentKind::Expr) }).into()
+    ExprKind::Quote(ExprQuote { block, kind: None }).into()
 }
 
 fn lower_splice(cst: &CstNode) -> Expr {
@@ -50,7 +50,10 @@ fn lower_splice(cst: &CstNode) -> Expr {
     } else {
         Expr::unit()
     };
-    ExprKind::Splice(ExprSplice { token: Box::new(token_expr) }).into()
+    ExprKind::Splice(ExprSplice {
+        token: Box::new(token_expr),
+    })
+    .into()
 }
 
 fn lower_const_block(cst: &CstNode) -> Expr {
@@ -61,20 +64,15 @@ fn lower_const_block(cst: &CstNode) -> Expr {
     let block_expr = Expr::block(block);
     let call = ExprIntrinsicCall::new(
         IntrinsicCallKind::ConstBlock,
-        IntrinsicCallPayload::Args { args: vec![block_expr] },
+        IntrinsicCallPayload::Args {
+            args: vec![block_expr],
+        },
     );
     ExprKind::IntrinsicCall(call).into()
 }
 
 fn lower_block(cst: &CstNode) -> Expr {
-    let mut stmts = Vec::new();
-    for child in &cst.children {
-        if let Some(expr) = lower_expr_from_cst(child) {
-            let stmt = BlockStmt::Expr(BlockStmtExpr::new(expr));
-            stmts.push(stmt);
-        }
-    }
-    let block = ExprBlock::new_stmts(stmts);
+    let block = lower_block_to_block(cst);
     ExprKind::Block(block).into()
 }
 
@@ -86,12 +84,38 @@ fn lower_block_child(cst: &CstNode) -> Option<ExprBlock> {
 }
 
 fn lower_block_to_block(cst: &CstNode) -> ExprBlock {
-    let mut stmts = Vec::new();
-    for child in &cst.children {
+    // Track the position of each lowered expr so we can inspect tokens that
+    // appear *after* the last expression to decide whether it was terminated
+    // by an explicit semicolon.
+    let mut stmts_with_pos: Vec<(usize, BlockStmt)> = Vec::new();
+    for (idx, child) in cst.children.iter().enumerate() {
         if let Some(expr) = lower_expr_from_cst(child) {
-            stmts.push(BlockStmt::Expr(BlockStmtExpr::new(expr)));
+            stmts_with_pos.push((idx, BlockStmt::Expr(BlockStmtExpr::new(expr))));
         }
     }
+
+    if !stmts_with_pos.is_empty() {
+        let last_pos = stmts_with_pos.last().map(|(idx, _)| *idx).unwrap();
+        let trailing_has_semicolon = cst.children.iter().skip(last_pos + 1).any(|child| {
+            matches!(child.kind, CstKind::Token) && child.text.as_deref() == Some(";")
+        });
+
+        let last_idx = stmts_with_pos.len() - 1;
+        for (i, (_, stmt)) in stmts_with_pos.iter_mut().enumerate() {
+            if let BlockStmt::Expr(expr_stmt) = stmt {
+                if i != last_idx {
+                    expr_stmt.semicolon = Some(true);
+                } else {
+                    expr_stmt.semicolon = Some(trailing_has_semicolon);
+                }
+            }
+        }
+    }
+
+    let stmts = stmts_with_pos
+        .into_iter()
+        .map(|(_, stmt)| stmt)
+        .collect::<Vec<_>>();
     ExprBlock::new_stmts(stmts)
 }
 

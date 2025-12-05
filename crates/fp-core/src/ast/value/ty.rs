@@ -22,6 +22,8 @@ common_enum! {
     #[derive(Copy)]
     pub enum TypeBinaryOpKind {
         Add,
+        /// Union / alternative branches of types.
+        Union,
         /// Intersection of struct-like types (common fields only).
         Intersect,
         /// Field removal from a struct-like type.
@@ -280,12 +282,16 @@ impl StructuralField {
 common_struct! {
     pub struct TypeStruct {
         pub name: Ident,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub generics_params: Vec<GenericParam>,
         pub fields: Vec<StructuralField>,
     }
 }
 common_struct! {
     pub struct TypeEnum {
         pub name: Ident,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub generics_params: Vec<GenericParam>,
         pub variants: Vec<EnumTypeVariant>,
     }
 }
