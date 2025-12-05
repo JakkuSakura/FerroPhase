@@ -5,6 +5,7 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, TranspilePreparationOptions},
 };
+use clap::{ArgAction, Args};
 use console::style;
 use fp_core::ast::{AstSerializer, Node};
 use fp_core::ast::{Ident, Item, Module as AstModule, NodeKind, Visibility};
@@ -23,18 +24,47 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use tracing::{info, info_span};
 
-/// Arguments for the transpile command
-#[derive(Debug, Clone)]
+/// Arguments for the transpile command (also used by Clap)
+#[derive(Debug, Clone, Args)]
 pub struct TranspileArgs {
+    /// Input file(s) to transpile
+    #[arg(required = true)]
     pub input: Vec<PathBuf>,
+
+    /// Target language (javascript, typescript, python, go)
+    #[arg(short, long, default_value = "typescript")]
     pub target: String,
+
+    /// Output file or directory
+    #[arg(short, long)]
     pub output: Option<PathBuf>,
+
+    /// Perform const evaluation before transpilation
+    #[arg(long, default_value_t = true)]
     pub const_eval: bool,
+
+    /// Preserve struct types and methods
+    #[arg(long, default_value_t = true)]
     pub preserve_structs: bool,
+
+    /// Generate type definitions (for TypeScript)
+    #[arg(long)]
     pub type_defs: bool,
+
+    /// Pretty print output
+    #[arg(long, default_value_t = true)]
     pub pretty: bool,
+
+    /// Include source maps
+    #[arg(long)]
     pub source_maps: bool,
+
+    /// Generate a single WIT world instead of per-package worlds
+    #[arg(long)]
     pub single_world: bool,
+
+    /// Resolve and parse imported modules (disable with --no-resolve)
+    #[arg(long = "no-resolve", action = ArgAction::SetFalse, default_value_t = true)]
     pub resolve_imports: bool,
 }
 
@@ -42,7 +72,7 @@ pub struct TranspileArgs {
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     info!("Starting transpilation to target: {}", args.target);
 
-    crate::commands::validate_paths_exist(&args.input, false)?;
+    crate::commands::validate_paths_exist(&args.input, false, "transpile")?;
 
     // Watch mode removed: always perform a single pass
     transpile_once(args, config).await

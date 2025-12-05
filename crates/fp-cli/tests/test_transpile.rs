@@ -44,7 +44,6 @@ fn main() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -141,7 +140,6 @@ fn main() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -206,7 +204,6 @@ fn main() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -256,7 +253,6 @@ fn main() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -316,7 +312,6 @@ fn main() {
         type_defs: true,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -372,7 +367,6 @@ async fn test_transpile_invalid_target() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -398,7 +392,6 @@ async fn test_transpile_nonexistent_file() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };
@@ -437,7 +430,6 @@ async fn test_transpile_multiple_files() {
         type_defs: false,
         pretty: true,
         source_maps: false,
-        watch: false,
         resolve_imports: true,
         single_world: false,
     };

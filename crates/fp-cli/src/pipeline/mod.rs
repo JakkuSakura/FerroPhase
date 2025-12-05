@@ -121,6 +121,8 @@ fn ast_contains_quote_or_splice(node: &Node) -> bool {
             Closured(cl) => expr_has(cl.expr.as_ref()),
             Try(t) => expr_has(t.expr.as_ref()),
             Paren(p) => expr_has(p.expr.as_ref()),
+            For(f) => expr_has(f.iter.as_ref()) || expr_has(f.body.as_ref()),
+            Async(a) => expr_has(a.expr.as_ref()),
             FormatString(fs) => fs.args.iter().any(expr_has),
             Value(_) | Locator(_) | Id(_) | Item(_) | Any(_) | Await(_) | Range(_) | Splat(_)
             | SplatDict(_) | IntrinsicCall(_) | Macro(_) => false,

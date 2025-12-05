@@ -52,6 +52,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(while_expr.cond.as_mut());
                 self.evaluate_function_body(while_expr.body.as_mut());
             }
+            ExprKind::For(for_expr) => {
+                // 仅做语法遍历：先看迭代表达式，再深入循环体，确保 const/quote/splice 不被漏掉
+                self.evaluate_function_body(for_expr.iter.as_mut());
+                self.evaluate_function_body(for_expr.body.as_mut());
+            }
             ExprKind::Match(match_expr) => {
                 for case in match_expr.cases.iter_mut() {
                     self.evaluate_function_body(case.cond.as_mut());
@@ -123,6 +128,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Await(await_expr) => {
                 self.evaluate_function_body(await_expr.base.as_mut());
+            }
+            ExprKind::Async(async_expr) => {
+                // async 在 AST 层仅是标记，继续深入内部表达式做分析
+                self.evaluate_function_body(async_expr.expr.as_mut());
             }
             ExprKind::Reference(reference) => {
                 self.evaluate_function_body(reference.referee.as_mut());

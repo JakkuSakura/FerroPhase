@@ -154,6 +154,8 @@ impl HirGenerator {
         self.current_type_scope()
             .insert("Self".to_string(), hir::Res::SelfTy);
         let result = (|| {
+            // Register impl generics in the current type scope.
+            let generics = self.transform_generics(&impl_block.generics_params);
             let self_ty_ast = ast::Ty::expr(impl_block.self_ty.clone());
             let self_ty = self.transform_type_to_hir(&self_ty_ast)?;
             let trait_ty = if let Some(trait_locator) = &impl_block.trait_ty {
@@ -193,7 +195,7 @@ impl HirGenerator {
             }
 
             Ok(hir::Impl {
-                generics: hir::Generics::default(),
+                generics,
                 trait_ty,
                 self_ty,
                 items,

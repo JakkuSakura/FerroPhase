@@ -38,8 +38,11 @@ pub enum Keyword {
     Impl,
     Where,
     Use,
+    Extern,
     Super,
     Crate,
+    As,
+    Pub,
 }
 
 impl Keyword {
@@ -73,8 +76,11 @@ impl Keyword {
             "impl" => Some(Self::Impl),
             "where" => Some(Self::Where),
             "use" => Some(Self::Use),
+            "extern" => Some(Self::Extern),
             "super" => Some(Self::Super),
             "crate" => Some(Self::Crate),
+            "as" => Some(Self::As),
+            "pub" => Some(Self::Pub),
             _ => None,
         }
     }
@@ -106,6 +112,41 @@ pub enum TokenKind {
 pub enum LexerError {
     #[error("lexer error: {0}")]
     Message(String),
+}
+
+// Strip a type suffix from a number lexeme (e.g., "10i64" -> "10", "1.2f32" -> "1.2").
+// Suffix is defined as the first alphabetic character that is *not* part of an exponent,
+// followed by alphanumeric/underscore chars.
+fn strip_number_suffix(lexeme: &str) -> &str {
+    let mut numeric_part = lexeme;
+    for (idx, ch) in lexeme.char_indices() {
+        if ch.is_ascii_alphabetic() {
+            // Treat exponent markers (`e`/`E` [+/-]digits) as numeric, not suffix start.
+            let is_exponent = (ch == 'e' || ch == 'E')
+                && idx > 0
+                && lexeme[idx + ch.len_utf8()..]
+                    .chars()
+                    .next()
+                    .map(|next| {
+                        if next == '+' || next == '-' {
+                            lexeme[idx + ch.len_utf8() + next.len_utf8()..]
+                                .chars()
+                                .next()
+                                .map(|c| c.is_ascii_digit())
+                                .unwrap_or(false)
+                        } else {
+                            next.is_ascii_digit()
+                        }
+                    })
+                    .unwrap_or(false);
+            if is_exponent {
+                continue;
+            }
+            numeric_part = &lexeme[..idx];
+            break;
+        }
+    }
+    numeric_part
 }
 
 impl From<ContextError> for LexerError {
@@ -148,6 +189,12 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
                     }
                     TokenKind::Ident
                 }
+            }
+            TokenKind::Number => {
+                // Normalize number lexeme by stripping type suffix; suffix remains consumed.
+                let trimmed = strip_number_suffix(&lexeme);
+                lexeme = trimmed.to_string();
+                TokenKind::Number
             }
             other => other,
         };
@@ -194,12 +241,73 @@ fn raw_identifier_token(input: &mut &str) -> ModalResult<TokenKind> {
 }
 
 fn number_token(input: &mut &str) -> ModalResult<TokenKind> {
-    (
-        take_while(1.., |c: char| c.is_ascii_digit()),
-        take_while(0.., |c: char| c.is_ascii_digit() || c == '_'),
-    )
-        .map(|_| TokenKind::Number)
-        .parse_next(input)
+    // Simple decimal number literal with optional fractional part.
+    // Grammar: [0-9][0-9_]*( "." [0-9][0-9_]* )?
+    let s = *input;
+    let mut end; // end of the numeric part (without suffix)
+    let mut iter = s.char_indices().peekable();
+
+    // first digit
+    match iter.peek() {
+        Some(&(idx, ch)) if ch.is_ascii_digit() => {
+            end = idx + ch.len_utf8();
+            iter.next();
+        }
+        _ => return Err(backtrack_err()),
+    }
+    // integer tail
+    while let Some(&(idx, ch)) = iter.peek() {
+        if ch.is_ascii_digit() || ch == '_' {
+            end = idx + ch.len_utf8();
+            iter.next();
+        } else {
+            break;
+        }
+    }
+    // optional fractional part, but avoid consuming range operator `..`
+    if let Some(&(dot_idx, '.')) = iter.peek() {
+        if !s[dot_idx..].starts_with("..") {
+            // look ahead one more char to ensure it's a digit
+            if let Some((_, next_ch)) = { iter.clone().nth(1) } {
+                if next_ch.is_ascii_digit() {
+                    // consume '.'
+                    end = dot_idx + 1;
+                    iter.next();
+                    // consume fraction digits / underscores
+                    while let Some(&(idx, ch)) = iter.peek() {
+                        if ch.is_ascii_digit() || ch == '_' {
+                            end = idx + ch.len_utf8();
+                            iter.next();
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Optional type suffix: alphabetic start, then alphanumeric/underscore.
+    let mut suffix_end = end;
+    let mut suffix_iter = s[end..].char_indices().peekable();
+    if let Some(&(off, ch)) = suffix_iter.peek() {
+        if ch.is_ascii_alphabetic() {
+            suffix_end = end + off + ch.len_utf8();
+            suffix_iter.next();
+            while let Some(&(off, ch)) = suffix_iter.peek() {
+                if ch.is_ascii_alphanumeric() || ch == '_' {
+                    suffix_end = end + off + ch.len_utf8();
+                    suffix_iter.next();
+                } else {
+                    break;
+                }
+            }
+        }
+    }
+
+    let _lexeme = &s[..suffix_end];
+    *input = &s[suffix_end..];
+    Ok(TokenKind::Number)
 }
 
 fn ident_token(input: &mut &str) -> ModalResult<TokenKind> {
