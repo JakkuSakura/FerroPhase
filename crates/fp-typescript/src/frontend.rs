@@ -602,6 +602,7 @@ fn lower_type_alias(
             name: ident.clone(),
             value: TypeStruct {
                 name: ident.clone(),
+                generics_params: Vec::new(),
                 fields: structural.fields.clone(),
             },
         };
@@ -706,6 +707,7 @@ fn lower_interface_decl(
         name: ident.clone(),
         value: TypeStruct {
             name: ident.clone(),
+            generics_params: Vec::new(),
             fields: merged_fields,
         },
     };
@@ -834,6 +836,7 @@ fn lower_enum_decl(enum_decl: &TsEnumDecl, visibility: Visibility) -> Vec<Item> 
         name: ident.clone(),
         value: TypeEnum {
             name: ident.clone(),
+            generics_params: Vec::new(),
             variants,
         },
     };
@@ -1478,7 +1481,7 @@ fn lower_var_decl(var_decl: &VarDecl, visibility: Visibility) -> Vec<Item> {
             VarDeclKind::Const => {
                 let mut item = ItemDefConst {
                     ty_annotation: None,
-                    visibility,
+                    visibility: visibility.clone(),
                     name: name_ident.clone(),
                     ty: Some(inferred_ty.clone()),
                     value: Box::new(init_expr),

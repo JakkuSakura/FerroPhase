@@ -1,16 +1,25 @@
 //! Project initialization command implementation
 
 use crate::{CliError, Result, cli::CliConfig};
+use clap::Args;
 use console::style;
 use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::info;
 
 /// Arguments for the init command
+#[derive(Debug, Clone, Args)]
 pub struct InitArgs {
+    /// Project name
     pub project_name: String,
+    /// Project template (basic, library, binary, multi-lang)
+    #[arg(short, long, default_value = "basic")]
     pub template: String,
+    /// Target directory (defaults to project name)
+    #[arg(short, long)]
     pub output: Option<PathBuf>,
+    /// Initialize git repository
+    #[arg(long)]
     pub git: bool,
 }
 

@@ -3383,7 +3383,7 @@ impl<'a> BodyBuilder<'a> {
                         .filter_map(|(_struct_name, methods)| {
                             methods
                                 .get(&String::from(method_key.clone()))
-                                .map(|info| (info.clone()))
+                    .map(|info| info.clone())
                         })
                         .collect::<Vec<_>>();
                     if matches.len() == 1 {

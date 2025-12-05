@@ -200,6 +200,12 @@ fn node_contains_splice_quote(node: &Node) -> bool {
     }
 }
 
+fn expect_parse_err(src: &str) {
+    let parser = FerroPhaseParser::new();
+    let res = parser.parse_items_ast(src);
+    assert!(res.is_err(), "expected parse error for source:\n{src}");
+}
+
 #[test]
 fn code_emit_in_fn_lowers_to_splice_of_quote() {
     let fe = FerroFrontend::new();
@@ -259,6 +265,38 @@ fn nested_splice_inside_if_parses() {
         "expected file AST"
     );
     assert!(node_contains_splice_quote(&res.ast));
+}
+
+// -------- G3 quote/splice 反例（正反例同文件便于定位） --------
+
+#[test]
+fn splice_without_parens_errors() {
+    // splice 括号缺失/未闭合
+    expect_parse_err("fn main() { splice ( quote { 1 }; }");
+}
+
+#[test]
+fn mismatched_quote_delimiter_errors() {
+    // quote 使用 [ ] 而非 { }
+    expect_parse_err("fn main() { quote [ 1 + 2 ); }");
+}
+
+#[test]
+fn splice_item_in_expr_position_errors() {
+    // item token spliced 到表达式位置应触发种类不匹配
+    expect_parse_err("fn main() { let _ = splice ( quote item { struct S; } ); }");
+}
+
+#[test]
+fn splice_stmt_in_item_position_errors() {
+    // quote 内语法错误应导致 splice 失败
+    expect_parse_err("splice ( quote { let x = ; } );");
+}
+
+#[test]
+fn emit_outside_const_errors() {
+    // emit! 使用错误的定界符应触发解析错误
+    expect_parse_err("fn main() { emit! ( let x = 1; ) }");
 }
 
 #[test]

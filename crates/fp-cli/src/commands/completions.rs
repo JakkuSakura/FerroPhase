@@ -1,12 +1,15 @@
 //! Shell completions command implementation
 
 use crate::{Result, cli::CliConfig};
-use clap::Command;
+use clap::{Args, Command};
 use clap_complete::{Shell, generate};
 use std::io;
 
 /// Arguments for the completions command
+#[derive(Debug, Clone, Args)]
 pub struct CompletionsArgs {
+    /// Shell to generate completions for
+    #[arg(value_enum)]
     pub shell: Shell,
 }
 

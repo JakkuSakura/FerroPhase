@@ -8,16 +8,35 @@ use crate::{
 };
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
+use clap::Args;
 use tracing::info;
 
 /// Arguments for the eval command
+#[derive(Debug, Clone, Args)]
 pub struct EvalArgs {
+    /// Expression to evaluate
+    #[arg(short, long, conflicts_with = "file")]
     pub expr: Option<String>,
+
+    /// File containing code to evaluate
+    #[arg(short, long)]
     pub file: Option<std::path::PathBuf>,
+
+    /// Print the AST representation
+    #[arg(long)]
     pub print_ast: bool,
+
+    /// Print optimization passes
+    #[arg(long)]
     pub print_passes: bool,
-    pub print_result: bool,      // Whether to print the final result
-    pub runtime: Option<String>, // Runtime to use (literal, rust)
+
+    /// Whether to print the final result
+    #[arg(skip = true)]
+    pub print_result: bool,
+
+    /// Runtime to use (literal, rust)
+    #[arg(long, default_value = "literal")]
+    pub runtime: Option<String>,
 }
 
 /// Execute the eval command
@@ -29,6 +48,7 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
             format!("expression: {}", expr),
         )
     } else if let Some(file) = &args.file {
+        crate::commands::validate_paths_exist(&[file.clone()], true, "eval")?;
         (
             PipelineInput::File(file.clone()),
             format!("file '{}'", file.display()),

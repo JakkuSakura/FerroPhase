@@ -41,7 +41,7 @@ impl ZigEmitter {
 
     fn emit_struct(&mut self, def: &fp_core::ast::ItemDefStruct) -> Result<()> {
         self.ensure_header();
-        let visibility = self.render_visibility(def.visibility);
+        let visibility = self.render_visibility(&def.visibility);
         self.push_line(&format!(
             "{}const {} = struct {{",
             visibility, def.name.name
@@ -61,7 +61,7 @@ impl ZigEmitter {
 
     fn emit_enum(&mut self, def: &fp_core::ast::ItemDefEnum) -> Result<()> {
         self.ensure_header();
-        let visibility = self.render_visibility(def.visibility);
+        let visibility = self.render_visibility(&def.visibility);
         self.push_line(&format!("{}const {} = enum {{", visibility, def.name.name));
         self.indent += 1;
         if def.value.variants.is_empty() {
@@ -78,7 +78,7 @@ impl ZigEmitter {
 
     fn emit_const(&mut self, def: &fp_core::ast::ItemDefConst) -> Result<()> {
         self.ensure_header();
-        let visibility = self.render_visibility(def.visibility);
+        let visibility = self.render_visibility(&def.visibility);
         let ty = def
             .ty_annotation()
             .or(def.ty.as_ref())
@@ -106,7 +106,7 @@ impl ZigEmitter {
 
     fn emit_function(&mut self, def: &fp_core::ast::ItemDefFunction) -> Result<()> {
         self.ensure_header();
-        let visibility = self.render_visibility(def.visibility);
+        let visibility = self.render_visibility(&def.visibility);
         let params = def
             .sig
             .params
@@ -142,7 +142,7 @@ impl ZigEmitter {
 
     fn emit_module(&mut self, module: &Module) -> Result<()> {
         self.ensure_header();
-        let visibility = self.render_visibility(module.visibility);
+        let visibility = self.render_visibility(&module.visibility);
         self.push_line(&format!(
             "{}const {} = struct {{",
             visibility, module.name.name
@@ -176,9 +176,11 @@ impl ZigEmitter {
         format!("{}: {}", param.name.as_str(), ty)
     }
 
-    fn render_visibility(&self, visibility: Visibility) -> &'static str {
+    fn render_visibility(&self, visibility: &Visibility) -> &'static str {
         match visibility {
             Visibility::Public => "pub ",
+            Visibility::Crate => "pub ",          // Zig 没有作用域限制，退化为 pub
+            Visibility::Restricted(_) => "pub ",  // 同上，保持可见性不丢失语义
             Visibility::Inherited | Visibility::Private => "",
         }
     }
