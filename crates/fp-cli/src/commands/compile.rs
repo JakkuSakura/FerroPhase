@@ -13,27 +13,62 @@ use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
-/// Arguments for the compile command
-#[derive(Debug, Clone)]
+use clap::Args;
+
+/// Arguments for the compile command (also used by Clap)
+#[derive(Debug, Clone, Args)]
 pub struct CompileArgs {
+    /// Input file(s) to compile
+    #[arg(required = true)]
     pub input: Vec<PathBuf>,
+
+    /// Output target (binary, rust, llvm, wasm, interpret)
+    #[arg(short, long, default_value = "binary")]
     pub target: String,
+
+    /// Output file or directory
+    #[arg(short, long)]
     pub output: Option<PathBuf>,
+
+    /// Optimization level (0, 1, 2, 3)
+    #[arg(short = 'O', long, default_value_t = 2)]
     pub opt_level: u8,
+
+    /// Enable debug information
+    #[arg(short, long)]
     pub debug: bool,
-    pub include: Vec<PathBuf>,
-    pub define: Vec<String>,
-    pub exec: bool,
-    /// Enable error tolerance (collect multiple errors instead of early exit)
-    pub error_tolerance: bool,
-    /// Maximum number of errors to collect (0 = unlimited)
-    pub max_errors: usize,
-    /// Persist intermediate representations to disk
-    pub save_intermediates: bool,
-    /// Override source language detection
-    pub source_language: Option<String>,
-    /// Treat build as release (disable debug assertions)
+
+    /// Treat build as release (disables debug assertions)
+    #[arg(long)]
     pub release: bool,
+
+    /// Additional include directories
+    #[arg(short = 'I', long)]
+    pub include: Vec<PathBuf>,
+
+    /// Define constants for compilation
+    #[arg(short = 'D', long)]
+    pub define: Vec<String>,
+
+    /// Execute the compiled binary using exec clib function
+    #[arg(short, long)]
+    pub exec: bool,
+
+    /// Persist intermediate representations to disk
+    #[arg(long)]
+    pub save_intermediates: bool,
+
+    /// Enable error tolerance during compilation
+    #[arg(long)]
+    pub error_tolerance: bool,
+
+    /// Maximum number of errors to collect when tolerance is enabled (0 = unlimited)
+    #[arg(long, default_value_t = 50)]
+    pub max_errors: usize,
+
+    /// Override automatic source language detection (e.g. "typescript")
+    #[arg(long = "lang", alias = "language")]
+    pub source_language: Option<String>,
 }
 
 /// Execute the compile command
@@ -253,7 +288,7 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
 }
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
-    validate_paths_exist(&args.input, true)?;
+    validate_paths_exist(&args.input, true, "compile")?;
 
     // Validate optimization level
     if args.opt_level > 3 {

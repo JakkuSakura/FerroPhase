@@ -1,22 +1,23 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp,
-    ExprBlock, ExprClosure, ExprField, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit,
-    ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple,
-    ExprUnOp, ExprWhile, Ident, Locator, MacroDelimiter, MacroInvocation, Path, Pattern,
-    PatternIdent, PatternKind, PatternType, StmtLet, Ty, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAsync, ExprAwait,
+    ExprBinOp, ExprBlock, ExprClosure, ExprField, ExprFor, ExprIf, ExprIndex, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprLoop, ExprMacro, ExprMatch, ExprMatchCase, ExprQuote,
+    ExprRange, ExprRangeLimit, ExprSelect, ExprSelectType, ExprSplice, ExprStruct, ExprStructural,
+    ExprTry, ExprTuple, ExprUnOp, ExprWhile, Ident, Locator, MacroDelimiter, MacroInvocation, Path,
+    Pattern, PatternIdent, PatternKind, PatternTuple, PatternType, StmtLet, Value,
 };
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use std::str::FromStr;
 use thiserror::Error;
-use winnow::combinator::{alt, delimited, peek, separated};
+use winnow::combinator::{alt, delimited, peek};
 use winnow::error::{ContextError, ErrMode};
 use winnow::ModalResult;
 use winnow::Parser;
 
-use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
 use crate::lexer::winnow::backtrack_err;
+use crate::lexer::{self, Keyword, LexerError, Token, TokenKind};
+use crate::parser::items;
 use crate::parser::items::parse_path_as_ty;
 
 #[derive(Debug, Error)]
@@ -45,7 +46,10 @@ pub fn parse_expression(source: &str) -> Result<Expr, ExprParseError> {
         Ok(e) => e,
         Err(_) => {
             let msg = match slice.first() {
-                Some(tok) => format!("failed to parse expression starting at token '{}'", tok.lexeme),
+                Some(tok) => format!(
+                    "failed to parse expression starting at token '{}'",
+                    tok.lexeme
+                ),
                 None => "failed to parse expression at end of input".to_string(),
             };
             return Err(ExprParseError::Parse(msg));
@@ -72,13 +76,30 @@ pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult
         // consume operator
         advance(input);
         let next_min = if right_assoc { prec } else { prec + 1 };
-        let right = parse_expr_prec(input, next_min)?;
+        let right = if matches!(op, BinaryOp::Cast) {
+            Expr::unit() // placeholder
+        } else {
+            parse_expr_prec(input, next_min)?
+        };
         left = match op {
             BinaryOp::Assign => ExprKind::Assign(ExprAssign {
                 target: Box::new(left),
                 value: Box::new(right),
             })
             .into(),
+            BinaryOp::AssignBin(kind) => {
+                let combined = ExprKind::BinOp(ExprBinOp {
+                    kind,
+                    lhs: Box::new(left.clone()),
+                    rhs: Box::new(right),
+                })
+                .into();
+                ExprKind::Assign(ExprAssign {
+                    target: Box::new(left),
+                    value: Box::new(combined),
+                })
+                .into()
+            }
             BinaryOp::Range(limit) => ExprKind::Range(ExprRange {
                 start: Some(Box::new(left)),
                 limit,
@@ -86,6 +107,14 @@ pub(crate) fn parse_expr_prec(input: &mut &[Token], min_prec: u8) -> ModalResult
                 step: None,
             })
             .into(),
+            BinaryOp::Cast => {
+                let ty = items::parse_type(input)?;
+                ExprKind::Cast(fp_core::ast::ExprCast {
+                    expr: Box::new(left),
+                    ty,
+                })
+                .into()
+            }
             BinaryOp::Bin(kind) => ExprKind::BinOp(ExprBinOp {
                 kind,
                 lhs: Box::new(left),
@@ -138,6 +167,30 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     if match_keyword(input, Keyword::Async) {
         return parse_async(input);
     }
+    if match_keyword(input, Keyword::Const) {
+        // const { ... } block expression
+        let block = parse_block(input)?;
+        let block_expr = Expr::block(block);
+        let call = IntrinsicCall::new(
+            IntrinsicCallKind::ConstBlock,
+            IntrinsicCallPayload::Args {
+                args: vec![block_expr],
+            },
+        );
+        return Ok(ExprKind::IntrinsicCall(call).into());
+    }
+    if let Some(Token {
+        kind: TokenKind::StringLiteral,
+        lexeme: _,
+        ..
+    }) = input.first()
+    {
+        let tok = advance(input).unwrap();
+        match parse_string(tok) {
+            Ok(expr) => return Ok(expr),
+            Err(e) => return Err(e),
+        }
+    }
     if match_symbol(input, "!") {
         let expr = parse_expr_prec(input, 30)?;
         return Ok(ExprKind::UnOp(ExprUnOp {
@@ -182,6 +235,31 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     if match_keyword(input, Keyword::Struct) {
         return parse_structural_literal(input);
     }
+    if match_keyword(input, Keyword::Emit) {
+        // Lower emit! { ... } to splice(quote { ... })
+        if !match_symbol(input, "!") {
+            return Err(ErrMode::Cut(ContextError::new()));
+        }
+        let quoted = if matches_symbol(input.first(), "{") {
+            let block = parse_block(input)?;
+            ExprKind::Quote(ExprQuote { block, kind: None }).into()
+        } else {
+            // Fallback: treat following expression as the quote body
+            let expr = parse_expr_prec(input, 0)?;
+            let mut block = ExprBlock::new();
+            block.push_expr(expr);
+            ExprKind::Quote(ExprQuote { block, kind: None }).into()
+        };
+        let splice = ExprKind::Splice(ExprSplice {
+            token: Box::new(quoted),
+        });
+        return Ok(splice.into());
+    }
+    if match_keyword(input, Keyword::Type) {
+        // 解析类型表达式并将其作为 Value::Type 包装成表达式值。
+        let ty = items::parse_type(input)?;
+        return Ok(Expr::value(Value::Type(ty)));
+    }
     // Bare block expression `{ ... }`.
     if matches_symbol(input.first(), "{") {
         let block = parse_block(input)?;
@@ -192,6 +270,18 @@ fn parse_unary_or_atom(input: &mut &[Token]) -> ModalResult<Expr> {
     }
     if match_symbol(input, "(") {
         return parse_paren_or_tuple(input);
+    }
+    if let Some(Token {
+        kind: TokenKind::Ident,
+        lexeme,
+        ..
+    }) = input.first()
+    {
+        if lexeme == "true" || lexeme == "false" {
+            let tok = advance(input).unwrap();
+            let val = tok.lexeme == "true";
+            return Ok(Expr::value(Value::bool(val)));
+        }
     }
     let token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     match token.kind {
@@ -247,14 +337,69 @@ fn parse_postfix(input: &mut &[Token], mut expr: Expr) -> ModalResult<Expr> {
             continue;
         }
         // Struct literal: Path { field: value, ... }
-        if match_symbol(input, "{") {
-            let fields = parse_struct_fields(input)?;
-            let struct_expr = ExprStruct {
-                name: expr.into(),
-                fields,
-            };
-            expr = ExprKind::Struct(struct_expr).into();
-            continue;
+        if matches_symbol(input.first(), "{") {
+            // Only treat as struct literal when the base is a path/locator expression.
+            if matches!(expr.kind(), ExprKind::Locator(_)) {
+                // Heuristic: if the block immediately closes and is followed by `else`,
+                // we're likely in a control-flow construct (e.g., `if a > b { a } else { b }`)
+                // rather than a struct literal. In that case, leave the '{' for the caller.
+                let mut depth = 0i32;
+                let mut idx_after_close = None;
+                for (i, tok) in input.iter().enumerate() {
+                    if tok.lexeme == "{" {
+                        depth += 1;
+                    } else if tok.lexeme == "}" {
+                        depth -= 1;
+                        if depth == 0 {
+                            idx_after_close = Some(i + 1);
+                            break;
+                        }
+                    }
+                }
+                if let Some(next_idx) = idx_after_close {
+                    if let Some(Token {
+                        kind: TokenKind::Keyword(Keyword::Else),
+                        ..
+                    }) = input.get(next_idx)
+                    {
+                        break;
+                    }
+                }
+                // Look ahead: struct literal must start with Ident and that Ident must be followed by ':'/','/'}.
+                if let (Some(first), Some(second)) = (input.get(1), input.get(2)) {
+                    let ident_start = matches!(
+                        first,
+                        Token {
+                            kind: TokenKind::Ident,
+                            ..
+                        }
+                    ) && (matches_symbol(Some(second), ":")
+                        || matches_symbol(Some(second), ",")
+                        || matches_symbol(Some(second), "}"));
+                    let rest_wildcard = matches!(
+                        first,
+                        Token {
+                            kind: TokenKind::Symbol,
+                            lexeme,
+                            ..
+                        } if lexeme == ".."
+                    );
+                    if !(ident_start || rest_wildcard) {
+                        break;
+                    }
+                }
+                match_symbol(input, "{");
+                let fields = parse_struct_fields(input)?;
+                let struct_expr = ExprStruct {
+                    name: expr.into(),
+                    fields,
+                };
+                expr = ExprKind::Struct(struct_expr).into();
+                continue;
+            } else {
+                // Leave the '{' to be consumed by outer constructs (e.g., control-flow blocks).
+                break;
+            }
         }
         if match_symbol(input, "[") {
             let index = parse_expr_prec(input, 0)?;
@@ -302,12 +447,21 @@ fn parse_if(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_argument_list(input: &mut &[Token]) -> ModalResult<Vec<Expr>> {
-    delimited(
-        symbol_parser("("),
-        separated(0.., |i: &mut &[Token]| parse_expr_prec(i, 0), symbol_parser(",")),
-        symbol_parser(")"),
-    )
-    .parse_next(input)
+    symbol_parser("(").parse_next(input)?;
+    let mut args = Vec::new();
+    if !matches_symbol(input.first(), ")") {
+        loop {
+            let e = parse_expr_prec(input, 0)?;
+            args.push(e);
+            if match_symbol(input, ")") {
+                break;
+            }
+            expect_symbol(input, ",")?;
+        }
+    } else {
+        expect_symbol(input, ")")?;
+    }
+    Ok(args)
 }
 
 fn parse_loop(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -330,9 +484,26 @@ fn parse_while(input: &mut &[Token]) -> ModalResult<Expr> {
 }
 
 fn parse_for(input: &mut &[Token]) -> ModalResult<Expr> {
-    // Parse loop variable identifier as a simple binding pattern.
-    let pat_ident = Ident::new(expect_ident(input)?);
-    let pat = Pattern::from(PatternKind::Ident(PatternIdent::new(pat_ident)));
+    // Parse loop variable pattern: ident or tuple of idents `(a, b, ..)`.
+    let pat = if match_symbol(input, "(") {
+        let mut pats = Vec::new();
+        if matches_symbol(input.first(), ")") {
+            expect_symbol(input, ")")?;
+        } else {
+            loop {
+                let name = Ident::new(expect_ident(input)?);
+                pats.push(Pattern::from(PatternKind::Ident(PatternIdent::new(name))));
+                if match_symbol(input, ")") {
+                    break;
+                }
+                expect_symbol(input, ",")?;
+            }
+        }
+        Pattern::from(PatternKind::Tuple(PatternTuple { patterns: pats }))
+    } else {
+        let pat_ident = Ident::new(expect_ident(input)?);
+        Pattern::from(PatternKind::Ident(PatternIdent::new(pat_ident)))
+    };
 
     // Expect `in` keyword
     keyword_parser(Keyword::In)
@@ -385,7 +556,10 @@ fn control_flow_call(kind: IntrinsicCallKind, expr: Option<Expr>) -> Expr {
 
 fn parse_async(input: &mut &[Token]) -> ModalResult<Expr> {
     let inner = parse_expr_prec(input, 0)?;
-    Ok(ExprKind::Async(ExprAsync { expr: Box::new(inner) }).into())
+    Ok(ExprKind::Async(ExprAsync {
+        expr: Box::new(inner),
+    })
+    .into())
 }
 
 fn parse_quote_body(input: &mut &[Token]) -> ModalResult<Expr> {
@@ -424,10 +598,14 @@ fn parse_closure(input: &mut &[Token]) -> ModalResult<Expr> {
 
 fn parse_await(input: &mut &[Token]) -> ModalResult<Expr> {
     let base = parse_expr_prec(input, 30)?;
-    Ok(ExprKind::Await(ExprAwait { base: Box::new(base) }).into())
+    Ok(ExprKind::Await(ExprAwait {
+        base: Box::new(base),
+    })
+    .into())
 }
 
 fn parse_splice_body(input: &mut &[Token]) -> ModalResult<Expr> {
+    // TODO: 当前未对 splice 进行上下文/片段种类的禁用诊断，仅做语法包装；后续可在不匹配位置记录诊断。
     let target = if match_symbol(input, "(") {
         let expr = parse_expr_prec(input, 0)?;
         expect_symbol(input, ")")?;
@@ -467,7 +645,10 @@ fn parse_closure_param(input: &mut &[Token]) -> ModalResult<Pattern> {
     // Optional type annotation: `: Type`.
     if match_symbol(input, ":") {
         let (_path, ty) = parse_path_as_ty(input)?;
-        pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
+        // Attach the type both to the wrapper node and to the outer slot so
+        // callers can read it without unwrapping PatternType.
+        pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty.clone())));
+        pat.set_ty(ty);
     }
 
     Ok(pat)
@@ -525,11 +706,21 @@ fn parse_struct_fields(input: &mut &[Token]) -> ModalResult<Vec<ExprField>> {
     }
 
     loop {
+        // Support struct patterns with `..` (ignore remaining fields).
+        if match_symbol(input, "..") {
+            // consume optional trailing comma before closing brace
+            match_symbol(input, ",");
+            expect_symbol(input, "}")?;
+            break;
+        }
         let field_name = expect_ident(input)?;
         let name_ident = Ident::new(field_name.clone());
         let value_expr = if match_symbol(input, ":") {
             // Explicit value: `field: expr`
-            parse_expr_prec(input, 0)?
+            match parse_expr_prec(input, 0) {
+                Ok(v) => v,
+                Err(e) => return Err(e),
+            }
         } else {
             // Shorthand: `field` => locator with same name.
             let locator = Locator::Ident(Ident::new(field_name));
@@ -539,6 +730,13 @@ fn parse_struct_fields(input: &mut &[Token]) -> ModalResult<Vec<ExprField>> {
         fields.push(field);
         if match_symbol(input, "}") {
             break;
+        }
+        if match_symbol(input, ",") {
+            // allow trailing comma before closing brace
+            if match_symbol(input, "}") {
+                break;
+            }
+            continue;
         }
         expect_symbol(input, ",")?;
     }
@@ -601,8 +799,7 @@ fn parse_match(input: &mut &[Token]) -> ModalResult<Expr> {
             break;
         }
         let arm_pattern = parse_expr_prec(input, 0)?;
-        let mut cond_base = if is_wildcard_pattern(&arm_pattern)
-            || is_binding_pattern(&arm_pattern)
+        let mut cond_base = if is_wildcard_pattern(&arm_pattern) || is_binding_pattern(&arm_pattern)
         {
             Expr::value(Value::bool(true))
         } else {
@@ -648,7 +845,7 @@ fn locator_path_from_expr(expr: &Expr) -> Option<Path> {
     }
 }
 
-fn parse_macro_invocation(path: Path, input: &mut &[Token]) -> ModalResult<Expr> {
+pub(crate) fn parse_macro_invocation(path: Path, input: &mut &[Token]) -> ModalResult<Expr> {
     // consume '!'
     match_symbol(input, "!");
     let next = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
@@ -697,17 +894,13 @@ fn is_wildcard_pattern(expr: &Expr) -> bool {
 
 fn is_binding_pattern(expr: &Expr) -> bool {
     match expr.kind() {
-        ExprKind::Locator(loc) => loc
-            .as_ident()
-            .map(|id| id.as_str() != "_")
-            .unwrap_or(false),
+        ExprKind::Locator(loc) => loc.as_ident().map(|id| id.as_str() != "_").unwrap_or(false),
         _ => false,
     }
 }
 
 pub fn parse_block(input: &mut &[Token]) -> ModalResult<ExprBlock> {
-    delimited(symbol_parser("{"), parse_block_body, symbol_parser("}"))
-        .parse_next(input)
+    delimited(symbol_parser("{"), parse_block_body, symbol_parser("}")).parse_next(input)
 }
 
 fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
@@ -718,6 +911,55 @@ fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
         }
         if input.is_empty() {
             return Err(ErrMode::Cut(ContextError::new()));
+        }
+        // Support block-level items (const/static/struct/enum/type/mod/trait/impl/use/fn).
+        if let Some(Token {
+            kind: TokenKind::Keyword(k),
+            ..
+        }) = input.first()
+        {
+            let mut snapshot = *input;
+            let parsed_item = match k {
+                Keyword::Pub => Some(items::parse_item(&mut snapshot)),
+                Keyword::Const => {
+                    // const { ... } is an expression, not an item.
+                    if matches_symbol(snapshot.get(1), "{") {
+                        None
+                    } else if matches!(
+                        snapshot.get(1),
+                        Some(Token {
+                            kind: TokenKind::Keyword(Keyword::Fn),
+                            ..
+                        })
+                    ) {
+                        // consume `const` and let the fn parser handle the rest
+                        snapshot = &snapshot[1..];
+                        Some(items::parse_fn_item(&mut snapshot))
+                    } else {
+                        Some(items::parse_const_item(&mut snapshot))
+                    }
+                }
+                Keyword::Static => Some(items::parse_static_item(&mut snapshot)),
+                Keyword::Struct => Some(items::parse_struct_item(&mut snapshot)),
+                Keyword::Enum => Some(items::parse_enum_item(&mut snapshot)),
+                Keyword::Type => Some(items::parse_type_item(&mut snapshot)),
+                Keyword::Mod => Some(items::parse_mod_item(&mut snapshot)),
+                Keyword::Trait => Some(items::parse_trait_item(&mut snapshot)),
+                Keyword::Impl => Some(items::parse_impl_item(&mut snapshot)),
+                Keyword::Use => Some(items::parse_use_item(&mut snapshot)),
+                Keyword::Fn => Some(items::parse_fn_item(&mut snapshot)),
+                _ => None,
+            };
+            if let Some(parsed_item) = parsed_item {
+                match parsed_item {
+                    Ok(item) => {
+                        *input = snapshot;
+                        stmts.push(BlockStmt::Item(Box::new(item)));
+                        continue;
+                    }
+                    Err(err) => return Err(err),
+                }
+            }
         }
         // Treat stray semicolons as no-op statements to keep
         // block parsing resilient in the presence of extra `;`.
@@ -747,7 +989,15 @@ fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
             };
             let control_like = matches!(
                 last_expr.kind(),
-                ExprKind::If(_) | ExprKind::Loop(_) | ExprKind::While(_) | ExprKind::Match(_)
+                ExprKind::If(_)
+                    | ExprKind::Loop(_)
+                    | ExprKind::While(_)
+                    | ExprKind::For(_)
+                    | ExprKind::Match(_)
+            ) || matches!(
+                last_expr.kind(),
+                ExprKind::IntrinsicCall(call)
+                    if matches!(call.kind(), IntrinsicCallKind::ConstBlock)
             );
             if !(control_like && !matches_symbol(input.first(), "}")) {
                 break;
@@ -758,10 +1008,20 @@ fn parse_block_body(input: &mut &[Token]) -> ModalResult<ExprBlock> {
 }
 
 fn parse_let_stmt(input: &mut &[Token]) -> ModalResult<StmtLet> {
+    let is_mut = match_keyword(input, Keyword::Mut);
     let ident = expect_ident(input)?;
+    let mut pat = Pattern::from(PatternKind::Ident(PatternIdent::new(Ident::new(ident))));
+    // Optional type annotation
+    if match_symbol(input, ":") {
+        let (_path, ty) = items::parse_path_as_ty(input)?;
+        pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
+    }
     expect_symbol(input, "=")?;
     let init = parse_expr_prec(input, 0)?;
-    Ok(StmtLet::new_simple(Ident::new(ident), init))
+    if is_mut {
+        pat.make_mut();
+    }
+    Ok(StmtLet::new(pat, Some(init), None))
 }
 
 fn parse_locator_expr(input: &mut &[Token], token: Token) -> ModalResult<Expr> {
@@ -780,8 +1040,17 @@ fn parse_locator_expr(input: &mut &[Token], token: Token) -> ModalResult<Expr> {
 
 fn parse_number(token: Token) -> ModalResult<Expr> {
     let cleaned = token.lexeme.replace('_', "");
-    let value = i64::from_str(&cleaned).map_err(|_| ErrMode::Cut(ContextError::new()))?;
-    Ok(Expr::value(Value::int(value)))
+    // TODO: 当前只按 i64/f64 解析并忽略数值后缀的类型/溢出校验；后续应依据后缀决定具体位宽并给出诊断。
+    if cleaned.is_empty() {
+        return Err(ErrMode::Cut(ContextError::new()));
+    }
+    if cleaned.contains('.') || cleaned.contains('e') || cleaned.contains('E') {
+        let value = f64::from_str(&cleaned).map_err(|_| ErrMode::Cut(ContextError::new()))?;
+        Ok(Expr::value(Value::decimal(value)))
+    } else {
+        let value = i64::from_str(&cleaned).map_err(|_| ErrMode::Cut(ContextError::new()))?;
+        Ok(Expr::value(Value::int(value)))
+    }
 }
 
 fn parse_string(token: Token) -> ModalResult<Expr> {
@@ -795,7 +1064,9 @@ fn parse_string(token: Token) -> ModalResult<Expr> {
 #[derive(Debug, Clone)]
 enum BinaryOp {
     Assign,
+    AssignBin(BinOpKind),
     Range(ExprRangeLimit),
+    Cast,
     Bin(BinOpKind),
 }
 
@@ -804,6 +1075,16 @@ fn peek_binop(input: &[Token]) -> Option<(u8, BinaryOp, bool)> {
     match token.kind {
         TokenKind::Symbol => match token.lexeme.as_str() {
             "=" => Some((1, BinaryOp::Assign, true)),
+            "+=" => Some((1, BinaryOp::AssignBin(BinOpKind::Add), true)),
+            "-=" => Some((1, BinaryOp::AssignBin(BinOpKind::Sub), true)),
+            "*=" => Some((1, BinaryOp::AssignBin(BinOpKind::Mul), true)),
+            "/=" => Some((1, BinaryOp::AssignBin(BinOpKind::Div), true)),
+            "%=" => Some((1, BinaryOp::AssignBin(BinOpKind::Mod), true)),
+            "<<=" => Some((1, BinaryOp::AssignBin(BinOpKind::Shl), true)),
+            ">>=" => Some((1, BinaryOp::AssignBin(BinOpKind::Shr), true)),
+            "&=" => Some((1, BinaryOp::AssignBin(BinOpKind::BitAnd), true)),
+            "|=" => Some((1, BinaryOp::AssignBin(BinOpKind::BitOr), true)),
+            "^=" => Some((1, BinaryOp::AssignBin(BinOpKind::BitXor), true)),
             ".." => Some((3, BinaryOp::Range(ExprRangeLimit::Exclusive), false)),
             "..=" | "..." => Some((3, BinaryOp::Range(ExprRangeLimit::Inclusive), false)),
             "||" => Some((4, BinaryOp::Bin(BinOpKind::Or), false)),
@@ -826,11 +1107,12 @@ fn peek_binop(input: &[Token]) -> Option<(u8, BinaryOp, bool)> {
             "%" => Some((13, BinaryOp::Bin(BinOpKind::Mod), false)),
             _ => None,
         },
+        TokenKind::Keyword(Keyword::As) => Some((14, BinaryOp::Cast, false)),
         _ => None,
     }
 }
 
-fn match_keyword(input: &mut &[Token], keyword: Keyword) -> bool {
+pub(crate) fn match_keyword(input: &mut &[Token], keyword: Keyword) -> bool {
     keyword_parser(keyword).parse_next(input).is_ok()
 }
 
@@ -890,17 +1172,15 @@ fn advance(input: &mut &[Token]) -> Option<Token> {
 }
 
 fn keyword_parser<'a>(keyword: Keyword) -> impl Parser<&'a [Token], (), ContextError> {
-    move |input: &mut &[Token]| {
-        match input.first() {
-            Some(Token {
-                kind: TokenKind::Keyword(k),
-                ..
-            }) if *k == keyword => {
-                *input = &input[1..];
-                Ok(())
-            }
-            _ => Err(backtrack_err()),
+    move |input: &mut &[Token]| match input.first() {
+        Some(Token {
+            kind: TokenKind::Keyword(k),
+            ..
+        }) if *k == keyword => {
+            *input = &input[1..];
+            Ok(())
         }
+        _ => Err(backtrack_err()),
     }
 }
 

@@ -1,13 +1,23 @@
 //! Information command implementation
 
 use crate::{Result, cli::CliConfig};
+use clap::Args;
 use console::style;
 
 /// Arguments for the info command
+#[derive(Debug, Clone, Args)]
 pub struct InfoArgs {
+    /// Show version information
+    #[arg(long)]
     pub version: bool,
+    /// Show build information
+    #[arg(long)]
     pub build: bool,
+    /// Show feature flags
+    #[arg(long)]
     pub features: bool,
+    /// Show all information
+    #[arg(long)]
     pub all: bool,
 }
 

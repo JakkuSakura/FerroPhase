@@ -22,10 +22,17 @@
 //! fp repl
 //! ```
 
-use clap::{Args, Parser, Subcommand, ValueHint};
+use clap::{Parser, Subcommand};
 use console::style;
-use fp_cli::{Result, cli::CliConfig, commands, diagnostics::setup_error_reporting};
-use fp_typescript::frontend::TsParseMode;
+use fp_cli::{
+    Result,
+    cli::CliConfig,
+    commands::{
+        self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
+        info::InfoArgs, init::InitArgs, parse::ParseArgs, run::RunArgs, transpile::TranspileArgs,
+    },
+    diagnostics::setup_error_reporting,
+};
 use std::path::PathBuf;
 use tracing::info;
 
@@ -96,246 +103,6 @@ enum Commands {
     Completions(CompletionsArgs),
 }
 
-#[derive(Args)]
-struct CompileArgs {
-    /// Input file(s) to compile
-    #[arg(required = true)]
-    input: Vec<PathBuf>,
-
-    /// Output target (binary, rust, llvm, wasm, interpret)
-    #[arg(short, long, default_value = "binary")]
-    target: String,
-
-    /// Output file or directory
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Optimization level (0, 1, 2, 3)
-    #[arg(short = 'O', long, default_value = "2")]
-    opt_level: u8,
-
-    /// Enable debug information
-    #[arg(short, long)]
-    debug: bool,
-
-    /// Treat build as release (disables debug assertions)
-    #[arg(long)]
-    release: bool,
-
-    /// Additional include directories
-    #[arg(short = 'I', long)]
-    include: Vec<PathBuf>,
-
-    /// Define constants for compilation
-    #[arg(short = 'D', long)]
-    define: Vec<String>,
-
-    /// Execute the compiled binary using exec clib function
-    #[arg(short, long)]
-    exec: bool,
-
-    /// Persist intermediate representations to disk
-    #[arg(long)]
-    save_intermediates: bool,
-
-    /// Enable error tolerance during compilation
-    #[arg(long)]
-    error_tolerance: bool,
-
-    /// Maximum number of errors to collect when tolerance is enabled (0 = unlimited)
-    #[arg(long, default_value = "50")]
-    max_errors: usize,
-
-    /// Override automatic source language detection (e.g. "typescript")
-    #[arg(long = "lang", alias = "language")]
-    language: Option<String>,
-}
-
-#[derive(Args)]
-struct TranspileArgs {
-    /// Input file(s) to transpile
-    #[arg(required = true)]
-    input: Vec<PathBuf>,
-
-    /// Target language (javascript, typescript, python, go)
-    #[arg(short, long, default_value = "typescript")]
-    target: String,
-
-    /// Output file or directory
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Perform const evaluation before transpilation
-    #[arg(long, default_value = "true")]
-    const_eval: bool,
-
-    /// Preserve struct types and methods
-    #[arg(long, default_value = "true")]
-    preserve_structs: bool,
-
-    /// Generate type definitions (for TypeScript)
-    #[arg(long)]
-    type_defs: bool,
-
-    /// Pretty print output
-    #[arg(long, default_value = "true")]
-    pretty: bool,
-
-    /// Include source maps
-    #[arg(long)]
-    source_maps: bool,
-
-    /// Generate a single WIT world instead of per-package worlds
-    #[arg(long)]
-    single_world: bool,
-
-    /// Disable resolving and parsing imported modules
-    #[arg(long = "no-resolve")]
-    no_resolve: bool,
-}
-
-#[derive(Args)]
-struct EvalArgs {
-    /// Expression to evaluate
-    #[arg(short, long, conflicts_with = "file")]
-    expr: Option<String>,
-
-    /// File containing code to evaluate
-    #[arg(short, long)]
-    file: Option<PathBuf>,
-
-    /// Print the AST representation
-    #[arg(long)]
-    print_ast: bool,
-
-    /// Print optimization passes
-    #[arg(long)]
-    print_passes: bool,
-
-    /// Runtime semantics to use (literal, rust)
-    #[arg(long, default_value = "literal")]
-    runtime: String,
-}
-
-#[derive(Args)]
-struct ParseArgs {
-    /// Expression to parse
-    #[arg(short, long, conflicts_with = "files")]
-    expr: Option<String>,
-
-    /// File(s) containing code to parse
-    #[arg(value_hint = ValueHint::FilePath)]
-    files: Vec<PathBuf>,
-
-    /// TypeScript parse mode (strict errors vs loose recovery)
-    #[arg(long = "parse-mode", default_value = "strict", value_enum)]
-    parse_mode: ParseModeArg,
-
-    /// Disable resolving and parsing imported modules
-    #[arg(long = "no-resolve")]
-    no_resolve: bool,
-
-    /// Persist the parsed AST as JSON at this path
-    #[arg(long, value_hint = ValueHint::FilePath)]
-    snapshot: Option<PathBuf>,
-}
-
-#[derive(Copy, Clone, Debug, clap::ValueEnum)]
-enum ParseModeArg {
-    Strict,
-    Loose,
-}
-
-impl From<ParseModeArg> for TsParseMode {
-    fn from(value: ParseModeArg) -> Self {
-        match value {
-            ParseModeArg::Strict => TsParseMode::Strict,
-            ParseModeArg::Loose => TsParseMode::Loose,
-        }
-    }
-}
-
-#[derive(Args)]
-struct RunArgs {
-    /// FerroPhase file to run
-    file: PathBuf,
-
-    /// Print the AST representation
-    #[arg(long)]
-    print_ast: bool,
-
-    /// Print optimization passes
-    #[arg(long)]
-    print_passes: bool,
-
-    /// Runtime semantics to use (literal, rust)
-    #[arg(long, default_value = "literal")]
-    runtime: String,
-}
-
-#[derive(Args)]
-struct CheckArgs {
-    /// Files or directories to check
-    #[arg(default_value = ".")]
-    paths: Vec<PathBuf>,
-
-    /// Include patterns (glob)
-    #[arg(long)]
-    include: Vec<String>,
-
-    /// Exclude patterns (glob)  
-    #[arg(long)]
-    exclude: Vec<String>,
-
-    /// Check only syntax, skip semantic analysis
-    #[arg(long)]
-    syntax_only: bool,
-}
-
-#[derive(Args)]
-struct InitArgs {
-    /// Project name
-    project_name: String,
-
-    /// Project template (basic, library, binary, multi-lang)
-    #[arg(short, long, default_value = "basic")]
-    template: String,
-
-    /// Target directory (defaults to project name)
-    #[arg(short, long)]
-    output: Option<PathBuf>,
-
-    /// Initialize git repository
-    #[arg(long)]
-    git: bool,
-}
-
-#[derive(Args)]
-struct InfoArgs {
-    /// Show version information
-    #[arg(long)]
-    version: bool,
-
-    /// Show build information  
-    #[arg(long)]
-    build: bool,
-
-    /// Show feature flags
-    #[arg(long)]
-    features: bool,
-
-    /// Show all information
-    #[arg(long)]
-    all: bool,
-}
-
-#[derive(Args)]
-struct CompletionsArgs {
-    /// Shell to generate completions for
-    #[arg(value_enum)]
-    shell: clap_complete::Shell,
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     // Minimal bootstrap fast-path: when self-hosting (Stage 2), bypass Clap/Tracing and
@@ -365,101 +132,15 @@ async fn main() -> Result<()> {
 
     // Execute command
     let result = match cli.command {
-        Commands::Compile(args) => {
-            let compile_args = commands::compile::CompileArgs {
-                input: args.input,
-                target: args.target,
-                output: args.output,
-                opt_level: args.opt_level,
-                debug: args.debug,
-                release: args.release,
-                include: args.include,
-                define: args.define,
-                exec: args.exec,
-                error_tolerance: args.error_tolerance,
-                max_errors: args.max_errors,
-                save_intermediates: args.save_intermediates,
-                source_language: args.language,
-            };
-            commands::compile_command(compile_args, &config).await
-        }
-        Commands::Transpile(args) => {
-            let transpile_args = commands::transpile::TranspileArgs {
-                input: args.input,
-                target: args.target,
-                output: args.output,
-                const_eval: args.const_eval,
-                preserve_structs: args.preserve_structs,
-                type_defs: args.type_defs,
-                pretty: args.pretty,
-                source_maps: args.source_maps,
-                single_world: args.single_world,
-                resolve_imports: !args.no_resolve,
-            };
-            commands::transpile_command(transpile_args, &config).await
-        }
-        Commands::Eval(args) => {
-            let eval_args = commands::eval::EvalArgs {
-                expr: args.expr,
-                file: args.file,
-                print_ast: args.print_ast,
-                print_passes: args.print_passes,
-                print_result: true, // For eval command, always print result
-                runtime: Some(args.runtime),
-            };
-            commands::eval_command(eval_args, &config).await
-        }
-        Commands::Parse(args) => {
-            let parse_args = commands::parse::ParseArgs {
-                expr: args.expr,
-                files: args.files,
-                parse_mode: args.parse_mode.into(),
-                resolve_imports: !args.no_resolve,
-                snapshot: args.snapshot,
-            };
-            commands::parse_command(parse_args, &config).await
-        }
-        Commands::Run(args) => {
-            // Use dedicated run command with simplified pipeline
-            let run_args = commands::run::RunArgs {
-                file: args.file,
-                print_ast: args.print_ast,
-                print_passes: args.print_passes,
-                runtime: Some(args.runtime), // Use specified runtime
-            };
-            commands::run_command(run_args, &config).await
-        }
-        Commands::Check(args) => {
-            let check_args = commands::check::CheckArgs {
-                paths: args.paths,
-                include: args.include,
-                exclude: args.exclude,
-                syntax_only: args.syntax_only,
-            };
-            commands::check_command(check_args, &config).await
-        }
-        Commands::Init(args) => {
-            let init_args = commands::init::InitArgs {
-                project_name: args.project_name,
-                template: args.template,
-                output: args.output,
-                git: args.git,
-            };
-            commands::init_command(init_args, &config).await
-        }
-        Commands::Info(args) => {
-            let info_args = commands::info::InfoArgs {
-                version: args.version,
-                build: args.build,
-                features: args.features,
-                all: args.all,
-            };
-            commands::info_command(info_args, &config).await
-        }
-        Commands::Completions(args) => {
-            let comp_args = commands::completions::CompletionsArgs { shell: args.shell };
-            commands::completions_command(comp_args, &config).await
-        }
+        Commands::Compile(args) => commands::compile_command(args, &config).await,
+        Commands::Transpile(args) => commands::transpile_command(args, &config).await,
+        Commands::Eval(args) => commands::eval_command(args, &config).await,
+        Commands::Parse(args) => commands::parse_command(args, &config).await,
+        Commands::Run(args) => commands::run_command(args, &config).await,
+        Commands::Check(args) => commands::check_command(args, &config).await,
+        Commands::Init(args) => commands::init_command(args, &config).await,
+        Commands::Info(args) => commands::info_command(args, &config).await,
+        Commands::Completions(args) => commands::completions_command(args, &config).await,
     };
 
     match result {

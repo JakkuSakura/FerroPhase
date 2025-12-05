@@ -37,7 +37,10 @@ pub(super) fn map_err_mode(err: ErrMode<ContextError>) -> CstError {
     }
 }
 
-pub(super) fn try_parse<T, F>(input: &mut &str, mut f: F) -> Result<Option<T>, ErrMode<ContextError>>
+pub(super) fn try_parse<T, F>(
+    input: &mut &str,
+    mut f: F,
+) -> Result<Option<T>, ErrMode<ContextError>>
 where
     F: FnMut(&mut &str) -> ModalResult<T>,
 {
