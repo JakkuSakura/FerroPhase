@@ -1,5 +1,5 @@
 use fp_core::ast::{Item, ItemImportTree, ItemKind};
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 
 fn parse_single_item(src: &str) -> Item {
     let parser = FerroPhaseParser::new();
@@ -15,7 +15,9 @@ fn parses_extern_crate_plain() {
         ItemKind::Import(import) => match &import.tree {
             ItemImportTree::Path(path) => {
                 assert_eq!(path.segments.len(), 1);
-                assert!(matches!(path.segments[0], ItemImportTree::Ident(ref id) if id.as_str()=="alloc"));
+                assert!(
+                    matches!(path.segments[0], ItemImportTree::Ident(ref id) if id.as_str()=="alloc")
+                );
             }
             other => panic!("expected import path, got {:?}", other),
         },

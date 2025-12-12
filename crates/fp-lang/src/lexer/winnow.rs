@@ -123,10 +123,6 @@ pub(crate) fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
 
-pub(crate) fn is_delimiter(ch: char) -> bool {
-    "{}()[];,+-*/=:.".contains(ch)
-}
-
 pub(crate) fn backtrack_err() -> ErrMode<ContextError> {
     ErrMode::Backtrack(ContextError::new())
 }

@@ -153,7 +153,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn binop_shift(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
-        // 移位仅对整数定义；对齐 bitwise 的约束风格
+        // Shifts are only defined for integers; match the bitwise operator constraints.
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => {
                 let result = match op {

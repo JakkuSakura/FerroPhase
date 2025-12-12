@@ -1,5 +1,5 @@
 use fp_core::ast::*;
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 
 fn parse_single_type_alias(src: &str) -> ItemDefType {
     let parser = FerroPhaseParser::new();
@@ -78,7 +78,7 @@ fn parses_bare_structural_type_literal() {
     }
 }
 
-// -------- 反例：类型代数语法错误应报错 --------
+// -------- Negative cases: invalid type algebra syntax should error --------
 
 fn expect_type_parse_err(src: &str) {
     let parser = FerroPhaseParser::new();
