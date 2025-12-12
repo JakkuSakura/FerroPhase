@@ -378,8 +378,11 @@ impl PrettyPrintable for ast::Item {
 
         match &self.kind {
             ast::ItemKind::Module(module) => {
-                let mut header =
-                    format!("{}module {}", visibility_prefix(&module.visibility), module.name);
+                let mut header = format!(
+                    "{}module {}",
+                    visibility_prefix(&module.visibility),
+                    module.name
+                );
                 header.push_str(&suffix);
                 ctx.writeln(f, format!("{} {{", header))?;
                 ctx.with_indent(|ctx| {
