@@ -53,7 +53,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(while_expr.body.as_mut());
             }
             ExprKind::For(for_expr) => {
-                // 仅做语法遍历：先看迭代表达式，再深入循环体，确保 const/quote/splice 不被漏掉
+                // Syntax-only traversal: visit the iterator expression first, then the loop body,
+                // so const/quote/splice constructs are not missed.
                 self.evaluate_function_body(for_expr.iter.as_mut());
                 self.evaluate_function_body(for_expr.body.as_mut());
             }
@@ -130,7 +131,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(await_expr.base.as_mut());
             }
             ExprKind::Async(async_expr) => {
-                // async 在 AST 层仅是标记，继续深入内部表达式做分析
+                // `async` is a syntactic marker at the AST layer; keep traversing the inner expr.
                 self.evaluate_function_body(async_expr.expr.as_mut());
             }
             ExprKind::Reference(reference) => {

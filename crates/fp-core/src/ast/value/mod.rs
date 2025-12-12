@@ -7,7 +7,6 @@ pub use ty::*;
 pub use value::*;
 
 use crate::ast::{get_threadlocal_serializer, BExpr, Expr, ExprKind};
-use crate::bail;
 use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};

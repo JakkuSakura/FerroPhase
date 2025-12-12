@@ -3282,9 +3282,12 @@ fn main() {
         pipeline
             .stage_normalize_intrinsics(&mut ast, &diagnostics)
             .expect("normalization should succeed before const-eval");
-        pipeline
-            .stage_type_check_for_tests(&mut ast, &diagnostics)
-            .expect("type checking should succeed before hitting interpreter limitations");
+        if let Err(err) = pipeline.stage_type_check_for_tests(&mut ast, &diagnostics) {
+            panic!(
+                "type checking should succeed before hitting interpreter limitations: {err:?}; diagnostics: {:?}",
+                diagnostics.get_diagnostics()
+            );
+        }
 
         let mut options = PipelineOptions::default();
         options.execute_main = true;

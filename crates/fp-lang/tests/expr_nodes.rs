@@ -129,9 +129,7 @@ fn parses_struct_literal_single_field_without_trailing_comma() {
 #[test]
 fn block_in_if_else_not_misparsed_as_struct_literal() {
     let fe = FerroFrontend::new();
-    let res = fe
-        .parse("if a > b { a } else { b }", None)
-        .expect("parse");
+    let res = fe.parse("if a > b { a } else { b }", None).expect("parse");
     let e = unwrap_expr(&res.ast);
     assert!(
         matches!(e.kind(), ExprKind::If(_)),
@@ -166,7 +164,7 @@ fn parses_empty_structural_literal() {
     assert_eq!(s.fields.len(), 0);
 }
 
-// 反例：结构化/结构体字面量的错误语法应报错
+// Negative cases: invalid structural/struct literal syntax should error.
 
 fn expect_parse_err(src: &str) {
     let fe = FerroFrontend::new();

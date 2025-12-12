@@ -57,7 +57,11 @@ macro_rules! plain_value {
 plain_value! {
     ValueInt: i64
 }
-// TODO: 数值后缀仅在解析阶段保留，当前存储仍为 i64；未按后缀做位宽/溢出校验。
+// TODO(literal semantics): numeric suffix/bit-width metadata is not carried into `ValueInt`
+// (it is still fixed to i64), and there is no overflow checking.
+// If we want full support for suffix semantics like `10i32`/`10u8`, we should preserve raw
+// literal/suffix metadata in the token/AST and validate/diagnose it in a post-AST stage
+// (typing/semantic) based on contextual types.
 plain_value! {
     ValueBool: bool
 }
@@ -66,7 +70,8 @@ plain_value! {
 pub struct ValueDecimal {
     pub value: f64,
 }
-// TODO: 浮点后缀目前未反映到存储/校验，仅保留在解析侧元数据。
+// TODO(literal semantics): float suffixes (e.g. `1.0f32`) are not reflected in storage/validation.
+// For full semantics, preserve suffix metadata in the token/AST and handle it post-AST.
 impl PartialEq for ValueDecimal {
     fn eq(&self, other: &Self) -> bool {
         self.value.total_cmp(&other.value) == std::cmp::Ordering::Equal
@@ -94,7 +99,6 @@ impl ValueDecimal {
         Self { value: v }
     }
 }
-// TODO: emit! 当前仅作为语法糖重写为 splice(quote)，未限制使用场景；若需语义约束，请在解析/语义阶段补诊断。
 impl ToJson for ValueDecimal {
     fn to_json(&self) -> crate::error::Result<serde_json::Value> {
         Ok(json!(self.value))
