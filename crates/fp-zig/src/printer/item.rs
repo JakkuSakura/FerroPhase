@@ -179,8 +179,8 @@ impl ZigEmitter {
     fn render_visibility(&self, visibility: &Visibility) -> &'static str {
         match visibility {
             Visibility::Public => "pub ",
-            Visibility::Crate => "pub ",          // Zig 没有作用域限制，退化为 pub
-            Visibility::Restricted(_) => "pub ",  // 同上，保持可见性不丢失语义
+            Visibility::Crate => "pub ", // Zig has no crate-scoped visibility; degrade to `pub`.
+            Visibility::Restricted(_) => "pub ", // Same; keep maximum visibility to avoid dropping semantics.
             Visibility::Inherited | Visibility::Private => "",
         }
     }

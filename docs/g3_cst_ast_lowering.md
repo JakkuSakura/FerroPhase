@@ -9,13 +9,16 @@
   - `quote { … }` → `ExprKind::Quote`（携带块 AST，含推断的片段种类）
   - `splice ( … )` → `ExprKind::Splice`（引用 QuoteToken）
   - `const { … }` → `ExprKind::IntrinsicCall(ConstBlock)`，内部 block 原样保留
-  - `emit! { … }` → 解析期重写为 `splice ( quote { … } )`
+  - `emit! { … }` → 作为语法糖，在进入 token-based parser 之前降级为 `splice ( quote { … } )`
 - 宏调用/属性：不在降级阶段展开，保留为 AST 节点交给后续宏系统。
 
 ## 解析入口与重写位置
 
-- CST→AST 主入口：`crates/fp-lang/src/parser/lower.rs`
-- quote/splice/emit 关键重写：`crates/fp-lang/src/parser/expr.rs`（`parse_expr_prec`）
+- CST→AST 主入口：`crates/fp-lang/src/parser/mod.rs`（`FerroPhaseParser::parse_expr_from_cst` / `parse_items_from_cst`）
+- CST 构建：`crates/fp-lang/src/parser/cst.rs`（仅构建通用 `Root/Group/Token/Trivia*`，不区分任何关键字/构造名）
+- CST→tokens：`crates/fp-lang/src/parser/cst_tokens.rs`（Group 展开为分隔符 token + children，并过滤 trivia）
+- token-pass 降级（语法糖规范化）：`crates/fp-lang/src/parser/token_lowering.rs`（包含 `emit!` → `splice(quote(...))`）
+- rewrite_to_rust：`crates/fp-lang/src/parser/mod.rs`（基于 token/group 模式匹配输出 `fp_quote!/fp_splice!`）
 
 ## 诊断与日志
 

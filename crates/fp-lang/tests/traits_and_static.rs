@@ -1,5 +1,5 @@
 use fp_core::ast::ItemKind;
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 
 fn parse_items(src: &str) -> Vec<fp_core::ast::Item> {
     let parser = FerroPhaseParser::new();

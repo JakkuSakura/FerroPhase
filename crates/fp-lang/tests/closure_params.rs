@@ -9,11 +9,26 @@ fn closure_param_typed_simple_path() {
 
     let expr = match res.ast.kind() {
         NodeKind::Expr(e) => e,
-        other => panic!("expected Expr node, found {:?}", other),
+        NodeKind::File(file) => file
+            .items
+            .first()
+            .and_then(|it| match it.kind() {
+                ItemKind::Expr(e) => Some(e),
+                _ => None,
+            })
+            .expect("expected expr item"),
+        other => panic!("expected Expr or File node, found {:?}", other),
     };
 
     let closure = match expr.kind() {
         ExprKind::Closure(c) => c,
+        ExprKind::Block(b) => match b.stmts.first() {
+            Some(BlockStmt::Let(stmt)) => match stmt.init.as_ref().unwrap().kind() {
+                ExprKind::Closure(c) => c,
+                other => panic!("expected closure in let init, got {:?}", other),
+            },
+            other => panic!("expected let stmt, got {:?}", other),
+        },
         other => panic!("expected closure expr, found {:?}", other),
     };
 
@@ -34,11 +49,26 @@ fn closure_param_typed_with_crate_super_segments() {
 
     let expr = match res.ast.kind() {
         NodeKind::Expr(e) => e,
-        other => panic!("expected Expr node, found {:?}", other),
+        NodeKind::File(file) => file
+            .items
+            .first()
+            .and_then(|it| match it.kind() {
+                ItemKind::Expr(e) => Some(e),
+                _ => None,
+            })
+            .expect("expected expr item"),
+        other => panic!("expected Expr or File node, found {:?}", other),
     };
 
     let closure = match expr.kind() {
         ExprKind::Closure(c) => c,
+        ExprKind::Block(b) => match b.stmts.first() {
+            Some(BlockStmt::Let(stmt)) => match stmt.init.as_ref().unwrap().kind() {
+                ExprKind::Closure(c) => c,
+                other => panic!("expected closure in let init, got {:?}", other),
+            },
+            other => panic!("expected let stmt, got {:?}", other),
+        },
         other => panic!("expected closure expr, found {:?}", other),
     };
 

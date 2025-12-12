@@ -4,7 +4,6 @@ use crate::ast::{
     NodeKind,
 };
 use crate::ast::{Ty, Value, ValueFunction};
-use crate::bail;
 use crate::query::QueryDocument;
 use crate::workspace::WorkspaceDocument;
 use std::cell::RefCell;

@@ -1,5 +1,5 @@
 use fp_core::ast::{ItemImportTree, ItemKind};
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 
 fn parse_use(src: &str) -> ItemImportTree {
     let parser = FerroPhaseParser::new();
@@ -13,7 +13,9 @@ fn parse_use(src: &str) -> ItemImportTree {
 
 #[test]
 fn parses_nested_group_with_self_super_root_glob_and_rename() {
-    let tree = parse_use("use crate::{self, super::util::{foo, bar as baz}, ::core::fmt::Debug, alloc::*};");
+    let tree = parse_use(
+        "use crate::{self, super::util::{foo, bar as baz}, ::core::fmt::Debug, alloc::*};",
+    );
     let path = match tree {
         ItemImportTree::Path(p) => p,
         other => panic!("expected path import, got {:?}", other),
@@ -29,7 +31,9 @@ fn parses_nested_group_with_self_super_root_glob_and_rename() {
 
     // self
     match &group.items[0] {
-        ItemImportTree::Path(p) => assert!(matches!(p.segments.first(), Some(ItemImportTree::SelfMod))),
+        ItemImportTree::Path(p) => {
+            assert!(matches!(p.segments.first(), Some(ItemImportTree::SelfMod)))
+        }
         other => panic!("expected self path, got {:?}", other),
     }
     // super::util::{foo, bar as baz}
@@ -48,7 +52,10 @@ fn parses_nested_group_with_self_super_root_glob_and_rename() {
             assert!(matches!(grp.items[0], ItemImportTree::Path(_)));
             match &grp.items[1] {
                 ItemImportTree::Path(path) => {
-                    assert!(matches!(path.segments.last(), Some(ItemImportTree::Rename(_))));
+                    assert!(matches!(
+                        path.segments.last(),
+                        Some(ItemImportTree::Rename(_))
+                    ));
                 }
                 other => panic!("expected path with rename, got {:?}", other),
             }
@@ -57,7 +64,9 @@ fn parses_nested_group_with_self_super_root_glob_and_rename() {
     }
     // ::core::fmt::Debug
     match &group.items[2] {
-        ItemImportTree::Path(p) => assert!(matches!(p.segments.first(), Some(ItemImportTree::Root))),
+        ItemImportTree::Path(p) => {
+            assert!(matches!(p.segments.first(), Some(ItemImportTree::Root)))
+        }
         other => panic!("expected root path, got {:?}", other),
     }
     // alloc::*

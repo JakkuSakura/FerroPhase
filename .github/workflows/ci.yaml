@@ -15,9 +15,22 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions-rs/toolchain@v1
         with:
-          toolchain: nightly-2024-07-09
-          components: rustfmt
+          # Use a recent nightly so edition2024 is available
+          toolchain: nightly
+          components: rustfmt, clippy
           override: true
+
+      # Install LLVM 19 for llvm-sys 191; required by fp-cli/fp-optimize dependencies.
+      - name: Install LLVM 19
+        run: sudo apt-get update && sudo apt-get install -y llvm-19-dev clang-19 libpolly-19-dev
+
+      # Point llvm-sys to the installed LLVM toolchain.
+      - name: Set LLVM env
+        run: |
+          echo "LLVM_SYS_191_PREFIX=/usr/lib/llvm-19" >> $GITHUB_ENV
+          echo "LLVM_CONFIG_PATH=/usr/bin/llvm-config-19" >> $GITHUB_ENV
+          # Polly may be unavailable on some runners; ignore if missing.
+          echo "LLVM_SYS_191_IGNORE_POLLY=1" >> $GITHUB_ENV
 
       - name: Cache rust build
         uses: Swatinem/rust-cache@v2

@@ -1,7 +1,6 @@
 use fp_core::ast::*;
-use fp_core::cst::{CstKind, CstNode};
 use fp_core::frontend::LanguageFrontend;
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 use fp_lang::FerroFrontend;
 use std::path::PathBuf;
 
@@ -92,14 +91,6 @@ fn first_gt(const xs: [i32], ys: [i32]) -> i32 {
 fn main() {
     // Intended usage once parser is wired
     let _ = first_gt([1, 2, 5], [0, 1, 3]);
-}
-"#;
-
-const EXAMPLE_EMIT: &str = r#"
-fn main() {
-    const {
-        emit! { let generated = 42; generated }
-    }
 }
 "#;
 
@@ -267,35 +258,35 @@ fn nested_splice_inside_if_parses() {
     assert!(node_contains_splice_quote(&res.ast));
 }
 
-// -------- G3 quote/splice 反例（正反例同文件便于定位） --------
+// -------- G3 quote/splice negative cases --------
 
 #[test]
 fn splice_without_parens_errors() {
-    // splice 括号缺失/未闭合
+    // `splice` parentheses are missing/unclosed.
     expect_parse_err("fn main() { splice ( quote { 1 }; }");
 }
 
 #[test]
 fn mismatched_quote_delimiter_errors() {
-    // quote 使用 [ ] 而非 { }
+    // `quote` requires `{ ... }`.
     expect_parse_err("fn main() { quote [ 1 + 2 ); }");
 }
 
 #[test]
 fn splice_item_in_expr_position_errors() {
-    // item token spliced 到表达式位置应触发种类不匹配
+    // Splicing an item fragment into expression position should error.
     expect_parse_err("fn main() { let _ = splice ( quote item { struct S; } ); }");
 }
 
 #[test]
 fn splice_stmt_in_item_position_errors() {
-    // quote 内语法错误应导致 splice 失败
+    // Invalid syntax inside a quote should cause the splice to fail.
     expect_parse_err("splice ( quote { let x = ; } );");
 }
 
 #[test]
 fn emit_outside_const_errors() {
-    // emit! 使用错误的定界符应触发解析错误
+    // `emit!` requires `{ ... }`.
     expect_parse_err("fn main() { emit! ( let x = 1; ) }");
 }
 
@@ -310,47 +301,74 @@ fn parse_const_eval_basics_example_file() {
 }
 
 #[test]
-fn parser_rewrites_const_eval_example() {
-    let parser = FerroPhaseParser::new();
-    parser
-        .rewrite_to_rust(EXAMPLE_CONST_EVAL)
-        .expect("rewrite const eval example");
-}
-
-#[test]
-fn parser_rewrites_quote_splice_example() {
-    let parser = FerroPhaseParser::new();
-    parser
-        .rewrite_to_rust(EXAMPLE_QUOTE_SPLICE)
-        .expect("rewrite quote splice example");
-}
-
-#[test]
 fn parser_detects_const_blocks() {
     let parser = FerroPhaseParser::new();
-    let cst = parser
-        .parse_to_cst(EXAMPLE_CONST_EVAL)
+    let cleaned = EXAMPLE_CONST_EVAL
+        .lines()
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join("\n");
+    let items = parser
+        .parse_items_ast(&cleaned)
         .expect("parse const eval example");
-    assert!(cst_contains_kind(&cst, CstKind::ConstBlock));
+    assert!(items_contain_const_block(&items));
 }
 
 #[test]
-fn parser_rewrites_emit_macro() {
+fn cst_printer_can_reconstruct_source() {
+    // CST printing is now expression-focused.
     let parser = FerroPhaseParser::new();
-    let rewritten = parser
-        .rewrite_to_rust(EXAMPLE_EMIT)
-        .expect("rewrite emit example");
-    assert!(
-        rewritten.contains("fp_splice!(fp_quote!"),
-        "emit! should lower to fp_splice!(fp_quote!(...))"
-    );
+    let src = "a + b * 2";
+    let cst = parser.parse_expr_cst(src).expect("parse expr CST");
+    let printed = fp_lang::syntax::SyntaxPrinter::print(&cst);
+    assert_eq!(printed, src);
 }
 
-fn cst_contains_kind(node: &CstNode, kind: CstKind) -> bool {
-    if node.kind == kind {
-        return true;
+fn items_contain_const_block(items: &[Item]) -> bool {
+    fn expr_contains_const_block(expr: &Expr) -> bool {
+        match expr.kind() {
+            ExprKind::IntrinsicCall(call) => {
+                matches!(
+                    call.kind,
+                    fp_core::intrinsics::IntrinsicCallKind::ConstBlock
+                )
+            }
+            ExprKind::Block(block) => block.stmts.iter().any(|stmt| match stmt {
+                BlockStmt::Expr(e) => expr_contains_const_block(&e.expr),
+                BlockStmt::Let(l) => l.init.as_ref().is_some_and(expr_contains_const_block),
+                _ => false,
+            }),
+            ExprKind::If(i) => {
+                expr_contains_const_block(&i.cond)
+                    || expr_contains_const_block(&i.then)
+                    || i.elze
+                        .as_ref()
+                        .is_some_and(|e| expr_contains_const_block(e))
+            }
+            ExprKind::For(f) => {
+                expr_contains_const_block(&f.iter) || expr_contains_const_block(&f.body)
+            }
+            ExprKind::While(w) => {
+                expr_contains_const_block(&w.cond) || expr_contains_const_block(&w.body)
+            }
+            ExprKind::Loop(l) => expr_contains_const_block(&l.body),
+            ExprKind::BinOp(b) => {
+                expr_contains_const_block(&b.lhs) || expr_contains_const_block(&b.rhs)
+            }
+            ExprKind::Assign(a) => {
+                expr_contains_const_block(&a.target) || expr_contains_const_block(&a.value)
+            }
+            ExprKind::Invoke(i) => i.args.iter().any(expr_contains_const_block),
+            ExprKind::Quote(q) => {
+                expr_contains_const_block(&ExprKind::Block(q.block.clone()).into())
+            }
+            ExprKind::Splice(s) => expr_contains_const_block(&s.token),
+            _ => false,
+        }
     }
-    node.children
-        .iter()
-        .any(|child| cst_contains_kind(child, kind.clone()))
+
+    items.iter().any(|item| match item.kind() {
+        ItemKind::DefFunction(def) => expr_contains_const_block(&def.body),
+        _ => false,
+    })
 }

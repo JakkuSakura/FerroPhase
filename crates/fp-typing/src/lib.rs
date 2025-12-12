@@ -282,6 +282,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .insert(def.name.as_str().to_string(), def.value.clone());
                 self.register_symbol(&def.name);
             }
+            ItemKind::DefType(def) => {
+                // Type aliases / type-level expressions introduce a named type.
+                // The concrete shape (e.g. structural fields) is resolved during `infer_item`.
+                self.register_symbol(&def.name);
+            }
             ItemKind::DefEnum(def) => {
                 let enum_name = def.name.as_str().to_string();
                 self.enum_defs.insert(enum_name.clone(), def.value.clone());
@@ -414,6 +419,42 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.unify(placeholder, var)?;
                 self.generalize_symbol(def.name.as_str(), placeholder)?;
                 ty
+            }
+            ItemKind::DefType(def) => {
+                // Resolve the RHS to a concrete type; if it is structural, materialize it as a
+                // named struct so that later term-level syntax like `Foo { ... }` can type-check.
+                let placeholder = self.symbol_var(&def.name);
+                let value_var = self.type_from_ast_ty(&def.value)?;
+                let resolved = self.resolve_to_ty(value_var)?;
+
+                let normalized = match resolved {
+                    Ty::Structural(structural) => {
+                        let struct_ty = TypeStruct {
+                            name: def.name.clone(),
+                            generics_params: Vec::new(),
+                            fields: structural.fields.clone(),
+                        };
+                        self.struct_defs
+                            .insert(def.name.as_str().to_string(), struct_ty.clone());
+                        Ty::Struct(struct_ty)
+                    }
+                    Ty::Struct(struct_ty) => {
+                        self.struct_defs
+                            .insert(def.name.as_str().to_string(), struct_ty.clone());
+                        Ty::Struct(struct_ty)
+                    }
+                    Ty::Enum(enum_ty) => {
+                        self.enum_defs
+                            .insert(def.name.as_str().to_string(), enum_ty.clone());
+                        Ty::Enum(enum_ty)
+                    }
+                    other => other,
+                };
+
+                let var = self.type_from_ast_ty(&normalized)?;
+                self.unify(placeholder, var)?;
+                self.generalize_symbol(def.name.as_str(), placeholder)?;
+                normalized
             }
             ItemKind::DefEnum(def) => {
                 let ty = Ty::Enum(def.value.clone());

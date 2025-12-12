@@ -4,7 +4,7 @@
 //! to support different language runtime semantics (Rust, JavaScript, Python, etc.)
 
 use crate::ast::Value;
-use crate::{bail, Result};
+use crate::Result;
 use std::cell::RefCell;
 use std::fmt::{Debug, Display, Formatter};
 use std::rc::Rc;

@@ -1,5 +1,5 @@
 use fp_core::ast::{Item, ItemImportTree, ItemKind, Visibility};
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 
 fn parse_single_item(src: &str) -> Item {
     let parser = FerroPhaseParser::new();

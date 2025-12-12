@@ -15,37 +15,23 @@ pub struct LlvmContext {
 impl LlvmContext {
     /// Create a new LLVM context with the given name
     pub fn new(module_name: &str) -> Self {
-        // Create a minimal module using from_ir_str with proper structure
-        let module_ir = format!(
-            "; ModuleID = '{}'\ntarget datalayout = \"e-m:o-i64:64-f80:128-n8:16:32:64-S128\"\ntarget triple = \"x86_64-unknown-linux-gnu\"\n",
-            module_name
-        );
-
-        let mut module = Module::from_ir_str(&module_ir).unwrap_or_else(|e| {
-            // Fallback: create a basic module structure manually
-            tracing::warn!(
-                "Failed to parse minimal module IR ({}), creating basic module",
-                e
-            );
-            Module {
-                name: String::new(),
-                source_file_name: String::new(),
-                data_layout: DataLayout::default(),
-                target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
-                functions: Vec::new(),
-                global_vars: Vec::new(),
-                global_aliases: Vec::new(),
-                func_declarations: Vec::new(),
-                global_ifuncs: Vec::new(),
-                types: llvm_ir::types::Types::blank_for_testing(),
-                inline_assembly: String::new(),
-            }
-        });
-
-        module.name = module_name.to_string();
-        if module.source_file_name.is_empty() {
-            module.source_file_name = format!("{}.ll", module_name);
-        }
+        // Do not use `llvm_ir::Module::from_ir_str` here.
+        // On LLVM 19, llvm-ir 0.11.3 can panic during attribute-name initialization
+        // (e.g. missing enum attribute "nocapture"), which would make the entire LLVM backend
+        // unusable. We only need the in-memory IR structures, so build a minimal module directly.
+        let module = Module {
+            name: module_name.to_string(),
+            source_file_name: format!("{}.ll", module_name),
+            data_layout: DataLayout::default(),
+            target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
+            functions: Vec::new(),
+            global_vars: Vec::new(),
+            global_aliases: Vec::new(),
+            func_declarations: Vec::new(),
+            global_ifuncs: Vec::new(),
+            types: llvm_ir::types::Types::blank_for_testing(),
+            inline_assembly: String::new(),
+        };
 
         Self {
             module,

@@ -677,8 +677,41 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let inner = self.type_from_ast_ty(&v.ty)?;
                 self.bind(var, TypeTerm::Vec(inner));
             }
+            Ty::Expr(expr) => {
+                // Handle path-like type expressions (e.g., i64, bool, usize, str).
+                if let ExprKind::Locator(loc) = expr.kind() {
+                    let name = loc.to_string();
+                    if let Some(prim) = primitive_from_name(&name) {
+                        self.bind(var, TypeTerm::Primitive(prim));
+                        return Ok(var);
+                    }
+                    if let Some(struct_ty) = self.struct_defs.get(&name) {
+                        self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                        return Ok(var);
+                    }
+                    if let Some(enum_ty) = self.enum_defs.get(&name) {
+                        self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                        return Ok(var);
+                    }
+                }
+                // Fallback: treat as any to allow later constraints to refine.
+                self.bind(var, TypeTerm::Any);
+            }
+            Ty::Function(f) => {
+                let params = f
+                    .params
+                    .iter()
+                    .map(|p| self.type_from_ast_ty(p))
+                    .collect::<Result<Vec<_>>>()?;
+                let ret = if let Some(ret_ty) = f.ret_ty.as_ref() {
+                    self.type_from_ast_ty(ret_ty)
+                } else {
+                    self.type_from_ast_ty(&Ty::Unit(TypeUnit))
+                }?;
+                self.bind(var, TypeTerm::Function(FunctionTerm { params, ret }));
+            }
             other => {
-                // 直接报错，防止错误被吞，便于调试。
+                // Error out loudly instead of silently defaulting, to avoid masking bugs.
                 return Err(Error::from(format!(
                     "unsupported AST type in type_from_ast_ty: {:?}",
                     other
@@ -686,6 +719,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
         Ok(var)
+    }
+}
+
+fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
+    use TypePrimitive::Int;
+    match name {
+        "i8" => Some(Int(TypeInt::I8)),
+        "i16" => Some(Int(TypeInt::I16)),
+        "i32" => Some(Int(TypeInt::I32)),
+        "i64" => Some(Int(TypeInt::I64)),
+        "u8" => Some(Int(TypeInt::U8)),
+        "u16" => Some(Int(TypeInt::U16)),
+        "u32" => Some(Int(TypeInt::U32)),
+        "u64" => Some(Int(TypeInt::U64)),
+        "bool" => Some(TypePrimitive::Bool),
+        "char" => Some(TypePrimitive::Char),
+        "str" | "&str" => Some(TypePrimitive::String),
+        "f32" => Some(TypePrimitive::Decimal(DecimalType::F32)),
+        "f64" => Some(TypePrimitive::Decimal(DecimalType::F64)),
+        _ => None,
     }
 }
 

@@ -45,7 +45,8 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
 
     let options = build_pipeline_options(&runtime, &args, config);
 
-    let output = execute_pipeline(&runtime, &options, PipelineInput::Expression(source)).await?;
+    let output =
+        execute_pipeline(&runtime, &options, PipelineInput::File(args.file.clone())).await?;
 
     handle_pipeline_output(output, &args)?;
 
