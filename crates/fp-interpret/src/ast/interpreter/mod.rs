@@ -382,8 +382,41 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn cast_value_to_type(&mut self, value: Value, target_ty: &Ty) -> Value {
-        match target_ty {
-            Ty::Primitive(TypePrimitive::Int(_)) => match value {
+        let primitive_target = match target_ty {
+            Ty::Primitive(primitive) => Some(*primitive),
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Locator(locator) => {
+                    let name = match locator {
+                        Locator::Ident(ident) => Some(ident.as_str()),
+                        Locator::Path(path) if path.segments.len() == 1 => {
+                            Some(path.segments[0].as_str())
+                        }
+                        Locator::ParameterPath(path) if path.segments.len() == 1 => {
+                            Some(path.segments[0].ident.as_str())
+                        }
+                        _ => None,
+                    };
+
+                    match name {
+                        Some("i64") => Some(TypePrimitive::Int(TypeInt::I64)),
+                        Some("u64") => Some(TypePrimitive::Int(TypeInt::U64)),
+                        Some("i32") => Some(TypePrimitive::Int(TypeInt::I32)),
+                        Some("u32") => Some(TypePrimitive::Int(TypeInt::U32)),
+                        Some("i16") => Some(TypePrimitive::Int(TypeInt::I16)),
+                        Some("u16") => Some(TypePrimitive::Int(TypeInt::U16)),
+                        Some("i8") => Some(TypePrimitive::Int(TypeInt::I8)),
+                        Some("u8") => Some(TypePrimitive::Int(TypeInt::U8)),
+                        Some("bool") => Some(TypePrimitive::Bool),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+
+        match primitive_target {
+            Some(TypePrimitive::Int(_)) => match value {
                 Value::Int(int_val) => Value::int(int_val.value),
                 Value::Bool(bool_val) => Value::int(if bool_val.value { 1 } else { 0 }),
                 Value::Decimal(decimal_val) => Value::int(decimal_val.value as i64),
@@ -395,7 +428,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::undefined()
                 }
             },
-            Ty::Primitive(TypePrimitive::Bool) => match value {
+            Some(TypePrimitive::Bool) => match value {
                 Value::Bool(bool_val) => Value::bool(bool_val.value),
                 Value::Int(int_val) => Value::bool(int_val.value != 0),
                 other => {

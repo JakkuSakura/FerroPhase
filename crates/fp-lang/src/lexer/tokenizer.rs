@@ -1,6 +1,10 @@
+use super::lexeme::Lexeme;
+#[cfg(test)]
+use super::lexeme::LexemeKind;
 use super::winnow::{
-    backtrack_err, is_ident_continue, is_ident_start, parse_cooked_string_literal,
-    parse_raw_identifier, parse_raw_string_literal, ws, MULTI_PUNCT, SINGLE_PUNCT,
+    backtrack_err, block_comment, is_ident_continue, is_ident_start, line_comment,
+    parse_cooked_string_literal, parse_raw_identifier, parse_raw_string_literal, whitespace, ws,
+    MULTI_PUNCT, SINGLE_PUNCT,
 };
 use thiserror::Error;
 use winnow::combinator::alt;
@@ -46,7 +50,7 @@ pub enum Keyword {
 }
 
 impl Keyword {
-    fn from_lexeme(lexeme: &str) -> Option<Self> {
+    pub(crate) fn from_lexeme(lexeme: &str) -> Option<Self> {
         match lexeme {
             "quote" => Some(Self::Quote),
             "splice" => Some(Self::Splice),
@@ -117,7 +121,11 @@ pub enum LexerError {
 // Strip a type suffix from a number lexeme (e.g., "10i64" -> "10", "1.2f32" -> "1.2").
 // Suffix is defined as the first alphabetic character that is *not* part of an exponent,
 // followed by alphanumeric/underscore chars.
-fn strip_number_suffix(lexeme: &str) -> &str {
+//
+// NOTE: Transitional helper before the "literal semantics" TODO is addressed.
+// The lexer/token layer preserves the raw literal text, while the parser/value layer currently
+// parses only the numeric portion into i64/f64 and ignores any suffix.
+pub(crate) fn strip_number_suffix(lexeme: &str) -> &str {
     let mut numeric_part = lexeme;
     for (idx, ch) in lexeme.char_indices() {
         if ch.is_ascii_alphabetic() {
@@ -147,6 +155,36 @@ fn strip_number_suffix(lexeme: &str) -> &str {
         }
     }
     numeric_part
+}
+
+pub(crate) fn classify_lexeme(lexeme: &str) -> Option<TokenKind> {
+    let mut input = lexeme;
+    let kind = token_parser().parse_next(&mut input).ok()?;
+    if input.is_empty() {
+        Some(kind)
+    } else {
+        None
+    }
+}
+
+pub(crate) fn classify_and_normalize_lexeme(lexeme: &str) -> Option<(TokenKind, String)> {
+    let kind = classify_lexeme(lexeme)?;
+    let mut normalized = lexeme.to_string();
+    let kind = match kind {
+        TokenKind::Ident => {
+            if let Some(keyword) = Keyword::from_lexeme(&normalized) {
+                TokenKind::Keyword(keyword)
+            } else {
+                if let Some(stripped) = normalized.strip_prefix("r#") {
+                    normalized = stripped.to_string();
+                }
+                TokenKind::Ident
+            }
+        }
+        TokenKind::Number => TokenKind::Number,
+        other => other,
+    };
+    Some((kind, normalized))
 }
 
 impl From<ContextError> for LexerError {
@@ -190,12 +228,6 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
                     TokenKind::Ident
                 }
             }
-            TokenKind::Number => {
-                // Normalize number lexeme by stripping type suffix; suffix remains consumed.
-                let trimmed = strip_number_suffix(&lexeme);
-                lexeme = trimmed.to_string();
-                TokenKind::Number
-            }
             other => other,
         };
         tokens.push(Token {
@@ -205,6 +237,50 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
         });
     }
     Ok(tokens)
+}
+
+pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
+    let mut input = source;
+    let mut out = Vec::new();
+    while !input.is_empty() {
+        let before = input;
+        let start = source.len() - before.len();
+
+        if whitespace.parse_next(&mut input).is_ok() {
+            let end = source.len() - input.len();
+            out.push(Lexeme::trivia_whitespace(
+                source[start..end].to_string(),
+                Span { start, end },
+            ));
+            continue;
+        }
+        if line_comment.parse_next(&mut input).is_ok() {
+            let end = source.len() - input.len();
+            out.push(Lexeme::trivia_line_comment(
+                source[start..end].to_string(),
+                Span { start, end },
+            ));
+            continue;
+        }
+        if block_comment.parse_next(&mut input).is_ok() {
+            let end = source.len() - input.len();
+            out.push(Lexeme::trivia_block_comment(
+                source[start..end].to_string(),
+                Span { start, end },
+            ));
+            continue;
+        }
+
+        token_parser()
+            .parse_next(&mut input)
+            .map_err(LexerError::from)?;
+        let end = source.len() - input.len();
+        out.push(Lexeme::token(
+            source[start..end].to_string(),
+            Span { start, end },
+        ));
+    }
+    Ok(out)
 }
 
 fn token_parser<'a>() -> impl Parser<&'a str, TokenKind, ContextError> {
@@ -341,4 +417,61 @@ fn single_punct_token(input: &mut &str) -> ModalResult<char> {
     take_while(1..=1, |c: char| SINGLE_PUNCT.contains(c))
         .map(|s: &str| s.chars().next().unwrap())
         .parse_next(input)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn snapshot_from_lexemes(src: &str) -> Vec<(TokenKind, String)> {
+        lex_lexemes(src)
+            .expect("lex_lexemes")
+            .into_iter()
+            .filter(|l| !l.is_trivia())
+            .map(|l| classify_and_normalize_lexeme(&l.text).expect("classify_lexeme"))
+            .collect()
+    }
+
+    fn snapshot_from_lexer(src: &str) -> Vec<(TokenKind, String)> {
+        lex(src)
+            .expect("lex")
+            .into_iter()
+            .map(|t| (t.kind, t.lexeme))
+            .collect()
+    }
+
+    #[test]
+    fn lexemes_match_lexer_tokens_ignoring_trivia() {
+        let src = r#"
+            fn main(){ // hello
+              let r#type=10i64;
+              let y=a>>b;
+              let z = quote { splice ( token ) };
+              let k = const { 1 };
+              let f = 2.5;
+              let g = 1.5f64;
+              let r = 0..10;
+              /* block */
+            }
+        "#;
+        assert_eq!(snapshot_from_lexemes(src), snapshot_from_lexer(src));
+    }
+
+    #[test]
+    fn lexemes_preserve_trivia_text() {
+        let src = "a /*x*/ b //y\nc";
+        let lexemes = lex_lexemes(src).expect("lex_lexemes");
+        assert!(
+            lexemes
+                .iter()
+                .any(|l| l.text == "/*x*/" && l.kind == LexemeKind::TriviaBlockComment),
+            "missing block comment trivia"
+        );
+        assert!(
+            lexemes
+                .iter()
+                .any(|l| l.text == "//y\n" && l.kind == LexemeKind::TriviaLineComment),
+            "missing line comment trivia"
+        );
+    }
 }

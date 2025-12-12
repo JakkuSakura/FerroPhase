@@ -1,4 +1,4 @@
-use fp_lang::parser::FerroPhaseParser;
+use fp_lang::ast::FerroPhaseParser;
 
 #[test]
 fn parses_assoc_constraint_in_generic_bound() {

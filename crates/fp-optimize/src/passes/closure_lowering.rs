@@ -357,7 +357,7 @@ impl ClosureLowering {
                 }
             }
             ExprKind::For(expr_for) => {
-                // 遍历迭代器与循环体，保持与 While/Loop 相同的处理深度
+                // Visit the iterator expression and loop body, matching While/Loop traversal depth.
                 self.rewrite_in_expr(expr_for.iter.as_mut())?;
                 self.rewrite_in_expr(expr_for.body.as_mut())?;
             }
@@ -419,7 +419,7 @@ impl ClosureLowering {
                 self.rewrite_in_expr(await_expr.base.as_mut())?;
             }
             ExprKind::Async(async_expr) => {
-                // async 作为语法标记，继续深入内部表达式
+                // `async` is a syntactic marker; keep traversing the inner expression.
                 self.rewrite_in_expr(async_expr.expr.as_mut())?;
             }
             ExprKind::Assign(assign) => {
@@ -686,7 +686,7 @@ impl CaptureCollector {
                 self.visit(await_expr.base.as_ref());
             }
             ExprKind::Async(async_expr) => {
-                // async 仅作标记，这里继续下钻内部表达式
+                // `async` is a syntactic marker; keep traversing the inner expression.
                 self.visit(async_expr.expr.as_ref());
             }
             ExprKind::BinOp(binop) => {
@@ -744,7 +744,7 @@ impl CaptureCollector {
                 self.visit(expr_while.body.as_ref());
             }
             ExprKind::For(expr_for) => {
-                // 遍历 for 的迭代器与循环体，保持与其它控制流一致
+                // Visit the iterator expression and the loop body, consistent with other control flow.
                 self.visit(expr_for.iter.as_ref());
                 self.visit(expr_for.body.as_ref());
             }
@@ -915,7 +915,7 @@ impl CaptureReplacer {
                 self.visit(await_expr.base.as_mut());
             }
             ExprKind::Async(async_expr) => {
-                // async 仅作标记，继续下钻内部表达式
+                // `async` is a syntactic marker; keep traversing the inner expression.
                 self.visit(async_expr.expr.as_mut());
             }
             ExprKind::Select(select) => self.visit(select.obj.as_mut()),
@@ -977,7 +977,7 @@ impl CaptureReplacer {
                 self.visit(expr_while.body.as_mut());
             }
             ExprKind::For(expr_for) => {
-                // 遍历 for 的迭代器与循环体
+                // Visit the iterator expression and the loop body.
                 self.visit(expr_for.iter.as_mut());
                 self.visit(expr_for.body.as_mut());
             }

@@ -35,4 +35,3 @@ fn impl_generics_multiple_params() {
     assert_eq!(impl_block.generics_params[0].name.as_str(), "T");
     assert_eq!(impl_block.generics_params[1].name.as_str(), "U");
 }
-
