@@ -1,4 +1,3 @@
-use common::assert_eq;
 use javascript_lang::ts::printer::TsPrinter;
 use fp_core::ast::*;
 use fp_core::ast::{EnumTypeVariant, Type, TypeEnum, TypeUnit};
