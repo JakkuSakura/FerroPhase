@@ -703,7 +703,6 @@ dependencies = [
  "eyre",
  "fp-core",
  "llvm-ir",
- "llvm-sys",
  "serde",
  "serde_json",
  "tempfile",
