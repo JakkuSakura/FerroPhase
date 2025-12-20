@@ -39,10 +39,6 @@ pub struct NoopIntrinsicNormalizer;
 
 /// Strategy interface for language-specific intrinsic normalisation.
 pub trait IntrinsicNormalizer {
-    fn normalize(&self, _node: &mut crate::ast::Node) -> Result<()> {
-        Ok(())
-    }
-
     /// Strategy hook for intrinsic call expressions.
     ///
     /// The framework guarantees `expr.kind()` is `ExprKind::IntrinsicCall`.

@@ -665,6 +665,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
 
 [[package]]
+name = "ferrophase"
+version = "0.0.0"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -902,6 +906,7 @@ dependencies = [
  "clap",
  "eyre",
  "fp-core",
+ "fp-optimize",
  "itertools 0.12.1",
  "pretty_assertions",
  "proc-macro2",

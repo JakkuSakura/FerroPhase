@@ -3302,21 +3302,9 @@ fn main() {
         let mut options = PipelineOptions::default();
         options.execute_main = true;
 
-        let result = pipeline.stage_const_eval(&mut ast, &options, &diagnostics);
-        assert!(result.is_err(), "enum const-eval should currently fail");
-
-        let messages: Vec<_> = diagnostics
-            .get_diagnostics()
-            .iter()
-            .map(|diag| diag.message.clone())
-            .collect();
-        assert!(
-            messages
-                .iter()
-                .any(|msg| msg.contains("unresolved symbol 'Value::C'")),
-            "expected const-eval to report unresolved enum variant, got {:?}",
-            messages
-        );
+        pipeline
+            .stage_const_eval(&mut ast, &options, &diagnostics)
+            .expect("enum const-eval should succeed");
     }
 
     #[test]
@@ -3355,21 +3343,9 @@ fn main() {
             .stage_normalize_intrinsics(&mut ast, &diagnostics)
             .expect("intrinsic normalization should still succeed");
 
-        let result = pipeline.stage_type_check_for_tests(&mut ast, &diagnostics);
-        assert!(result.is_err(), "trait typing should currently fail");
-
-        let messages: Vec<_> = diagnostics
-            .get_diagnostics()
-            .iter()
-            .map(|diag| diag.message.clone())
-            .collect();
-        assert!(
-            messages
-                .iter()
-                .any(|msg| msg.contains("type inference for item not implemented")),
-            "expected trait lowering to report missing inference, got {:?}",
-            messages
-        );
+        pipeline
+            .stage_type_check_for_tests(&mut ast, &diagnostics)
+            .expect("trait typing should succeed");
     }
 
     #[test]
