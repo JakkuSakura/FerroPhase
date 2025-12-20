@@ -146,15 +146,42 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_match(&mut self, match_expr: &mut ExprMatch) -> Result<TypeVarId> {
         let mut result_var: Option<TypeVarId> = None;
 
-        for case in &mut match_expr.cases {
-            let cond_var = self.infer_expr(case.cond.as_mut())?;
-            self.ensure_bool(cond_var, "match case condition")?;
+        if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
+            let scrutinee_var = self.infer_expr(scrutinee.as_mut())?;
+            for case in &mut match_expr.cases {
+                self.enter_scope();
 
-            let body_var = self.infer_expr(case.body.as_mut())?;
-            if let Some(existing) = result_var {
-                self.unify(existing, body_var)?;
-            } else {
-                result_var = Some(body_var);
+                if let Some(pat) = case.pat.as_mut() {
+                    let pat_info = self.infer_pattern(pat.as_mut())?;
+                    self.unify(pat_info.var, scrutinee_var)?;
+                    self.apply_pattern_generalization(&pat_info)?;
+                }
+
+                if let Some(guard) = case.guard.as_mut() {
+                    let guard_var = self.infer_expr(guard.as_mut())?;
+                    self.ensure_bool(guard_var, "match guard")?;
+                }
+
+                let body_var = self.infer_expr(case.body.as_mut())?;
+                if let Some(existing) = result_var {
+                    self.unify(existing, body_var)?;
+                } else {
+                    result_var = Some(body_var);
+                }
+                self.exit_scope();
+            }
+        } else {
+            // Legacy lowering: cases are boolean conditions.
+            for case in &mut match_expr.cases {
+                let cond_var = self.infer_expr(case.cond.as_mut())?;
+                self.ensure_bool(cond_var, "match case condition")?;
+
+                let body_var = self.infer_expr(case.body.as_mut())?;
+                if let Some(existing) = result_var {
+                    self.unify(existing, body_var)?;
+                } else {
+                    result_var = Some(body_var);
+                }
             }
         }
 
