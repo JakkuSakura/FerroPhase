@@ -10,7 +10,7 @@ use fp_core::ast::{
     Path, Pattern, PatternIdent, PatternKind, PatternTuple, PatternType, PatternWildcard, StmtLet,
     PatternStructural, PatternStructField, PatternTupleStruct, PatternVariant, StructuralField,
     Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference,
-    TypeSlice, TypeStructural, TypeTuple, Value,
+    TypeSlice, TypeStructural, TypeTuple, Value, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -354,7 +354,8 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprString))?;
             let decoded = decode_string_literal(&raw).unwrap_or(raw);
-            Ok(Expr::value(Value::string(decoded)))
+            // String literals should lower to borrowed `&'static str` equivalents by default.
+            Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
         }
         SyntaxKind::ExprUnary => {
             let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;

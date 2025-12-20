@@ -1,38 +1,52 @@
 ast::File {
   items:
-    priv import std::fmt::Display
-    priv import std::ops::Add
-    priv fn<T: Add + Display> apply(a: Expr(T), b: Expr(T), op: fn(Expr(T), Expr(T)) -> Expr(T)) -> () : fn<T: Add + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> ()
+    pub import std::fmt::Display
+    pub import std::ops::Add
+    pub fn<T: Add<T
+> + Display> apply(a: Expr(T), b: Expr(T), op: fn(Expr(T), Expr(T)) -> Expr(T)) -> () : fn<T: Add<T
+> + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> ()
       block (1 stmt)
         expr_stmt ;
           intrinsic println
             template: "{}" op(a, b)
-    priv fn<T: Add> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add>(unknown, unknown) -> unknown
-      binop +
-        lhs:
-          locator a
-        rhs:
-          locator b
-    priv fn apply_if(cond: Expr(bool), a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
-      if
-        cond:
-          locator cond
-        then:
-          invoke
-            target: op
-            args:
+    pub fn<T: Add<T
+>> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+>>(unknown, unknown) -> unknown
+      block (1 stmt)
+        expr_stmt (value)
+          binop +
+            lhs:
               locator a
+            rhs:
               locator b
-        else:
-          value 0
-    priv fn make_adder(n: i64) -> impl Fn : fn(i64) -> fn(i64) -> i64
-      closure (x : unknown)
-        binop +
-          lhs:
-            locator x
-          rhs:
-            locator n
-    priv fn main() -> () : fn() -> ()
+    pub fn apply_if(cond: Expr(bool), a: Expr(i64), b: Expr(i64), op: fn(Expr(i64), Expr(i64)) -> Expr(i64)) -> Expr(i64) : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
+      block (1 stmt)
+        expr_stmt (value)
+          if
+            cond:
+              locator cond
+            then:
+              block (1 stmt)
+                expr_stmt (value)
+                  invoke
+                    target: op
+                    args:
+                      locator a
+                      locator b
+            else:
+              block (1 stmt)
+                expr_stmt (value)
+                  value 0
+    pub fn make_adder(n: Expr(i64)) -> fn(Expr(i64)) -> Expr(i64) : fn(i64) -> fn(i64) -> i64
+      block (1 stmt)
+        expr_stmt (value)
+          closure (x)
+            binop +
+              lhs:
+                locator x
+              rhs:
+                locator n
+    pub fn main() -> () : fn() -> ()
       block (11 stmts)
         expr_stmt ;
           intrinsic println
@@ -65,7 +79,7 @@ Conditional:"
           intrinsic println
             template: "
 Closure factory:"
-        priv const add_10: fn(i64) -> i64
+        pub const add_10: fn(i64) -> i64
           invoke
             target: make_adder
             args:
@@ -73,9 +87,9 @@ Closure factory:"
         expr_stmt ;
           intrinsic println
             template: "add_10(5) = {}" add_10(5)
-        let double : unknown
+        let double
           init:
-            closure (x : unknown)
+            closure (x)
               binop *
                 lhs:
                   locator x

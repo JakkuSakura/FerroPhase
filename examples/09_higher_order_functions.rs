@@ -1,14 +1,10 @@
 pub use std::fmt::Display;
 pub use std::ops::Add;
 pub fn apply_if(cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
-    if cond {
-        op(a, b)
-    } else {
-        0
-    }
+    if cond { op(a, b) } else { 0 }
 }
-pub fn make_adder(n: i64) -> fn(i64) -> i64 {
-    |x| x + n
+pub fn make_adder(n: i64) -> impl Fn(i64) -> i64 {
+    move |x| x + n
 }
 pub fn main() -> () {
     println!("Generic operations:");
@@ -18,9 +14,9 @@ pub fn main() -> () {
     println!("{}", apply_if(true, 5, 3, add__spec0));
     println!("{}", apply_if(false, 5, 3, add__spec0));
     println!("\nClosure factory:");
-    pub const add_10: fn(i64) -> i64 = make_adder(10);
+    let add_10 = make_adder(10);
     println!("add_10(5) = {}", add_10(5));
-    let double = |x| x * 2;
+    let double = move |x| x * 2;
     println!("double(7) = {}", double(7));
 }
 pub fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () {

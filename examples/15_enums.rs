@@ -4,11 +4,11 @@ pub enum Shape {
     Rectangle { w: i64, h: i64 },
 }
 impl Shape {
-    pub fn describe(&self) -> &str {
+    pub fn describe(&self) -> &'static str {
         match self {
-            Shape::Point => "point".to_string(),
-            Shape::Circle(_) => "circle".to_string(),
-            Shape::Rectangle { .. } => "rectangle".to_string(),
+            Shape::Point => "point",
+            Shape::Circle(_) => "circle",
+            Shape::Rectangle { .. } => "rectangle",
         }
     }
 }
@@ -42,6 +42,6 @@ pub fn main() -> () {
     let none: Option<i64> = Option::None;
     println!("{}", some.unwrap_or(0));
     println!("{}", none.unwrap_or(99));
-    pub const CODE: i32 = 2;
+    const CODE: i32 = 2;
     println!("const: {}", CODE);
 }

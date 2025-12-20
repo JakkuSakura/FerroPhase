@@ -1,14 +1,14 @@
 pub trait Shape {
     fn area(&self) -> f64;
     fn describe(&self) -> () {
-        println!("area={.2}", self.area());
+        println!("area={:.2}", self.area());
     }
 }
 pub struct Circle {
     pub radius: f64,
 }
 impl Shape for Circle {
-    pub fn area(&self) -> f64 {
+    fn area(&self) -> f64 {
         3.14159 * self.radius * self.radius
     }
 }
@@ -17,15 +17,15 @@ pub struct Rectangle {
     pub height: f64,
 }
 impl Shape for Rectangle {
-    pub fn area(&self) -> f64 {
+    fn area(&self) -> f64 {
         self.width * self.height
     }
 }
 pub fn main() -> () {
-    let circle = Circle { radius: 5 };
+    let circle = Circle { radius: 5.0 };
     let rect = Rectangle {
-        width: 4,
-        height: 6,
+        width: 4.0,
+        height: 6.0,
     };
     circle.describe();
     rect.describe();
@@ -33,8 +33,8 @@ pub fn main() -> () {
     print_area__spec1(&rect);
 }
 pub fn print_area__spec0(shape: &Circle) -> () {
-    println!("{.2}", shape.area());
+    println!("{:.2}", shape.area());
 }
 pub fn print_area__spec1(shape: &Rectangle) -> () {
-    println!("{.2}", shape.area());
+    println!("{:.2}", shape.area());
 }

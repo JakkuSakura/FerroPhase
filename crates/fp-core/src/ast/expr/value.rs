@@ -296,15 +296,52 @@ fn build_format_string_from_args(args: &[Expr], _newline: bool) -> Option<ExprFo
         }
         ExprKind::Value(value) => {
             if let Value::String(str_val) = &**value {
-                let mut format = ExprFormatString {
-                    parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
-                    args: Vec::new(),
-                    kwargs: Vec::new(),
-                };
-                if args.len() > 1 {
-                    format.args.extend(args[1..].iter().cloned());
+                if args.len() == 1 {
+                    return Some(ExprFormatString {
+                        parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                    });
                 }
-                Some(format)
+
+                // When extra args are provided, decide whether the first string literal
+                // is intended as a Rust-style format template.
+                let template = str_val.value.clone();
+                let looks_like_format_template = template.contains('{');
+                if looks_like_format_template {
+                    let mut format = ExprFormatString {
+                        parts: vec![FormatTemplatePart::Literal(template)],
+                        args: Vec::new(),
+                        kwargs: Vec::new(),
+                    };
+                    format.args.extend(args[1..].iter().cloned());
+                    return Some(format);
+                }
+
+                // Otherwise treat it like a multi-arg print: prefix + placeholders.
+                let mut parts = vec![FormatTemplatePart::Literal(template)];
+                if !matches!(
+                    parts.last(),
+                    Some(FormatTemplatePart::Literal(lit)) if lit.is_empty()
+                ) {
+                    parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                }
+
+                for (idx, _arg) in args[1..].iter().enumerate() {
+                    parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                        arg_ref: FormatArgRef::Implicit,
+                        format_spec: None,
+                    }));
+                    if idx + 1 < args.len() - 1 {
+                        parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                    }
+                }
+
+                Some(ExprFormatString {
+                    parts,
+                    args: args[1..].to_vec(),
+                    kwargs: Vec::new(),
+                })
             } else {
                 None
             }
