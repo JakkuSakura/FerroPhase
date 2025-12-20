@@ -1149,7 +1149,10 @@ impl Parser {
                 // `&'lifetime T`
                 self.bump_token_into(&mut children);
                 self.bump_trivia_into(&mut children);
-                if matches!(self.peek_non_trivia_token_kind(), Some(TokenKind::Ident) | Some(TokenKind::Keyword(_))) {
+                if matches!(
+                    self.peek_non_trivia_token_kind(),
+                    Some(TokenKind::Ident) | Some(TokenKind::Keyword(_))
+                ) {
                     self.bump_token_into(&mut children);
                     self.bump_trivia_into(&mut children);
                 }
