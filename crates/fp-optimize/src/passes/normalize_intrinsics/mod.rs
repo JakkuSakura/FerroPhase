@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicNormalizer;
+use fp_core::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
 
 mod bootstrap;
 mod format;
@@ -11,27 +11,17 @@ mod format;
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
 /// downstream passes can assume consistent structures.
 pub fn normalize_intrinsics(node: &mut Node) -> Result<()> {
-    normalize_intrinsics_with(node, None)
+    normalize_intrinsics_with(node, &NoopIntrinsicNormalizer)
 }
 
 pub fn normalize_intrinsics_with(
     node: &mut Node,
-    strategy: Option<&dyn IntrinsicNormalizer>,
+    strategy: &dyn IntrinsicNormalizer,
 ) -> Result<()> {
     normalize_node(node, strategy)
 }
 
-/// Default normalizer that applies the shared intrinsic-normalization pass.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct DefaultIntrinsicNormalizer;
-
-impl IntrinsicNormalizer for DefaultIntrinsicNormalizer {
-    fn normalize(&self, node: &mut Node) -> Result<()> {
-        normalize_intrinsics_with(node, Some(self))
-    }
-}
-
-fn normalize_node(node: &mut Node, strategy: Option<&dyn IntrinsicNormalizer>) -> Result<()> {
+fn normalize_node(node: &mut Node, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match node.kind_mut() {
         NodeKind::File(file) => {
             for item in &mut file.items {
@@ -45,7 +35,7 @@ fn normalize_node(node: &mut Node, strategy: Option<&dyn IntrinsicNormalizer>) -
     Ok(())
 }
 
-fn normalize_item(item: &mut Item, strategy: Option<&dyn IntrinsicNormalizer>) -> Result<()> {
+fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match item.kind_mut() {
         ItemKind::Macro(_) => {}
         ItemKind::Module(module) => {
@@ -83,10 +73,7 @@ fn normalize_item(item: &mut Item, strategy: Option<&dyn IntrinsicNormalizer>) -
     Ok(())
 }
 
-fn normalize_block(
-    block: &mut ExprBlock,
-    strategy: Option<&dyn IntrinsicNormalizer>,
-) -> Result<()> {
+fn normalize_block(block: &mut ExprBlock, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     for stmt in &mut block.stmts {
         match stmt {
             BlockStmt::Expr(expr_stmt) => normalize_expr(expr_stmt.expr.as_mut(), strategy)?,
@@ -105,161 +92,175 @@ fn normalize_block(
     Ok(())
 }
 
-fn normalize_expr(expr: &mut Expr, strategy: Option<&dyn IntrinsicNormalizer>) -> Result<()> {
-    let mut replacement: Option<Expr> = None;
+fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
+    loop {
+        let mut replacement: Option<Expr> = None;
 
-    match expr.kind_mut() {
-        ExprKind::Block(block) => normalize_block(block, strategy)?,
-        ExprKind::If(expr_if) => {
-            normalize_expr(expr_if.cond.as_mut(), strategy)?;
-            normalize_expr(expr_if.then.as_mut(), strategy)?;
-            if let Some(else_expr) = expr_if.elze.as_mut() {
-                normalize_expr(else_expr, strategy)?;
+        let strat_outcome = match expr.kind() {
+            ExprKind::Macro(_) => {
+                Some(strategy.normalize_macro(std::mem::replace(expr, Expr::unit()))?)
+            }
+            ExprKind::IntrinsicCall(_) => {
+                Some(strategy.normalize_call(std::mem::replace(expr, Expr::unit()))?)
+            }
+            ExprKind::IntrinsicContainer(_) => {
+                Some(strategy.normalize_container(std::mem::replace(expr, Expr::unit()))?)
+            }
+            ExprKind::Struct(_) => {
+                Some(strategy.normalize_struct(std::mem::replace(expr, Expr::unit()))?)
+            }
+            ExprKind::Structural(_) => {
+                Some(strategy.normalize_structural(std::mem::replace(expr, Expr::unit()))?)
+            }
+            _ => None,
+        };
+
+        if let Some(outcome) = strat_outcome {
+            match outcome {
+                NormalizeOutcome::Ignored(expr_back) => {
+                    *expr = expr_back;
+                }
+                NormalizeOutcome::Normalized(expr_new) => {
+                    *expr = expr_new;
+                    // Strategy owns this node; keep normalizing the replacement
+                    // expression through the shared framework.
+                    continue;
+                }
             }
         }
-        ExprKind::Loop(expr_loop) => normalize_expr(expr_loop.body.as_mut(), strategy)?,
-        ExprKind::For(expr_for) => {
-            normalize_expr(expr_for.iter.as_mut(), strategy)?;
-            normalize_expr(expr_for.body.as_mut(), strategy)?;
-        }
-        ExprKind::While(expr_while) => {
-            normalize_expr(expr_while.cond.as_mut(), strategy)?;
-            normalize_expr(expr_while.body.as_mut(), strategy)?;
-        }
-        ExprKind::Match(expr_match) => {
-            for case in &mut expr_match.cases {
-                normalize_expr(case.cond.as_mut(), strategy)?;
-                normalize_expr(case.body.as_mut(), strategy)?;
+
+        match expr.kind_mut() {
+            ExprKind::Block(block) => normalize_block(block, strategy)?,
+            ExprKind::If(expr_if) => {
+                normalize_expr(expr_if.cond.as_mut(), strategy)?;
+                normalize_expr(expr_if.then.as_mut(), strategy)?;
+                if let Some(else_expr) = expr_if.elze.as_mut() {
+                    normalize_expr(else_expr, strategy)?;
+                }
             }
-        }
-        ExprKind::Let(expr_let) => normalize_expr(expr_let.expr.as_mut(), strategy)?,
-        ExprKind::Macro(_) => {
-            if let ExprKind::Macro(mac) = expr.kind().clone() {
-                if let Some(strat) = strategy {
-                    if let Some(lowered) = strat.normalize_macro(&mac)? {
-                        *expr = lowered;
-                        // Re-run normalization on the lowered expression
-                        normalize_expr(expr, strategy)?;
+            ExprKind::Loop(expr_loop) => normalize_expr(expr_loop.body.as_mut(), strategy)?,
+            ExprKind::For(expr_for) => {
+                normalize_expr(expr_for.iter.as_mut(), strategy)?;
+                normalize_expr(expr_for.body.as_mut(), strategy)?;
+            }
+            ExprKind::While(expr_while) => {
+                normalize_expr(expr_while.cond.as_mut(), strategy)?;
+                normalize_expr(expr_while.body.as_mut(), strategy)?;
+            }
+            ExprKind::Match(expr_match) => {
+                for case in &mut expr_match.cases {
+                    normalize_expr(case.cond.as_mut(), strategy)?;
+                    normalize_expr(case.body.as_mut(), strategy)?;
+                }
+            }
+            ExprKind::Let(expr_let) => normalize_expr(expr_let.expr.as_mut(), strategy)?,
+            ExprKind::Macro(_) => {}
+            ExprKind::Assign(assign) => {
+                normalize_expr(assign.target.as_mut(), strategy)?;
+                normalize_expr(assign.value.as_mut(), strategy)?;
+            }
+            ExprKind::Cast(cast) => {
+                normalize_expr(cast.expr.as_mut(), strategy)?;
+            }
+            ExprKind::Invoke(invoke) => {
+                normalize_invoke(invoke, strategy)?;
+
+                if let Some(intrinsic_call) = fp_core::ast::intrinsic_call_from_invoke(invoke) {
+                    replacement = Some(Expr::new(ExprKind::IntrinsicCall(intrinsic_call)));
+                } else if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
+                    replacement = Some(repl);
+                } else if let Some(mut collection) = ExprIntrinsicContainer::from_invoke(invoke) {
+                    let new_expr = apply_intrinsic_collection(&mut collection, strategy)?;
+                    replacement = Some(new_expr);
+                } else if bootstrap::is_bootstrap_cli_side_effect_call(invoke) {
+                    replacement = Some(Expr::new(ExprKind::Value(Box::new(Value::unit()))));
+                }
+            }
+            ExprKind::Await(await_expr) => normalize_expr(await_expr.base.as_mut(), strategy)?,
+            ExprKind::Select(select) => normalize_expr(select.obj.as_mut(), strategy)?,
+            ExprKind::Struct(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        normalize_expr(value, strategy)?;
                     }
                 }
             }
+            ExprKind::Structural(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        normalize_expr(value, strategy)?;
+                    }
+                }
+            }
+            ExprKind::Array(array_expr) => {
+                for value in &mut array_expr.values {
+                    normalize_expr(value, strategy)?;
+                }
+            }
+            ExprKind::ArrayRepeat(repeat) => {
+                normalize_expr(repeat.elem.as_mut(), strategy)?;
+                normalize_expr(repeat.len.as_mut(), strategy)?;
+            }
+            ExprKind::Tuple(tuple_expr) => {
+                for value in &mut tuple_expr.values {
+                    normalize_expr(value, strategy)?;
+                }
+            }
+            ExprKind::BinOp(binop) => {
+                normalize_expr(binop.lhs.as_mut(), strategy)?;
+                normalize_expr(binop.rhs.as_mut(), strategy)?;
+            }
+            ExprKind::UnOp(unop) => normalize_expr(unop.val.as_mut(), strategy)?,
+            ExprKind::Reference(reference) => normalize_expr(reference.referee.as_mut(), strategy)?,
+            ExprKind::Dereference(deref) => normalize_expr(deref.referee.as_mut(), strategy)?,
+            ExprKind::Index(index) => {
+                normalize_expr(index.obj.as_mut(), strategy)?;
+                normalize_expr(index.index.as_mut(), strategy)?;
+            }
+            ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut(), strategy)?,
+            ExprKind::SplatDict(splat) => normalize_expr(splat.dict.as_mut(), strategy)?,
+            ExprKind::Try(expr_try) => normalize_expr(expr_try.expr.as_mut(), strategy)?,
+            ExprKind::Async(async_expr) => normalize_expr(async_expr.expr.as_mut(), strategy)?,
+            ExprKind::Closure(closure) => normalize_expr(closure.body.as_mut(), strategy)?,
+            ExprKind::Closured(closured) => normalize_expr(closured.expr.as_mut(), strategy)?,
+            ExprKind::Paren(paren) => normalize_expr(paren.expr.as_mut(), strategy)?,
+            ExprKind::FormatString(format_expr) => normalize_format_string(format_expr, strategy)?,
+            ExprKind::Item(item) => normalize_item(item.as_mut(), strategy)?,
+            ExprKind::Value(value) => normalize_value(value, strategy)?,
+            ExprKind::IntrinsicCall(call) => {
+                normalize_intrinsic_call(call, strategy)?;
+            }
+            ExprKind::IntrinsicContainer(collection) => {
+                replacement = Some(apply_intrinsic_collection(collection, strategy)?);
+            }
+            ExprKind::Range(range) => {
+                if let Some(start) = range.start.as_mut() {
+                    normalize_expr(start, strategy)?;
+                }
+                if let Some(end) = range.end.as_mut() {
+                    normalize_expr(end, strategy)?;
+                }
+                if let Some(step) = range.step.as_mut() {
+                    normalize_expr(step, strategy)?;
+                }
+            }
+            ExprKind::Quote(q) => normalize_block(&mut q.block, strategy)?,
+            ExprKind::Splice(s) => normalize_expr(s.token.as_mut(), strategy)?,
+            ExprKind::Id(_) | ExprKind::Locator(_) | ExprKind::Any(_) => {}
         }
-        ExprKind::Assign(assign) => {
-            normalize_expr(assign.target.as_mut(), strategy)?;
-            normalize_expr(assign.value.as_mut(), strategy)?;
+        if let Some(new_expr) = replacement {
+            let old_ty = expr.ty.clone();
+            *expr = new_expr.with_ty_slot(old_ty);
+            continue;
         }
-        ExprKind::Cast(cast) => {
-            normalize_expr(cast.expr.as_mut(), strategy)?;
-        }
-        ExprKind::Invoke(invoke) => {
-            normalize_invoke(invoke, strategy)?;
 
-            if let Some(intrinsic_call) = fp_core::ast::intrinsic_call_from_invoke(invoke) {
-                replacement = Some(Expr::new(ExprKind::IntrinsicCall(intrinsic_call)));
-            } else if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
-                replacement = Some(repl);
-            } else if let Some(mut collection) = ExprIntrinsicContainer::from_invoke(invoke) {
-                let new_expr = apply_intrinsic_collection(&mut collection, strategy)?;
-                replacement = Some(new_expr);
-            } else if bootstrap::is_bootstrap_cli_side_effect_call(invoke) {
-                replacement = Some(Expr::new(ExprKind::Value(Box::new(Value::unit()))));
-            }
-        }
-        ExprKind::Await(await_expr) => normalize_expr(await_expr.base.as_mut(), strategy)?,
-        ExprKind::Select(select) => normalize_expr(select.obj.as_mut(), strategy)?,
-        ExprKind::Struct(struct_expr) => {
-            for field in &mut struct_expr.fields {
-                if let Some(value) = field.value.as_mut() {
-                    normalize_expr(value, strategy)?;
-                }
-            }
-            if let Some(strat) = strategy {
-                if let Some(new_expr) = strat.normalize_struct(struct_expr)? {
-                    replacement = Some(new_expr);
-                }
-            }
-        }
-        ExprKind::Structural(struct_expr) => {
-            for field in &mut struct_expr.fields {
-                if let Some(value) = field.value.as_mut() {
-                    normalize_expr(value, strategy)?;
-                }
-            }
-            if let Some(strat) = strategy {
-                if let Some(new_expr) = strat.normalize_structural(struct_expr)? {
-                    replacement = Some(new_expr);
-                }
-            }
-        }
-        ExprKind::Array(array_expr) => {
-            for value in &mut array_expr.values {
-                normalize_expr(value, strategy)?;
-            }
-        }
-        ExprKind::ArrayRepeat(repeat) => {
-            normalize_expr(repeat.elem.as_mut(), strategy)?;
-            normalize_expr(repeat.len.as_mut(), strategy)?;
-        }
-        ExprKind::Tuple(tuple_expr) => {
-            for value in &mut tuple_expr.values {
-                normalize_expr(value, strategy)?;
-            }
-        }
-        ExprKind::BinOp(binop) => {
-            normalize_expr(binop.lhs.as_mut(), strategy)?;
-            normalize_expr(binop.rhs.as_mut(), strategy)?;
-        }
-        ExprKind::UnOp(unop) => normalize_expr(unop.val.as_mut(), strategy)?,
-        ExprKind::Reference(reference) => normalize_expr(reference.referee.as_mut(), strategy)?,
-        ExprKind::Dereference(deref) => normalize_expr(deref.referee.as_mut(), strategy)?,
-        ExprKind::Index(index) => {
-            normalize_expr(index.obj.as_mut(), strategy)?;
-            normalize_expr(index.index.as_mut(), strategy)?;
-        }
-        ExprKind::Splat(splat) => normalize_expr(splat.iter.as_mut(), strategy)?,
-        ExprKind::SplatDict(splat) => normalize_expr(splat.dict.as_mut(), strategy)?,
-        ExprKind::Try(expr_try) => normalize_expr(expr_try.expr.as_mut(), strategy)?,
-        ExprKind::Async(async_expr) => normalize_expr(async_expr.expr.as_mut(), strategy)?,
-        ExprKind::Closure(closure) => normalize_expr(closure.body.as_mut(), strategy)?,
-        ExprKind::Closured(closured) => normalize_expr(closured.expr.as_mut(), strategy)?,
-        ExprKind::Paren(paren) => normalize_expr(paren.expr.as_mut(), strategy)?,
-        ExprKind::FormatString(format_expr) => normalize_format_string(format_expr, strategy)?,
-        ExprKind::Item(item) => normalize_item(item.as_mut(), strategy)?,
-        ExprKind::Value(value) => normalize_value(value, strategy)?,
-        ExprKind::IntrinsicCall(call) => {
-            if let Some(new_expr) = normalize_intrinsic_call(call, strategy)? {
-                replacement = Some(new_expr);
-            }
-        }
-        ExprKind::IntrinsicContainer(collection) => {
-            let new_expr = apply_intrinsic_collection(collection, strategy)?;
-            replacement = Some(new_expr);
-        }
-        ExprKind::Range(range) => {
-            if let Some(start) = range.start.as_mut() {
-                normalize_expr(start, strategy)?;
-            }
-            if let Some(end) = range.end.as_mut() {
-                normalize_expr(end, strategy)?;
-            }
-            if let Some(step) = range.step.as_mut() {
-                normalize_expr(step, strategy)?;
-            }
-        }
-        ExprKind::Quote(q) => normalize_block(&mut q.block, strategy)?,
-        ExprKind::Splice(s) => normalize_expr(s.token.as_mut(), strategy)?,
-        ExprKind::Id(_) | ExprKind::Locator(_) | ExprKind::Any(_) => {}
+        break;
     }
-    if let Some(new_expr) = replacement {
-        *expr = new_expr;
-    }
+
     Ok(())
 }
 
-fn normalize_invoke(
-    invoke: &mut ExprInvoke,
-    strategy: Option<&dyn IntrinsicNormalizer>,
-) -> Result<()> {
+fn normalize_invoke(invoke: &mut ExprInvoke, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match &mut invoke.target {
         ExprInvokeTarget::Expr(inner) => normalize_expr(inner.as_mut(), strategy)?,
         ExprInvokeTarget::Method(select) => normalize_expr(select.obj.as_mut(), strategy)?,
@@ -274,7 +275,7 @@ fn normalize_invoke(
 
 fn normalize_format_string(
     format_expr: &mut ExprFormatString,
-    strategy: Option<&dyn IntrinsicNormalizer>,
+    strategy: &dyn IntrinsicNormalizer,
 ) -> Result<()> {
     for arg in &mut format_expr.args {
         normalize_expr(arg, strategy)?;
@@ -285,7 +286,7 @@ fn normalize_format_string(
     Ok(())
 }
 
-fn normalize_value(value: &mut Value, strategy: Option<&dyn IntrinsicNormalizer>) -> Result<()> {
+fn normalize_value(value: &mut Value, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     match value {
         Value::Expr(expr) => normalize_expr(expr.as_mut(), strategy),
         Value::Function(function) => normalize_expr(function.body.as_mut(), strategy),
@@ -295,7 +296,7 @@ fn normalize_value(value: &mut Value, strategy: Option<&dyn IntrinsicNormalizer>
 
 fn apply_intrinsic_collection(
     collection: &mut ExprIntrinsicContainer,
-    strategy: Option<&dyn IntrinsicNormalizer>,
+    strategy: &dyn IntrinsicNormalizer,
 ) -> Result<Expr> {
     match collection {
         ExprIntrinsicContainer::VecElements { elements } => {
@@ -315,19 +316,13 @@ fn apply_intrinsic_collection(
         }
     }
 
-    if let Some(strat) = strategy {
-        if let Some(expr) = strat.normalize_container(collection)? {
-            return Ok(expr);
-        }
-    }
-
     Ok(collection.clone().into_const_expr())
 }
 
 fn normalize_intrinsic_call(
     call: &mut ExprIntrinsicCall,
-    strategy: Option<&dyn IntrinsicNormalizer>,
-) -> Result<Option<Expr>> {
+    strategy: &dyn IntrinsicNormalizer,
+) -> Result<()> {
     match &mut call.payload {
         fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
             normalize_format_string(template, strategy)?;
@@ -348,11 +343,7 @@ fn normalize_intrinsic_call(
         }
     }
 
-    if let Some(strat) = strategy {
-        strat.normalize_call(call)
-    } else {
-        Ok(None)
-    }
+    Ok(())
 }
 
 #[cfg(test)]
