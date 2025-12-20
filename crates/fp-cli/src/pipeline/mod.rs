@@ -244,6 +244,10 @@ const STAGE_LINK_BINARY: &str = "link-binary";
 const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
 const STAGE_AST_INTERPRET: &str = "ast-interpret";
 
+fn stage_enabled(options: &PipelineOptions, stage: &str) -> bool {
+    !options.disabled_stages.iter().any(|s| s == stage)
+}
+
 const EXT_AST: &str = "ast";
 const EXT_AST_TYPED: &str = "ast-typed";
 const EXT_AST_EVAL: &str = "ast-eval";
@@ -766,17 +770,19 @@ impl Pipeline {
 
         let diagnostic_manager = DiagnosticManager::new();
 
-        self.run_stage(
-            STAGE_INTRINSIC_NORMALIZE,
-            &diagnostic_manager,
-            &pipeline_options,
-            |pipeline| pipeline.stage_normalize_intrinsics(ast, &diagnostic_manager),
-        )?;
+        if stage_enabled(&pipeline_options, STAGE_INTRINSIC_NORMALIZE) {
+            self.run_stage(
+                STAGE_INTRINSIC_NORMALIZE,
+                &diagnostic_manager,
+                &pipeline_options,
+                |pipeline| pipeline.stage_normalize_intrinsics(ast, &diagnostic_manager),
+            )?;
+        }
 
         // For transpilation we prefer to run const-eval before type checking so that
         // quote/splice expansion and other compile-time rewrites are reflected in the
         // typed AST.
-        if options.run_const_eval {
+        if options.run_const_eval && stage_enabled(&pipeline_options, STAGE_CONST_EVAL) {
             let outcome = self.run_stage(
                 STAGE_CONST_EVAL,
                 &diagnostic_manager,
@@ -786,21 +792,23 @@ impl Pipeline {
             self.last_const_eval = Some(outcome.clone());
         }
 
-        self.run_stage(
-            STAGE_TYPE_ENRICH,
-            &diagnostic_manager,
-            &pipeline_options,
-            |pipeline| {
-                pipeline.stage_type_check(
-                    ast,
-                    STAGE_TYPE_ENRICH,
-                    &diagnostic_manager,
-                    &pipeline_options,
-                )
-            },
-        )?;
+        if stage_enabled(&pipeline_options, STAGE_TYPE_ENRICH) {
+            self.run_stage(
+                STAGE_TYPE_ENRICH,
+                &diagnostic_manager,
+                &pipeline_options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        ast,
+                        STAGE_TYPE_ENRICH,
+                        &diagnostic_manager,
+                        &pipeline_options,
+                    )
+                },
+            )?;
+        }
 
-        if options.run_const_eval {
+        if options.run_const_eval && stage_enabled(&pipeline_options, STAGE_CONST_EVAL) {
             remove_generic_templates(ast)?;
 
             if options.save_intermediates {
@@ -870,28 +878,37 @@ impl Pipeline {
     ) -> Result<PipelineOutput, CliError> {
         let diagnostic_manager = DiagnosticManager::new();
 
-        self.run_stage(
-            STAGE_INTRINSIC_NORMALIZE,
-            &diagnostic_manager,
-            options,
-            |pipeline| pipeline.stage_normalize_intrinsics(&mut ast, &diagnostic_manager),
-        )?;
+        if stage_enabled(options, STAGE_INTRINSIC_NORMALIZE) {
+            self.run_stage(
+                STAGE_INTRINSIC_NORMALIZE,
+                &diagnostic_manager,
+                options,
+                |pipeline| pipeline.stage_normalize_intrinsics(&mut ast, &diagnostic_manager),
+            )?;
+        }
 
-        self.run_stage(
-            STAGE_TYPE_ENRICH,
-            &diagnostic_manager,
-            options,
-            |pipeline| {
-                pipeline.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, &diagnostic_manager, options)
-            },
-        )?;
+        if stage_enabled(options, STAGE_TYPE_ENRICH) {
+            self.run_stage(
+                STAGE_TYPE_ENRICH,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_ENRICH,
+                        &diagnostic_manager,
+                        options,
+                    )
+                },
+            )?;
+        }
 
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST, options)?;
             self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
         }
 
-        let outcome = if options.bootstrap_mode {
+        let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
             ConstEvalOutcome::default()
         } else {
             self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
@@ -900,8 +917,10 @@ impl Pipeline {
         };
         self.last_const_eval = Some(outcome.clone());
 
-        // Remove generic template functions after specialization
-        remove_generic_templates(&mut ast)?;
+        // Remove generic template functions after specialization.
+        if stage_enabled(options, STAGE_CONST_EVAL) {
+            remove_generic_templates(&mut ast)?;
+        }
 
         if options.save_intermediates && !options.bootstrap_mode {
             self.save_pretty(&ast, base_path, EXT_AST_EVAL, options)?;
@@ -912,38 +931,44 @@ impl Pipeline {
             self.save_bootstrap_snapshot(&ast, base_path)?;
         }
 
-        self.run_stage(
-            STAGE_RUNTIME_MATERIALIZE,
-            &diagnostic_manager,
-            options,
-            |pipeline| {
-                pipeline.stage_materialize_runtime_intrinsics(
-                    &mut ast,
-                    target,
-                    options,
-                    &diagnostic_manager,
-                )
-            },
-        )?;
-
-        if !options.bootstrap_mode {
+        if stage_enabled(options, STAGE_RUNTIME_MATERIALIZE) {
             self.run_stage(
-                STAGE_TYPE_POST_MATERIALIZE,
+                STAGE_RUNTIME_MATERIALIZE,
                 &diagnostic_manager,
                 options,
                 |pipeline| {
-                    pipeline.stage_type_check(
+                    pipeline.stage_materialize_runtime_intrinsics(
                         &mut ast,
-                        STAGE_TYPE_POST_MATERIALIZE,
-                        &diagnostic_manager,
+                        target,
                         options,
+                        &diagnostic_manager,
                     )
                 },
             )?;
+        }
+
+        if !options.bootstrap_mode {
+            if stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
+                self.run_stage(
+                    STAGE_TYPE_POST_MATERIALIZE,
+                    &diagnostic_manager,
+                    options,
+                    |pipeline| {
+                        pipeline.stage_type_check(
+                            &mut ast,
+                            STAGE_TYPE_POST_MATERIALIZE,
+                            &diagnostic_manager,
+                            options,
+                        )
+                    },
+                )?;
+            }
 
             // Closure lowering is required for lower-level backends. For the Rust
             // backend, preserve closures and other higher-level constructs.
-            if !matches!(target, PipelineTarget::Rust) {
+            if !matches!(target, PipelineTarget::Rust)
+                && stage_enabled(options, STAGE_CLOSURE_LOWERING)
+            {
                 self.run_stage(
                     STAGE_CLOSURE_LOWERING,
                     &diagnostic_manager,
@@ -955,19 +980,21 @@ impl Pipeline {
                     self.save_pretty(&ast, base_path, "ast-closure", options)?;
                 }
 
-                self.run_stage(
-                    STAGE_TYPE_POST_CLOSURE,
-                    &diagnostic_manager,
-                    options,
-                    |pipeline| {
-                        pipeline.stage_type_check(
-                            &mut ast,
-                            STAGE_TYPE_POST_CLOSURE,
-                            &diagnostic_manager,
-                            options,
-                        )
-                    },
-                )?;
+                if stage_enabled(options, STAGE_TYPE_POST_CLOSURE) {
+                    self.run_stage(
+                        STAGE_TYPE_POST_CLOSURE,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_type_check(
+                                &mut ast,
+                                STAGE_TYPE_POST_CLOSURE,
+                                &diagnostic_manager,
+                                options,
+                            )
+                        },
+                    )?;
+                }
             }
         }
 
@@ -1843,6 +1870,7 @@ fn replay_workspace_modules(
                 execute_main: false,
                 bootstrap_mode: true,
                 emit_bootstrap_snapshot: false,
+                disabled_stages: options.disabled_stages.clone(),
             };
 
             let mut sub_pipeline = Pipeline::new();
@@ -1954,6 +1982,7 @@ fn replay_workspace_modules_blocking(
                 execute_main: false,
                 bootstrap_mode: true,
                 emit_bootstrap_snapshot: false,
+                disabled_stages: options.disabled_stages.clone(),
             };
 
             let mut sub_pipeline = Pipeline::new();

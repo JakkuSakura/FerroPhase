@@ -7,20 +7,20 @@ pub enum Option<T> {
     Some(T),
     None,
 }
-pub fn describe(color: &Color) -> &str {
+pub fn describe(color: &Color) -> &'static str {
     match color {
-        Color::Red => "red".to_string(),
-        Color::Green => "green".to_string(),
-        Color::Rgb(255, 0, 0) => "red rgb".to_string(),
-        Color::Rgb(r, g, b) => "custom rgb".to_string(),
+        Color::Red => "red",
+        Color::Green => "green",
+        Color::Rgb(255, 0, 0) => "red rgb",
+        Color::Rgb(r, g, b) => "custom rgb",
     }
 }
-pub fn classify(n: i64) -> &str {
+pub fn classify(n: i64) -> &'static str {
     match n {
-        0 => "zero".to_string(),
-        n if n < 0 => "negative".to_string(),
-        n if n % 2 == 0 => "even".to_string(),
-        _ => "odd".to_string(),
+        0 => "zero",
+        n if n < 0 => "negative",
+        n if n % 2 == 0 => "even",
+        _ => "odd",
     }
 }
 pub fn unwrap_or(opt: Option<i64>, default: i64) -> i64 {
@@ -40,6 +40,6 @@ pub fn main() -> () {
     println!("{}", classify(7));
     println!("{}", unwrap_or(Option::Some(42), 0));
     println!("{}", unwrap_or(Option::None, 99));
-    pub const CODE: i64 = 0;
-    println!("0x{06X}", CODE);
+    const CODE: i64 = 0;
+    println!("0x{:06X}", CODE);
 }

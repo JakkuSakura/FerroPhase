@@ -11,8 +11,8 @@ use fp_core::ast::{
     ExprIndex, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
     ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
     ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple,
-    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, PatternKind,
-    StmtLet,
+    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, StmtLet,
+    Ty, Value, ValueList, Visibility,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -36,7 +36,23 @@ impl RustPrinter {
         match node.kind() {
             ExprKind::Id(id) => self.print_expr_id(*id),
             ExprKind::Locator(loc) => self.print_locator(loc),
-            ExprKind::Value(n) => self.print_value(n),
+            ExprKind::Value(v) => {
+                if let Some(ty) = node.ty() {
+                    if let (Ty::Array(arr), Value::List(ValueList { values })) = (ty, v.as_ref()) {
+                        if let Some(first) = values.first() {
+                            let all_same = values.iter().all(|val| val == first);
+                            if all_same {
+                                let elem = self.print_value(first)?;
+                                let len = self.print_expr(arr.len.as_ref())?;
+                                return Ok(quote!([#elem; #len]));
+                            }
+                        }
+                        let elems: Vec<_> = values.iter().map(|x| self.print_value(x)).try_collect()?;
+                        return Ok(quote!([#(#elems),*]));
+                    }
+                }
+                self.print_value(v)
+            }
             ExprKind::Invoke(n) => self.print_invoke_expr(n),
             ExprKind::UnOp(op) => self.print_un_op(op),
             ExprKind::BinOp(op) => self.print_bin_op(op),
@@ -80,14 +96,119 @@ impl RustPrinter {
 
     fn print_expr_for(&self, for_expr: &ExprFor) -> Result<TokenStream> {
         // Emit a straightforward Rust-style `for` loop.
-        // Note: pattern printing is limited to simple identifiers here.
+        //
+        // Heuristic: `xs.iter().enumerate()` yields `(usize, &T)`. When the
+        // pattern is `(i, x)`, bind the element by value as `(i, &x)`.
         let pat_ts = match for_expr.pat.kind() {
-            PatternKind::Ident(id) => self.print_ident(&id.ident),
-            _ => quote!(_),
+            fp_core::ast::PatternKind::Tuple(tuple)
+                if tuple.patterns.len() == 2
+                    && matches!(
+                        for_expr.iter.kind(),
+                        ExprKind::Invoke(fp_core::ast::ExprInvoke {
+                            target: fp_core::ast::ExprInvokeTarget::Method(_),
+                            ..
+                        })
+                    )
+                    && is_iter_enumerate_over_iter(for_expr.iter.as_ref()) =>
+            {
+                let first = self.print_pattern(&tuple.patterns[0])?;
+                let second = match tuple.patterns[1].kind() {
+                    fp_core::ast::PatternKind::Ident(ident) => {
+                        let id = self.print_pat_ident(ident)?;
+                        quote!(&#id)
+                    }
+                    _ => self.print_pattern(&tuple.patterns[1])?,
+                };
+                quote!((#first, #second))
+            }
+            _ => self.print_pattern(&for_expr.pat)?,
         };
         let iter = self.print_expr(&for_expr.iter)?;
-        let body = self.print_expr(&for_expr.body)?;
+        let body = self.print_expr_no_braces(&for_expr.body)?;
         Ok(quote!(for #pat_ts in #iter { #body }))
+    }
+
+    fn print_block_item(&self, item: &Item) -> Result<TokenStream> {
+        use fp_core::ast::ItemKind;
+
+        match item.kind() {
+            ItemKind::DefConst(def) => {
+                let name = self.print_ident(&def.name);
+                let ty = def
+                    .ty
+                    .as_ref()
+                    .or_else(|| def.ty_annotation())
+                    .map(|ty| self.print_type(ty))
+                    .transpose()?;
+                let value = self.print_expr(def.value.as_ref())?;
+
+                // Prefer `const` when the initializer is const-like, so that nested
+                // items (impls, enums) can refer to it and `const { ... }` blocks can
+                // use it.
+                if ty.is_some() && is_const_like_expr(def.value.as_ref()) {
+                    let ty = ty.expect("ty checked");
+                    Ok(quote!(const #name: #ty = #value;))
+                } else if let Some(ty) = ty {
+                    let initializer_is_callable = matches!(
+                        def.value.kind(),
+                        ExprKind::Invoke(_) | ExprKind::Closure(_) | ExprKind::Closured(_)
+                    );
+                    let annotated_as_fn = matches!(def.ty.as_ref(), Some(Ty::Function(_)));
+                    if annotated_as_fn && initializer_is_callable {
+                        Ok(quote!(let #name = #value;))
+                    } else {
+                        Ok(quote!(let #name: #ty = #value;))
+                    }
+                } else {
+                    Ok(quote!(let #name = #value;))
+                }
+            }
+            ItemKind::DefStatic(def) => {
+                let name = self.print_ident(&def.name);
+                let ty = def
+                    .ty_annotation()
+                    .unwrap_or(&def.ty);
+                let ty = self.print_type(ty)?;
+                let value = self.print_expr(def.value.as_ref())?;
+                Ok(quote!(let #name: #ty = #value;))
+            }
+            ItemKind::DefFunction(def) => {
+                let func = self.print_function(&def.sig, &def.body, &Visibility::Inherited)?;
+                Ok(quote!(#func))
+            }
+            ItemKind::DefStruct(def) => {
+                let mut def = def.clone();
+                def.visibility = Visibility::Inherited;
+                self.print_def_struct(&def)
+            }
+            ItemKind::DefStructural(def) => {
+                let mut def = def.clone();
+                def.visibility = Visibility::Inherited;
+                self.print_def_structural(&def)
+            }
+            ItemKind::DefEnum(def) => {
+                let mut def = def.clone();
+                def.visibility = Visibility::Inherited;
+                self.print_def_enum(&def)
+            }
+            ItemKind::DefTrait(def) => {
+                let mut def = def.clone();
+                def.visibility = Visibility::Inherited;
+                self.print_def_trait(&def)
+            }
+            ItemKind::DefType(def) => {
+                let mut def = def.clone();
+                def.visibility = Visibility::Inherited;
+                self.print_def_type(&def)
+            }
+            ItemKind::Import(def) => {
+                let mut def = def.clone();
+                def.visibility = Visibility::Inherited;
+                self.print_import(&def)
+            }
+            // impl blocks and modules don't carry visibility on the item itself.
+            _ => self.print_item(item),
+        }
     }
 
     fn print_intrinsic_container(
@@ -214,7 +335,7 @@ impl RustPrinter {
     }
     pub fn print_statement(&self, stmt: &BlockStmt) -> Result<TokenStream> {
         match stmt {
-            BlockStmt::Item(item) => self.print_item(item),
+            BlockStmt::Item(item) => self.print_block_item(item),
             BlockStmt::Let(let_) => self.print_stmt_let(let_),
             BlockStmt::Expr(expr0) => {
                 let expr = self.print_expr(&expr0.expr)?;
@@ -505,10 +626,11 @@ impl RustPrinter {
         Ok(quote!(#op #value))
     }
     fn print_expr_closure(&self, closure: &ExprClosure) -> Result<TokenStream> {
-        let movability = if closure.movability == Some(true) {
-            quote!(move)
-        } else {
-            quote!()
+        // Default to `move` closures: it's the most robust translation for FP
+        // closures, especially when they escape the defining scope.
+        let movability = match closure.movability {
+            Some(true) | None => quote!(move),
+            Some(false) => quote!(),
         };
         let params: Vec<_> = closure
             .params
@@ -525,13 +647,15 @@ impl RustPrinter {
             .iter()
             .map(|x| self.print_expr(x))
             .try_collect()?;
-        Ok(quote!([#(#values),*]))
+        // FP slice types map to `&[T]` in Rust; borrowing array literals keeps
+        // call sites ergonomic (`[1,2,3]` coerces to a slice when borrowed).
+        Ok(quote!(&[#(#values),*]))
     }
 
     fn print_expr_array_repeat(&self, array: &ExprArrayRepeat) -> Result<TokenStream> {
         let elem = self.print_expr(array.elem.as_ref())?;
         let len = self.print_expr(array.len.as_ref())?;
-        Ok(quote!([#elem; #len]))
+        Ok(quote!(&[#elem; #len]))
     }
 
     fn print_expr_dereference(&self, deref: &ExprDereference) -> Result<TokenStream> {
@@ -568,6 +692,100 @@ impl RustPrinter {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 self.print_print_intrinsic(call)
             }
+            IntrinsicCallKind::SizeOf
+            | IntrinsicCallKind::FieldCount
+            | IntrinsicCallKind::MethodCount
+            | IntrinsicCallKind::TypeName => {
+                let args = match &call.payload {
+                    IntrinsicCallPayload::Args { args } => args,
+                    IntrinsicCallPayload::Format { .. } => {
+                        bail!("intrinsic expects args payload")
+                    }
+                };
+                if args.len() != 1 {
+                    bail!("intrinsic {:?} expects exactly 1 argument", call.kind)
+                }
+                let ty = match args[0].kind() {
+                    ExprKind::Locator(locator) => self.print_locator(locator)?,
+                    _ => bail!("intrinsic {:?} expects a type locator", call.kind),
+                };
+
+                match call.kind {
+                    IntrinsicCallKind::SizeOf => Ok(quote!(::core::mem::size_of::<#ty>())),
+                    IntrinsicCallKind::FieldCount => {
+                        Ok(quote!(::fp_rust::intrinsic_field_count::<#ty>()))
+                    }
+                    IntrinsicCallKind::MethodCount => {
+                        Ok(quote!(::fp_rust::intrinsic_method_count::<#ty>()))
+                    }
+                    IntrinsicCallKind::TypeName => {
+                        Ok(quote!(::fp_rust::intrinsic_type_name::<#ty>()))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+            IntrinsicCallKind::HasField | IntrinsicCallKind::HasMethod => {
+                let args = match &call.payload {
+                    IntrinsicCallPayload::Args { args } => args,
+                    IntrinsicCallPayload::Format { .. } => {
+                        bail!("intrinsic expects args payload")
+                    }
+                };
+                if args.len() != 2 {
+                    bail!("intrinsic {:?} expects exactly 2 arguments", call.kind)
+                }
+                let ty = match args[0].kind() {
+                    ExprKind::Locator(locator) => self.print_locator(locator)?,
+                    _ => bail!("intrinsic {:?} expects a type locator", call.kind),
+                };
+                let name = self.print_expr(&args[1])?;
+                match call.kind {
+                    IntrinsicCallKind::HasField => Ok(quote!(
+                        ::fp_rust::intrinsic_has_field::<#ty>(#name)
+                    )),
+                    IntrinsicCallKind::HasMethod => Ok(quote!(
+                        ::fp_rust::intrinsic_has_method::<#ty>(#name)
+                    )),
+                    _ => unreachable!(),
+                }
+            }
+            IntrinsicCallKind::ConstBlock => {
+                let args = match &call.payload {
+                    IntrinsicCallPayload::Args { args } => args,
+                    IntrinsicCallPayload::Format { .. } => {
+                        bail!("const_block intrinsic expects args payload")
+                    }
+                };
+                if args.len() != 1 {
+                    bail!("const_block intrinsic expects exactly 1 argument")
+                }
+                let arg = &args[0];
+                if matches!(arg.kind(), ExprKind::Block(_)) {
+                    let block = self.print_expr(arg)?;
+                    Ok(quote!(const #block))
+                } else {
+                    let expr = self.print_expr(arg)?;
+                    Ok(quote!(const { #expr }))
+                }
+            }
+            IntrinsicCallKind::Break => {
+                let args = match &call.payload {
+                    IntrinsicCallPayload::Args { args } => args,
+                    IntrinsicCallPayload::Format { .. } => {
+                        bail!("break intrinsic expects args payload")
+                    }
+                };
+                match args.as_slice() {
+                    [] => Ok(quote!(break)),
+                    [value] => {
+                        let value = self.print_expr(value)?;
+                        Ok(quote!(break #value))
+                    }
+                    _ => bail!("break intrinsic accepts at most one argument"),
+                }
+            }
+            IntrinsicCallKind::Continue => Ok(quote!(continue)),
+            IntrinsicCallKind::DebugAssertions => Ok(quote!(cfg!(debug_assertions))),
             IntrinsicCallKind::Return => {
                 let args: Vec<_> = match &call.payload {
                     IntrinsicCallPayload::Args { args } => args
@@ -685,7 +903,7 @@ impl RustPrinter {
         let mut args: Vec<TokenStream> = template
             .args
             .iter()
-            .map(|arg| self.print_expr(arg))
+            .map(|arg| self.print_print_arg(arg))
             .try_collect()?;
 
         for kwarg in &template.kwargs {
@@ -697,9 +915,72 @@ impl RustPrinter {
         Ok((LitStr::new(&literal, Span::call_site()), args))
     }
 
+    fn print_print_arg(&self, arg: &Expr) -> Result<TokenStream> {
+        let expr = self.print_expr(arg)?;
+        match arg.kind() {
+            ExprKind::Value(value)
+                if matches!(value.as_ref(), Value::Unit(_) | Value::Null(_)) =>
+            {
+                Ok(quote!(format_args!("{:?}", #expr)))
+            }
+            _ => Ok(expr),
+        }
+    }
+
     fn print_expr_format_string(&self, template: &ExprFormatString) -> Result<TokenStream> {
         let (literal, args) = self.prepare_format_args(template)?;
         let args_iter = args.iter();
         Ok(quote!(format!(#literal #(, #args_iter)* )))
     }
+}
+
+fn is_const_like_expr(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::Value(_) | ExprKind::Locator(_) => true,
+        ExprKind::Paren(p) => is_const_like_expr(&p.expr.get()),
+        ExprKind::Cast(c) => is_const_like_expr(c.expr.as_ref()),
+        ExprKind::Reference(r) => is_const_like_expr(r.referee.as_ref()),
+        ExprKind::Dereference(d) => is_const_like_expr(d.referee.as_ref()),
+        ExprKind::BinOp(b) => is_const_like_expr(b.lhs.as_ref()) && is_const_like_expr(b.rhs.as_ref()),
+        ExprKind::UnOp(u) => is_const_like_expr(u.val.as_ref()),
+        ExprKind::Tuple(t) => t.values.iter().all(is_const_like_expr),
+        ExprKind::Array(a) => a.values.iter().all(is_const_like_expr),
+        ExprKind::ArrayRepeat(r) => {
+            is_const_like_expr(r.elem.as_ref()) && is_const_like_expr(r.len.as_ref())
+        }
+        ExprKind::Struct(s) => {
+            is_const_like_expr(s.name.as_ref())
+                && s
+                    .fields
+                    .iter()
+                    .all(|f| f.value.as_ref().map(is_const_like_expr).unwrap_or(true))
+        }
+        ExprKind::If(i) => {
+            is_const_like_expr(i.cond.as_ref())
+                && is_const_like_expr(i.then.as_ref())
+                && i.elze.as_ref().map(|e| is_const_like_expr(e.as_ref())).unwrap_or(true)
+        }
+        // Be conservative: closures, invokes, loops, macros, etc. are not const-like.
+        _ => false,
+    }
+}
+
+fn is_iter_enumerate_over_iter(expr: &Expr) -> bool {
+    let ExprKind::Invoke(invoke) = expr.kind() else {
+        return false;
+    };
+    let fp_core::ast::ExprInvokeTarget::Method(select) = &invoke.target else {
+        return false;
+    };
+    if select.field.as_str() != "enumerate" || !invoke.args.is_empty() {
+        return false;
+    }
+
+    let ExprKind::Invoke(inner_invoke) = select.obj.kind() else {
+        return false;
+    };
+    let fp_core::ast::ExprInvokeTarget::Method(inner_select) = &inner_invoke.target else {
+        return false;
+    };
+    inner_select.field.as_str() == "iter" && inner_invoke.args.is_empty()
 }

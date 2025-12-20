@@ -1,5 +1,6 @@
 use crate::CliError;
 use fp_core::ast::{AstSerializer, Node, NodeKind};
+use fp_optimize::passes::materialize_structural_types;
 use fp_rust::printer::RustPrinter;
 use quote::quote;
 
@@ -9,7 +10,11 @@ pub struct CodeGenerator;
 impl CodeGenerator {
     /// Generate Rust code from AST
     pub fn generate_rust_code(node: &Node) -> Result<String, CliError> {
-        let printer = RustPrinter::new();
+        let printer = RustPrinter::new_with_rustfmt();
+
+        let mut node = node.clone();
+        materialize_structural_types(&mut node)
+            .map_err(|e| CliError::Compilation(format!("Rust codegen preparation failed: {e}")))?;
 
         match node.kind() {
             NodeKind::Expr(expr) => {

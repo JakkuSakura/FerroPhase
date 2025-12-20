@@ -10,9 +10,7 @@ pub fn factorial(n: i64) -> i64 {
 pub fn sum_range(start: i64, end: i64) -> i64 {
     let mut sum = 0;
     for i in start..end {
-        {
-            sum = sum + i;
-        }
+        sum = sum + i;
     }
     sum
 }
@@ -20,10 +18,10 @@ pub fn find_first_divisor(n: i64) -> i64 {
     let mut i = 2;
     loop {
         if i * i > n {
-            intrinsic_break(n);
+            break n;
         }
         if n % i == 0 {
-            intrinsic_break(i);
+            break i;
         }
         i = i + 1;
     }
@@ -34,7 +32,7 @@ pub fn sum_even_numbers(limit: i64) -> i64 {
     while i < limit {
         i = i + 1;
         if i % 2 != 0 {
-            intrinsic_continue();
+            continue;
         }
         sum = sum + i;
     }
@@ -56,20 +54,16 @@ pub fn main() -> () {
     println!("\n5. Nested loops:");
     let mut count = 0;
     for i in 1..4 {
-        {
-            for j in 1..4 {
-                {
-                    count = count + 1;
-                    if i == j {
-                        print!("[{}] ", i);
-                    }
-                }
+        for j in 1..4 {
+            count = count + 1;
+            if i == j {
+                print!("[{}] ", i);
             }
         }
     }
     println!("\n  Iterations: {}", count);
     println!("\n6. Compile-time iteration (simulated):");
-    pub const FACTORIAL_CONST: i64 = 120;
+    const FACTORIAL_CONST: i64 = 120;
     println!("  const 5! = {}", FACTORIAL_CONST);
     println!("\n✓ Loop constructs demonstrated!");
 }

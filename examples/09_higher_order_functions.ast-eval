@@ -1,27 +1,35 @@
 ast::File {
   items:
-    priv import std::fmt::Display : ()
-    priv import std::ops::Add : ()
-    priv fn apply_if(cond: Expr(bool), a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
-      if : i64
-        cond:
-          locator cond : bool
-        then:
-          invoke : i64
-            target: op
-            args:
-              locator a : i64
-              locator b : i64
-        else:
-          value 0 : i64
-    priv fn make_adder(n: i64) -> impl Fn : fn(i64) -> fn(i64) -> i64 : fn(i64) -> fn(i64) -> i64
-      closure (x : unknown) : fn(i64) -> i64
-        binop + : i64
-          lhs:
-            locator x : unknown
-          rhs:
-            locator n : i64
-    priv fn main() -> () : fn() -> () : fn() -> ()
+    pub import std::fmt::Display : ()
+    pub import std::ops::Add : ()
+    pub fn apply_if(cond: Expr(bool), a: Expr(i64), b: Expr(i64), op: fn(Expr(i64), Expr(i64)) -> Expr(i64)) -> Expr(i64) : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          if : i64
+            cond:
+              locator cond : bool
+            then:
+              block (1 stmt) : i64
+                expr_stmt (value)
+                  invoke : i64
+                    target: op
+                    args:
+                      locator a : i64
+                      locator b : i64
+            else:
+              block (1 stmt) : i64
+                expr_stmt (value)
+                  value 0 : i64
+    pub fn make_adder(n: Expr(i64)) -> fn(Expr(i64)) -> Expr(i64) : fn(i64) -> fn(i64) -> i64 : fn(i64) -> fn(i64) -> i64
+      block (1 stmt) : fn(i64) -> i64
+        expr_stmt (value)
+          closure (x) : fn(i64) -> i64
+            binop + : i64
+              lhs:
+                locator x : unknown
+              rhs:
+                locator n : i64
+    pub fn main() -> () : fn() -> () : fn() -> ()
       block (11 stmts) : ()
         expr_stmt ;
           intrinsic println : ()
@@ -54,7 +62,7 @@ Conditional:"
           intrinsic println : ()
             template: "
 Closure factory:"
-        priv const add_10: fn(i64) -> i64 : fn(i64) -> i64
+        pub const add_10: fn(i64) -> i64 : fn(i64) -> i64
           invoke : fn(i64) -> i64
             target: make_adder
             args:
@@ -73,26 +81,30 @@ Closure factory:"
         expr_stmt ;
           intrinsic println : ()
             template: "double(7) = {}" double(7)
-    priv fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> ()
+    pub fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> ()
       block (1 stmt) : ()
         expr_stmt ;
           intrinsic println : ()
             template: "{}" op(a, b)
-    priv fn add__spec0(a: i64, b: i64) -> i64 : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
-      binop + : unknown
-        lhs:
-          locator a : i64
-        rhs:
-          locator b : i64
-    priv fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> ()
+    pub fn add__spec0(a: i64, b: i64) -> i64 : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              locator a : i64
+            rhs:
+              locator b : i64
+    pub fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> ()
       block (1 stmt) : ()
         expr_stmt ;
           intrinsic println : ()
             template: "{}" op(a, b)
-    priv fn add__spec1(a: f64, b: f64) -> f64 : fn(f64, f64) -> f64 : fn(f64, f64) -> f64
-      binop + : unknown
-        lhs:
-          locator a : f64
-        rhs:
-          locator b : f64
+    pub fn add__spec1(a: f64, b: f64) -> f64 : fn(f64, f64) -> f64 : fn(f64, f64) -> f64
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              locator a : f64
+            rhs:
+              locator b : f64
 }

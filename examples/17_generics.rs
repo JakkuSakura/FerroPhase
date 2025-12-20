@@ -23,7 +23,7 @@ impl<T> Option<T> {
     }
 }
 pub fn main() -> () {
-    let pair = Pair::new(42, "hello".to_string());
+    let pair = Pair::new(42, "hello");
     println!("({}, {})", pair.first, pair.second);
     println!("max(10, 20) = {}", max__spec0(10, 20));
     println!("max(3.5, 2.1) = {}", max__spec1(3.5, 2.1));
@@ -33,16 +33,8 @@ pub fn main() -> () {
     println!("{}", none.unwrap_or(99));
 }
 pub fn max__spec0(a: i64, b: i64) -> i64 {
-    if a > b {
-        a
-    } else {
-        b
-    }
+    if a > b { a } else { b }
 }
 pub fn max__spec1(a: f64, b: f64) -> f64 {
-    if a > b {
-        a
-    } else {
-        b
-    }
+    if a > b { a } else { b }
 }

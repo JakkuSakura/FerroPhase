@@ -89,3 +89,42 @@ impl Eq for RawTokenStream {}
 macro_rules! fp {
     ($t: tt) => {};
 }
+
+/// Type-quoting helper used by generated Rust output.
+///
+/// `t! { ... }` is treated as a transparent wrapper around the contained tokens.
+#[macro_export]
+macro_rules! t {
+    ($($tt:tt)*) => {
+        $($tt)*
+    };
+}
+
+// Runtime helpers used by generated Rust output.
+//
+// Note: stable Rust lacks general field/method reflection. These helpers are
+// intentionally conservative so that transpiled examples remain compilable.
+
+pub fn intrinsic_type_name<T>() -> &'static str {
+    std::any::type_name::<T>()
+}
+
+pub fn intrinsic_field_count<T: 'static>() -> usize {
+    let _ = std::any::TypeId::of::<T>();
+    0
+}
+
+pub fn intrinsic_method_count<T: 'static>() -> usize {
+    let _ = std::any::TypeId::of::<T>();
+    0
+}
+
+pub fn intrinsic_has_field<T: 'static>(_name: &str) -> bool {
+    let _ = std::any::TypeId::of::<T>();
+    false
+}
+
+pub fn intrinsic_has_method<T: 'static>(_name: &str) -> bool {
+    let _ = std::any::TypeId::of::<T>();
+    false
+}

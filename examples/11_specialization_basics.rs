@@ -11,6 +11,6 @@ pub fn main() -> () {
     println!("{}", add(2, 3));
     println!("{}", double(5));
     println!("{}", compose(10));
-    pub const RESULT: i64 = 30;
+    const RESULT: i64 = 30;
     println!("const: {}", RESULT);
 }

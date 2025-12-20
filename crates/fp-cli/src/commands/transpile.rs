@@ -9,7 +9,7 @@ use crate::{
     cli::CliConfig,
     commands::compile::{CompileArgs, compile_command},
 };
-use clap::Args;
+use clap::{ArgAction, Args};
 use std::path::PathBuf;
 
 /// Arguments for the transpile command.
@@ -57,6 +57,10 @@ pub struct TranspileArgs {
     /// Override automatic source language detection (e.g. "typescript")
     #[arg(long = "lang", alias = "language")]
     pub source_language: Option<String>,
+
+    /// Disable pipeline stages by name (repeatable).
+    #[arg(long = "disable-stage", action = ArgAction::Append)]
+    pub disable_stage: Vec<String>,
 }
 
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
@@ -74,6 +78,7 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
         error_tolerance: args.error_tolerance,
         max_errors: args.max_errors,
         source_language: args.source_language,
+        disable_stage: args.disable_stage,
     };
 
     compile_command(compile_args, config).await

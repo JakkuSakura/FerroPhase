@@ -69,7 +69,13 @@ impl RustPrinter {
         Ok(quote!(#n))
     }
     pub fn print_decimal(&self, n: &ValueDecimal) -> fp_core::Result<TokenStream> {
-        let n = syn::LitFloat::new(&n.value.to_string(), Span::call_site());
+        // Rust requires float literals to contain a decimal point or exponent.
+        // `f64::to_string()` returns "0" for `0.0`, so keep it a float literal.
+        let mut text = n.value.to_string();
+        if !text.contains(['.', 'e', 'E']) {
+            text.push_str(".0");
+        }
+        let n = syn::LitFloat::new(&text, Span::call_site());
         Ok(quote!(#n))
     }
     pub fn print_char(&self, n: &ValueChar) -> fp_core::Result<TokenStream> {

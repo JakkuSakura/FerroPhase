@@ -6,8 +6,9 @@ use fp_core::ast::{
 use fp_core::bail;
 use fp_core::error::Result;
 use itertools::Itertools;
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::quote;
+use syn::Lifetime;
 
 impl RustPrinter {
     pub fn print_type(&self, v: &Ty) -> Result<TokenStream> {
@@ -47,10 +48,20 @@ impl RustPrinter {
     }
     fn print_type_ref(&self, reference: &TypeReference) -> Result<TokenStream> {
         let ty = self.print_type(&reference.ty)?;
+        let lifetime = reference.lifetime.as_ref().map(|raw| {
+            let raw = raw.as_str();
+            let text = if raw.starts_with('\'') {
+                raw.to_string()
+            } else {
+                format!("'{}", raw)
+            };
+            Lifetime::new(&text, Span::call_site())
+        });
+        let lifetime = lifetime.as_ref().map(|lt| quote!(#lt)).unwrap_or_default();
         if reference.mutability == Some(true) {
-            Ok(quote!(&mut #ty))
+            Ok(quote!(& #lifetime mut #ty))
         } else {
-            Ok(quote!(&#ty))
+            Ok(quote!(& #lifetime #ty))
         }
     }
 
@@ -121,7 +132,8 @@ impl RustPrinter {
     }
     pub fn print_type_slice(&self, ty: &TypeSlice) -> Result<TokenStream> {
         let elem = self.print_type(&*ty.elem)?;
-        Ok(quote!([#elem]))
+        // `[T]` is unsized in Rust. The closest stable surface type is `&[T]`.
+        Ok(quote!(&[#elem]))
     }
 
     pub fn print_type_array(&self, ty: &TypeArray) -> Result<TokenStream> {

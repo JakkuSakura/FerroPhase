@@ -28,6 +28,9 @@ pub struct PipelineOptions {
     pub bootstrap_mode: bool,
     /// Emit bootstrap snapshots (JSON) for downstream replay
     pub emit_bootstrap_snapshot: bool,
+
+    /// Disable specific pipeline stages by name (best-effort; mainly for debugging).
+    pub disabled_stages: Vec<String>,
 }
 
 /// Compilation targets
@@ -111,6 +114,7 @@ impl Default for PipelineOptions {
             execute_main: false,
             bootstrap_mode: false,
             emit_bootstrap_snapshot: false,
+            disabled_stages: Vec::new(),
         }
     }
 }
@@ -155,6 +159,7 @@ impl From<&PipelineConfig> for PipelineOptions {
             execute_main: false,
             bootstrap_mode: false,
             emit_bootstrap_snapshot: false,
+            disabled_stages: Vec::new(),
         }
     }
 }

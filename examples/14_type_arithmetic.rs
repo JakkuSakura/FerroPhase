@@ -3,21 +3,21 @@ pub use std::fmt::Display;
 pub fn print(i: impl Display) -> () {
     println!("{}", i)
 }
-pub type Int = t! {
-    i64
-};
-pub type FooUnnamedStruct = t! {
-    struct{
-        pub a : Int , pub b : Int
-    }
-};
+pub type Int = i64;
+pub struct FooUnnamedStruct {
+    pub a: Int,
+    pub b: Int,
+}
 pub struct BarNamedStruct {
     pub c: Int,
     pub d: Int,
 }
-pub type FooPlusBar = t! {
-    (FooUnnamedStruct + BarNamedStruct)
-};
+pub struct FooPlusBar {
+    pub a: Int,
+    pub b: Int,
+    pub c: Int,
+    pub d: Int,
+}
 pub fn main() -> () {
     FooPlusBar {
         a: 1,

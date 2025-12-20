@@ -2,10 +2,12 @@
 
 pub mod closure_lowering;
 pub mod materialize_intrinsics;
+pub mod materialize_types;
 pub mod normalize_intrinsics;
 pub mod remove_generics;
 
 pub use closure_lowering::*;
 pub use materialize_intrinsics::*;
+pub use materialize_types::*;
 pub use normalize_intrinsics::*;
 pub use remove_generics::*;

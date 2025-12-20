@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
-use clap::Args;
+use clap::{ArgAction, Args};
 
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
@@ -69,6 +69,10 @@ pub struct CompileArgs {
     /// Override automatic source language detection (e.g. "typescript")
     #[arg(long = "lang", alias = "language")]
     pub source_language: Option<String>,
+
+    /// Disable pipeline stages by name (repeatable).
+    #[arg(long = "disable-stage", action = ArgAction::Append)]
+    pub disable_stage: Vec<String>,
 }
 
 /// Execute the compile command
@@ -86,10 +90,20 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
 
+    let output_is_dir = args
+        .output
+        .as_ref()
+        .is_some_and(|path| args.input.len() > 1 || path.is_dir());
+
     for (_i, input_file) in args.input.iter().enumerate() {
         progress.set_message(format!("Compiling {}", input_file.display()));
 
-        let output_file = determine_output_path(input_file, args.output.as_ref(), &args.target)?;
+        let output_file = determine_output_path(
+            input_file,
+            args.output.as_ref(),
+            &args.target,
+            output_is_dir,
+        )?;
 
         // Compile single file
         if let Some(artifact_path) = compile_file(input_file, &output_file, &args, config).await? {
@@ -178,6 +192,7 @@ async fn compile_file(
         execute_main: execute_const_main,
         bootstrap_mode: std::env::var_os("FERROPHASE_BOOTSTRAP").is_some(),
         emit_bootstrap_snapshot: false,
+        disabled_stages: args.disable_stage.clone(),
     };
 
     // Execute pipeline with new options
@@ -300,8 +315,36 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
     Ok(())
 }
 
-fn determine_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -> Result<PathBuf> {
+fn determine_output_path(
+    input: &Path,
+    output: Option<&PathBuf>,
+    target: &str,
+    output_is_dir: bool,
+) -> Result<PathBuf> {
     if let Some(output) = output {
+        if output_is_dir {
+            let extension = match target {
+                "binary" => {
+                    if cfg!(target_os = "windows") {
+                        "exe"
+                    } else {
+                        "out"
+                    }
+                }
+                "rust" => "rs",
+                "llvm" => "ll",
+                "wasm" => "wasm",
+                _ => "out",
+            };
+            let stem = input
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+            let mut path = output.join(stem);
+            path.set_extension(extension);
+            return Ok(path);
+        }
+
         if target == "binary" {
             let mut path = output.clone();
             let desired_ext = if cfg!(target_os = "windows") {
@@ -320,10 +363,10 @@ fn determine_output_path(input: &Path, output: Option<&PathBuf>, target: &str) -
                 path.set_extension(desired_ext);
             }
 
-            Ok(path)
-        } else {
-            Ok(output.clone())
+            return Ok(path);
         }
+
+        Ok(output.clone())
     } else {
         let extension = match target {
             "binary" => {
