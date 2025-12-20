@@ -1,13 +1,13 @@
 pub fn main() -> () {
-    pub const FIELD_COUNT: usize = 3;
-    pub const TYPE_NAME: &str = "Point3D".to_string();
-    pub struct Point3D {
+    const FIELD_COUNT: usize = 3;
+    const TYPE_NAME: &str = "Point3D";
+    struct Point3D {
         pub x: i64,
         pub y: i64,
         pub z: i64,
     }
     impl Point3D {
-        pub fn type_name() -> &str {
+        pub fn type_name() -> &'static str {
             TYPE_NAME
         }
         pub fn field_count() -> usize {
@@ -19,9 +19,9 @@ pub fn main() -> () {
         Point3D::type_name(),
         Point3D::field_count()
     );
-    pub const VARIANT_A: u8 = 1;
-    pub const VARIANT_B: u8 = 2;
-    pub enum Tag {
+    const VARIANT_A: u8 = 1;
+    const VARIANT_B: u8 = 2;
+    enum Tag {
         A = VARIANT_A as isize,
         B = VARIANT_B as isize,
     }

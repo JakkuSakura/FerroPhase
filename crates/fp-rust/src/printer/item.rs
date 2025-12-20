@@ -2,7 +2,7 @@ use eyre::ContextCompat;
 use fp_core::ast::{
     FunctionSignature, GenericParam, Item, ItemDeclConst, ItemDeclFunction, ItemDeclStatic,
     ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct,
-    ItemDefStructural, ItemDefTrait, ItemDefType, ItemImpl, ItemKind, Ty,
+    ItemDefStructural, ItemDefTrait, ItemDefType, ItemImpl, ItemKind, Ty, Visibility,
 };
 use fp_core::{Error, Result};
 use itertools::Itertools;
@@ -12,6 +12,36 @@ use quote::quote;
 use crate::printer::RustPrinter;
 
 impl RustPrinter {
+    fn print_items_chunk_in_trait_impl(&self, items: &[Item]) -> Result<TokenStream> {
+        let mut stmts = Vec::new();
+        for item in items {
+            let tokens = match item.kind() {
+                ItemKind::DefFunction(def) => {
+                    let func = self.print_function(&def.sig, &def.body, &Visibility::Inherited)?;
+                    quote!(#func)
+                }
+                ItemKind::DefConst(def) => {
+                    let mut def = def.clone();
+                    def.visibility = Visibility::Inherited;
+                    self.print_def_const(&def)?
+                }
+                ItemKind::DefStatic(def) => {
+                    let mut def = def.clone();
+                    def.visibility = Visibility::Inherited;
+                    self.print_def_static(&def)?
+                }
+                ItemKind::DefType(def) => {
+                    let mut def = def.clone();
+                    def.visibility = Visibility::Inherited;
+                    self.print_def_type(&def)?
+                }
+                _ => self.print_item(item)?,
+            };
+            stmts.push(tokens);
+        }
+        Ok(quote!(#(#stmts)*))
+    }
+
     pub fn print_items_chunk(&self, items: &[Item]) -> Result<TokenStream> {
         let mut stmts = vec![];
         for item in items {
@@ -55,10 +85,30 @@ impl RustPrinter {
     pub fn print_def_type(&self, def: &ItemDefType) -> Result<TokenStream> {
         let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
-        let ty = self.print_type(&def.value)?;
-        return Ok(quote!(
-            #vis type #name = t!{ #ty };
-        ));
+        match &def.value {
+            Ty::Structural(structural) => {
+                let fields: Vec<_> = structural
+                    .fields
+                    .iter()
+                    .map(|field| self.print_field(field))
+                    .try_collect()?;
+                Ok(quote!(
+                    #vis struct #name {
+                        #(#fields),*
+                    }
+                ))
+            }
+            Ty::TypeBinaryOp(_) => Err(Error::from(format!(
+                "cannot print unresolved type arithmetic for alias '{name}'; materialize the type before Rust codegen",
+                name = def.name.as_str()
+            ))),
+            other => {
+                let ty = self.print_type(other)?;
+                Ok(quote!(
+                    #vis type #name = #ty;
+                ))
+            }
+        }
     }
     pub fn print_def_enum(&self, def: &ItemDefEnum) -> Result<TokenStream> {
         let vis = self.print_vis(&def.visibility);
@@ -179,7 +229,11 @@ impl RustPrinter {
 
     pub fn print_impl(&self, impl_: &ItemImpl) -> Result<TokenStream> {
         let name = self.print_expr(&impl_.self_ty)?;
-        let methods = self.print_items_chunk(&impl_.items)?;
+        let methods = if impl_.trait_ty.is_some() {
+            self.print_items_chunk_in_trait_impl(&impl_.items)?
+        } else {
+            self.print_items_chunk(&impl_.items)?
+        };
         let generics = self.print_generics_params(&impl_.generics_params)?;
         let trait_part = if let Some(trait_ty) = &impl_.trait_ty {
             let trait_tokens = self.print_locator(trait_ty)?;
