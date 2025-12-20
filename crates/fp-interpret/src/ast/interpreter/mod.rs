@@ -263,8 +263,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         }
                     }
 
-                    let qualified =
-                        self.qualified_name(&format!("{}::{}", def.name, variant.name));
+                    let qualified = self.qualified_name(&format!("{}::{}", def.name, variant.name));
                     self.evaluated_constants
                         .insert(qualified, Value::int(next_discriminant));
                     next_discriminant += 1;
