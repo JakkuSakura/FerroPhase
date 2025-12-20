@@ -5,29 +5,33 @@ use fp_core::ast::*;
 use fp_core::ast::{ExprKind as AstExprKind, Node, NodeKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_rust::normalization::{lower_macro_for_ast, normalize_last_to_ast};
+use fp_rust::normalization::lower_macro_for_ast;
 use fp_rust::printer::RustPrinter;
 use fp_rust::shll_parse_expr;
 
-fn normalize_expr_tree(expr: fp_core::ast::Expr) -> fp_core::ast::Expr {
+fn normalize_expr_tree(expr: fp_core::ast::Expr) -> Result<fp_core::ast::Expr> {
     // First lower the top-level macro if present (shortcut).
     let expr = match expr.kind() {
         AstExprKind::Macro(mac) => lower_macro_for_ast(mac, None),
         _ => expr,
     };
-    // Then run the normalization pass over a Node wrapper to recursively lower nested macros.
+    // Then run the shared intrinsic normalization pass over a Node wrapper to recursively
+    // lower nested macros and normalize intrinsic forms.
     let mut node = Node::new(NodeKind::Expr(expr.clone()));
-    normalize_last_to_ast(&mut node, None);
+    fp_optimize::passes::normalize_intrinsics_with(
+        &mut node,
+        &fp_rust::normalization::RustIntrinsicNormalizer,
+    )?;
     match node.kind() {
-        NodeKind::Expr(e) => e.clone(),
-        _ => expr,
+        NodeKind::Expr(e) => Ok(e.clone()),
+        _ => Ok(expr),
     }
 }
 
 #[test]
 fn emit_macro_lowers_to_splice_of_quote_without_kind() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    let expr = normalize_expr_tree(shll_parse_expr! { emit! { let x = 1; } });
+    let expr = normalize_expr_tree(shll_parse_expr! { emit! { let x = 1; } })?;
     let ExprKind::Splice(splice) = expr.kind() else {
         panic!("emit! should lower to a splice expression");
     };
@@ -115,7 +119,7 @@ fn expect_assert_failure_block<'a>(
 #[test]
 fn panic_macro_lowering_emits_message_and_abort() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    let expr = normalize_expr_tree(shll_parse_expr! { panic!() });
+    let expr = normalize_expr_tree(shll_parse_expr! { panic!() })?;
 
     let ExprKind::Block(block) = expr.kind() else {
         panic!("panic! should lower to a block expression");
@@ -139,7 +143,7 @@ fn panic_macro_lowering_emits_message_and_abort() -> Result<()> {
 #[test]
 fn assert_macro_uses_default_message() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    let expr = normalize_expr_tree(shll_parse_expr! { assert!(1 == 2); });
+    let expr = normalize_expr_tree(shll_parse_expr! { assert!(1 == 2); })?;
 
     let ExprKind::Block(block) = expr.kind() else {
         panic!("assert! lowering should produce a block");
@@ -180,7 +184,7 @@ fn assert_macro_uses_default_message() -> Result<()> {
 #[test]
 fn assert_eq_lowering_binds_operands_once() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    let expr = normalize_expr_tree(shll_parse_expr! { assert_eq!(foo(), bar()); });
+    let expr = normalize_expr_tree(shll_parse_expr! { assert_eq!(foo(), bar()); })?;
 
     let ExprKind::Block(block) = expr.kind() else {
         panic!("assert_eq! lowering should produce a block");
@@ -248,7 +252,7 @@ fn assert_eq_lowering_binds_operands_once() -> Result<()> {
 #[test]
 fn assert_with_side_effect_arguments_preserves_order() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    let expr = normalize_expr_tree(shll_parse_expr! { assert!(1 == 2, log_error()); });
+    let expr = normalize_expr_tree(shll_parse_expr! { assert!(1 == 2, log_error()); })?;
 
     let ExprKind::Block(block) = expr.kind() else {
         panic!("assert! lowering should produce a block");
@@ -300,7 +304,7 @@ fn assert_with_side_effect_arguments_preserves_order() -> Result<()> {
 #[test]
 fn debug_assert_wrapped_in_runtime_guard() -> Result<()> {
     register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-    let expr = normalize_expr_tree(shll_parse_expr! { debug_assert!(1 == 2); });
+    let expr = normalize_expr_tree(shll_parse_expr! { debug_assert!(1 == 2); })?;
 
     let ExprKind::If(wrapper) = expr.kind() else {
         panic!("debug_assert! should produce guard if expression");
@@ -336,7 +340,7 @@ fn env_macros_resolve_at_parse_time() -> Result<()> {
     std::env::set_var(KEY_SOME, "alpha");
     std::env::remove_var(KEY_NONE);
 
-    let expr_some = normalize_expr_tree(shll_parse_expr! { env!("FP_RUST_TEST_ENV_SOME") });
+    let expr_some = normalize_expr_tree(shll_parse_expr! { env!("FP_RUST_TEST_ENV_SOME") })?;
     let value = match expr_some.kind() {
         ExprKind::Value(val) => val.as_ref(),
         other => panic!("env! should lower to literal value, found {:?}", other),
@@ -347,7 +351,7 @@ fn env_macros_resolve_at_parse_time() -> Result<()> {
     assert_eq!(s.value, "alpha");
 
     let expr_option_some =
-        normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_SOME") });
+        normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_SOME") })?;
     let value = match expr_option_some.kind() {
         ExprKind::Value(val) => val.as_ref(),
         other => panic!(
@@ -361,7 +365,7 @@ fn env_macros_resolve_at_parse_time() -> Result<()> {
     assert!(opt.value.is_some(), "expected option_env! to capture value");
 
     let expr_option_none =
-        normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_NONE") });
+        normalize_expr_tree(shll_parse_expr! { option_env!("FP_RUST_TEST_ENV_NONE") })?;
     let value = match expr_option_none.kind() {
         ExprKind::Value(val) => val.as_ref(),
         other => panic!(

@@ -2,7 +2,6 @@ use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_optimize::transformations::{HirGenerator, IrTransform};
-use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::parser::RustParser;
 use std::path::PathBuf;
 
@@ -198,9 +197,10 @@ fn transform_source(source: &str) -> OptimizeResult<hir::Program> {
         .parse_file_content(PathBuf::from("<memory>"), syn_file)
         .expect("AST parsing succeeds");
 
-    // Lower builtin macros and normalize intrinsic forms before HIR generation
+    // Lower builtin macros and normalize intrinsic forms before HIR generation.
     let mut node = fp_core::ast::Node::from(fp_core::ast::NodeKind::File(ast_file));
-    normalize_last_to_ast(&mut node, None);
+    fp_optimize::passes::normalize_intrinsics_with(&mut node, &fp_rust::normalization::RustIntrinsicNormalizer)
+        .expect("intrinsic normalization");
     let ast_file = match node.kind() {
         fp_core::ast::NodeKind::File(f) => f.clone(),
         _ => unreachable!("expected file node after normalization"),
