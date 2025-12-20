@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use fp_core::ast::{
-    Expr, Value, ValueBool, ValueChar, ValueDecimal, ValueInt, ValueList, ValueString, ValueStruct,
-    ValueUndefined, ValueUnit,
+    Expr, Value, ValueBool, ValueChar, ValueDecimal, ValueInt, ValueList, ValueNull, ValueString,
+    ValueStruct, ValueUndefined, ValueUnit,
 };
 use fp_core::bail;
 use itertools::Itertools;
@@ -28,6 +28,7 @@ impl RustPrinter {
             Value::BinOpKind(op) => self.print_bin_op_kind(op),
             Value::Expr(e) => self.print_expr(&e.get())?,
             Value::Undefined(u) => self.print_undefined(u)?,
+            Value::Null(_n) => self.print_null(_n)?,
             Value::None(_) => quote!(None),
             Value::Some(s) => {
                 let s = self.print_value(&s.value)?;
@@ -43,6 +44,10 @@ impl RustPrinter {
             _ => bail!("Not supported {:?}", v),
         };
         Ok(v)
+    }
+
+    pub fn print_null(&self, _n: &ValueNull) -> fp_core::Result<TokenStream> {
+        Ok(quote!(()))
     }
     pub fn print_struct_value(&self, s: &ValueStruct) -> fp_core::Result<TokenStream> {
         let name = self.print_ident(&s.ty.name);

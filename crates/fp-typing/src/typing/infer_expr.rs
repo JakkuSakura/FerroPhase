@@ -86,9 +86,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ExprKind::IntrinsicContainer(collection) => {
-                let new_expr = collection.clone().into_const_expr();
-                *expr = new_expr;
-                return self.infer_expr(expr);
+                self.infer_intrinsic_container(collection)?
             }
             ExprKind::Value(value) => {
                 if let Value::List(list) = value.as_ref() {
@@ -872,6 +870,54 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let vec_var = self.fresh_type_var();
         self.bind(vec_var, TypeTerm::Vec(elem_var));
         Ok(vec_var)
+    }
+
+    fn infer_intrinsic_container(
+        &mut self,
+        collection: &mut ExprIntrinsicContainer,
+    ) -> Result<TypeVarId> {
+        match collection {
+            ExprIntrinsicContainer::VecElements { elements } => {
+                let elem_var = if let Some(first) = elements.first_mut() {
+                    let first_var = self.infer_expr(first)?;
+                    for expr in elements.iter_mut().skip(1) {
+                        let next_var = self.infer_expr(expr)?;
+                        self.unify(first_var, next_var)?;
+                    }
+                    first_var
+                } else {
+                    let fresh = self.fresh_type_var();
+                    self.bind(fresh, TypeTerm::Any);
+                    fresh
+                };
+                let vec_var = self.fresh_type_var();
+                self.bind(vec_var, TypeTerm::Vec(elem_var));
+                Ok(vec_var)
+            }
+            ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                let elem_var = self.infer_expr(elem.as_mut())?;
+                let len_var = self.infer_expr(len.as_mut())?;
+                let expected = self.fresh_type_var();
+                self.bind(
+                    expected,
+                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                );
+                self.unify(len_var, expected)?;
+                let vec_var = self.fresh_type_var();
+                self.bind(vec_var, TypeTerm::Vec(elem_var));
+                Ok(vec_var)
+            }
+            ExprIntrinsicContainer::HashMapEntries { entries } => {
+                for entry in entries {
+                    let _ = self.infer_expr(&mut entry.key)?;
+                    let _ = self.infer_expr(&mut entry.value)?;
+                }
+                let map_var = self.fresh_type_var();
+                let map_ty = self.make_hashmap_ty();
+                self.bind(map_var, TypeTerm::Custom(map_ty));
+                Ok(map_var)
+            }
+        }
     }
 
     pub(crate) fn infer_value(&mut self, value: &Value) -> Result<TypeVarId> {

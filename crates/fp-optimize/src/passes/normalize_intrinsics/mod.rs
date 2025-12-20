@@ -231,7 +231,25 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
                 normalize_intrinsic_call(call, strategy)?;
             }
             ExprKind::IntrinsicContainer(collection) => {
-                replacement = Some(apply_intrinsic_collection(collection, strategy)?);
+                // Preserve intrinsic containers as a canonical AST node; downstream
+                // passes (typing/const-eval/materialization) understand it directly.
+                match collection {
+                    ExprIntrinsicContainer::VecElements { elements } => {
+                        for element in elements {
+                            normalize_expr(element, strategy)?;
+                        }
+                    }
+                    ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                        normalize_expr(elem.as_mut(), strategy)?;
+                        normalize_expr(len.as_mut(), strategy)?;
+                    }
+                    ExprIntrinsicContainer::HashMapEntries { entries } => {
+                        for entry in entries {
+                            normalize_expr(&mut entry.key, strategy)?;
+                            normalize_expr(&mut entry.value, strategy)?;
+                        }
+                    }
+                }
             }
             ExprKind::Range(range) => {
                 if let Some(start) = range.start.as_mut() {
@@ -316,7 +334,7 @@ fn apply_intrinsic_collection(
         }
     }
 
-    Ok(collection.clone().into_const_expr())
+    Ok(Expr::new(ExprKind::IntrinsicContainer(collection.clone())))
 }
 
 fn normalize_intrinsic_call(

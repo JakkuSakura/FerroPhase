@@ -4,9 +4,9 @@
 //! serializes the resulting AST into a target language. It does not lower through MIR/LIR.
 
 use crate::{
+    CliError, Result,
     cli::CliConfig,
     pipeline::{Pipeline, TranspilePreparationOptions},
-    CliError, Result,
 };
 use clap::{ArgAction, Args};
 use console::style;
@@ -137,7 +137,7 @@ async fn syntax_transpile_file(
         .map(|name| name.eq_ignore_ascii_case("Cargo.toml"))
         .unwrap_or(false);
 
-    use crate::languages::frontend::{detect_language_source_by_path, LanguageSource};
+    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
     let detected = detect_language_source_by_path(input);
     let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
     let is_typescript_input = matches!(
