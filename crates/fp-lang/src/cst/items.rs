@@ -1,5 +1,5 @@
 use thiserror::Error;
-use winnow::error::{ContextError, ErrMode};
+use winnow::error::{ContextError, ErrMode, ErrorKind, FromExternalError};
 use winnow::ModalResult;
 
 use crate::cst;
@@ -15,6 +15,17 @@ pub enum ItemParseError {
     #[error("parse error: {0}")]
     Parse(String),
 }
+
+#[derive(Debug)]
+struct ItemParseMessage(String);
+
+impl std::fmt::Display for ItemParseMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ItemParseMessage {}
 
 impl From<ErrMode<ContextError>> for ItemParseError {
     fn from(err: ErrMode<ContextError>) -> Self {
@@ -162,6 +173,10 @@ fn parse_item_cst(
             advance(input);
             let name = expect_ident_token(input)?;
             children.push(SyntaxElement::Token(name));
+            if matches_symbol(input.first(), "<") {
+                let gen = parse_generic_params_cst(input)?;
+                children.push(SyntaxElement::Node(Box::new(gen)));
+            }
             if match_symbol(input, "{") {
                 while !matches_symbol(input.first(), "}") {
                     if match_symbol(input, "}") {
@@ -842,16 +857,27 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
 
 fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) = cst::parse_expr_lexemes_prefix_to_cst(&lexemes, 0)
-        .map_err(|_| ErrMode::Cut(ContextError::new()))?;
+    let (node, consumed) = cst::parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
+        ErrMode::Cut(<ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+            &lexemes,
+            ErrorKind::Fail,
+            err,
+        ))
+    })?;
     *input = &input[consumed..];
     Ok(node)
 }
 
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
     let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) = cst::parse_type_lexemes_prefix_to_cst(&lexemes, 0, stops)
-        .map_err(|_| ErrMode::Cut(ContextError::new()))?;
+    let (node, consumed) =
+        cst::parse_type_lexemes_prefix_to_cst(&lexemes, 0, stops).map_err(|err| {
+            ErrMode::Cut(<ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+                &lexemes,
+                ErrorKind::Fail,
+                err,
+            ))
+        })?;
     *input = &input[consumed..];
     Ok(node)
 }
@@ -932,7 +958,13 @@ fn expect_keyword(input: &mut &[Token], keyword: Keyword) -> ModalResult<()> {
     if match_keyword(input, keyword) {
         Ok(())
     } else {
-        Err(ErrMode::Cut(ContextError::new()))
+        Err(ErrMode::Cut(
+            <ContextError as FromExternalError<&[Token], _>>::from_external_error(
+                input,
+                ErrorKind::Verify,
+                ItemParseMessage(format!("expected keyword {keyword:?}")),
+            ),
+        ))
     }
 }
 
@@ -948,7 +980,13 @@ fn expect_symbol(input: &mut &[Token], sym: &str) -> ModalResult<()> {
     if match_symbol(input, sym) {
         Ok(())
     } else {
-        Err(ErrMode::Cut(ContextError::new()))
+        Err(ErrMode::Cut(
+            <ContextError as FromExternalError<&[Token], _>>::from_external_error(
+                input,
+                ErrorKind::Verify,
+                ItemParseMessage(format!("expected symbol '{sym}'")),
+            ),
+        ))
     }
 }
 
@@ -959,7 +997,13 @@ fn matches_symbol(tok: Option<&Token>, sym: &str) -> bool {
 fn expect_symbol_token(input: &mut &[Token]) -> ModalResult<SyntaxToken> {
     let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
     if tok.kind != TokenKind::Symbol {
-        return Err(ErrMode::Cut(ContextError::new()));
+        return Err(ErrMode::Cut(
+            <ContextError as FromExternalError<&[Token], _>>::from_external_error(
+                input,
+                ErrorKind::Verify,
+                ItemParseMessage("expected symbol".to_string()),
+            ),
+        ));
     }
     Ok(syntax_token_from_token(&tok))
 }
@@ -969,7 +1013,15 @@ fn expect_ident_token(input: &mut &[Token]) -> ModalResult<SyntaxToken> {
     match tok.kind {
         TokenKind::Ident => Ok(syntax_token_from_token(&tok)),
         TokenKind::Keyword(_) if tok.lexeme == "_" => Ok(syntax_token_from_token(&tok)),
-        _ => Err(ErrMode::Cut(ContextError::new())),
+        _ => {
+            Err(ErrMode::Cut(
+                <ContextError as FromExternalError<&[Token], _>>::from_external_error(
+                    input,
+                    ErrorKind::Verify,
+                    ItemParseMessage("expected identifier".to_string()),
+                ),
+            ))
+        }
     }
 }
 

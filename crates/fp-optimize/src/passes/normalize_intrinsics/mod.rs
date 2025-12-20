@@ -153,7 +153,10 @@ fn normalize_expr(expr: &mut Expr, strategy: Option<&dyn IntrinsicNormalizer>) -
         }
         ExprKind::Invoke(invoke) => {
             normalize_invoke(invoke, strategy)?;
-            if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
+
+            if let Some(intrinsic_call) = fp_core::ast::intrinsic_call_from_invoke(invoke) {
+                replacement = Some(Expr::new(ExprKind::IntrinsicCall(intrinsic_call)));
+            } else if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
                 replacement = Some(repl);
             } else if let Some(mut collection) = ExprIntrinsicContainer::from_invoke(invoke) {
                 let new_expr = apply_intrinsic_collection(&mut collection, strategy)?;

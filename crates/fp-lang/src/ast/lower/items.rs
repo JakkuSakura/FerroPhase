@@ -466,22 +466,26 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
     if type_nodes.is_empty() {
         return Err(LowerItemsError::MissingToken("impl type"));
     }
-    let first_ty = lower_type_from_cst(type_nodes[0])
-        .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
 
-    let (trait_ty, self_ty) = if type_nodes.len() >= 2 {
+    let (trait_ty, self_ty_node) = if type_nodes.len() >= 2 {
         let trait_path =
             path_from_ty_node(type_nodes[0]).ok_or(LowerItemsError::MissingToken("trait path"))?;
-        let self_ty = lower_type_from_cst(type_nodes[1])
-            .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-        (Some(Locator::path(trait_path)), self_ty)
+        (Some(Locator::path(trait_path)), type_nodes[1])
     } else {
-        (None, first_ty)
+        (None, type_nodes[0])
+    };
+
+    let self_ty = if let Some(path) = path_from_ty_node(self_ty_node) {
+        Expr::path(path)
+    } else {
+        let ty = lower_type_from_cst(self_ty_node)
+            .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+        Expr::value(Value::Type(ty))
     };
 
     Ok(ItemImpl {
         trait_ty,
-        self_ty: Expr::value(Value::Type(self_ty)),
+        self_ty,
         generics_params: generics,
         items,
     })

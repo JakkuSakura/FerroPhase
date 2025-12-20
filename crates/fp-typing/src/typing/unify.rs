@@ -422,6 +422,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
             | (TypeTerm::Vec(a), TypeTerm::Vec(b))
             | (TypeTerm::Reference(a), TypeTerm::Reference(b)) => self.unify(a, b),
+            (TypeTerm::Slice(a), TypeTerm::Vec(b))
+            | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => self.unify(a, b),
             (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String)) => {
                 let temp = self.fresh_type_var();
                 self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
@@ -431,6 +433,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let temp = self.fresh_type_var();
                 self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
                 self.unify(inner, temp)
+            }
+            (TypeTerm::Reference(inner), other) => {
+                let other_var = self.fresh_type_var();
+                self.bind(other_var, other);
+                self.unify(inner, other_var)
+            }
+            (other, TypeTerm::Reference(inner)) => {
+                let other_var = self.fresh_type_var();
+                self.bind(other_var, other);
+                self.unify(inner, other_var)
             }
             (TypeTerm::Unknown, _other) | (_other, TypeTerm::Unknown) => Ok(()),
             (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
@@ -677,10 +689,23 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let inner = self.type_from_ast_ty(&v.ty)?;
                 self.bind(var, TypeTerm::Vec(inner));
             }
+            Ty::Array(_) => {
+                // Preserve the full AST representation for now.
+                // Array typing is handled via `TypeTerm::Custom` and compared structurally.
+                self.bind(var, TypeTerm::Custom(ty.clone()));
+            }
             Ty::Expr(expr) => {
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {
                     let name = loc.to_string();
+                    if name == "Self" {
+                        if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
+                            if let Ty::Struct(struct_ty) = &ctx.self_ty {
+                                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                                return Ok(var);
+                            }
+                        }
+                    }
                     if let Some(prim) = primitive_from_name(&name) {
                         self.bind(var, TypeTerm::Primitive(prim));
                         return Ok(var);
@@ -709,6 +734,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.type_from_ast_ty(&Ty::Unit(TypeUnit))
                 }?;
                 self.bind(var, TypeTerm::Function(FunctionTerm { params, ret }));
+            }
+            Ty::ImplTraits(_traits) => {
+                // `impl Trait` is currently treated as an opaque/unknown type.
+                // This keeps typing permissive for higher-level experiments and transpilation.
+                self.bind(var, TypeTerm::Any);
             }
             other => {
                 // Error out loudly instead of silently defaulting, to avoid masking bugs.
