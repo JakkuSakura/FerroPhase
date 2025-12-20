@@ -1,8 +1,9 @@
 use crate::ast::lower::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    EnumTypeVariant, Expr, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam,
-    Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum,
+    EnumTypeVariant, Expr, ExprKind, FunctionParam, FunctionParamReceiver, FunctionSignature,
+    GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst,
+    ItemDefEnum,
     ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
     ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro,
     Locator, MacroDelimiter, MacroInvocation, Module, Path, StructuralField, Ty, TypeBounds,
@@ -20,6 +21,10 @@ pub enum LowerItemsError {
 
 pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
     if node.kind != SyntaxKind::ItemList {
+        // Be forgiving: some callers may pass a single item node directly.
+        if node.kind.category() == CstCategory::Item {
+            return Ok(vec![lower_item_from_cst(node)?]);
+        }
         return Err(LowerItemsError::UnexpectedNode(node.kind));
     }
 
@@ -168,6 +173,18 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
     let name = Ident::new(
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("struct name"))?,
     );
+
+    let generics = node
+        .children
+        .iter()
+        .find_map(|c| match c {
+            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
+            _ => None,
+        })
+        .map(lower_generic_params)
+        .transpose()?
+        .unwrap_or_default();
+
     let mut fields = Vec::new();
     for child in &node.children {
         let SyntaxElement::Node(field) = child else {
@@ -190,7 +207,7 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         name: name.clone(),
         value: TypeStruct {
             name,
-            generics_params: Vec::new(),
+            generics_params: generics,
             fields,
         },
     })
@@ -200,6 +217,18 @@ fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name =
         Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("enum name"))?);
+
+    let generics = node
+        .children
+        .iter()
+        .find_map(|c| match c {
+            SyntaxElement::Node(n) if n.kind == SyntaxKind::GenericParams => Some(n.as_ref()),
+            _ => None,
+        })
+        .map(lower_generic_params)
+        .transpose()?
+        .unwrap_or_default();
+
     let mut variants = Vec::new();
     for child in &node.children {
         let SyntaxElement::Node(v) = child else {
@@ -230,7 +259,7 @@ fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
         name: name.clone(),
         value: TypeEnum {
             name,
-            generics_params: Vec::new(),
+            generics_params: generics,
             variants,
         },
     })
@@ -318,8 +347,12 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
 
     let body_node = first_child_by_category(node, CstCategory::Expr)
         .ok_or(LowerItemsError::MissingToken("fn body"))?;
-    let body =
-        lower_expr_from_cst(body_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+    let body = lower_expr_from_cst(body_node).map_err(|err| match err {
+        crate::ast::lower::expr::LowerError::UnexpectedNode(kind) => {
+            LowerItemsError::UnexpectedNode(kind)
+        }
+        _ => LowerItemsError::UnexpectedNode(node.kind),
+    })?;
     let mut def = ItemDefFunction::new_simple(
         sig.name
             .clone()
@@ -480,7 +513,10 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
     } else {
         let ty = lower_type_from_cst(self_ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
-        Expr::value(Value::Type(ty))
+        match ty {
+            Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Locator(_)) => *expr,
+            other => Expr::value(Value::Type(other)),
+        }
     };
 
     Ok(ItemImpl {
@@ -542,9 +578,13 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                 let is_const = n.children.iter().any(
                     |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "const"),
                 );
-                let pname = Ident::new(
-                    first_ident_token_text(n).ok_or(LowerItemsError::MissingToken("param"))?,
-                );
+                let pname_text = if is_const {
+                    first_ident_token_text_skipping(n, &["const"])
+                        .ok_or(LowerItemsError::MissingToken("param"))?
+                } else {
+                    first_ident_token_text(n).ok_or(LowerItemsError::MissingToken("param"))?
+                };
+                let pname = Ident::new(pname_text);
                 let ty_node = first_child_by_category(n, CstCategory::Type)
                     .ok_or(LowerItemsError::MissingToken("param type"))?;
                 let ty = lower_type_from_cst(ty_node)
@@ -689,6 +729,7 @@ fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
         return None;
     }
     let mut segments = Vec::new();
+    let mut saw_generic_start = false;
     for child in &node.children {
         let SyntaxElement::Token(t) = child else {
             continue;
@@ -697,7 +738,12 @@ fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
             continue;
         }
         match t.text.as_str() {
-            "::" | "<" | ">" | "," | "=" => {}
+            "::" => {}
+            "<" => {
+                saw_generic_start = true;
+                break;
+            }
+            ">" | "," | "=" => {}
             _ => {
                 if t.text
                     .chars()
@@ -708,6 +754,9 @@ fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
                 }
             }
         }
+    }
+    if saw_generic_start {
+        return None;
     }
     if segments.is_empty() {
         None
@@ -745,6 +794,22 @@ fn first_ident_token_text(node: &SyntaxNode) -> Option<String> {
     node.children.iter().find_map(|c| match c {
         SyntaxElement::Token(t)
             if !t.is_trivia()
+                && t.text
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_') =>
+        {
+            Some(t.text.clone())
+        }
+        _ => None,
+    })
+}
+
+fn first_ident_token_text_skipping(node: &SyntaxNode, skip: &[&str]) -> Option<String> {
+    node.children.iter().find_map(|c| match c {
+        SyntaxElement::Token(t)
+            if !t.is_trivia()
+                && !skip.contains(&t.text.as_str())
                 && t.text
                     .chars()
                     .next()

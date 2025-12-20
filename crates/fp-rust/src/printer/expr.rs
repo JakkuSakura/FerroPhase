@@ -281,20 +281,35 @@ impl RustPrinter {
     }
 
     pub fn print_match(&self, m: &ExprMatch) -> Result<TokenStream> {
-        let mut ts = vec![];
-        for (_i, c) in m.cases.iter().enumerate() {
-            let node = &c.cond;
-            let co = self.print_expr(node)?;
-            let node = &c.body;
-            let ex = self.print_expr_no_braces(node)?;
-            ts.push(quote!(
-                if #co => { #ex }
-            ))
+        if let Some(scrutinee) = m.scrutinee.as_ref() {
+            let scrutinee = self.print_expr(scrutinee)?;
+            let mut arms = Vec::new();
+            for case in &m.cases {
+                let pat = case
+                    .pat
+                    .as_ref()
+                    .ok_or_else(|| fp_core::error::Error::from("match arm missing pattern"))?;
+                let pat_tokens = self.print_pattern(pat)?;
+                let guard_tokens = if let Some(guard) = case.guard.as_ref() {
+                    let guard = self.print_expr(guard)?;
+                    quote!(if #guard)
+                } else {
+                    quote!()
+                };
+                let body = self.print_expr_no_braces(&case.body)?;
+                arms.push(quote!(#pat_tokens #guard_tokens => { #body }));
+            }
+            return Ok(quote!(match #scrutinee { #(#arms,)* }));
         }
-        Ok(quote!(match () {
-            () #(#ts)*
-            _ => {}
-        }))
+
+        // Legacy lowering: boolean conditions.
+        let mut ts = vec![];
+        for c in m.cases.iter() {
+            let co = self.print_expr(&c.cond)?;
+            let ex = self.print_expr_no_braces(&c.body)?;
+            ts.push(quote!(if #co => { #ex }));
+        }
+        Ok(quote!(match () { () #(#ts)* _ => {} }))
     }
 
     pub fn print_invoke(&self, node: &ExprInvoke) -> Result<TokenStream> {
@@ -552,6 +567,22 @@ impl RustPrinter {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 self.print_print_intrinsic(call)
+            }
+            IntrinsicCallKind::Return => {
+                let args: Vec<_> = match &call.payload {
+                    IntrinsicCallPayload::Args { args } => args
+                        .iter()
+                        .map(|arg| self.print_expr(arg))
+                        .try_collect()?,
+                    IntrinsicCallPayload::Format { .. } => {
+                        bail!("return intrinsic expects args payload")
+                    }
+                };
+                match args.as_slice() {
+                    [] => Ok(quote!(return)),
+                    [value] => Ok(quote!(return #value)),
+                    _ => bail!("return intrinsic accepts at most one argument"),
+                }
             }
             _ => self.print_generic_intrinsic(call),
         }

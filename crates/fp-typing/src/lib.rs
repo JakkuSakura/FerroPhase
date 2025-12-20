@@ -103,6 +103,9 @@ pub struct AstTypeInferencer<'ctx> {
     enum_defs: HashMap<String, TypeEnum>,
     enum_variants: HashMap<String, Vec<String>>,
     struct_methods: HashMap<String, HashMap<String, MethodRecord>>,
+    trait_method_sigs: HashMap<String, HashMap<String, FunctionSignature>>,
+    impl_traits: HashMap<String, HashSet<String>>,
+    generic_trait_bounds: HashMap<TypeVarId, Vec<String>>,
     impl_stack: Vec<Option<ImplContext>>,
     current_level: usize,
     diagnostics: Vec<TypingDiagnostic>,
@@ -123,6 +126,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             enum_defs: HashMap::new(),
             enum_variants: HashMap::new(),
             struct_methods: HashMap::new(),
+            trait_method_sigs: HashMap::new(),
+            impl_traits: HashMap::new(),
+            generic_trait_bounds: HashMap::new(),
             impl_stack: Vec::new(),
             current_level: 0,
             diagnostics: Vec::new(),
@@ -210,13 +216,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         struct_name: name,
                         self_ty: Ty::Struct(def),
                     })
+                } else if let Some(def) = self.enum_defs.get(&name).cloned() {
+                    Some(ImplContext {
+                        struct_name: name,
+                        self_ty: Ty::Enum(def),
+                    })
                 } else {
-                    self.emit_error(format!("impl target {} is not a known struct", name));
+                    self.emit_error(format!(
+                        "impl target {} is not a known struct or enum",
+                        name
+                    ));
                     None
                 }
             }
             None => {
-                self.emit_error("impl self type must resolve to a struct");
+                self.emit_error("impl self type must resolve to a struct or enum");
                 None
             }
         }
@@ -302,6 +316,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 self.enum_variants.insert(enum_name, variant_keys);
+            }
+            ItemKind::DefTrait(def) => {
+                self.register_symbol(&def.name);
+                let entry = self
+                    .trait_method_sigs
+                    .entry(def.name.as_str().to_string())
+                    .or_default();
+                for member in &def.items {
+                    match member.kind() {
+                        ItemKind::DeclFunction(decl) => {
+                            if let Some(name) = decl.sig.name.as_ref() {
+                                entry.insert(name.as_str().to_string(), decl.sig.clone());
+                            }
+                        }
+                        ItemKind::DefFunction(func) => {
+                            entry.insert(func.name.as_str().to_string(), func.sig.clone());
+                        }
+                        _ => {}
+                    }
+                }
             }
             ItemKind::DefConst(def) => {
                 self.register_symbol(&def.name);
@@ -553,8 +587,72 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ty::Unit(TypeUnit)
             }
             ItemKind::Import(_) => Ty::Unit(TypeUnit),
+            ItemKind::DefTrait(trait_def) => {
+                let trait_name = trait_def.name.as_str().to_string();
+                self.enter_scope();
+
+                // Provide `Self` inside trait methods as a generic parameter
+                // bounded by the trait itself.
+                let self_var = self.register_generic_param("Self");
+                self.generic_trait_bounds
+                    .insert(self_var, vec![trait_name.clone()]);
+
+                for member in &mut trait_def.items {
+                    match member.kind_mut() {
+                        ItemKind::DeclFunction(decl) => {
+                            let ty = self.ty_from_function_signature(&decl.sig)?;
+                            decl.ty_annotation = Some(ty);
+                        }
+                        ItemKind::DefFunction(func) => {
+                            self.infer_trait_method(func)?;
+                        }
+                        _ => {}
+                    }
+                }
+
+                self.exit_scope();
+                Ty::Unit(TypeUnit)
+            }
             ItemKind::Impl(impl_block) => {
                 let ctx = self.resolve_impl_context(&impl_block.self_ty);
+
+                if let (Some(ctx), Some(trait_ty)) = (ctx.as_ref(), impl_block.trait_ty.as_ref()) {
+                    let trait_name = trait_ty.to_string();
+                    self.impl_traits
+                        .entry(ctx.struct_name.clone())
+                        .or_default()
+                        .insert(trait_name.clone());
+
+                    if let Some(methods) = self.trait_method_sigs.get(&trait_name).cloned() {
+                        for (method_name, sig) in methods {
+                            if sig.receiver.is_none() {
+                                continue;
+                            }
+                            // Ensure default trait methods are callable as inherent methods
+                            // on this concrete receiver type.
+                            let scheme = self.scheme_from_method_signature(&sig)?;
+                            let receiver_ty = sig
+                                .receiver
+                                .as_ref()
+                                .map(|receiver| self.ty_for_receiver(ctx, receiver));
+                            let entry = self
+                                .struct_methods
+                                .entry(ctx.struct_name.clone())
+                                .or_default();
+                            if entry.contains_key(&method_name) {
+                                continue;
+                            }
+                            entry.insert(
+                                method_name,
+                                MethodRecord {
+                                    receiver_ty,
+                                    scheme: Some(scheme),
+                                },
+                            );
+                        }
+                    }
+                }
+
                 self.impl_stack.push(ctx.clone());
                 self.enter_scope();
                 for child in &impl_block.items {
@@ -633,8 +731,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         if !func.sig.generics_params.is_empty() {
             for param in &func.sig.generics_params {
-                // Ignore trait bounds for now; just register the symbol so it can be resolved.
-                self.register_generic_param(param.name.as_str());
+                let var = self.register_generic_param(param.name.as_str());
+                let bounds = Self::extract_trait_bounds(&param.bounds);
+                if !bounds.is_empty() {
+                    self.generic_trait_bounds.insert(var, bounds);
+                }
             }
         }
 
@@ -727,6 +828,106 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(ty)
     }
 
+    fn infer_trait_method(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
+        let fn_var = self.symbol_var(&func.name);
+
+        self.enter_scope();
+
+        if let Some(receiver) = func.sig.receiver.as_ref() {
+            let self_ty = Ty::locator(Locator::ident("Self"));
+            let receiver_type = match receiver {
+                FunctionParamReceiver::Implicit
+                | FunctionParamReceiver::Value
+                | FunctionParamReceiver::MutValue => self_ty,
+                FunctionParamReceiver::Ref | FunctionParamReceiver::RefStatic => Ty::Reference(
+                    TypeReference {
+                        ty: Box::new(self_ty),
+                        mutability: Some(false),
+                        lifetime: None,
+                    }
+                    .into(),
+                ),
+                FunctionParamReceiver::RefMut | FunctionParamReceiver::RefMutStatic => Ty::Reference(
+                    TypeReference {
+                        ty: Box::new(self_ty),
+                        mutability: Some(true),
+                        lifetime: None,
+                    }
+                    .into(),
+                ),
+            };
+
+            let self_var = self.fresh_type_var();
+            let expected = self.type_from_ast_ty(&receiver_type)?;
+            self.unify(self_var, expected)?;
+            self.insert_env("self".to_string(), EnvEntry::Mono(self_var));
+        }
+
+        if !func.sig.generics_params.is_empty() {
+            for param in &func.sig.generics_params {
+                let var = self.register_generic_param(param.name.as_str());
+                let bounds = Self::extract_trait_bounds(&param.bounds);
+                if !bounds.is_empty() {
+                    self.generic_trait_bounds.insert(var, bounds);
+                }
+            }
+        }
+
+        let mut param_vars = Vec::new();
+        for param in func.sig.params.iter_mut() {
+            let var = self.fresh_type_var();
+            let annot_var = self.type_from_ast_ty(&param.ty)?;
+            self.unify(var, annot_var)?;
+            self.insert_env(param.name.as_str().to_string(), EnvEntry::Mono(var));
+            let resolved = self.resolve_to_ty(var)?;
+            param.ty_annotation = Some(resolved);
+            param_vars.push(var);
+        }
+
+        let body_var = {
+            let mut body = func.body.as_mut();
+            self.infer_expr(&mut body)?
+        };
+
+        let ret_var = if let Some(ret) = &func.sig.ret_ty {
+            let annot_var = self.type_from_ast_ty(ret)?;
+            self.unify(body_var, annot_var)?;
+            annot_var
+        } else {
+            body_var
+        };
+
+        self.exit_scope();
+
+        self.bind(
+            fn_var,
+            TypeTerm::Function(FunctionTerm {
+                params: param_vars.clone(),
+                ret: ret_var,
+            }),
+        );
+
+        let scheme = self.generalize(fn_var)?;
+        self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme));
+
+        let mut param_tys = Vec::new();
+        for var in &param_vars {
+            param_tys.push(self.resolve_to_ty(*var)?);
+        }
+        let ret_ty = self.resolve_to_ty(ret_var)?;
+        func.sig.ret_ty.get_or_insert(ret_ty.clone());
+
+        let func_ty = TypeFunction {
+            params: param_tys,
+            generics_params: func.sig.generics_params.clone(),
+            ret_ty: Some(Box::new(ret_ty)),
+        };
+        func.ty = Some(func_ty.clone());
+        let ty = Ty::Function(func_ty);
+        func.ty_annotation = Some(ty.clone());
+        Ok(ty)
+    }
+
     // infer_expr moved to typing::infer_expr
 
     // infer_block moved to typing::infer_stmt
@@ -768,6 +969,45 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     // instantiate_scheme moved to typing/unify.rs
 
     // instantiate_scheme_type moved to typing/unify.rs
+
+    fn scheme_from_method_signature(&mut self, sig: &FunctionSignature) -> Result<TypeScheme> {
+        let fn_var = self.fresh_type_var();
+        let mut param_vars = Vec::new();
+        for param in &sig.params {
+            param_vars.push(self.type_from_ast_ty(&param.ty)?);
+        }
+        let ret_var = if let Some(ret) = sig.ret_ty.as_ref() {
+            self.type_from_ast_ty(ret)?
+        } else {
+            self.unit_type_var()
+        };
+        self.bind(
+            fn_var,
+            TypeTerm::Function(FunctionTerm {
+                params: param_vars,
+                ret: ret_var,
+            }),
+        );
+        self.generalize(fn_var)
+    }
+
+    fn extract_trait_bounds(bounds: &TypeBounds) -> Vec<String> {
+        bounds
+            .bounds
+            .iter()
+            .filter_map(|expr| match expr.kind() {
+                ExprKind::Locator(locator) => Some(locator.to_string()),
+                ExprKind::Value(value) => match value.as_ref() {
+                    Value::Type(Ty::Expr(inner)) => match inner.kind() {
+                        ExprKind::Locator(locator) => Some(locator.to_string()),
+                        _ => None,
+                    },
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect()
+    }
 
     fn register_generic_param(&mut self, name: &str) -> TypeVarId {
         let var = self.fresh_type_var();
@@ -855,6 +1095,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                         }
                     }
+
+                    // Enum tuple variant constructors: `Enum::Variant(...)`.
+                    if let Some(enum_def) = self.enum_defs.get(struct_name).cloned() {
+                        if let Some(variant) = enum_def
+                            .variants
+                            .iter()
+                            .find(|v| v.name.as_str() == method_name)
+                        {
+                            let mut params = Vec::new();
+                            if let Ty::Tuple(tuple_ty) = &variant.value {
+                                params.extend(tuple_ty.types.clone());
+                            }
+
+                            let func_ty = Ty::Function(TypeFunction {
+                                params,
+                                generics_params: Vec::new(),
+                                ret_ty: Some(Box::new(Ty::Enum(enum_def.clone()))),
+                            });
+                            let func_var = self.type_from_ast_ty(&func_ty)?;
+                            return Ok(Some(func_var));
+                        }
+                    }
                 }
             }
         }
@@ -875,6 +1137,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if let Some(first) = path.segments.first() {
                 if let Some(var) = self.lookup_env_var(first.as_str()) {
                     return Ok(var);
+                }
+            }
+
+            // Enum unit variants as values: `Enum::Variant`.
+            if path.segments.len() >= 2 {
+                if let (Some(enum_segment), Some(variant_segment)) = (
+                    path.segments.get(path.segments.len() - 2),
+                    path.segments.last(),
+                ) {
+                    let enum_name = enum_segment.as_str();
+                    let variant_name = variant_segment.as_str();
+                    if let Some(enum_def) = self.enum_defs.get(enum_name).cloned() {
+                        if enum_def
+                            .variants
+                            .iter()
+                            .any(|v| v.name.as_str() == variant_name)
+                        {
+                            let var = self.fresh_type_var();
+                            self.bind(var, TypeTerm::Enum(enum_def));
+                            return Ok(var);
+                        }
+                    }
                 }
             }
         }
@@ -987,7 +1271,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn struct_name_from_expr(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
             ExprKind::Locator(locator) => {
-                let name = locator.to_string();
+                let name = match locator {
+                    Locator::ParameterPath(path) => path
+                        .segments
+                        .last()
+                        .map(|seg| seg.ident.as_str().to_string())?,
+                    other => other.to_string(),
+                };
                 if name == "Self" {
                     self.impl_stack
                         .last()
@@ -999,6 +1289,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprKind::Value(value) => match &**value {
                 Value::Type(Ty::Struct(struct_ty)) => Some(struct_ty.name.as_str().to_string()),
+                Value::Type(Ty::Enum(enum_ty)) => Some(enum_ty.name.as_str().to_string()),
                 _ => None,
             },
             _ => None,
