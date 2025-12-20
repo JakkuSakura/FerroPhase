@@ -16,6 +16,8 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
 };
+#[cfg(feature = "bootstrap")]
+use fp_core::intrinsics::NoopIntrinsicNormalizer;
 use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::workspace::{WorkspaceDocument, WorkspaceModule, WorkspacePackage};
@@ -25,8 +27,6 @@ use fp_llvm::{
     LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicMaterializer,
 };
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
-#[cfg(feature = "bootstrap")]
-use fp_optimize::passes::DefaultIntrinsicNormalizer;
 use fp_optimize::passes::{
     NoopIntrinsicMaterializer, lower_closures, materialize_intrinsics, normalize_intrinsics,
     remove_generic_templates,
@@ -530,7 +530,7 @@ impl Pipeline {
                 register_threadlocal_serializer(serializer.clone());
                 self.serializer = Some(serializer);
                 let normalizer: Arc<dyn IntrinsicNormalizer> =
-                    Arc::new(DefaultIntrinsicNormalizer::default());
+                    Arc::new(NoopIntrinsicNormalizer::default());
                 self.intrinsic_normalizer = Some(normalizer);
                 self.source_language = Some("bootstrap-json".to_string());
                 self.frontend_snapshot = None;
@@ -544,7 +544,7 @@ impl Pipeline {
                     register_threadlocal_serializer(serializer.clone());
                     self.serializer = Some(serializer);
                     let normalizer: Arc<dyn IntrinsicNormalizer> =
-                        Arc::new(DefaultIntrinsicNormalizer::default());
+                        Arc::new(NoopIntrinsicNormalizer::default());
                     self.intrinsic_normalizer = Some(normalizer);
                     self.source_language = Some("bootstrap-json".to_string());
                     self.frontend_snapshot = None;

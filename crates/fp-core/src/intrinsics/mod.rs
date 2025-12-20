@@ -6,11 +6,36 @@
 //! language before we introduce backend-specific resolvers.
 
 use crate::ast::{
-    Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprMacro, ExprStruct, ExprStructural, File,
+    Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprStruct, ExprStructural, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind, Ty, TySlot,
     TypeFunction,
 };
 use crate::error::Result;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NormalizeOutcome<T> {
+    /// The strategy chose not to handle this node; the shared framework should
+    /// continue normalizing it (including descending into children).
+    Ignored(T),
+    /// The strategy normalized this node and produced a replacement.
+    Normalized(T),
+}
+
+impl<T> NormalizeOutcome<T> {
+    pub fn into_inner(self) -> T {
+        match self {
+            NormalizeOutcome::Ignored(value) | NormalizeOutcome::Normalized(value) => value,
+        }
+    }
+
+    pub fn is_normalized(&self) -> bool {
+        matches!(self, NormalizeOutcome::Normalized(_))
+    }
+}
+
+/// Default strategy that never performs language-specific normalization.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct NoopIntrinsicNormalizer;
 
 /// Strategy interface for language-specific intrinsic normalisation.
 pub trait IntrinsicNormalizer {
@@ -18,29 +43,47 @@ pub trait IntrinsicNormalizer {
         Ok(())
     }
 
-    fn normalize_call(&self, _call: &ExprIntrinsicCall) -> Result<Option<Expr>> {
-        Ok(None)
+    /// Strategy hook for intrinsic call expressions.
+    ///
+    /// The framework guarantees `expr.kind()` is `ExprKind::IntrinsicCall`.
+    fn normalize_call(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 
-    fn normalize_container(&self, _container: &ExprIntrinsicContainer) -> Result<Option<Expr>> {
-        Ok(None)
+    /// Strategy hook for intrinsic container expressions.
+    ///
+    /// The framework guarantees `expr.kind()` is `ExprKind::IntrinsicContainer`.
+    fn normalize_container(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 
-    fn normalize_struct(&self, _struct_expr: &ExprStruct) -> Result<Option<Expr>> {
-        Ok(None)
+    /// Strategy hook for struct literal expressions.
+    ///
+    /// The framework guarantees `expr.kind()` is `ExprKind::Struct`.
+    fn normalize_struct(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 
-    fn normalize_structural(&self, _struct_expr: &ExprStructural) -> Result<Option<Expr>> {
-        Ok(None)
+    /// Strategy hook for structural literal expressions.
+    ///
+    /// The framework guarantees `expr.kind()` is `ExprKind::Structural`.
+    fn normalize_structural(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 
     /// Language-specific macro lowering hook. When provided by a frontend, the
     /// shared intrinsic normalizer will delegate `ExprKind::Macro` to this
-    /// implementation. Return `Ok(Some(expr))` to replace the macro with `expr`.
-    fn normalize_macro(&self, _macro_expr: &ExprMacro) -> Result<Option<Expr>> {
-        Ok(None)
+    /// implementation. Return `NormalizeOutcome::Normalized(expr)` to replace
+    /// the macro with `expr`.
+    /// Strategy hook for macro expressions.
+    ///
+    /// The framework guarantees `expr.kind()` is `ExprKind::Macro`.
+    fn normalize_macro(&self, expr: Expr) -> Result<NormalizeOutcome<Expr>> {
+        Ok(NormalizeOutcome::Ignored(expr))
     }
 }
+
+impl IntrinsicNormalizer for NoopIntrinsicNormalizer {}
 
 /// Strategy interface for backend-specific intrinsic materialisation.
 pub trait IntrinsicMaterializer {

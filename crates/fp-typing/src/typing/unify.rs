@@ -422,8 +422,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
             | (TypeTerm::Vec(a), TypeTerm::Vec(b))
             | (TypeTerm::Reference(a), TypeTerm::Reference(b)) => self.unify(a, b),
-            (TypeTerm::Slice(a), TypeTerm::Vec(b))
-            | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => self.unify(a, b),
+            (TypeTerm::Slice(a), TypeTerm::Vec(b)) | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => {
+                self.unify(a, b)
+            }
             (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String)) => {
                 let temp = self.fresh_type_var();
                 self.bind(temp, TypeTerm::Primitive(TypePrimitive::String));
