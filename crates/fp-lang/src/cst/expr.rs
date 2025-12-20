@@ -213,6 +213,11 @@ impl Parser {
                     return self.parse_const_block_expr();
                 }
             }
+            Some("move") => {
+                if self.peek_second_non_trivia_raw() == Some("|") {
+                    return self.parse_closure_expr();
+                }
+            }
             Some("if") => return self.parse_if_expr(),
             Some("loop") => return self.parse_loop_expr(),
             Some("while") => return self.parse_while_expr(),
@@ -234,7 +239,7 @@ impl Parser {
         }
 
         match self.peek_non_trivia_raw() {
-            Some("+") | Some("-") | Some("!") => {
+            Some("+") | Some("-") | Some("!") | Some("&") | Some("*") => {
                 let mut children = Vec::new();
                 let start_span = self
                     .peek_any_span()
@@ -242,6 +247,12 @@ impl Parser {
                 self.bump_trivia_into(&mut children);
                 self.bump_token_into(&mut children); // operator
                 self.bump_trivia_into(&mut children);
+
+                // `&mut expr`
+                if self.peek_non_trivia_normalized() == Some("mut") {
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                }
                 let expr = self.parse_expr_bp(255)?;
                 children.push(SyntaxElement::Node(Box::new(expr)));
                 let span = span_for_children(&children).unwrap_or(start_span);
@@ -259,7 +270,9 @@ impl Parser {
         loop {
             match self.peek_non_trivia_raw() {
                 Some("{") => {
-                    if allow_struct_literal && base.kind == SyntaxKind::ExprName {
+                    if allow_struct_literal
+                        && matches!(base.kind, SyntaxKind::ExprName | SyntaxKind::ExprPath)
+                    {
                         base = self.parse_struct_literal(base)?;
                         continue;
                     }
@@ -724,6 +737,14 @@ impl Parser {
         let pat = self.parse_expr_bp(0)?;
         children.push(SyntaxElement::Node(Box::new(pat)));
         self.bump_trivia_into(&mut children);
+
+        // Support struct-like match patterns like `Variant { .. }` by consuming the braced body.
+        // The current match lowering does not destructure fields, but this at least keeps parsing
+        // compatible with example sources.
+        if self.peek_non_trivia_raw() == Some("{") {
+            self.parse_balanced_group_into("{", "}", &mut children)?;
+            self.bump_trivia_into(&mut children);
+        }
         if self.peek_non_trivia_normalized() == Some("if") {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
@@ -750,6 +771,11 @@ impl Parser {
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
+
+        if self.peek_non_trivia_normalized() == Some("move") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
         self.expect_token_raw("|")?;
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
@@ -1119,7 +1145,16 @@ impl Parser {
         }
 
         if let Some(raw) = self.peek_non_trivia_raw() {
-            if raw.starts_with('\'') {
+            if raw == "'" {
+                // `&'lifetime T`
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                if matches!(self.peek_non_trivia_token_kind(), Some(TokenKind::Ident) | Some(TokenKind::Keyword(_))) {
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                }
+            } else if raw.starts_with('\'') {
+                // Lexer may provide a combined `'lifetime` token.
                 self.bump_token_into(&mut children);
                 self.bump_trivia_into(&mut children);
             }
@@ -1214,8 +1249,41 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `impl`
         self.bump_trivia_into(&mut children);
+
         let bound = self.parse_path_type()?;
         children.push(SyntaxElement::Node(Box::new(bound)));
+
+        // Support Rust-like `impl Fn(T) -> U` syntax by consuming the signature tokens.
+        // At the moment this is represented as additional children on `TyImplTraits`.
+        self.bump_trivia_into(&mut children);
+        if self.peek_non_trivia_raw() == Some("(") {
+            self.bump_token_into(&mut children); // '('
+            self.bump_trivia_into(&mut children);
+            if self.peek_non_trivia_raw() != Some(")") {
+                loop {
+                    let arg = self.parse_type_bp_until(0, &[",", ")"])?;
+                    children.push(SyntaxElement::Node(Box::new(arg)));
+                    self.bump_trivia_into(&mut children);
+                    if self.peek_non_trivia_raw() == Some(",") {
+                        self.bump_token_into(&mut children);
+                        self.bump_trivia_into(&mut children);
+                        continue;
+                    }
+                    break;
+                }
+            }
+            self.expect_token_raw(")")?;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+
+            if self.peek_non_trivia_raw() == Some("->") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                let ret = self.parse_type_bp_until(0, &[])?;
+                children.push(SyntaxElement::Node(Box::new(ret)));
+            }
+        }
+
         let span = span_for_children(&children).unwrap_or(start);
         Ok(SyntaxNode::new(SyntaxKind::TyImplTraits, children, span))
     }
@@ -1541,6 +1609,24 @@ impl Parser {
             if self.peek_non_trivia_raw() == Some("}") {
                 break;
             }
+
+            // Rust-like struct update / wildcard field pattern: `..` or `..expr`.
+            if self.peek_non_trivia_raw() == Some("..") {
+                self.bump_token_into(out);
+                self.bump_trivia_into(out);
+                if !matches!(self.peek_non_trivia_raw(), Some(",") | Some("}")) {
+                    let expr = self.parse_expr_bp(0)?;
+                    out.push(SyntaxElement::Node(Box::new(expr)));
+                    self.bump_trivia_into(out);
+                }
+                if self.peek_non_trivia_raw() == Some(",") {
+                    self.bump_token_into(out);
+                    self.bump_trivia_into(out);
+                }
+                // `..` must be the last field.
+                break;
+            }
+
             let field = self.parse_struct_field()?;
             out.push(SyntaxElement::Node(Box::new(field)));
             self.bump_trivia_into(out);
@@ -1750,8 +1836,9 @@ impl Parser {
     }
 
     fn error(&self, message: &str) -> ExprCstParseError {
+        let near = self.peek_non_trivia_raw().unwrap_or("<eof>");
         ExprCstParseError {
-            message: message.to_string(),
+            message: format!("{message} (near `{near}`)"),
         }
     }
 }

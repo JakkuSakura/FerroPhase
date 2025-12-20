@@ -315,6 +315,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             match name.as_str() {
                 "true" => Ok(Expr::value(Value::bool(true))),
                 "false" => Ok(Expr::value(Value::bool(false))),
+                "null" => Ok(Expr::value(Value::null())),
                 _ => Ok(ExprKind::Locator(Locator::from_ident(Ident::new(name))).into()),
             }
         }
@@ -370,20 +371,37 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
             let expr = last_child_expr(node)?;
             let inner = lower_expr_from_cst(expr)?;
-            let kind = match op.as_str() {
-                "-" => UnOpKind::Neg,
-                "!" => UnOpKind::Not,
+            match op.as_str() {
+                "-" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
+                    op: UnOpKind::Neg,
+                    val: Box::new(inner),
+                })
+                .into()),
+                "!" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
+                    op: UnOpKind::Not,
+                    val: Box::new(inner),
+                })
+                .into()),
                 "+" => {
                     // Unary plus is a no-op.
-                    return Ok(inner);
+                    Ok(inner)
                 }
-                _ => return Err(LowerError::MissingOperator),
-            };
-            Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
-                op: kind,
-                val: Box::new(inner),
-            })
-            .into())
+                "*" => Ok(ExprKind::Dereference(fp_core::ast::ExprDereference {
+                    referee: Box::new(inner),
+                })
+                .into()),
+                "&" => {
+                    let is_mut = node.children.iter().any(|c| {
+                        matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut")
+                    });
+                    Ok(ExprKind::Reference(fp_core::ast::ExprReference {
+                        referee: Box::new(inner),
+                        mutable: if is_mut { Some(true) } else { None },
+                    })
+                    .into())
+                }
+                _ => Err(LowerError::MissingOperator),
+            }
         }
         SyntaxKind::ExprTry => {
             let base = first_child_expr(node)?;
@@ -495,11 +513,14 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             for arg in nodes {
                 args.push(lower_expr_from_cst(arg)?);
             }
-            Ok(ExprKind::Invoke(ExprInvoke {
-                target: ExprInvokeTarget::expr(callee),
-                args,
-            })
-            .into())
+
+            let target = match callee.kind() {
+                ExprKind::Locator(locator) => ExprInvokeTarget::Function(locator.clone()),
+                ExprKind::Select(select) => ExprInvokeTarget::Method(select.clone()),
+                _ => ExprInvokeTarget::expr(callee),
+            };
+
+            Ok(ExprKind::Invoke(ExprInvoke { target, args }).into())
         }
         SyntaxKind::ExprMacroCall => {
             // Shape: <name> ! <group>
@@ -1222,12 +1243,47 @@ fn lower_ty_binary(node: &SyntaxNode) -> Result<Ty, LowerError> {
 }
 
 fn lower_ty_impl_traits(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let bound_node = node_children_types(node)
+    let mut type_nodes = node_children_types(node);
+    let bound_node = type_nodes
         .next()
         .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
     let bound_ty = lower_type_from_cst(bound_node)?;
 
-    // Keep the representation aligned with the old token-based parser: bounds as a locator path.
+    // Special-case `impl Fn(T) -> U` into a first-class function type.
+    // This matches the surface syntax used in `examples/09_higher_order_functions.fp`.
+    let is_fn_trait = match &bound_ty {
+        Ty::Expr(expr) => matches!(expr.kind(), ExprKind::Locator(loc) if loc.to_string() == "Fn"),
+        _ => false,
+    };
+    let mut trailing_types = type_nodes
+        .map(lower_type_from_cst)
+        .collect::<Result<Vec<_>, _>>()?;
+    if is_fn_trait && !trailing_types.is_empty() {
+        let has_arrow = node.children.iter().any(|c| match c {
+            crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() => t.text == "->",
+            _ => false,
+        });
+        let ret_ty = if has_arrow {
+            Some(Box::new(
+                trailing_types
+                    .pop()
+                    .ok_or(LowerError::UnexpectedNode(node.kind))?,
+            ))
+        } else {
+            None
+        };
+        return Ok(Ty::Function(
+            TypeFunction {
+                params: trailing_types,
+                generics_params: Vec::new(),
+                ret_ty,
+            }
+            .into(),
+        ));
+    }
+
+    // Default: keep the representation aligned with the old token-based parser: bounds as a
+    // locator path (or a value-wrapped type).
     let bound_expr = match bound_ty {
         Ty::Expr(expr) => (*expr).clone(),
         other => Expr::value(Value::Type(other)),

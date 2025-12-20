@@ -773,6 +773,19 @@ impl Pipeline {
             |pipeline| pipeline.stage_normalize_intrinsics(ast, &diagnostic_manager),
         )?;
 
+        // For transpilation we prefer to run const-eval before type checking so that
+        // quote/splice expansion and other compile-time rewrites are reflected in the
+        // typed AST.
+        if options.run_const_eval {
+            let outcome = self.run_stage(
+                STAGE_CONST_EVAL,
+                &diagnostic_manager,
+                &pipeline_options,
+                |pipeline| pipeline.stage_const_eval(ast, &pipeline_options, &diagnostic_manager),
+            )?;
+            self.last_const_eval = Some(outcome.clone());
+        }
+
         self.run_stage(
             STAGE_TYPE_ENRICH,
             &diagnostic_manager,
@@ -788,13 +801,6 @@ impl Pipeline {
         )?;
 
         if options.run_const_eval {
-            let outcome = self.run_stage(
-                STAGE_CONST_EVAL,
-                &diagnostic_manager,
-                &pipeline_options,
-                |pipeline| pipeline.stage_const_eval(ast, &pipeline_options, &diagnostic_manager),
-            )?;
-            self.last_const_eval = Some(outcome.clone());
             remove_generic_templates(ast)?;
 
             if options.save_intermediates {

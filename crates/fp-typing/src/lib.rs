@@ -314,7 +314,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ItemKind::DefFunction(def) => {
-                let fn_var = self.symbol_var(&def.name);
+                let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
+                    let key = format!("{}::{}", ctx.struct_name, def.name.as_str());
+                    if let Some(var) = self.lookup_env_var(&key) {
+                        var
+                    } else {
+                        let var = self.fresh_type_var();
+                        self.insert_env(key, EnvEntry::Mono(var));
+                        var
+                    }
+                } else {
+                    self.symbol_var(&def.name)
+                };
                 self.prebind_function_signature(def, fn_var);
             }
             ItemKind::DeclFunction(decl) => {
@@ -571,7 +582,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
-        let fn_var = self.symbol_var(&func.name);
+        let impl_ctx = self.impl_stack.last().cloned().flatten();
+        let fn_key = impl_ctx
+            .as_ref()
+            .map(|ctx| format!("{}::{}", ctx.struct_name, func.name.as_str()));
+        let fn_var = if let Some(key) = fn_key.as_ref() {
+            if let Some(var) = self.lookup_env_var(key.as_str()) {
+                var
+            } else {
+                let var = self.fresh_type_var();
+                self.insert_env(key.clone(), EnvEntry::Mono(var));
+                var
+            }
+        } else {
+            self.symbol_var(&func.name)
+        };
         let param_count = func.sig.params.len();
         let existing_signature = {
             let root = self.find(fn_var);
@@ -589,7 +614,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         self.enter_scope();
 
-        let impl_ctx = self.impl_stack.last().cloned().flatten();
         let mut receiver_ty: Option<Ty> = None;
         if let Some(receiver) = func.sig.receiver.as_ref() {
             if let Some(ctx) = impl_ctx.as_ref() {
@@ -668,7 +692,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         let scheme = self.generalize(fn_var)?;
         let scheme_env = scheme.clone();
-        self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme_env));
+        if let Some(key) = fn_key.as_ref() {
+            self.replace_env_entry(key.as_str(), EnvEntry::Poly(scheme_env));
+        } else {
+            self.replace_env_entry(func.name.as_str(), EnvEntry::Poly(scheme_env));
+        }
 
         if let Some(ctx) = impl_ctx.as_ref() {
             let entry = self

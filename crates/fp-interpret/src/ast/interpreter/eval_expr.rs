@@ -106,6 +106,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            ExprKind::Match(expr_match) => {
+                for case in &mut expr_match.cases {
+                    let cond = self.eval_expr(case.cond.as_mut());
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                return self.eval_expr(case.body.as_mut());
+                            }
+                        }
+                        _ => {
+                            self.emit_error(
+                                "expected boolean match condition in const expression",
+                            );
+                            return Value::undefined();
+                        }
+                    }
+                }
+                Value::unit()
+            }
             ExprKind::Block(block) => self.eval_block(block),
             ExprKind::Tuple(tuple) => {
                 let values = tuple
