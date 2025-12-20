@@ -29,7 +29,8 @@ use fp_cli::{
     cli::CliConfig,
     commands::{
         self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        info::InfoArgs, init::InitArgs, parse::ParseArgs, run::RunArgs, transpile::TranspileArgs,
+        info::InfoArgs, init::InitArgs, parse::ParseArgs, run::RunArgs,
+        syntax_transpile::SyntaxTranspileArgs, transpile::TranspileArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -78,8 +79,11 @@ enum Commands {
     /// Compile FerroPhase code to various targets
     Compile(CompileArgs),
 
-    /// Transpile FerroPhase code with const evaluation to target languages
+    /// Compile to a backend code target (shorthand for `compile --target ...`)
     Transpile(TranspileArgs),
+
+    /// AST-level transpilation (no backend lowering)
+    SyntaxTranspile(SyntaxTranspileArgs),
 
     /// Evaluate expressions using the interpreter
     Eval(EvalArgs),
@@ -134,6 +138,7 @@ async fn main() -> Result<()> {
     let result = match cli.command {
         Commands::Compile(args) => commands::compile_command(args, &config).await,
         Commands::Transpile(args) => commands::transpile_command(args, &config).await,
+        Commands::SyntaxTranspile(args) => commands::syntax_transpile_command(args, &config).await,
         Commands::Eval(args) => commands::eval_command(args, &config).await,
         Commands::Parse(args) => commands::parse_command(args, &config).await,
         Commands::Run(args) => commands::run_command(args, &config).await,
