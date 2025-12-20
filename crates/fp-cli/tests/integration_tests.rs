@@ -145,6 +145,7 @@ async fn compile_example(example_name: &str) {
         save_intermediates: false,
         source_language: None,
         release: false,
+        disable_stage: Vec::new(),
     };
 
     if let Err(err) = compile_command(args, &CliConfig::default()).await {

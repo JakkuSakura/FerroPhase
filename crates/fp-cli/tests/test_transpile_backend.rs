@@ -30,6 +30,7 @@ fn main() {
         error_tolerance: false,
         max_errors: 10,
         source_language: None,
+        disable_stage: Vec::new(),
     };
 
     let config = CliConfig::default();
