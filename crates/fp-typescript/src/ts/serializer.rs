@@ -12,6 +12,7 @@ use fp_core::ast::{
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::ops::UnOpKind;
 use itertools::Itertools;
 
 pub struct TypeScriptSerializer {
@@ -353,7 +354,7 @@ impl ScriptEmitter {
 
         self.start_block(&header);
         match func.body.as_ref().kind() {
-            ExprKind::Block(block) => self.emit_block(block)?,
+            ExprKind::Block(block) => self.emit_block(block, true)?,
             _ => {
                 let rendered = self.render_expr(func.body.as_ref())?;
                 self.push_line(&format!("return {};", rendered));
@@ -363,9 +364,10 @@ impl ScriptEmitter {
         Ok(())
     }
 
-    fn emit_block(&mut self, block: &ExprBlock) -> Result<()> {
-        for stmt in &block.stmts {
-            self.emit_stmt(stmt)?;
+    fn emit_block(&mut self, block: &ExprBlock, return_tail: bool) -> Result<()> {
+        for (idx, stmt) in block.stmts.iter().enumerate() {
+            let is_tail = idx + 1 == block.stmts.len();
+            self.emit_stmt(stmt, return_tail && is_tail)?;
         }
         Ok(())
     }
@@ -395,7 +397,7 @@ impl ScriptEmitter {
                 self.start_block(&header);
                 wrote_main_block = true;
             }
-            self.emit_stmt(stmt)?;
+            self.emit_stmt(stmt, false)?;
         }
 
         if wrote_main_block {
@@ -405,7 +407,164 @@ impl ScriptEmitter {
         Ok(())
     }
 
-    fn emit_stmt(&mut self, stmt: &BlockStmt) -> Result<()> {
+    fn block_tail_value_expr(block: &ExprBlock) -> Option<&Expr> {
+        if block.stmts.len() != 1 {
+            return None;
+        }
+        match &block.stmts[0] {
+            BlockStmt::Expr(stmt) if stmt.has_value() => Some(stmt.expr.as_ref()),
+            _ => None,
+        }
+    }
+
+    fn render_if_expr(&mut self, if_expr: &fp_core::ast::ExprIf) -> Result<String> {
+        let cond = self.render_expr(if_expr.cond.as_ref())?;
+
+        let then_expr = match if_expr.then.as_ref().kind() {
+            ExprKind::Block(block) => Self::block_tail_value_expr(block)
+                .map(|e| self.render_expr(e))
+                .transpose()?,
+            _ => Some(self.render_expr(if_expr.then.as_ref())?),
+        };
+
+        let else_expr = match if_expr.elze.as_deref() {
+            None => None,
+            Some(elze) => match elze.kind() {
+                ExprKind::Block(block) => Self::block_tail_value_expr(block)
+                    .map(|e| self.render_expr(e))
+                    .transpose()?,
+                _ => Some(self.render_expr(elze)?),
+            },
+        };
+
+        match (then_expr, else_expr) {
+            (Some(then_expr), Some(else_expr)) => {
+                Ok(format!("({cond} ? {then_expr} : {else_expr})"))
+            }
+            (Some(then_expr), None) => Ok(format!("({cond} ? {then_expr} : undefined)")),
+            _ => Err(eyre!("Unsupported if-expression shape for script targets").into()),
+        }
+    }
+
+    fn render_match_expr(&mut self, match_expr: &fp_core::ast::ExprMatch) -> Result<String> {
+        // Lowered match cases already contain boolean conditions.
+        // Render as a right-associated ternary chain.
+        let mut out: Option<String> = None;
+        for case in match_expr.cases.iter().rev() {
+            let cond = self.render_expr(case.cond.as_ref())?;
+            let body_expr = match case.body.as_ref().kind() {
+                ExprKind::Block(block) => Self::block_tail_value_expr(block)
+                    .map(|e| self.render_expr(e))
+                    .transpose()?,
+                _ => Some(self.render_expr(case.body.as_ref())?),
+            }
+            .ok_or_else(|| eyre!("Unsupported match arm body for script targets"))?;
+
+            out = Some(match out {
+                None => body_expr,
+                Some(tail) => format!("({cond} ? {body_expr} : {tail})"),
+            });
+        }
+        out.ok_or_else(|| eyre!("match expression has no cases").into())
+    }
+
+    fn emit_if_stmt(&mut self, if_expr: &fp_core::ast::ExprIf, return_value: bool) -> Result<()> {
+        let cond = self.render_expr(if_expr.cond.as_ref())?;
+        self.start_block(&format!("if ({cond})"));
+        self.emit_branch_body(if_expr.then.as_ref(), return_value)?;
+        self.end_block();
+
+        if let Some(elze) = if_expr.elze.as_deref() {
+            self.start_block("else");
+            self.emit_branch_body(elze, return_value)?;
+            self.end_block();
+        } else if return_value {
+            self.start_block("else");
+            self.push_line("return undefined;");
+            self.end_block();
+        }
+
+        Ok(())
+    }
+
+    fn emit_while_stmt(&mut self, while_expr: &fp_core::ast::ExprWhile) -> Result<()> {
+        let cond = self.render_expr(while_expr.cond.as_ref())?;
+        self.start_block(&format!("while ({cond})"));
+        self.emit_branch_body(while_expr.body.as_ref(), false)?;
+        self.end_block();
+        Ok(())
+    }
+
+    fn emit_loop_stmt(&mut self, loop_expr: &fp_core::ast::ExprLoop) -> Result<()> {
+        let _ = loop_expr.label.as_ref();
+        self.start_block("while (true)");
+        self.emit_branch_body(loop_expr.body.as_ref(), false)?;
+        self.end_block();
+        Ok(())
+    }
+
+    fn emit_for_stmt(&mut self, for_expr: &fp_core::ast::ExprFor) -> Result<()> {
+        let pat = self.render_pattern(for_expr.pat.as_ref());
+        match for_expr.iter.as_ref().kind() {
+            ExprKind::Range(range) => {
+                let start = range
+                    .start
+                    .as_deref()
+                    .map(|e| self.render_expr(e))
+                    .transpose()?
+                    .unwrap_or_else(|| "0".to_string());
+                let end = range
+                    .end
+                    .as_deref()
+                    .map(|e| self.render_expr(e))
+                    .transpose()?
+                    .unwrap_or_else(|| "0".to_string());
+                let cmp = match range.limit {
+                    fp_core::ast::ExprRangeLimit::Exclusive => "<",
+                    fp_core::ast::ExprRangeLimit::Inclusive => "<=",
+                };
+                let step = range
+                    .step
+                    .as_deref()
+                    .map(|e| self.render_expr(e))
+                    .transpose()?;
+                let update = match step {
+                    Some(step) => format!("{pat} += {step}"),
+                    None => format!("{pat}++"),
+                };
+                self.start_block(&format!(
+                    "for (let {pat} = {start}; {pat} {cmp} {end}; {update})"
+                ));
+                self.emit_branch_body(for_expr.body.as_ref(), false)?;
+                self.end_block();
+                Ok(())
+            }
+            _ => {
+                let iter = self.render_expr(for_expr.iter.as_ref())?;
+                self.start_block(&format!("for (const {pat} of {iter})"));
+                self.emit_branch_body(for_expr.body.as_ref(), false)?;
+                self.end_block();
+                Ok(())
+            }
+        }
+    }
+
+    fn emit_branch_body(&mut self, expr: &Expr, return_value: bool) -> Result<()> {
+        match expr.kind() {
+            ExprKind::Block(block) => self.emit_block(block, return_value),
+            _ => {
+                let rendered = self.render_expr(expr)?;
+                if return_value {
+                    self.push_line(&format!("return {rendered};"));
+                } else {
+                    self.push_line(&format!("{rendered};"));
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn emit_stmt(&mut self, stmt: &BlockStmt, return_value: bool) -> Result<()> {
         match stmt {
             BlockStmt::Let(stmt_let) => {
                 let name = self.render_pattern(&stmt_let.pat);
@@ -418,13 +577,29 @@ impl ScriptEmitter {
             }
             BlockStmt::Expr(expr_stmt) => {
                 let expr = expr_stmt.expr.as_ref();
+                if let ExprKind::If(if_expr) = expr.kind() {
+                    self.emit_if_stmt(if_expr, return_value)?;
+                    return Ok(());
+                }
+                if let ExprKind::While(while_expr) = expr.kind() {
+                    self.emit_while_stmt(while_expr)?;
+                    return Ok(());
+                }
+                if let ExprKind::Loop(loop_expr) = expr.kind() {
+                    self.emit_loop_stmt(loop_expr)?;
+                    return Ok(());
+                }
+                if let ExprKind::For(for_expr) = expr.kind() {
+                    self.emit_for_stmt(for_expr)?;
+                    return Ok(());
+                }
                 if let ExprKind::IntrinsicCall(call) = expr.kind() {
                     self.emit_intrinsic_statement(call)?;
                 } else if let ExprKind::Block(block_expr) = expr.kind() {
-                    self.emit_block(block_expr)?;
+                    self.emit_block(block_expr, false)?;
                 } else {
                     let rendered = self.render_expr(expr)?;
-                    if expr_stmt.has_value() {
+                    if return_value {
                         self.push_line(&format!("return {};", rendered));
                     } else {
                         self.push_line(&format!("{};", rendered));
@@ -457,6 +632,30 @@ impl ScriptEmitter {
                 };
                 let joined = rendered_args.join(", ");
                 self.push_line(&format!("console.log({});", joined));
+                Ok(())
+            }
+            IntrinsicCallKind::Return => match &call.payload {
+                IntrinsicCallPayload::Args { args } if args.is_empty() => {
+                    self.push_line("return;");
+                    Ok(())
+                }
+                IntrinsicCallPayload::Args { args } => {
+                    let value = args
+                        .get(0)
+                        .map(|expr| self.render_expr(expr))
+                        .transpose()?
+                        .unwrap_or_else(|| "undefined".to_string());
+                    self.push_line(&format!("return {value};"));
+                    Ok(())
+                }
+                _ => Err(eyre!("return intrinsic expects args payload").into()),
+            },
+            IntrinsicCallKind::Break => {
+                self.push_line("break;");
+                Ok(())
+            }
+            IntrinsicCallKind::Continue => {
+                self.push_line("continue;");
                 Ok(())
             }
             _ => {
@@ -502,6 +701,11 @@ impl ScriptEmitter {
                 render_bin_op(&bin_op.kind),
                 self.render_expr(bin_op.rhs.as_ref())?
             )),
+            ExprKind::UnOp(un_op) => match &un_op.op {
+                UnOpKind::Neg => Ok(format!("(-{})", self.render_expr(un_op.val.as_ref())?)),
+                UnOpKind::Not => Ok(format!("(!{})", self.render_expr(un_op.val.as_ref())?)),
+                other => Err(eyre!("Unsupported unary op in transpiler: {:?}", other).into()),
+            },
             ExprKind::FormatString(format) => self.render_format_string(format),
             ExprKind::Struct(struct_expr) => self.render_struct_literal(struct_expr),
             ExprKind::Array(array) => {
@@ -530,6 +734,17 @@ impl ScriptEmitter {
             ExprKind::Reference(reference) => self.render_expr(reference.referee.as_ref()),
             ExprKind::Dereference(deref) => self.render_expr(deref.referee.as_ref()),
             ExprKind::Cast(cast) => self.render_expr(cast.expr.as_ref()),
+            ExprKind::If(if_expr) => self.render_if_expr(if_expr),
+            ExprKind::Match(match_expr) => self.render_match_expr(match_expr),
+            ExprKind::Closure(closure) => {
+                let params = closure
+                    .params
+                    .iter()
+                    .map(|pat| self.render_pattern(pat))
+                    .join(", ");
+                let body = self.render_expr(closure.body.as_ref())?;
+                Ok(format!("({params}) => {body}"))
+            }
             ExprKind::Any(_) => Err(eyre!(
                 "Normalization cannot process placeholder expressions during transpile"
             )
@@ -590,6 +805,62 @@ impl ScriptEmitter {
                 }
                 _ => Err(eyre!("len intrinsic expects an argument").into()),
             },
+            IntrinsicCallKind::ConstBlock => match &call.payload {
+                IntrinsicCallPayload::Args { args } if args.len() == 1 => {
+                    let expr = &args[0];
+                    match expr.kind() {
+                        ExprKind::Block(block) => {
+                            if let Some(tail) = Self::block_tail_value_expr(block) {
+                                self.render_expr(tail)
+                            } else {
+                                Err(eyre!(
+                                    "const block needs a trailing expression for script targets"
+                                )
+                                .into())
+                            }
+                        }
+                        _ => self.render_expr(expr),
+                    }
+                }
+                _ => Err(eyre!("const_block intrinsic expects a single argument").into()),
+            },
+            IntrinsicCallKind::SizeOf => match &call.payload {
+                IntrinsicCallPayload::Args { args } if args.len() == 1 => {
+                    if let Some(ty_name) = self.extract_type_name(&args[0]) {
+                        Ok(format!("{}_SIZE", to_upper_snake(&ty_name)))
+                    } else {
+                        Ok("0".to_string())
+                    }
+                }
+                _ => Ok("0".to_string()),
+            },
+            IntrinsicCallKind::FieldCount => match &call.payload {
+                IntrinsicCallPayload::Args { args } if args.len() == 1 => {
+                    if let Some(ty_name) = self.extract_type_name(&args[0]) {
+                        Ok(format!("{}_SIZE", to_upper_snake(&ty_name)))
+                    } else {
+                        Ok("0".to_string())
+                    }
+                }
+                _ => Ok("0".to_string()),
+            },
+            IntrinsicCallKind::HasField => match &call.payload {
+                IntrinsicCallPayload::Args { args } if args.len() >= 2 => {
+                    let Some(ty_name) = self.extract_type_name(&args[0]) else {
+                        return Ok("false".to_string());
+                    };
+                    let Some(field) = self.extract_string_literal(&args[1]) else {
+                        return Ok("false".to_string());
+                    };
+                    let has = self
+                        .structs
+                        .get(&ty_name)
+                        .is_some_and(|def| def.fields.iter().any(|f| f.name.name == field));
+                    Ok(if has { "true" } else { "false" }.to_string())
+                }
+                _ => Ok("false".to_string()),
+            },
+            IntrinsicCallKind::MethodCount => Ok("0".to_string()),
             _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind()).into()),
         }
     }
@@ -708,6 +979,32 @@ impl ScriptEmitter {
                 .split("::")
                 .map(|segment| segment.to_string())
                 .last(),
+            _ => None,
+        }
+    }
+
+    fn extract_type_name(&self, expr: &Expr) -> Option<String> {
+        match expr.kind() {
+            ExprKind::Locator(_) => self.extract_struct_name(expr),
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::Type(ty) => match ty {
+                    Ty::Struct(def) => Some(def.name.name.clone()),
+                    Ty::Enum(def) => Some(def.name.name.clone()),
+                    Ty::Expr(inner) => self.extract_struct_name(inner.as_ref()),
+                    other => Some(format!("{other}")),
+                },
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn extract_string_literal(&self, expr: &Expr) -> Option<String> {
+        match expr.kind() {
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::String(s) => Some(s.value.clone()),
+                _ => None,
+            },
             _ => None,
         }
     }
