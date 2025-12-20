@@ -5,9 +5,9 @@
 //! lowering, use `syntax-transpile`.
 
 use crate::{
-    cli::CliConfig,
-    commands::compile::{compile_command, CompileArgs},
     Result,
+    cli::CliConfig,
+    commands::compile::{CompileArgs, compile_command},
 };
 use clap::Args;
 use std::path::PathBuf;
@@ -78,4 +78,3 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
 
     compile_command(compile_args, config).await
 }
-

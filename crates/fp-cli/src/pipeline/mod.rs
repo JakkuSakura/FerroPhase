@@ -941,30 +941,34 @@ impl Pipeline {
                 },
             )?;
 
-            self.run_stage(
-                STAGE_CLOSURE_LOWERING,
-                &diagnostic_manager,
-                options,
-                |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
-            )?;
+            // Closure lowering is required for lower-level backends. For the Rust
+            // backend, preserve closures and other higher-level constructs.
+            if !matches!(target, PipelineTarget::Rust) {
+                self.run_stage(
+                    STAGE_CLOSURE_LOWERING,
+                    &diagnostic_manager,
+                    options,
+                    |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
+                )?;
 
-            if options.save_intermediates {
-                self.save_pretty(&ast, base_path, "ast-closure", options)?;
+                if options.save_intermediates {
+                    self.save_pretty(&ast, base_path, "ast-closure", options)?;
+                }
+
+                self.run_stage(
+                    STAGE_TYPE_POST_CLOSURE,
+                    &diagnostic_manager,
+                    options,
+                    |pipeline| {
+                        pipeline.stage_type_check(
+                            &mut ast,
+                            STAGE_TYPE_POST_CLOSURE,
+                            &diagnostic_manager,
+                            options,
+                        )
+                    },
+                )?;
             }
-
-            self.run_stage(
-                STAGE_TYPE_POST_CLOSURE,
-                &diagnostic_manager,
-                options,
-                |pipeline| {
-                    pipeline.stage_type_check(
-                        &mut ast,
-                        STAGE_TYPE_POST_CLOSURE,
-                        &diagnostic_manager,
-                        options,
-                    )
-                },
-            )?;
         }
 
         let output = if matches!(target, PipelineTarget::Rust) {

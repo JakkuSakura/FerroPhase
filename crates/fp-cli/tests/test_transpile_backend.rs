@@ -4,7 +4,7 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::transpile::{transpile_command, TranspileArgs};
+use fp_cli::commands::transpile::{TranspileArgs, transpile_command};
 
 #[tokio::test]
 async fn test_transpile_defaults_to_rust_backend() {
@@ -43,4 +43,3 @@ fn main() {
         "Rust output should contain a main function"
     );
 }
-
