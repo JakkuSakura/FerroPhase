@@ -9,6 +9,7 @@ pub mod info;
 pub mod init;
 pub mod parse;
 pub mod run;
+pub mod syntax_transpile;
 pub mod transpile;
 
 // Re-export command functions
@@ -20,6 +21,7 @@ pub use info::info_command;
 pub use init::init_command;
 pub use parse::parse_command;
 pub use run::run_command;
+pub use syntax_transpile::syntax_transpile_command;
 pub use transpile::transpile_command;
 // Re-export shared helpers for convenience
 pub use common::{
