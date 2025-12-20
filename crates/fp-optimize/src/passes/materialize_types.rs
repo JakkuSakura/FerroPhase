@@ -50,21 +50,19 @@ fn materialize_items(items: &mut Vec<Item>) -> Result<()> {
     // Build a best-effort environment of known structural shapes.
     let mut shapes: HashMap<String, Vec<StructuralField>> = HashMap::new();
 
-    let mut seed_shapes = |item: &Item| {
-        match item.kind() {
-            ItemKind::DefStruct(def) => {
-                shapes.insert(def.name.as_str().to_string(), def.value.fields.clone());
-            }
-            ItemKind::DefStructural(def) => {
-                shapes.insert(def.name.as_str().to_string(), def.value.fields.clone());
-            }
-            ItemKind::DefType(def) => {
-                if let Ty::Structural(st) = &def.value {
-                    shapes.insert(def.name.as_str().to_string(), st.fields.clone());
-                }
-            }
-            _ => {}
+    let mut seed_shapes = |item: &Item| match item.kind() {
+        ItemKind::DefStruct(def) => {
+            shapes.insert(def.name.as_str().to_string(), def.value.fields.clone());
         }
+        ItemKind::DefStructural(def) => {
+            shapes.insert(def.name.as_str().to_string(), def.value.fields.clone());
+        }
+        ItemKind::DefType(def) => {
+            if let Ty::Structural(st) = &def.value {
+                shapes.insert(def.name.as_str().to_string(), st.fields.clone());
+            }
+        }
+        _ => {}
     };
     for item in items.iter() {
         seed_shapes(item);
@@ -82,12 +80,15 @@ fn materialize_items(items: &mut Vec<Item>) -> Result<()> {
                 // Direct structural aliases are handled below.
             }
 
-            if let Some(fields) = resolve_structural_fields(&def.value, &shapes, &mut HashSet::new())
+            if let Some(fields) =
+                resolve_structural_fields(&def.value, &shapes, &mut HashSet::new())
             {
                 let def_structural = ItemDefStructural {
                     visibility: def.visibility.clone(),
                     name: def.name.clone(),
-                    value: TypeStructural { fields: fields.clone() },
+                    value: TypeStructural {
+                        fields: fields.clone(),
+                    },
                 };
                 let key = def_structural.name.as_str().to_string();
                 *item = Item::new(ItemKind::DefStructural(def_structural));
@@ -145,9 +146,7 @@ fn resolve_structural_fields(
 fn locator_key(locator: &Locator) -> Option<String> {
     match locator {
         Locator::Ident(ident) => Some(ident.as_str().to_string()),
-        Locator::Path(Path { segments }) => segments
-            .last()
-            .map(|ident| ident.as_str().to_string()),
+        Locator::Path(Path { segments }) => segments.last().map(|ident| ident.as_str().to_string()),
         Locator::ParameterPath(path) => path
             .segments
             .last()
@@ -171,14 +170,20 @@ fn merge_structural_fields(
     lhs
 }
 
-fn intersect_structural_fields(lhs: Vec<StructuralField>, rhs: Vec<StructuralField>) -> Vec<StructuralField> {
+fn intersect_structural_fields(
+    lhs: Vec<StructuralField>,
+    rhs: Vec<StructuralField>,
+) -> Vec<StructuralField> {
     let rhs_names: HashSet<&str> = rhs.iter().map(|f| f.name.as_str()).collect();
     lhs.into_iter()
         .filter(|f| rhs_names.contains(f.name.as_str()))
         .collect()
 }
 
-fn subtract_structural_fields(lhs: Vec<StructuralField>, rhs: Vec<StructuralField>) -> Vec<StructuralField> {
+fn subtract_structural_fields(
+    lhs: Vec<StructuralField>,
+    rhs: Vec<StructuralField>,
+) -> Vec<StructuralField> {
     let rhs_names: HashSet<&str> = rhs.iter().map(|f| f.name.as_str()).collect();
     lhs.into_iter()
         .filter(|f| !rhs_names.contains(f.name.as_str()))

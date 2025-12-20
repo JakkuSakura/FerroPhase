@@ -1,7 +1,11 @@
 pub use std::fmt::Display;
 pub use std::ops::Add;
 pub fn apply_if(cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
-    if cond { op(a, b) } else { 0 }
+    if cond {
+        op(a, b)
+    } else {
+        0
+    }
 }
 pub fn make_adder(n: i64) -> impl Fn(i64) -> i64 {
     move |x| x + n

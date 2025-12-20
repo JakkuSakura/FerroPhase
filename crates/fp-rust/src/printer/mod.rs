@@ -315,7 +315,9 @@ impl RustPrinter {
                 if let Some(pattern) = &variant.pattern {
                     let inner = self.print_pattern(pattern)?;
                     match pattern.kind() {
-                        PatternKind::Structural(_) | PatternKind::Struct(_) => Ok(quote!(#name #inner)),
+                        PatternKind::Structural(_) | PatternKind::Struct(_) => {
+                            Ok(quote!(#name #inner))
+                        }
                         _ => Ok(quote!(#name(#inner))),
                     }
                 } else {

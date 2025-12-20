@@ -7,10 +7,10 @@ use fp_core::ast::{
     ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect,
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
     ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
-    Path, Pattern, PatternIdent, PatternKind, PatternTuple, PatternType, PatternWildcard, StmtLet,
-    PatternStructural, PatternStructField, PatternTupleStruct, PatternVariant, StructuralField,
-    Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference,
-    TypeSlice, TypeStructural, TypeTuple, Value, ValueString,
+    Path, Pattern, PatternIdent, PatternKind, PatternStructField, PatternStructural, PatternTuple,
+    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, StmtLet, StructuralField, Ty,
+    TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference, TypeSlice,
+    TypeStructural, TypeTuple, Value, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};

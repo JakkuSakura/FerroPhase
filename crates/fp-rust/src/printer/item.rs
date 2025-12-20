@@ -314,7 +314,11 @@ impl RustPrinter {
         let ret = self.print_return_type(sig.ret_ty.as_ref())?;
         let params_iter = params.iter();
 
-        let const_kw = if sig.is_const { quote!(const) } else { quote!() };
+        let const_kw = if sig.is_const {
+            quote!(const)
+        } else {
+            quote!()
+        };
         Ok(quote!(#const_kw fn #name #generics(#(#params_iter),*) #ret;))
     }
 
