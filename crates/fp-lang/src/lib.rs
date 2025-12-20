@@ -7,7 +7,6 @@ use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_rust::normalization::normalize_last_to_ast;
 use fp_rust::normalization::RustIntrinsicNormalizer;
 use fp_rust::printer::RustPrinter;
 
@@ -71,7 +70,13 @@ impl LanguageFrontend for FerroFrontend {
 
                     let last = Node::file(file);
                     let mut ast = last.clone();
-                    normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
+                    // Perform intrinsic normalization (includes Rust macro lowering via the
+                    // provided normalizer strategy).
+                    fp_optimize::passes::normalize_intrinsics_with(
+                        &mut ast,
+                        intrinsic_normalizer.as_ref(),
+                    )
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                     let snapshot = FrontendSnapshot {
                         language: self.language().to_string(),
                         description: format!("FerroPhase LAST for {}", path.display()),
@@ -103,7 +108,11 @@ impl LanguageFrontend for FerroFrontend {
             let diagnostics = self.ferro.diagnostics();
             let last = Node::expr(expr.clone());
             let mut ast = last.clone();
-            normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
+            fp_optimize::passes::normalize_intrinsics_with(
+                &mut ast,
+                intrinsic_normalizer.as_ref(),
+            )
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             return Ok(FrontendResult {
                 last,
                 ast,
@@ -123,7 +132,11 @@ impl LanguageFrontend for FerroFrontend {
                 let diagnostics = self.ferro.diagnostics();
                 let last = Node::file(file);
                 let mut ast = last.clone();
-                normalize_last_to_ast(&mut ast, Some(diagnostics.as_ref()));
+                fp_optimize::passes::normalize_intrinsics_with(
+                    &mut ast,
+                    intrinsic_normalizer.as_ref(),
+                )
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 Ok(FrontendResult {
                     last,
                     ast,
