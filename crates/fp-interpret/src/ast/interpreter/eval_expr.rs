@@ -116,9 +116,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                         _ => {
-                            self.emit_error(
-                                "expected boolean match condition in const expression",
-                            );
+                            self.emit_error("expected boolean match condition in const expression");
                             return Value::undefined();
                         }
                     }
