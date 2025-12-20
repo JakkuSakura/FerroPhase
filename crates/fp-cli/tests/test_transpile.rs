@@ -1,10 +1,10 @@
-//! Integration tests for the transpile command
+//! Integration tests for the syntax-transpile command
 
 use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::transpile::{TranspileArgs, transpile_command};
+use fp_cli::commands::syntax_transpile::{syntax_transpile_command, SyntaxTranspileArgs};
 
 #[tokio::test]
 async fn test_transpile_typescript_with_structs() {
@@ -35,7 +35,7 @@ fn main() {
     fs::write(&input_file, test_code).unwrap();
 
     // Prepare transpile arguments
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file],
         target: "typescript".to_string(),
         output: Some(output_file.clone()),
@@ -51,7 +51,7 @@ fn main() {
     let config = CliConfig::default();
 
     // Execute transpilation
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_ok(), "Transpilation should succeed");
 
     // Verify output file exists
@@ -131,7 +131,7 @@ fn main() {
     fs::write(&input_file, test_code).unwrap();
 
     // Prepare transpile arguments
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file],
         target: "javascript".to_string(),
         output: Some(output_file.clone()),
@@ -147,7 +147,7 @@ fn main() {
     let config = CliConfig::default();
 
     // Execute transpilation
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_ok(), "Transpilation should succeed");
 
     // Verify output file exists
@@ -195,7 +195,7 @@ fn main() {
 
     fs::write(&input_file, test_code).unwrap();
 
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file],
         target: "python".to_string(),
         output: Some(output_file.clone()),
@@ -210,7 +210,7 @@ fn main() {
 
     let config = CliConfig::default();
 
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_ok(), "Transpilation should succeed");
 
     assert!(output_file.exists(), "Output file should be created");
@@ -244,7 +244,7 @@ fn main() {
 
     fs::write(&input_file, test_code).unwrap();
 
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file],
         target: "zig".to_string(),
         output: Some(output_file.clone()),
@@ -259,7 +259,7 @@ fn main() {
 
     let config = CliConfig::default();
 
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_ok(), "Transpilation should succeed for Zig");
 
     assert!(output_file.exists(), "Output file should be created");
@@ -303,7 +303,7 @@ fn main() {
     fs::write(&input_file, test_code).unwrap();
 
     // Prepare transpile arguments
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file],
         target: "typescript".to_string(),
         output: Some(output_file.clone()),
@@ -319,7 +319,7 @@ fn main() {
     let config = CliConfig::default();
 
     // Execute transpilation
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_ok(), "Transpilation should succeed");
 
     // Verify both output files exist
@@ -358,7 +358,7 @@ async fn test_transpile_invalid_target() {
 
     fs::write(&input_file, "fn main() {}").unwrap();
 
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file],
         target: "invalid_language".to_string(),
         output: None,
@@ -374,7 +374,7 @@ async fn test_transpile_invalid_target() {
     let config = CliConfig::default();
 
     // Execute transpilation - should fail
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_err(), "Should fail with invalid target language");
 }
 
@@ -383,7 +383,7 @@ async fn test_transpile_nonexistent_file() {
     let temp_dir = TempDir::new().unwrap();
     let nonexistent_file = temp_dir.path().join("nonexistent.fp");
 
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![nonexistent_file],
         target: "typescript".to_string(),
         output: None,
@@ -399,7 +399,7 @@ async fn test_transpile_nonexistent_file() {
     let config = CliConfig::default();
 
     // Execute transpilation - should fail
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_err(), "Should fail with nonexistent input file");
 }
 
@@ -421,7 +421,7 @@ async fn test_transpile_multiple_files() {
     )
     .unwrap();
 
-    let args = TranspileArgs {
+    let args = SyntaxTranspileArgs {
         input: vec![input_file1.clone(), input_file2.clone()],
         target: "typescript".to_string(),
         output: None, // Auto-generate output names
@@ -437,7 +437,7 @@ async fn test_transpile_multiple_files() {
     let config = CliConfig::default();
 
     // Execute transpilation
-    let result = transpile_command(args, &config).await;
+    let result = syntax_transpile_command(args, &config).await;
     assert!(result.is_ok(), "Multi-file transpilation should succeed");
 
     // Verify output files exist

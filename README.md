@@ -5,7 +5,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 ## Why FerroPhase
 
 - Structural metaprogramming: generate fields, methods, and whole types with hygienic transformations.
-- Multi-mode toolchain: interpret, transpile to Rust, emit bytecode, or lower to native backends without changing source.
+- Multi-mode toolchain: interpret, compile to native backends, or transpile to backend code targets without changing source.
 - Compile-time intelligence: query layouts, traits, and type metadata during const evaluation to shape emitted code.
 
 ## Quick Start
@@ -22,7 +22,11 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
    ```
 3. Compile and run:
    ```bash
-   fp compile src/main.fp --target rust --run
+   # Quick iteration (interpreter)
+   fp run src/main.fp
+
+   # Or generate Rust via the backend pipeline
+   fp transpile src/main.fp --output src/main.rs
    ```
 
 ## Core Capabilities
@@ -45,9 +49,17 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 ## Example Workflow
 
 ```bash
-fp compile examples/05_struct_generation.fp --emit tast
-fp bytecode examples/09_metaprogramming_patterns.fp --run
-fp transpile src/service.fp --target rust --emit east
+# Inspect the AST
+fp parse examples/05_struct_generation.fp
+
+# Interpret
+fp run examples/09_metaprogramming_patterns.fp
+
+# Transpile (backend shorthand; defaults to Rust)
+fp transpile src/service.fp --output service.rs
+
+# Syntax-level transpile (AST serializer; e.g. TypeScript)
+fp syntax-transpile src/service.fp --target typescript --output service.ts
 ```
 
 ## Roadmap
