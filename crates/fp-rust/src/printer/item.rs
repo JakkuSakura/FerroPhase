@@ -259,9 +259,9 @@ impl RustPrinter {
 
         let ret = self.print_return_type(sig.ret_ty.as_ref())?;
         let params_iter = params.iter();
-        Ok(quote!(extern "Rust" {
-            fn #name #generics(#(#params_iter),*) #ret;
-        }))
+
+        let const_kw = if sig.is_const { quote!(const) } else { quote!() };
+        Ok(quote!(#const_kw fn #name #generics(#(#params_iter),*) #ret;))
     }
 
     fn print_generics_params(&self, params: &[GenericParam]) -> Result<TokenStream> {
