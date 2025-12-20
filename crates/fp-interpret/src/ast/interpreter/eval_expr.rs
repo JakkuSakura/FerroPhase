@@ -107,6 +107,50 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_mut() {
+                    let scrutinee_value = self.eval_expr(scrutinee.as_mut());
+                    for case in &mut expr_match.cases {
+                        self.push_scope();
+
+                        let pat_matches = case
+                            .pat
+                            .as_ref()
+                            .map(|pat| self.pattern_matches(pat, &scrutinee_value))
+                            .unwrap_or(false);
+
+                        if pat_matches {
+                            if let Some(guard) = case.guard.as_mut() {
+                                let guard_value = self.eval_expr(guard.as_mut());
+                                match guard_value {
+                                    Value::Bool(b) if b.value => {
+                                        let out = self.eval_expr(case.body.as_mut());
+                                        self.pop_scope();
+                                        return out;
+                                    }
+                                    Value::Bool(_) => {
+                                        // Guard failed; fall through.
+                                    }
+                                    _ => {
+                                        self.emit_error(
+                                            "expected boolean match guard in const expression",
+                                        );
+                                        self.pop_scope();
+                                        return Value::undefined();
+                                    }
+                                }
+                            } else {
+                                let out = self.eval_expr(case.body.as_mut());
+                                self.pop_scope();
+                                return out;
+                            }
+                        }
+
+                        self.pop_scope();
+                    }
+                    return Value::unit();
+                }
+
+                // Legacy lowering: boolean conditions.
                 for case in &mut expr_match.cases {
                     let cond = self.eval_expr(case.cond.as_mut());
                     match cond {

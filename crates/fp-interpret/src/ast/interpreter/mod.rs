@@ -245,6 +245,30 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::DefEnum(def) => {
                 let ty = Ty::Enum(def.value.clone());
                 self.insert_type(def.name.as_str(), ty);
+
+                // Make unit enum variants available to const evaluation (e.g. `Enum::Variant as i32`).
+                // We approximate enum values by their discriminant integer.
+                let mut next_discriminant: i64 = 0;
+                for variant in &mut def.value.variants {
+                    if let Some(discriminant_expr) = variant.discriminant.as_mut() {
+                        let mut disc_expr = discriminant_expr.get().clone();
+                        let disc_value = self.eval_expr(&mut disc_expr);
+                        if let Value::Int(int_value) = disc_value {
+                            next_discriminant = int_value.value;
+                        } else {
+                            self.emit_error(format!(
+                                "enum discriminant for {}::{} must be an integer",
+                                def.name, variant.name
+                            ));
+                        }
+                    }
+
+                    let qualified =
+                        self.qualified_name(&format!("{}::{}", def.name, variant.name));
+                    self.evaluated_constants
+                        .insert(qualified, Value::int(next_discriminant));
+                    next_discriminant += 1;
+                }
             }
             ItemKind::DefType(def) => {
                 self.insert_type(def.name.as_str(), def.value.clone());
@@ -406,6 +430,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                         Some("u16") => Some(TypePrimitive::Int(TypeInt::U16)),
                         Some("i8") => Some(TypePrimitive::Int(TypeInt::I8)),
                         Some("u8") => Some(TypePrimitive::Int(TypeInt::U8)),
+                        Some("isize") => Some(TypePrimitive::Int(TypeInt::I64)),
+                        Some("usize") => Some(TypePrimitive::Int(TypeInt::U64)),
                         Some("bool") => Some(TypePrimitive::Bool),
                         _ => None,
                     }

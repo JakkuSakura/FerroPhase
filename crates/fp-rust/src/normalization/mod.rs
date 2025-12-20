@@ -128,7 +128,7 @@ fn normalize_expr(expr: &mut Expr, diagnostics: Diagnostics<'_>) {
             }
         }
         ExprKind::Match(expr_match) => {
-            for ExprMatchCase { cond, body } in &mut expr_match.cases {
+            for ExprMatchCase { cond, body, .. } in &mut expr_match.cases {
                 normalize_bexpr(cond, diagnostics);
                 normalize_bexpr(body, diagnostics);
             }

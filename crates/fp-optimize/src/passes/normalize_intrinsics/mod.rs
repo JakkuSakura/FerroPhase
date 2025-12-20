@@ -66,8 +66,12 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
         | ItemKind::DeclFunction(_)
         | ItemKind::DeclType(_)
         | ItemKind::Import(_)
-        | ItemKind::DefTrait(_)
         | ItemKind::Any(_) => {}
+        ItemKind::DefTrait(def_trait) => {
+            for child in &mut def_trait.items {
+                normalize_item(child, strategy)?;
+            }
+        }
         ItemKind::Expr(expr) => normalize_expr(expr, strategy)?,
     }
     Ok(())

@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::ast::PatternKind;
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn insert_value(&mut self, name: &str, value: Value) {
@@ -22,8 +23,54 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
-        if let Some(ident) = pattern.as_ident() {
-            self.insert_value(ident.as_str(), value);
+        match pattern.kind() {
+            PatternKind::Ident(ident) => {
+                self.insert_value(ident.ident.as_str(), value);
+            }
+            PatternKind::Type(inner) => self.bind_pattern(&inner.pat, value),
+            PatternKind::Tuple(tuple) => {
+                if let Value::Tuple(items) = value {
+                    for (pat, val) in tuple.patterns.iter().zip(items.values.iter().cloned()) {
+                        self.bind_pattern(pat, val);
+                    }
+                }
+            }
+            _ => {
+                // Best-effort; other pattern kinds are not yet supported by the const evaluator.
+            }
+        }
+    }
+
+    pub(super) fn pattern_matches(&mut self, pattern: &Pattern, value: &Value) -> bool {
+        match pattern.kind() {
+            PatternKind::Wildcard(_) => true,
+            PatternKind::Ident(_) => {
+                self.bind_pattern(pattern, value.clone());
+                true
+            }
+            PatternKind::Type(inner) => self.pattern_matches(&inner.pat, value),
+            PatternKind::Tuple(tuple) => match value {
+                Value::Tuple(items) if items.values.len() == tuple.patterns.len() => tuple
+                    .patterns
+                    .iter()
+                    .zip(items.values.iter())
+                    .all(|(pat, val)| self.pattern_matches(pat, val)),
+                _ => false,
+            },
+            PatternKind::Variant(variant) => {
+                if variant.pattern.is_some() {
+                    return false;
+                }
+                let mut name_expr = variant.name.clone();
+                let expected = self.eval_expr(&mut name_expr);
+                match (&expected, value) {
+                    (Value::Int(a), Value::Int(b)) => a.value == b.value,
+                    (Value::Bool(a), Value::Bool(b)) => a.value == b.value,
+                    (Value::String(a), Value::String(b)) => a.value == b.value,
+                    _ => false,
+                }
+            }
+            _ => false,
         }
     }
 
