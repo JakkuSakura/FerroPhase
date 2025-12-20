@@ -239,7 +239,14 @@ impl RustPrinter {
                     .iter()
                     .map(|p| self.print_pattern(p))
                     .try_collect()?;
-                Ok(quote!(#(#elems), *))
+                match elems.len() {
+                    0 => Ok(quote!(())),
+                    1 => {
+                        let elem = &elems[0];
+                        Ok(quote!((#elem,)))
+                    }
+                    _ => Ok(quote!((#(#elems),*))),
+                }
             }
             PatternKind::TupleStruct(tuple) => {
                 let name = self.print_locator(&tuple.name)?;
@@ -355,7 +362,33 @@ impl RustPrinter {
         } else {
             quote!()
         };
-        let ret = self.print_return_type(sig.ret_ty.as_ref())?;
+        let closure_return_ty: Option<&fp_core::ast::TypeFunction> = match body.kind() {
+            ExprKind::Closure(_) => match body.ty() {
+                Some(Ty::Function(fun_ty)) => Some(fun_ty),
+                _ => None,
+            },
+            ExprKind::Block(block) => block
+                .last_expr()
+                .and_then(|expr| matches!(expr.kind(), ExprKind::Closure(_)).then_some(expr))
+                .and_then(|expr| match expr.ty() {
+                    Some(Ty::Function(fun_ty)) => Some(fun_ty),
+                    _ => None,
+                }),
+            _ => None,
+        };
+
+        let ret = if let Some(fun_ty) = closure_return_ty {
+            let args: Vec<_> = fun_ty
+                .params
+                .iter()
+                .map(|ty| self.print_type(ty))
+                .try_collect()?;
+            let ret_ty = fun_ty.ret_ty.as_deref().unwrap_or(&Ty::UNIT);
+            let ret_ty = self.print_type(ret_ty)?;
+            quote!(-> impl Fn(#(#args),*) -> #ret_ty)
+        } else {
+            self.print_return_type(sig.ret_ty.as_ref())?
+        };
         let receiver = if let Some(receiver) = &sig.receiver {
             let rec = self.print_receiver(receiver)?;
             quote!(#rec,)
@@ -409,11 +442,63 @@ impl RustPrinter {
     }
     pub fn print_func_type_param(&self, param: &FunctionParam) -> Result<TokenStream> {
         let name = self.print_ident(&param.name);
-        let ty = self.print_type(&param.ty)?;
+        let ty = if let Ty::Slice(slice) = &param.ty {
+            let elem = self.print_type(slice.elem.as_ref())?;
+            quote!(&[#elem])
+        } else {
+            self.print_type(&param.ty)?
+        };
         Ok(quote!(#name: #ty))
     }
     pub fn print_return_type(&self, node: Option<&Ty>) -> Result<TokenStream> {
         if let Some(node) = node {
+            // `&str` without an input lifetime is rejected by Rust (no elision target).
+            // When FP uses string literals, the most reasonable mapping is `&'static str`.
+            if let Ty::Reference(reference) = node {
+                if reference.lifetime.is_none() && reference.mutability != Some(true) {
+                    if let Ty::Expr(expr) = reference.ty.as_ref() {
+                        if let fp_core::ast::ExprKind::Locator(locator) = expr.kind() {
+                            let is_str = match locator {
+                                fp_core::ast::Locator::Ident(id) => id.as_str() == "str",
+                                fp_core::ast::Locator::Path(path) => {
+                                    path.segments.last().is_some_and(|s| s.as_str() == "str")
+                                }
+                                fp_core::ast::Locator::ParameterPath(path) => path
+                                    .segments
+                                    .last()
+                                    .is_some_and(|s| s.ident.as_str() == "str"),
+                            };
+                            if is_str {
+                                return Ok(quote!(-> &'static str));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Some frontends represent `&str` as a type expression (`Ty::Expr`) instead
+            // of a `Ty::Reference`. Handle that representation in return position too.
+            if let Ty::Expr(expr) = node {
+                if let fp_core::ast::ExprKind::Reference(reference) = expr.kind() {
+                    if reference.mutable != Some(true) {
+                        if let fp_core::ast::ExprKind::Locator(locator) = reference.referee.kind() {
+                            let is_str = match locator {
+                                fp_core::ast::Locator::Ident(id) => id.as_str() == "str",
+                                fp_core::ast::Locator::Path(path) => {
+                                    path.segments.last().is_some_and(|s| s.as_str() == "str")
+                                }
+                                fp_core::ast::Locator::ParameterPath(path) => path
+                                    .segments
+                                    .last()
+                                    .is_some_and(|s| s.ident.as_str() == "str"),
+                            };
+                            if is_str {
+                                return Ok(quote!(-> &'static str));
+                            }
+                        }
+                    }
+                }
+            }
             let ty = self.print_type(node)?;
             Ok(quote!(-> #ty))
         } else {

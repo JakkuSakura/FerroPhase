@@ -50,6 +50,7 @@ pub fn bootstrap_compile(snapshot: &Path, output: Option<&Path>) -> Result<()> {
         execute_main: false,
         bootstrap_mode: true,
         emit_bootstrap_snapshot: false,
+        disabled_stages: Vec::new(),
     };
 
     let mut pipeline = Pipeline::new();

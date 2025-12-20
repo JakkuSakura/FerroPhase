@@ -4,6 +4,9 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
+[dependencies]
+fp-rust = { path = "crates/fp-rust" }
+
 [workspace]
 resolver = "2"
 members = [

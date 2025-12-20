@@ -1532,7 +1532,6 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
                     ));
                 } else {
                     let mut placeholder_content = String::new();
-                    chars.next();
                     while let Some(inner_ch) = chars.next() {
                         if inner_ch == '}' {
                             break;
