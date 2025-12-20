@@ -4,7 +4,7 @@ use std::fs;
 use tempfile::TempDir;
 
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::syntax_transpile::{syntax_transpile_command, SyntaxTranspileArgs};
+use fp_cli::commands::syntax_transpile::{SyntaxTranspileArgs, syntax_transpile_command};
 
 #[tokio::test]
 async fn test_transpile_typescript_with_structs() {
