@@ -108,7 +108,9 @@ fn scrub_any_expressions(file: &mut File) {
                 scrub_expr(inner.cond.as_mut());
                 scrub_expr(inner.body.as_mut());
             }
-            ExprKind::Match(ExprMatch { scrutinee, cases, .. }) => {
+            ExprKind::Match(ExprMatch {
+                scrutinee, cases, ..
+            }) => {
                 if let Some(expr) = scrutinee.as_mut() {
                     scrub_expr(expr.as_mut());
                 }

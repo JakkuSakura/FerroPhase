@@ -72,9 +72,7 @@ fn expr_contains_return(expr: &Expr) -> bool {
                 .is_some_and(|e| expr_contains_return(e))
                 || expr_match.cases.iter().any(|case| {
                     expr_contains_return(case.cond.as_ref())
-                        || case.guard
-                            .as_ref()
-                            .is_some_and(|e| expr_contains_return(e))
+                        || case.guard.as_ref().is_some_and(|e| expr_contains_return(e))
                         || expr_contains_return(case.body.as_ref())
                 })
         }
@@ -1162,8 +1160,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let enum_name = path.segments[path.segments.len() - 2].as_str().to_string();
                         let variant_name = path.segments[path.segments.len() - 1].as_str();
                         if let Some(enum_def) = self.enum_defs.get(&enum_name).cloned() {
-                            if let Some(variant) =
-                                enum_def.variants.iter().find(|v| v.name.as_str() == variant_name)
+                            if let Some(variant) = enum_def
+                                .variants
+                                .iter()
+                                .find(|v| v.name.as_str() == variant_name)
                             {
                                 if let Ty::Tuple(tuple_ty) = &variant.value {
                                     for (idx, expected_ty) in
@@ -1211,8 +1211,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                             .find(|v| v.name.as_str() == variant_name)
                                         {
                                             // Struct-like enum variant patterns: `Enum::Variant { ... }`.
-                                            if let (Ty::Structural(structural), PatternKind::Structural(pat)) =
-                                                (&def_variant.value, inner.kind_mut())
+                                            if let (
+                                                Ty::Structural(structural),
+                                                PatternKind::Structural(pat),
+                                            ) = (&def_variant.value, inner.kind_mut())
                                             {
                                                 let mut bindings = Vec::new();
                                                 for field in &mut pat.fields {
@@ -1221,10 +1223,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                         .iter()
                                                         .find(|f| f.name == field.name)
                                                     {
-                                                        let expected_var =
-                                                            self.type_from_ast_ty(&expected_field.value)?;
-                                                        if let Some(rename) = field.rename.as_mut() {
-                                                            let child = self.infer_pattern(rename)?;
+                                                        let expected_var = self.type_from_ast_ty(
+                                                            &expected_field.value,
+                                                        )?;
+                                                        if let Some(rename) = field.rename.as_mut()
+                                                        {
+                                                            let child =
+                                                                self.infer_pattern(rename)?;
                                                             bindings.extend(child.bindings);
                                                             self.unify(child.var, expected_var)?;
                                                         } else {
@@ -1235,7 +1240,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                             );
                                                             self.unify(var, expected_var)?;
                                                             bindings.push(PatternBinding {
-                                                                name: field.name.as_str().to_string(),
+                                                                name: field
+                                                                    .name
+                                                                    .as_str()
+                                                                    .to_string(),
                                                                 var,
                                                             });
                                                         }
@@ -1504,12 +1512,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 for field in &mut struct_expr.fields {
                                     if let Some(value) = field.value.as_mut() {
                                         let value_var = self.infer_expr(value)?;
-                                        if let Some(def_field) = structural
-                                            .fields
-                                            .iter()
-                                            .find(|f| f.name == field.name)
+                                        if let Some(def_field) =
+                                            structural.fields.iter().find(|f| f.name == field.name)
                                         {
-                                            let expected = self.type_from_ast_ty(&def_field.value)?;
+                                            let expected =
+                                                self.type_from_ast_ty(&def_field.value)?;
                                             self.unify(value_var, expected)?;
                                         } else {
                                             self.emit_error(format!(
