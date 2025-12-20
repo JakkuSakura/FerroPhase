@@ -24,6 +24,7 @@ impl RustPrinter {
     pub fn print_def_struct(&self, def: &ItemDefStruct) -> Result<TokenStream> {
         let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
+        let generics = self.print_generics_params(&def.value.generics_params)?;
         let fields: Vec<_> = def
             .value
             .fields
@@ -31,7 +32,7 @@ impl RustPrinter {
             .map(|x| self.print_field(&x))
             .try_collect()?;
         Ok(quote!(
-            #vis struct #name {
+            #vis struct #name #generics {
                 #(#fields), *
             }
         ))
@@ -62,6 +63,7 @@ impl RustPrinter {
     pub fn print_def_enum(&self, def: &ItemDefEnum) -> Result<TokenStream> {
         let vis = self.print_vis(&def.visibility);
         let name = self.print_ident(&def.name);
+        let generics = self.print_generics_params(&def.value.generics_params)?;
         let variants: Vec<_> = def
             .value
             .variants
@@ -70,6 +72,30 @@ impl RustPrinter {
                 let variant_name = self.print_ident(&variant.name);
                 let base = match &variant.value {
                     Ty::Any(_) | Ty::Unit(_) => quote!(#variant_name),
+                    Ty::Tuple(tuple) => {
+                        if tuple.types.is_empty() {
+                            quote!(#variant_name)
+                        } else {
+                            let elems: Vec<_> = tuple
+                                .types
+                                .iter()
+                                .map(|ty| self.print_type(ty))
+                                .try_collect()?;
+                            quote!(#variant_name(#(#elems),*))
+                        }
+                    }
+                    Ty::Structural(structural) => {
+                        let fields: Vec<_> = structural
+                            .fields
+                            .iter()
+                            .map(|field| {
+                                let field_name = self.print_ident(&field.name);
+                                let field_ty = self.print_type(&field.value)?;
+                                Ok::<TokenStream, Error>(quote!(#field_name: #field_ty))
+                            })
+                            .try_collect()?;
+                        quote!(#variant_name { #(#fields),* })
+                    }
                     ty => {
                         let ty_tokens = self.print_type(ty)?;
                         quote!(#variant_name(#ty_tokens))
@@ -86,7 +112,7 @@ impl RustPrinter {
             .try_collect()?;
 
         Ok(quote!(
-            #vis enum #name {
+            #vis enum #name #generics {
                 #(#variants), *
             }
         ))

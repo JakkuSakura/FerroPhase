@@ -96,11 +96,15 @@ common_struct! {
     pub struct PatternStruct {
         pub name: Ident,
         pub fields: Vec<PatternStructField>,
+        #[serde(default, skip_serializing_if = "bool_is_false")]
+        pub has_rest: bool,
     }
 }
 common_struct! {
     pub struct PatternStructural {
         pub fields: Vec<PatternStructField>,
+        #[serde(default, skip_serializing_if = "bool_is_false")]
+        pub has_rest: bool,
     }
 }
 common_struct! {
@@ -136,6 +140,10 @@ impl PatternType {
             ty,
         }
     }
+}
+
+fn bool_is_false(value: &bool) -> bool {
+    !*value
 }
 
 impl From<PatternKind> for Pattern {

@@ -11,8 +11,9 @@ use fp_core::ops::{BinOpKind, UnOpKind};
 /// - All items at top level => Item
 /// - Otherwise => Stmt
 pub(crate) fn infer_quote_kind(block: &ExprBlock) -> QuoteFragmentKind {
-    // Prefer Expr when a trailing expression is present.
-    if block.last_expr().is_some() {
+    // Prefer Expr when a trailing expression is present and the block does not
+    // contain control-flow intrinsics such as `return`.
+    if block.last_expr().is_some() && !block_contains_return(block) {
         return QuoteFragmentKind::Expr;
     }
 
@@ -24,6 +25,73 @@ pub(crate) fn infer_quote_kind(block: &ExprBlock) -> QuoteFragmentKind {
 
     // Otherwise => Stmt
     QuoteFragmentKind::Stmt
+}
+
+fn block_contains_return(block: &ExprBlock) -> bool {
+    block.stmts.iter().any(|stmt| match stmt {
+        BlockStmt::Expr(expr_stmt) => expr_contains_return(expr_stmt.expr.as_ref()),
+        BlockStmt::Let(stmt_let) => {
+            stmt_let
+                .init
+                .as_ref()
+                .is_some_and(|e| expr_contains_return(e))
+                || stmt_let
+                    .diverge
+                    .as_ref()
+                    .is_some_and(|e| expr_contains_return(e))
+        }
+        _ => false,
+    })
+}
+
+fn expr_contains_return(expr: &Expr) -> bool {
+    match expr.kind() {
+        ExprKind::IntrinsicCall(call) => matches!(call.kind, IntrinsicCallKind::Return),
+        ExprKind::Block(block) => block_contains_return(block),
+        ExprKind::If(expr_if) => {
+            expr_contains_return(expr_if.cond.as_ref())
+                || expr_contains_return(expr_if.then.as_ref())
+                || expr_if
+                    .elze
+                    .as_ref()
+                    .is_some_and(|e| expr_contains_return(e))
+        }
+        ExprKind::Loop(expr_loop) => expr_contains_return(expr_loop.body.as_ref()),
+        ExprKind::For(expr_for) => {
+            expr_contains_return(expr_for.iter.as_ref())
+                || expr_contains_return(expr_for.body.as_ref())
+        }
+        ExprKind::While(expr_while) => {
+            expr_contains_return(expr_while.cond.as_ref())
+                || expr_contains_return(expr_while.body.as_ref())
+        }
+        ExprKind::Match(expr_match) => {
+            expr_match
+                .scrutinee
+                .as_ref()
+                .is_some_and(|e| expr_contains_return(e))
+                || expr_match.cases.iter().any(|case| {
+                    expr_contains_return(case.cond.as_ref())
+                        || case.guard
+                            .as_ref()
+                            .is_some_and(|e| expr_contains_return(e))
+                        || expr_contains_return(case.body.as_ref())
+                })
+        }
+        ExprKind::Invoke(invoke) => {
+            let target_has_return = match &invoke.target {
+                ExprInvokeTarget::Expr(inner) => expr_contains_return(inner.as_ref()),
+                ExprInvokeTarget::Method(select) => expr_contains_return(select.obj.as_ref()),
+                ExprInvokeTarget::Closure(closure) => expr_contains_return(closure.body.as_ref()),
+                _ => false,
+            };
+            target_has_return || invoke.args.iter().any(|arg| expr_contains_return(arg))
+        }
+        ExprKind::Paren(paren) => expr_contains_return(paren.expr.as_ref()),
+        ExprKind::Quote(quote) => block_contains_return(&quote.block),
+        ExprKind::Splice(splice) => expr_contains_return(splice.token.as_ref()),
+        _ => false,
+    }
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -100,11 +168,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ExprKind::Locator(locator) => {
+                let var = self.lookup_locator(locator)?;
                 if let Some(ty) = existing_ty.as_ref() {
-                    self.type_from_ast_ty(ty)?
-                } else {
-                    self.lookup_locator(locator)?
+                    let annot = self.type_from_ast_ty(ty)?;
+                    self.unify(var, annot)?;
                 }
+                var
             }
             ExprKind::Block(block) => self.infer_block(block)?,
             ExprKind::If(if_expr) => self.infer_if(if_expr)?,
@@ -442,8 +511,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.nothing_type_var());
             }
             IntrinsicCallKind::Return => {
-                self.emit_error("`return` intrinsic must be lowered before typing");
-                return Ok(self.error_type_var());
+                // Treat `return` as diverging for typing purposes. Backends are
+                // responsible for lowering it into their native control-flow.
+                if arg_vars.len() > 1 {
+                    self.emit_error("`return` accepts at most one value");
+                }
+                return Ok(self.nothing_type_var());
             }
             _ => {}
         }
@@ -1069,6 +1142,128 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     PatternInfo::new(self.error_type_var())
                 }
             }
+            PatternKind::TupleStruct(tuple_struct) => {
+                // Handles tuple-struct patterns and enum tuple variants.
+                let mut bindings = Vec::new();
+                let mut element_vars = Vec::new();
+                for pat in &mut tuple_struct.patterns {
+                    let child = self.infer_pattern(pat)?;
+                    element_vars.push(child.var);
+                    bindings.extend(child.bindings);
+                }
+
+                let tuple_var = self.fresh_type_var();
+                self.bind(tuple_var, TypeTerm::Tuple(element_vars.clone()));
+
+                // Try to resolve as an enum variant: `Enum::Variant(...)`.
+                let locator = &tuple_struct.name;
+                if let Locator::Path(path) = locator {
+                    if path.segments.len() >= 2 {
+                        let enum_name = path.segments[path.segments.len() - 2].as_str().to_string();
+                        let variant_name = path.segments[path.segments.len() - 1].as_str();
+                        if let Some(enum_def) = self.enum_defs.get(&enum_name).cloned() {
+                            if let Some(variant) =
+                                enum_def.variants.iter().find(|v| v.name.as_str() == variant_name)
+                            {
+                                if let Ty::Tuple(tuple_ty) = &variant.value {
+                                    for (idx, expected_ty) in
+                                        tuple_ty.types.iter().enumerate().take(element_vars.len())
+                                    {
+                                        let expected_var = self.type_from_ast_ty(expected_ty)?;
+                                        self.unify(element_vars[idx], expected_var)?;
+                                    }
+                                }
+
+                                let enum_var = self.fresh_type_var();
+                                self.bind(enum_var, TypeTerm::Enum(enum_def));
+                                return Ok(PatternInfo {
+                                    var: enum_var,
+                                    bindings,
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Fallback: treat as a tuple value.
+                PatternInfo {
+                    var: tuple_var,
+                    bindings,
+                }
+            }
+            PatternKind::Variant(variant) => {
+                // Enum variant patterns (unit and struct-like) and literal patterns.
+                match variant.name.kind() {
+                    ExprKind::Locator(locator) => {
+                        if let Locator::Path(path) = locator {
+                            if path.segments.len() >= 2 {
+                                let enum_name =
+                                    path.segments[path.segments.len() - 2].as_str().to_string();
+                                let variant_name = path.segments[path.segments.len() - 1].as_str();
+                                if let Some(enum_def) = self.enum_defs.get(&enum_name).cloned() {
+                                    let enum_var = self.fresh_type_var();
+                                    self.bind(enum_var, TypeTerm::Enum(enum_def.clone()));
+
+                                    if let Some(inner) = variant.pattern.as_mut() {
+                                        if let Some(def_variant) = enum_def
+                                            .variants
+                                            .iter()
+                                            .find(|v| v.name.as_str() == variant_name)
+                                        {
+                                            // Struct-like enum variant patterns: `Enum::Variant { ... }`.
+                                            if let (Ty::Structural(structural), PatternKind::Structural(pat)) =
+                                                (&def_variant.value, inner.kind_mut())
+                                            {
+                                                let mut bindings = Vec::new();
+                                                for field in &mut pat.fields {
+                                                    if let Some(expected_field) = structural
+                                                        .fields
+                                                        .iter()
+                                                        .find(|f| f.name == field.name)
+                                                    {
+                                                        let expected_var =
+                                                            self.type_from_ast_ty(&expected_field.value)?;
+                                                        if let Some(rename) = field.rename.as_mut() {
+                                                            let child = self.infer_pattern(rename)?;
+                                                            bindings.extend(child.bindings);
+                                                            self.unify(child.var, expected_var)?;
+                                                        } else {
+                                                            let var = self.fresh_type_var();
+                                                            self.insert_env(
+                                                                field.name.as_str().to_string(),
+                                                                EnvEntry::Mono(var),
+                                                            );
+                                                            self.unify(var, expected_var)?;
+                                                            bindings.push(PatternBinding {
+                                                                name: field.name.as_str().to_string(),
+                                                                var,
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                                return Ok(PatternInfo {
+                                                    var: enum_var,
+                                                    bindings,
+                                                });
+                                            }
+                                        }
+                                    }
+
+                                    return Ok(PatternInfo::new(enum_var));
+                                }
+                            }
+                        }
+                        // Otherwise treat as a binding-like identifier.
+                        let var = self.fresh_type_var();
+                        PatternInfo::new(var)
+                    }
+                    _ => {
+                        // Literal pattern.
+                        let lit_var = self.infer_expr(&mut variant.name)?;
+                        PatternInfo::new(lit_var)
+                    }
+                }
+            }
             _ => {
                 self.emit_error("pattern is not supported by type inference");
                 PatternInfo::new(self.error_type_var())
@@ -1086,7 +1281,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let resolved_ty = Self::peel_reference(ty.clone());
         let struct_name = match resolved_ty {
             Ty::Struct(struct_ty) => struct_ty.name.as_str().to_string(),
+            Ty::Enum(enum_ty) => enum_ty.name.as_str().to_string(),
             other => {
+                if let Some(var) = self.lookup_trait_method_for_receiver(obj_var, field)? {
+                    return Ok(var);
+                }
+                if matches!(other, Ty::Any(_) | Ty::Unknown(_)) {
+                    if let Some(var) = self.lookup_unique_trait_method(field)? {
+                        return Ok(var);
+                    }
+                }
                 self.emit_error(format!(
                     "cannot call method {} on value of type {}",
                     field, other
@@ -1122,27 +1326,95 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(self.error_type_var())
     }
 
+    fn lookup_unique_trait_method(&mut self, field: &Ident) -> Result<Option<TypeVarId>> {
+        let mut found: Option<(String, FunctionSignature)> = None;
+        for (trait_name, methods) in &self.trait_method_sigs {
+            if let Some(sig) = methods.get(field.as_str()) {
+                if found.is_some() {
+                    return Ok(None);
+                }
+                found = Some((trait_name.clone(), sig.clone()));
+            }
+        }
+        let Some((_trait_name, sig)) = found else {
+            return Ok(None);
+        };
+        let scheme = self.scheme_from_method_signature(&sig)?;
+        Ok(Some(self.instantiate_scheme(&scheme)))
+    }
+
+    fn lookup_trait_method_for_receiver(
+        &mut self,
+        obj_var: TypeVarId,
+        field: &Ident,
+    ) -> Result<Option<TypeVarId>> {
+        let mut receiver = obj_var;
+        loop {
+            let root = self.find(receiver);
+            match self.type_vars[root].kind.clone() {
+                crate::typing::unify::TypeVarKind::Bound(TypeTerm::Reference(inner)) => {
+                    receiver = inner;
+                }
+                crate::typing::unify::TypeVarKind::Link(next) => {
+                    receiver = next;
+                }
+                _ => {
+                    receiver = root;
+                    break;
+                }
+            }
+        }
+
+        let Some(traits) = self.generic_trait_bounds.get(&receiver).cloned() else {
+            return Ok(None);
+        };
+
+        for trait_name in traits {
+            let Some(methods) = self.trait_method_sigs.get(&trait_name) else {
+                continue;
+            };
+            let Some(sig) = methods.get(field.as_str()).cloned() else {
+                continue;
+            };
+            let scheme = self.scheme_from_method_signature(&sig)?;
+            return Ok(Some(self.instantiate_scheme(&scheme)));
+        }
+        Ok(None)
+    }
+
     fn try_infer_primitive_method(
         &mut self,
         obj_var: TypeVarId,
         field: &Ident,
         arg_len: usize,
     ) -> Result<Option<TypeVarId>> {
-        if field.name.as_str() != "to_string" || arg_len != 0 {
+        if arg_len != 0 {
             return Ok(None);
         }
-        let obj_ty = match self.resolve_to_ty(obj_var) {
-            Ok(ty) => Self::peel_reference(ty),
-            Err(_) => return Ok(None),
-        };
-        let result_var = self.fresh_type_var();
-        self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
-        match obj_ty {
-            Ty::Primitive(TypePrimitive::String)
-            | Ty::Primitive(TypePrimitive::Bool)
-            | Ty::Primitive(TypePrimitive::Char)
-            | Ty::Primitive(TypePrimitive::Int(_))
-            | Ty::Primitive(TypePrimitive::Decimal(_)) => Ok(Some(result_var)),
+        match field.name.as_str() {
+            "to_string" => {
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                let result_var = self.fresh_type_var();
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+                match obj_ty {
+                    Ty::Primitive(TypePrimitive::String)
+                    | Ty::Primitive(TypePrimitive::Bool)
+                    | Ty::Primitive(TypePrimitive::Char)
+                    | Ty::Primitive(TypePrimitive::Int(_))
+                    | Ty::Primitive(TypePrimitive::Decimal(_)) => Ok(Some(result_var)),
+                    _ => Ok(None),
+                }
+            }
+            // Keep iterator methods permissive for now; these are primarily
+            // used by examples and desugar into Rust iterator chains.
+            "iter" | "enumerate" => {
+                let result_var = self.fresh_type_var();
+                self.bind(result_var, TypeTerm::Any);
+                Ok(Some(result_var))
+            }
             _ => Ok(None),
         }
     }
@@ -1217,6 +1489,46 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ok(var)
         } else {
+            // Enum struct variants: `Enum::Variant { ... }`.
+            if let ExprKind::Locator(Locator::Path(path)) = struct_expr.name.kind() {
+                if path.segments.len() >= 2 {
+                    let enum_name = path.segments[path.segments.len() - 2].as_str().to_string();
+                    let variant_name = path.segments[path.segments.len() - 1].as_str();
+                    if let Some(enum_def) = self.enum_defs.get(&enum_name).cloned() {
+                        if let Some(variant) = enum_def
+                            .variants
+                            .iter()
+                            .find(|v| v.name.as_str() == variant_name)
+                        {
+                            if let Ty::Structural(structural) = &variant.value {
+                                for field in &mut struct_expr.fields {
+                                    if let Some(value) = field.value.as_mut() {
+                                        let value_var = self.infer_expr(value)?;
+                                        if let Some(def_field) = structural
+                                            .fields
+                                            .iter()
+                                            .find(|f| f.name == field.name)
+                                        {
+                                            let expected = self.type_from_ast_ty(&def_field.value)?;
+                                            self.unify(value_var, expected)?;
+                                        } else {
+                                            self.emit_error(format!(
+                                                "unknown field {} on enum variant {}::{}",
+                                                field.name, enum_name, variant_name
+                                            ));
+                                            return Ok(self.error_type_var());
+                                        }
+                                    }
+                                }
+                                let var = self.fresh_type_var();
+                                self.bind(var, TypeTerm::Enum(enum_def));
+                                return Ok(var);
+                            }
+                        }
+                    }
+                }
+            }
+
             self.emit_error(format!("unknown struct literal target: {}", struct_name));
             Ok(self.error_type_var())
         }

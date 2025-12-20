@@ -265,7 +265,15 @@ impl RustPrinter {
                         }
                     })
                     .try_collect()?;
-                Ok(quote!(#name { #(#fields), * }))
+                if stru.has_rest {
+                    if fields.is_empty() {
+                        Ok(quote!(#name { .. }))
+                    } else {
+                        Ok(quote!(#name { #(#fields), *, .. }))
+                    }
+                } else {
+                    Ok(quote!(#name { #(#fields), * }))
+                }
             }
             PatternKind::Structural(stru) => {
                 let fields: Vec<_> = stru
@@ -281,7 +289,15 @@ impl RustPrinter {
                         }
                     })
                     .try_collect()?;
-                Ok(quote!({ #(#fields), * }))
+                if stru.has_rest {
+                    if fields.is_empty() {
+                        Ok(quote!({ .. }))
+                    } else {
+                        Ok(quote!({ #(#fields), *, .. }))
+                    }
+                } else {
+                    Ok(quote!({ #(#fields), * }))
+                }
             }
             PatternKind::Box(box_pat) => {
                 let inner = self.print_pattern(&box_pat.pattern)?;
@@ -291,7 +307,10 @@ impl RustPrinter {
                 let name = self.print_expr(&variant.name)?;
                 if let Some(pattern) = &variant.pattern {
                     let inner = self.print_pattern(pattern)?;
-                    Ok(quote!(#name(#inner)))
+                    match pattern.kind() {
+                        PatternKind::Structural(_) | PatternKind::Struct(_) => Ok(quote!(#name #inner)),
+                        _ => Ok(quote!(#name(#inner))),
+                    }
                 } else {
                     Ok(quote!(#name))
                 }

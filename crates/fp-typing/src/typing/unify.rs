@@ -391,12 +391,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
                 if a == b {
                     Ok(())
-                } else if matches!(a, Ty::Array(_)) && matches!(b, Ty::Array(_)) {
-                    if format!("{}", a) == format!("{}", b) {
-                        Ok(())
-                    } else {
-                        Err(Error::from(format!("custom type mismatch: {} vs {}", a, b)))
-                    }
+                } else if let (Ty::Array(a_arr), Ty::Array(b_arr)) = (&a, &b) {
+                    // Be permissive about array lengths during typing; const-eval
+                    // may normalize lengths into literals at different times.
+                    let a_elem = self.type_from_ast_ty(&a_arr.elem)?;
+                    let b_elem = self.type_from_ast_ty(&b_arr.elem)?;
+                    self.unify(a_elem, b_elem)
                 } else {
                     Err(Error::from(format!("custom type mismatch: {} vs {}", a, b)))
                 }
@@ -698,13 +698,38 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Expr(expr) => {
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {
-                    let name = loc.to_string();
+                    let name = match loc {
+                        Locator::ParameterPath(path) => path
+                            .segments
+                            .last()
+                            .map(|seg| seg.ident.as_str().to_string())
+                            .unwrap_or_default(),
+                        other => other.to_string(),
+                    };
                     if name == "Self" {
                         if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
-                            if let Ty::Struct(struct_ty) = &ctx.self_ty {
-                                self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                                return Ok(var);
+                            match &ctx.self_ty {
+                                Ty::Struct(struct_ty) => {
+                                    self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                                    return Ok(var);
+                                }
+                                Ty::Enum(enum_ty) => {
+                                    self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                                    return Ok(var);
+                                }
+                                _ => {}
                             }
+                        }
+                    }
+
+                    if self
+                        .generic_scopes
+                        .iter()
+                        .rev()
+                        .any(|scope| scope.contains(&name))
+                    {
+                        if let Some(existing) = self.lookup_env_var(&name) {
+                            return Ok(existing);
                         }
                     }
                     if let Some(prim) = primitive_from_name(&name) {

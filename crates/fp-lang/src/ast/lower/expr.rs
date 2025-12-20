@@ -8,8 +8,9 @@ use fp_core::ast::{
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
     ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
     Path, Pattern, PatternIdent, PatternKind, PatternTuple, PatternType, PatternWildcard, StmtLet,
-    StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
-    TypeReference, TypeSlice, TypeStructural, TypeTuple, Value,
+    PatternStructural, PatternStructField, PatternTupleStruct, PatternVariant, StructuralField,
+    Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference,
+    TypeSlice, TypeStructural, TypeTuple, Value,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -260,38 +261,26 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     continue;
                 }
                 let (pat, guard, body) = split_match_arm(arm)?;
-                let pat_expr = lower_expr_from_cst(pat)?;
-
-                let mut cond_base =
-                    if is_wildcard_pattern_expr(&pat_expr) || is_binding_pattern_expr(&pat_expr) {
-                        Expr::value(Value::bool(true))
-                    } else {
-                        ExprKind::BinOp(ExprBinOp {
-                            kind: BinOpKind::Eq,
-                            lhs: Box::new(scrutinee_expr.clone()),
-                            rhs: Box::new(pat_expr),
-                        })
-                        .into()
-                    };
-
-                if let Some(guard) = guard {
-                    let guard_expr = lower_expr_from_cst(guard)?;
-                    cond_base = ExprKind::BinOp(ExprBinOp {
-                        kind: BinOpKind::And,
-                        lhs: Box::new(cond_base),
-                        rhs: Box::new(guard_expr),
-                    })
-                    .into();
-                }
-
+                let pat = lower_match_pattern_from_cst(pat)?;
+                let guard_expr = guard.map(lower_expr_from_cst).transpose()?;
                 let body_expr = lower_expr_from_cst(body)?;
+
+                // New-style match: store scrutinee + pattern and let typing/backends
+                // decide how to lower. Keep the legacy `cond` field populated with
+                // `true` for compatibility.
                 cases.push(ExprMatchCase {
-                    cond: Box::new(cond_base),
+                    pat: Some(Box::new(pat)),
+                    cond: Box::new(Expr::value(Value::bool(true))),
+                    guard: guard_expr.map(Box::new),
                     body: Box::new(body_expr),
                 });
             }
 
-            Ok(ExprKind::Match(ExprMatch { cases }).into())
+            Ok(ExprKind::Match(ExprMatch {
+                scrutinee: Some(Box::new(scrutinee_expr)),
+                cases,
+            })
+            .into())
         }
         SyntaxKind::ExprClosure => {
             let (params, body) = lower_closure_from_cst(node)?;
@@ -862,6 +851,98 @@ fn is_binding_pattern_expr(expr: &Expr) -> bool {
     match expr.kind() {
         ExprKind::Locator(loc) => loc.as_ident().map(|id| id.as_str() != "_").unwrap_or(false),
         _ => false,
+    }
+}
+
+fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
+    // Patterns are currently parsed as expression CST nodes in match arms.
+    // We lower a small subset of expressions into `Pattern` so that the typer
+    // can bind names for match bodies.
+    match node.kind {
+        SyntaxKind::ExprName => {
+            let name = direct_first_non_trivia_token_text(node)
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?;
+            if name == "_" {
+                return Ok(Pattern::new(PatternKind::Wildcard(PatternWildcard {})));
+            }
+            Ok(Pattern::new(PatternKind::Ident(PatternIdent::new(
+                Ident::new(name),
+            ))))
+        }
+        SyntaxKind::ExprNumber | SyntaxKind::ExprString => {
+            let expr = lower_expr_from_cst(node)?;
+            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                name: expr,
+                pattern: None,
+            })))
+        }
+        SyntaxKind::ExprPath => {
+            let expr = lower_expr_from_cst(node)?;
+            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                name: expr,
+                pattern: None,
+            })))
+        }
+        SyntaxKind::ExprCall => {
+            // Tuple-struct/enum-variant pattern: `Path(p0, p1, ...)`.
+            let mut exprs = node_children_exprs(node);
+            let callee = exprs
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCall))?;
+            let callee_expr = lower_expr_from_cst(callee)?;
+            let locator = match callee_expr.kind() {
+                ExprKind::Locator(locator) => locator.clone(),
+                _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprCall)),
+            };
+            let patterns = exprs
+                .map(lower_match_pattern_from_cst)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
+                name: locator,
+                patterns,
+            })))
+        }
+        SyntaxKind::ExprStruct => {
+            // Struct-like enum variant pattern: `Enum::Variant { .. }`.
+            // We preserve the qualified variant name and (optionally) record
+            // whether `..` was present so that Rust codegen can print a valid
+            // struct-variant pattern.
+            let has_rest = node.children.iter().any(|child| {
+                matches!(
+                    child,
+                    crate::syntax::SyntaxElement::Token(tok) if !tok.is_trivia() && tok.text == ".."
+                )
+            });
+
+            let expr = lower_expr_from_cst(node)?;
+            let (_ty, kind) = expr.into_parts();
+            let ExprKind::Struct(struct_expr) = kind else {
+                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
+            };
+
+            let fields = struct_expr
+                .fields
+                .into_iter()
+                .map(|field| PatternStructField {
+                    name: field.name,
+                    rename: None,
+                })
+                .collect();
+
+            Ok(Pattern::new(PatternKind::Variant(PatternVariant {
+                name: *struct_expr.name,
+                pattern: Some(Box::new(Pattern::new(PatternKind::Structural(
+                    PatternStructural { fields, has_rest },
+                )))),
+            })))
+        }
+        SyntaxKind::ExprTuple => {
+            let patterns = node_children_exprs(node)
+                .map(lower_match_pattern_from_cst)
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
+        }
+        other => Err(LowerError::UnexpectedNode(other)),
     }
 }
 

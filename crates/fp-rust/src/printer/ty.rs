@@ -1,7 +1,7 @@
 use crate::printer::RustPrinter;
 use fp_core::ast::{
-    DecimalType, ExprInvoke, StructuralField, Ty, TypeArray, TypeEnum, TypeInt, TypePrimitive,
-    TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeVec,
+    DecimalType, ExprInvoke, StructuralField, Ty, TypeArray, TypeBinaryOpKind, TypeEnum, TypeInt,
+    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeVec,
 };
 use fp_core::bail;
 use fp_core::error::Result;
@@ -30,6 +30,17 @@ impl RustPrinter {
             Ty::Value(v) => self.print_value(&v.value)?,
             Ty::Tuple(t) => self.print_type_tuple(t)?,
             Ty::Enum(e) => self.print_type_enum_ref(e),
+            Ty::TypeBinaryOp(op) => {
+                let lhs = self.print_type(op.lhs.as_ref())?;
+                let rhs = self.print_type(op.rhs.as_ref())?;
+                let op_tokens = match op.kind {
+                    TypeBinaryOpKind::Add => quote!(+),
+                    TypeBinaryOpKind::Union => quote!(|),
+                    TypeBinaryOpKind::Intersect => quote!(&),
+                    TypeBinaryOpKind::Subtract => quote!(-),
+                };
+                quote!((#lhs #op_tokens #rhs))
+            }
             _ => bail!("Not supported {:?}", v),
         };
         Ok(ty)

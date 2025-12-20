@@ -353,6 +353,8 @@ common_struct! {
 
 common_struct! {
     pub struct ExprMatch {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub scrutinee: Option<BExpr>,
         pub cases: Vec<ExprMatchCase>,
     }
 }
@@ -378,7 +380,11 @@ common_struct! {
 }
 common_struct! {
     pub struct ExprMatchCase {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub pat: Option<BPattern>,
         pub cond: BExpr,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub guard: Option<BExpr>,
         pub body: BExpr,
     }
 }
