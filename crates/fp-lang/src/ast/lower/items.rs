@@ -3,11 +3,10 @@ use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     EnumTypeVariant, Expr, ExprKind, FunctionParam, FunctionParamReceiver, FunctionSignature,
     GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst,
-    ItemDefEnum,
-    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
-    ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro,
-    Locator, MacroDelimiter, MacroInvocation, Module, Path, StructuralField, Ty, TypeBounds,
-    TypeEnum, TypeStruct, Value, Visibility,
+    ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType,
+    ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree,
+    ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path, StructuralField,
+    Ty, TypeBounds, TypeEnum, TypeStruct, Value, Visibility,
 };
 use fp_core::cst::CstCategory;
 

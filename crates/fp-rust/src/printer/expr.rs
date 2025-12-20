@@ -11,8 +11,8 @@ use fp_core::ast::{
     ExprIndex, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
     ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
     ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple,
-    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, StmtLet,
-    Ty, Value, ValueList, Visibility,
+    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, StmtLet, Ty,
+    Value, ValueList, Visibility,
 };
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
@@ -47,7 +47,8 @@ impl RustPrinter {
                                 return Ok(quote!([#elem; #len]));
                             }
                         }
-                        let elems: Vec<_> = values.iter().map(|x| self.print_value(x)).try_collect()?;
+                        let elems: Vec<_> =
+                            values.iter().map(|x| self.print_value(x)).try_collect()?;
                         return Ok(quote!([#(#elems),*]));
                     }
                 }
@@ -165,9 +166,7 @@ impl RustPrinter {
             }
             ItemKind::DefStatic(def) => {
                 let name = self.print_ident(&def.name);
-                let ty = def
-                    .ty_annotation()
-                    .unwrap_or(&def.ty);
+                let ty = def.ty_annotation().unwrap_or(&def.ty);
                 let ty = self.print_type(ty)?;
                 let value = self.print_expr(def.value.as_ref())?;
                 Ok(quote!(let #name: #ty = #value;))
@@ -788,10 +787,9 @@ impl RustPrinter {
             IntrinsicCallKind::DebugAssertions => Ok(quote!(cfg!(debug_assertions))),
             IntrinsicCallKind::Return => {
                 let args: Vec<_> = match &call.payload {
-                    IntrinsicCallPayload::Args { args } => args
-                        .iter()
-                        .map(|arg| self.print_expr(arg))
-                        .try_collect()?,
+                    IntrinsicCallPayload::Args { args } => {
+                        args.iter().map(|arg| self.print_expr(arg)).try_collect()?
+                    }
                     IntrinsicCallPayload::Format { .. } => {
                         bail!("return intrinsic expects args payload")
                     }
@@ -918,9 +916,7 @@ impl RustPrinter {
     fn print_print_arg(&self, arg: &Expr) -> Result<TokenStream> {
         let expr = self.print_expr(arg)?;
         match arg.kind() {
-            ExprKind::Value(value)
-                if matches!(value.as_ref(), Value::Unit(_) | Value::Null(_)) =>
-            {
+            ExprKind::Value(value) if matches!(value.as_ref(), Value::Unit(_) | Value::Null(_)) => {
                 Ok(quote!(format_args!("{:?}", #expr)))
             }
             _ => Ok(expr),
@@ -941,7 +937,9 @@ fn is_const_like_expr(expr: &Expr) -> bool {
         ExprKind::Cast(c) => is_const_like_expr(c.expr.as_ref()),
         ExprKind::Reference(r) => is_const_like_expr(r.referee.as_ref()),
         ExprKind::Dereference(d) => is_const_like_expr(d.referee.as_ref()),
-        ExprKind::BinOp(b) => is_const_like_expr(b.lhs.as_ref()) && is_const_like_expr(b.rhs.as_ref()),
+        ExprKind::BinOp(b) => {
+            is_const_like_expr(b.lhs.as_ref()) && is_const_like_expr(b.rhs.as_ref())
+        }
         ExprKind::UnOp(u) => is_const_like_expr(u.val.as_ref()),
         ExprKind::Tuple(t) => t.values.iter().all(is_const_like_expr),
         ExprKind::Array(a) => a.values.iter().all(is_const_like_expr),
@@ -950,15 +948,17 @@ fn is_const_like_expr(expr: &Expr) -> bool {
         }
         ExprKind::Struct(s) => {
             is_const_like_expr(s.name.as_ref())
-                && s
-                    .fields
+                && s.fields
                     .iter()
                     .all(|f| f.value.as_ref().map(is_const_like_expr).unwrap_or(true))
         }
         ExprKind::If(i) => {
             is_const_like_expr(i.cond.as_ref())
                 && is_const_like_expr(i.then.as_ref())
-                && i.elze.as_ref().map(|e| is_const_like_expr(e.as_ref())).unwrap_or(true)
+                && i.elze
+                    .as_ref()
+                    .map(|e| is_const_like_expr(e.as_ref()))
+                    .unwrap_or(true)
         }
         // Be conservative: closures, invokes, loops, macros, etc. are not const-like.
         _ => false,

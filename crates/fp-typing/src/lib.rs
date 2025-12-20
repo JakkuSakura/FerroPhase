@@ -847,14 +847,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     .into(),
                 ),
-                FunctionParamReceiver::RefMut | FunctionParamReceiver::RefMutStatic => Ty::Reference(
-                    TypeReference {
-                        ty: Box::new(self_ty),
-                        mutability: Some(true),
-                        lifetime: None,
-                    }
-                    .into(),
-                ),
+                FunctionParamReceiver::RefMut | FunctionParamReceiver::RefMutStatic => {
+                    Ty::Reference(
+                        TypeReference {
+                            ty: Box::new(self_ty),
+                            mutability: Some(true),
+                            lifetime: None,
+                        }
+                        .into(),
+                    )
+                }
             };
 
             let self_var = self.fresh_type_var();
