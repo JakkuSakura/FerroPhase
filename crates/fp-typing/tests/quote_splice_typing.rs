@@ -90,3 +90,34 @@ fn splice_in_expr_requires_expr_quote_token() {
         .iter()
         .any(|d| matches!(d.level, TypingDiagnosticLevel::Error)));
 }
+
+#[test]
+fn splice_stmt_accepts_item_quote_list() {
+    let item_token = Expr::from(ExprKind::Quote(ExprQuote {
+        block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(Item::from(
+            ItemKind::DefStruct(ItemDefStruct::new(Ident::new("Generated"), vec![])),
+        )))]),
+        kind: Some(QuoteFragmentKind::Item),
+    }));
+
+    let token_list = Expr::from(ExprKind::Array(ExprArray {
+        values: vec![item_token],
+    }));
+
+    let splice_stmt = BlockStmt::Expr(
+        BlockStmtExpr::new(Expr::from(ExprKind::Splice(ExprSplice {
+            token: Box::new(token_list),
+        })))
+        .with_semicolon(true),
+    );
+
+    let mut node = Node::new(NodeKind::Expr(Expr::block(ExprBlock::new_stmts(vec![
+        splice_stmt,
+    ]))));
+    let mut typer = AstTypeInferencer::new();
+    let outcome = typer.infer(&mut node).expect("infer");
+    assert!(
+        !outcome.has_errors,
+        "splice with item quote list should type-check"
+    );
+}

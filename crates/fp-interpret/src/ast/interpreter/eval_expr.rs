@@ -374,9 +374,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return self.eval_expr(expr);
             }
             ExprKind::Quote(_quote) => {
-                self.emit_error(
-                    "quote cannot be evaluated directly; use it with splice inside const blocks",
-                );
+                if matches!(self.mode, InterpreterMode::CompileTime) {
+                    return Value::Expr(Box::new(expr.clone()));
+                }
+                self.emit_error("quote cannot be evaluated at runtime");
                 return Value::undefined();
             }
             ExprKind::Splice(_splice) => {
