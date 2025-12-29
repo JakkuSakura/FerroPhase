@@ -343,6 +343,14 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.mutations_applied = true;
     }
 
+    fn append_pending_items(&mut self, items: Vec<Item>) {
+        if let Some(scope_pending) = self.pending_items.last_mut() {
+            scope_pending.extend(items);
+        } else {
+            self.pending_items.push(items);
+        }
+    }
+
     pub fn evaluate_expression(&mut self, expr: &mut Expr) -> Value {
         self.push_scope();
         let value = self.eval_expr_with_mode(expr);

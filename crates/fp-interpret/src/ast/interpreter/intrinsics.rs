@@ -144,7 +144,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
                 {
                     if let Some(expr) = args.first_mut() {
-                        return self.eval_expr(expr);
+                        self.enter_const_region();
+                        let value = self.eval_expr(expr);
+                        self.exit_const_region();
+                        return value;
                     }
                 }
                 self.emit_error("const block requires an argument");
