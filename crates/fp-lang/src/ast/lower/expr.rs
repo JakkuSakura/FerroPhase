@@ -8,9 +8,9 @@ use fp_core::ast::{
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
     ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
     Path, Pattern, PatternIdent, PatternKind, PatternStructField, PatternStructural, PatternTuple,
-    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, StmtLet, StructuralField, Ty,
-    TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeReference, TypeSlice,
-    TypeStructural, TypeTuple, Value, ValueString,
+    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, StmtLet,
+    StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
+    TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple, Value, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -26,6 +26,43 @@ pub enum LowerError {
     InvalidNumber(String),
     #[error("failed to lower item: {0}")]
     Item(#[from] LowerItemsError),
+}
+
+fn quote_kind_from_cst(node: &SyntaxNode) -> Result<Option<QuoteFragmentKind>, LowerError> {
+    let mut tokens = Vec::new();
+    crate::syntax::collect_tokens(node, &mut tokens);
+    let mut iter = tokens.iter().filter(|t| !t.is_trivia());
+
+    while let Some(tok) = iter.next() {
+        if tok.text != "quote" {
+            continue;
+        }
+        let Some(next) = iter.next() else {
+            return Ok(None);
+        };
+        if next.text != "<" {
+            return Ok(None);
+        }
+        let Some(kind_tok) = iter.next() else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        let Some(close_tok) = iter.next() else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        if close_tok.text != ">" {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        }
+        let kind = match kind_tok.text.as_str() {
+            "expr" => QuoteFragmentKind::Expr,
+            "stmt" => QuoteFragmentKind::Stmt,
+            "item" => QuoteFragmentKind::Item,
+            "type" => QuoteFragmentKind::Type,
+            _ => return Err(LowerError::UnexpectedNode(node.kind)),
+        };
+        return Ok(Some(kind));
+    }
+
+    Ok(None)
 }
 
 pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
@@ -117,7 +154,8 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .find(|n| n.kind == SyntaxKind::ExprBlock)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprQuote))?;
             let block = lower_block_from_cst(block_node)?;
-            Ok(ExprKind::Quote(ExprQuote { block, kind: None }).into())
+            let kind = quote_kind_from_cst(node)?;
+            Ok(ExprKind::Quote(ExprQuote { block, kind }).into())
         }
         SyntaxKind::ExprSplice => {
             let token_expr = last_child_expr(node)?;
@@ -1115,6 +1153,23 @@ fn node_children_types<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a Syn
     })
 }
 
+fn quote_kind_from_type_arg(arg: &Ty) -> Option<QuoteFragmentKind> {
+    let ident = match arg {
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Locator(locator) => locator.as_ident().map(|id| id.as_str().to_string()),
+            _ => None,
+        },
+        _ => None,
+    };
+    match ident.as_deref() {
+        Some("expr") => Some(QuoteFragmentKind::Expr),
+        Some("stmt") => Some(QuoteFragmentKind::Stmt),
+        Some("item") => Some(QuoteFragmentKind::Item),
+        Some("type") => Some(QuoteFragmentKind::Type),
+        _ => None,
+    }
+}
+
 fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
     let mut segments: Vec<Ident> = Vec::new();
     let mut saw_generic_start = false;
@@ -1150,6 +1205,16 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
         .collect::<Result<Vec<_>, _>>()?;
 
     let path = Path::new(segments.clone());
+    if segments.len() == 1 && segments[0].as_str() == "quote" && args.len() == 1 {
+        let Some(kind) = quote_kind_from_type_arg(&args[0]) else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        return Ok(Ty::QuoteToken(Box::new(TypeQuoteToken {
+            kind,
+            inner: None,
+        })));
+    }
+
     if !saw_generic_start || args.is_empty() {
         return Ok(Ty::path(path));
     }

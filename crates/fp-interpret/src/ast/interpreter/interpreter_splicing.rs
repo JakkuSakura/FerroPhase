@@ -32,4 +32,51 @@ impl<'ctx> AstInterpreter<'ctx> {
         // Fallback ⇒ Stmts fragment (keep entire statement list)
         QuotedFragment::Stmts(block.stmts.clone())
     }
+
+    pub(crate) fn resolve_splice_fragments(
+        &mut self,
+        token: &mut Expr,
+    ) -> Option<Vec<QuotedFragment>> {
+        if let Some(fragment) = self.fragment_from_expr(token) {
+            return Some(vec![fragment]);
+        }
+
+        let value = self.eval_expr(token);
+        match value {
+            Value::List(list) => {
+                let mut fragments = Vec::with_capacity(list.values.len());
+                for entry in list.values {
+                    if let Some(fragment) = self.fragment_from_value(entry) {
+                        fragments.push(fragment);
+                    } else {
+                        self.emit_error("splice expects a list of quote tokens");
+                        return None;
+                    }
+                }
+                Some(fragments)
+            }
+            other => {
+                if let Some(fragment) = self.fragment_from_value(other) {
+                    Some(vec![fragment])
+                } else {
+                    self.emit_error("splice expects a quote token expression");
+                    None
+                }
+            }
+        }
+    }
+
+    fn fragment_from_expr(&mut self, expr: &Expr) -> Option<QuotedFragment> {
+        match expr.kind() {
+            ExprKind::Quote(quote) => Some(self.build_quoted_fragment(quote)),
+            _ => None,
+        }
+    }
+
+    fn fragment_from_value(&mut self, value: Value) -> Option<QuotedFragment> {
+        match value {
+            Value::Expr(expr) => self.fragment_from_expr(&expr),
+            _ => None,
+        }
+    }
 }
