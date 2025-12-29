@@ -34,22 +34,24 @@ fp run examples/01_const_eval_basics.fp
 | Example                          | Focus                   | Demonstrates                             |
 |----------------------------------|-------------------------|------------------------------------------|
 | `07_compile_time_validation.fp`  | Static validation       | Constraints, size checks, introspection  |
-| `08_error_tolerance.fp`          | Error handling          | Multiple diagnostics without abort       |
-| `09_metaprogramming_patterns.fp` | Code generation         | Schema-driven structs, protocol enums    |
-| `10_higher_order_functions.fp`   | Higher-order functions  | Function passing, generics, composition  |
-| `11_print_showcase.fp`           | Printing                | Variadic `print`, formatting             |
-| `12_specialization_basics.fp`    | Function specialization | Inlining, optimization, monomorphization |
+| `08_metaprogramming_patterns.fp` | Code generation         | Schema-driven structs, protocol enums    |
+| `09_higher_order_functions.fp`   | Higher-order functions  | Function passing, generics, composition  |
+| `10_print_showcase.fp`           | Printing                | Variadic `print`, formatting             |
+| `11_specialization_basics.fp`    | Function specialization | Inlining, optimization, monomorphization |
+| `18_comptime_collections.fp`     | Const collections       | `Vec`/`HashMap` construction in const    |
+| `20_quote_splice.fp`             | Quote/splice            | Typed quote tokens, const block splicing |
+| `21_build_blocks.fp`             | Build blocks            | Item generation with `quote<item>` lists |
 
 ### Type System
 
 | Example                  | Focus            | Demonstrates                                |
 |--------------------------|------------------|---------------------------------------------|
-| `13_pattern_matching.fp` | Pattern matching | `match`, guards, destructuring              |
-| `14_loops.fp`            | Loops            | `while`, `for`, `loop`, break, continue     |
+| `12_pattern_matching.fp` | Pattern matching | `match`, guards, destructuring              |
+| `13_loops.fp`            | Loops            | `while`, `for`, `loop`, break, continue     |
 | `14_type_arithmetic.fp`  | Type arithmetic  | Type-level operations, struct composition   |
-| `16_enums.fp`            | Enums            | Unit, tuple, struct variants, discriminants |
-| `17_traits.fp`           | Traits           | Trait bounds, default methods, impl         |
-| `18_generics.fp`         | Generics         | Type parameters, monomorphization           |
+| `15_enums.fp`            | Enums            | Unit, tuple, struct variants, discriminants |
+| `16_traits.fp`           | Traits           | Trait bounds, default methods, impl         |
+| `17_generics.fp`         | Generics         | Type parameters, monomorphization           |
 
 ### Interoperability
 
