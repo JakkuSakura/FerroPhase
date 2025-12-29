@@ -33,7 +33,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         QuotedFragment::Stmts(block.stmts.clone())
     }
 
-    pub(crate) fn resolve_splice_fragments(&mut self, token: &mut Expr) -> Option<Vec<QuotedFragment>> {
+    pub(crate) fn resolve_splice_fragments(
+        &mut self,
+        token: &mut Expr,
+    ) -> Option<Vec<QuotedFragment>> {
         if let Some(fragment) = self.fragment_from_expr(token) {
             return Some(vec![fragment]);
         }
