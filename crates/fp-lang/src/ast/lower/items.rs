@@ -1,7 +1,7 @@
 use crate::ast::lower::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    EnumTypeVariant, Expr, ExprKind, ExprQuote, FunctionParam, FunctionParamReceiver,
+    EnumTypeVariant, Expr, ExprKind, FunctionParam, FunctionParamReceiver,
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
@@ -385,12 +385,15 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         }
         _ => LowerItemsError::UnexpectedNode(node.kind),
     })?;
-    let mut body = body;
+    let body = body;
     if let Some(kind) = quote_kind {
         sig.is_const = true;
-        sig.ret_ty = Some(Ty::QuoteToken(Box::new(TypeQuoteToken { kind, inner: None })));
-        let block = body.into_block();
-        body = ExprKind::Quote(ExprQuote { block, kind: Some(kind) }).into();
+        sig.quote_kind = Some(kind);
+        let inner = sig.ret_ty.as_ref().and_then(|ty| match ty {
+            Ty::QuoteToken(qt) => qt.inner.clone(),
+            _ => None,
+        });
+        sig.ret_ty = Some(Ty::QuoteToken(Box::new(TypeQuoteToken { kind, inner })));
     }
     let mut def = ItemDefFunction::new_simple(
         sig.name
@@ -665,6 +668,7 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
         params,
         generics_params,
         is_const: false,
+        quote_kind: None,
         ret_ty,
     })
 }
