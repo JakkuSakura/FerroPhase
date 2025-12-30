@@ -1,12 +1,13 @@
 use crate::ast::lower::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    EnumTypeVariant, Expr, ExprKind, FunctionParam, FunctionParamReceiver, FunctionSignature,
-    GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst,
-    ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType,
-    ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree,
-    ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path, StructuralField,
-    Ty, TypeBounds, TypeEnum, TypeStruct, Value, Visibility,
+    EnumTypeVariant, Expr, ExprKind, ExprQuote, FunctionParam, FunctionParamReceiver,
+    FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
+    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
+    ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
+    ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
+    QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuoteToken, TypeStruct,
+    Value, Visibility,
 };
 use fp_core::cst::CstCategory;
 
@@ -344,6 +345,38 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         sig.is_const = true;
     }
 
+    let quote_kind = node
+        .children
+        .iter()
+        .find_map(|c| match c {
+            SyntaxElement::Token(t) if !t.is_trivia() && t.text == "quote" => Some(()),
+            _ => None,
+        })
+        .and_then(|_| sig.ret_ty.as_ref())
+        .and_then(|ty| match ty {
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Locator(locator) => locator.as_ident().map(|id| match id.as_str() {
+                    "expr" => QuoteFragmentKind::Expr,
+                    "stmt" => QuoteFragmentKind::Stmt,
+                    "item" => QuoteFragmentKind::Item,
+                    "type" => QuoteFragmentKind::Type,
+                    _ => QuoteFragmentKind::Item,
+                }),
+                _ => None,
+            },
+            Ty::QuoteToken(qt) => Some(qt.kind),
+            _ => None,
+        })
+        .or_else(|| {
+            if node.children.iter().any(|c| {
+                matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "quote")
+            }) {
+                Some(QuoteFragmentKind::Item)
+            } else {
+                None
+            }
+        });
+
     let body_node = first_child_by_category(node, CstCategory::Expr)
         .ok_or(LowerItemsError::MissingToken("fn body"))?;
     let body = lower_expr_from_cst(body_node).map_err(|err| match err {
@@ -352,6 +385,13 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         }
         _ => LowerItemsError::UnexpectedNode(node.kind),
     })?;
+    let mut body = body;
+    if let Some(kind) = quote_kind {
+        sig.is_const = true;
+        sig.ret_ty = Some(Ty::QuoteToken(Box::new(TypeQuoteToken { kind, inner: None })));
+        let block = body.into_block();
+        body = ExprKind::Quote(ExprQuote { block, kind: Some(kind) }).into();
+    }
     let mut def = ItemDefFunction::new_simple(
         sig.name
             .clone()

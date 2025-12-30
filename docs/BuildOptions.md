@@ -18,29 +18,38 @@ let item_token = quote<item> { struct Generated { value: i64 } };
 fragments (structs, functions, impls, etc.). Typed quote tags remove ambiguity
 when a quoted block could be interpreted as either statements or items.
 
-## Build Blocks with `const` + `splice`
+## Build Blocks with `splice`
 
 Build-time logic lives inside `const { ... }` blocks. `splice` accepts any
 expression that evaluates to a quote token or a list of quote tokens, so you can
 wrap build logic inside functions and control flow:
 
 ```fp
-fn build_items(flag: bool) -> quote<item> {
-    if flag {
-        [quote<item> { struct Alpha { id: i64 } }]
-    } else {
-        [quote<item> { struct Beta { id: i64 } }]
+const fn build_items(flag: bool) -> quote<item> {
+    quote<item> {
+        if flag {
+            struct Alpha { id: i64 }
+        } else {
+            struct Beta { id: i64 }
+        }
     }
 }
 
-const {
-    splice ( build_items(true) );
+quote fn build_items_2(flag: bool) -> item {
+    if flag {
+        struct Alpha { id: i64 }
+    } else {
+        struct Beta { id: i64 }
+    }
 }
+
+splice build_items(true);
+splice build_items_2(false);
 ```
 
-Within a module-level `const` block, `splice` inserts item fragments into the
-surrounding module. In function bodies, `splice` continues to accept statement
-and expression fragments only; item fragments must be emitted at module scope.
+At module scope, `splice` inserts item fragments into the surrounding module. In
+function bodies, `splice` continues to accept statement and expression fragments
+only; item fragments must be emitted at module scope.
 
 ## Notes
 
