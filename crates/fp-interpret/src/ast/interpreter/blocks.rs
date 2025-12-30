@@ -14,22 +14,23 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("splice is only valid inside const { ... } regions");
                     return;
                 }
-                match splice.token.kind() {
-                    ExprKind::Quote(q) => match self.build_quoted_fragment(q) {
-                        QuotedFragment::Expr(e) => {
-                            *expr = e;
-                            self.mark_mutated();
-                        }
-                        QuotedFragment::Stmts(_)
-                        | QuotedFragment::Items(_)
-                        | QuotedFragment::Type(_) => {
-                            self.emit_error(
-                                "cannot splice non-expression token in expression position",
-                            );
-                        }
-                    },
-                    _ => {
-                        self.emit_error("splice expects a quote token expression");
+                let Some(mut fragments) = self.resolve_splice_fragments(splice.token.as_mut())
+                else {
+                    return;
+                };
+                if fragments.len() != 1 {
+                    self.emit_error("splice in expression position expects one fragment");
+                    return;
+                }
+                match fragments.remove(0) {
+                    QuotedFragment::Expr(e) => {
+                        *expr = e;
+                        self.mark_mutated();
+                    }
+                    QuotedFragment::Stmts(_)
+                    | QuotedFragment::Items(_)
+                    | QuotedFragment::Type(_) => {
+                        self.emit_error("cannot splice non-expression token in expression position");
                     }
                 }
             }
@@ -207,40 +208,37 @@ impl<'ctx> AstInterpreter<'ctx> {
                             // Keep original statement to avoid dropping code
                             new_stmts.push(stmt);
                         } else {
-                            match splice.token.kind() {
-                                ExprKind::Quote(q) => {
-                                    match self.build_quoted_fragment(q) {
-                                        QuotedFragment::Stmts(stmts) => {
-                                            for s in stmts {
-                                                new_stmts.push(s.clone());
-                                            }
-                                            self.mark_mutated();
+                            let Some(fragments) =
+                                self.resolve_splice_fragments(splice.token.as_mut())
+                            else {
+                                new_stmts.push(stmt);
+                                continue;
+                            };
+                            if fragments.iter().any(|fragment| {
+                                matches!(fragment, QuotedFragment::Items(_) | QuotedFragment::Type(_))
+                            }) {
+                                self.emit_error(
+                                    "item/type splicing is not allowed inside function bodies; move item emission to a module-level const block",
+                                );
+                                new_stmts.push(stmt);
+                                continue;
+                            }
+                            for fragment in fragments {
+                                match fragment {
+                                    QuotedFragment::Stmts(stmts) => {
+                                        for s in stmts {
+                                            new_stmts.push(s.clone());
                                         }
-                                        QuotedFragment::Items(_items) => {
-                                            // Forbid: item splicing inside function bodies is not supported
-                                            // Suggest moving item emission to a module-level const region.
-                                            self.emit_error(
-                                            "item splicing is not allowed inside function bodies; move item emission to a module-level const block",
-                                        );
-                                            // Keep the original statement to avoid silently dropping code.
-                                            new_stmts.push(stmt);
-                                        }
-                                        QuotedFragment::Expr(e) => {
-                                            let mut es = expr_stmt.clone();
-                                            es.expr = e.into();
-                                            es.semicolon = Some(true);
-                                            new_stmts.push(BlockStmt::Expr(es));
-                                            self.mark_mutated();
-                                        }
-                                        QuotedFragment::Type(_) => {
-                                            self.emit_error("cannot splice a type fragment at statement position");
-                                            new_stmts.push(stmt);
-                                        }
+                                        self.mark_mutated();
                                     }
-                                }
-                                _ => {
-                                    self.emit_error("splice expects a quote token expression");
-                                    new_stmts.push(stmt);
+                                    QuotedFragment::Expr(e) => {
+                                        let mut es = expr_stmt.clone();
+                                        es.expr = e.into();
+                                        es.semicolon = Some(true);
+                                        new_stmts.push(BlockStmt::Expr(es));
+                                        self.mark_mutated();
+                                    }
+                                    QuotedFragment::Items(_) | QuotedFragment::Type(_) => {}
                                 }
                             }
                         }
