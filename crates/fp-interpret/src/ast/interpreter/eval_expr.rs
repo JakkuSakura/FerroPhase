@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::ast::{ExprQuote, QuoteFragmentKind};
 
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
@@ -379,6 +380,26 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Quote(_quote) => {
                 if matches!(self.mode, InterpreterMode::CompileTime) {
+                    if let ExprKind::Quote(quote) = expr.kind() {
+                        if matches!(quote.kind, Some(QuoteFragmentKind::Item)) {
+                            match self.build_quoted_fragment(quote) {
+                                QuotedFragment::Items(items) => {
+                                    let stmts = items
+                                        .into_iter()
+                                        .map(BlockStmt::item)
+                                        .collect();
+                                    let block = ExprBlock::new_stmts(stmts);
+                                    let normalized = ExprKind::Quote(ExprQuote {
+                                        block,
+                                        kind: quote.kind,
+                                    })
+                                    .into();
+                                    return Value::Expr(Box::new(normalized));
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
                     return Value::Expr(Box::new(expr.clone()));
                 }
                 self.emit_error("quote cannot be evaluated at runtime");
