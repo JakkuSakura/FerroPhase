@@ -88,6 +88,16 @@ impl<'ctx> AstInterpreter<'ctx> {
         captured
     }
 
+    // Capture a runtime closure with its environment snapshot.
+    pub(super) fn capture_runtime_closure(
+        &mut self,
+        closure: &ExprClosure,
+        ty: Option<Ty>,
+    ) -> Value {
+        let captured = self.capture_closure(closure, ty);
+        Value::Any(AnyBox::new(captured))
+    }
+
     pub(super) fn call_function(&mut self, function: ItemDefFunction, args: Vec<Value>) -> Value {
         if !function.sig.generics_params.is_empty() {
             self.emit_error(format!(
@@ -142,5 +152,206 @@ impl<'ctx> AstInterpreter<'ctx> {
         let result = self.eval_expr(&mut body);
         self.pop_scope();
         result
+    }
+
+    // Execute a runtime function call with return/break propagation.
+    pub(super) fn call_function_runtime(
+        &mut self,
+        function: ItemDefFunction,
+        args: Vec<Value>,
+    ) -> RuntimeFlow {
+        if function.sig.params.len() != args.len() {
+            self.emit_error(format!(
+                "function '{}' expected {} arguments, found {}",
+                function.name.as_str(),
+                function.sig.params.len(),
+                args.len()
+            ));
+            return RuntimeFlow::Value(Value::undefined());
+        }
+
+        self.function_depth += 1;
+        self.push_scope();
+        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
+            if let Some(scope) = self.type_env.last_mut() {
+                scope.insert(param.name.as_str().to_string(), param.ty.clone());
+            }
+            self.insert_value(param.name.as_str(), value);
+        }
+        let mut body = function.body.as_ref().clone();
+        let flow = self.eval_expr_runtime(&mut body);
+        self.pop_scope();
+        self.function_depth -= 1;
+
+        match flow {
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
+                self.emit_error("loop control flow escaped a function");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            other => other,
+        }
+    }
+
+    // Execute a runtime method call with receiver binding.
+    pub(super) fn call_method_runtime(
+        &mut self,
+        function: ItemDefFunction,
+        receiver: ReceiverBinding,
+        args: Vec<Value>,
+    ) -> RuntimeFlow {
+        if function.sig.params.len() != args.len() {
+            self.emit_error(format!(
+                "method '{}' expected {} arguments, found {}",
+                function.name.as_str(),
+                function.sig.params.len(),
+                args.len()
+            ));
+            return RuntimeFlow::Value(Value::undefined());
+        }
+
+        let receiver_kind = function
+            .sig
+            .receiver
+            .unwrap_or(fp_core::ast::FunctionParamReceiver::Value);
+
+        self.function_depth += 1;
+        self.push_scope();
+
+        let impl_context = self
+            .value_type_name(&receiver.value)
+            .map(|self_ty| ImplContext {
+                self_ty: Some(self_ty),
+                trait_ty: None,
+            });
+        if let Some(context) = impl_context.clone() {
+            self.impl_stack.push(context);
+        }
+
+        let receiver_name = "#self";
+        let plain_self_name = "self";
+        match receiver_kind {
+            fp_core::ast::FunctionParamReceiver::RefMut
+            | fp_core::ast::FunctionParamReceiver::MutValue
+            | fp_core::ast::FunctionParamReceiver::RefMutStatic => {
+                if let Some(shared) = receiver.shared.clone() {
+                    self.insert_shared_value(receiver_name, shared.clone());
+                    self.insert_shared_value(plain_self_name, shared);
+                } else {
+                    self.emit_error("mutable receiver requires a mutable binding");
+                    self.insert_mutable_value(receiver_name, receiver.value.clone());
+                    self.insert_mutable_value(plain_self_name, receiver.value.clone());
+                }
+            }
+            _ => {
+                self.insert_value(receiver_name, receiver.value.clone());
+                self.insert_value(plain_self_name, receiver.value.clone());
+            }
+        }
+
+        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
+            if let Some(scope) = self.type_env.last_mut() {
+                scope.insert(param.name.as_str().to_string(), param.ty.clone());
+            }
+            self.insert_value(param.name.as_str(), value);
+        }
+
+        let mut body = function.body.as_ref().clone();
+        let flow = self.eval_expr_runtime(&mut body);
+        if impl_context.is_some() {
+            self.impl_stack.pop();
+        }
+        self.pop_scope();
+        self.function_depth -= 1;
+
+        match flow {
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
+                self.emit_error("loop control flow escaped a method");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            other => other,
+        }
+    }
+
+    // Execute a runtime function value call.
+    pub(super) fn call_value_function_runtime(
+        &mut self,
+        function: &ValueFunction,
+        args: Vec<Value>,
+    ) -> RuntimeFlow {
+        if function.sig.params.len() != args.len() {
+            self.emit_error(format!(
+                "function literal expected {} arguments, found {}",
+                function.sig.params.len(),
+                args.len()
+            ));
+            return RuntimeFlow::Value(Value::undefined());
+        }
+
+        self.function_depth += 1;
+        self.push_scope();
+        for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
+            if let Some(scope) = self.type_env.last_mut() {
+                scope.insert(param.name.as_str().to_string(), param.ty.clone());
+            }
+            self.insert_value(param.name.as_str(), value);
+        }
+        let mut body = function.body.as_ref().clone();
+        let flow = self.eval_expr_runtime(&mut body);
+        self.pop_scope();
+        self.function_depth -= 1;
+
+        match flow {
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
+                self.emit_error("loop control flow escaped a function value");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            other => other,
+        }
+    }
+
+    // Execute a captured closure with its environment snapshot.
+    pub(super) fn call_const_closure_runtime(
+        &mut self,
+        closure: &ConstClosure,
+        args: Vec<Value>,
+    ) -> RuntimeFlow {
+        if closure.params.len() != args.len() {
+            self.emit_error(format!(
+                "closure expected {} arguments, found {}",
+                closure.params.len(),
+                args.len()
+            ));
+            return RuntimeFlow::Value(Value::undefined());
+        }
+
+        let saved_values = std::mem::replace(&mut self.value_env, closure.captured_values.clone());
+        let saved_types = std::mem::replace(&mut self.type_env, closure.captured_types.clone());
+        let saved_modules = std::mem::replace(&mut self.module_stack, closure.module_stack.clone());
+
+        self.function_depth += 1;
+        self.push_scope();
+        for (param, value) in closure.params.iter().zip(args.into_iter()) {
+            self.bind_pattern(param, value);
+        }
+        let mut body = closure.body.clone();
+        let flow = self.eval_expr_runtime(&mut body);
+        self.pop_scope();
+        self.function_depth -= 1;
+
+        self.value_env = saved_values;
+        self.type_env = saved_types;
+        self.module_stack = saved_modules;
+
+        match flow {
+            RuntimeFlow::Return(value) => RuntimeFlow::Value(value.unwrap_or_else(Value::unit)),
+            RuntimeFlow::Break(_) | RuntimeFlow::Continue => {
+                self.emit_error("loop control flow escaped a closure");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            other => other,
+        }
     }
 }
