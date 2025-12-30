@@ -248,7 +248,7 @@ commands.
 
 ## Developer Workflow
 
-1. Initialize the repository with your package manager (e.g. `magnet init` and
+1. Initialize the repository with your package manager (e.g. `magnet manifest init` and
    updating `Magnet.toml`). Create an initial `Ferrophase.toml` manually or via a
    Magnet plugin.
 2. Implement modules under `src/`.

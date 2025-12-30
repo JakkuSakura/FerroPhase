@@ -1,182 +1,113 @@
-//! Run command implementation - executes FerroPhase files directly through the unified pipeline
+//! Run command implementation - delegates to magnet
 
-use crate::commands::{format_value_brief, print_runtime_result};
-use crate::config::{PipelineOptions, PipelineTarget};
-use crate::pipeline::{Pipeline, PipelineInput, PipelineOutput};
 use crate::{CliError, Result, cli::CliConfig};
-use clap::Args;
-use console::style;
-use fp_core::ast::Value;
-use fp_core::pretty::{PrettyOptions, pretty};
-use std::path::PathBuf;
+use clap::{Args, ValueEnum};
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use tokio::process::Command;
 use tracing::info;
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum RunMode {
+    Compile,
+    Interpret,
+}
 
 /// Arguments for the run command
 #[derive(Debug, Clone, Args)]
 pub struct RunArgs {
     /// FerroPhase file to run
     pub file: PathBuf,
-    /// Print the AST representation
-    #[arg(long)]
-    pub print_ast: bool,
-    /// Print optimization passes
-    #[arg(long)]
-    pub print_passes: bool,
-    /// Runtime to use (literal, rust)
-    #[arg(long, default_value = "literal")]
-    pub runtime: Option<String>, // Runtime to use (literal, rust)
+    /// Execution mode (compile or interpret)
+    #[arg(long, default_value = "compile")]
+    pub mode: RunMode,
 }
 
-/// Execute the run command by funnelling source code through the same pipeline that `compile`
-/// uses, stopping at the interpretation stage.
-pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
-    info!("Running file '{}'", args.file.display());
+pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
+    info!("Delegating run to magnet for file '{}'", args.file.display());
 
     crate::commands::validate_paths_exist(&[args.file.clone()], true, "run")?;
 
-    let runtime = args.runtime.as_deref().unwrap_or("literal").to_string();
-    validate_runtime(&runtime)?;
-
-    let source = read_source(&args.file)?;
-
-    if args.print_ast {
-        print_ast_representation(&source, &runtime)?;
+    let magnet_bin = resolve_magnet_binary()?;
+    let mut command = Command::new(&magnet_bin);
+    command.arg("run").arg(&args.file);
+    if matches!(args.mode, RunMode::Interpret) {
+        command.arg("--mode").arg("interpret");
     }
 
-    let options = build_pipeline_options(&runtime, &args, config);
+    let status = command
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .await
+        .map_err(|error| {
+            CliError::MissingDependency(format!(
+                "Failed to execute magnet at '{}': {}",
+                magnet_bin.display(),
+                error
+            ))
+        })?;
 
-    let output =
-        execute_pipeline(&runtime, &options, PipelineInput::File(args.file.clone())).await?;
-
-    handle_pipeline_output(output, &args)?;
+    if !status.success() {
+        return Err(CliError::Compilation(format!(
+            "magnet run failed with status {}",
+            status.code().unwrap_or(-1)
+        )));
+    }
 
     Ok(())
 }
 
-fn validate_runtime(runtime: &str) -> Result<()> {
-    match runtime {
-        "literal" | "rust" => Ok(()),
-        other => Err(CliError::InvalidInput(format!(
-            "Unknown runtime: {}",
-            other
-        ))),
-    }
-}
-
-fn read_source(path: &PathBuf) -> Result<String> {
-    std::fs::read_to_string(path).map_err(|e| {
-        CliError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to read file {}: {}", path.display(), e),
-        ))
-    })
-}
-
-fn build_pipeline_options(runtime: &str, args: &RunArgs, config: &CliConfig) -> PipelineOptions {
-    let mut options = PipelineOptions::default();
-    options.target = PipelineTarget::Interpret;
-    options.runtime.runtime_type = runtime.to_string();
-    options.debug.print_ast = args.print_ast;
-    options.debug.print_passes = args.print_passes;
-    options.debug.verbose = config.compilation.debug;
-    options.optimization_level = config.compilation.default_opt_level;
-    options.save_intermediates = false;
-    options.release = !config.compilation.debug;
-    options
-}
-
-async fn execute_pipeline(
-    runtime: &str,
-    options: &PipelineOptions,
-    input: PipelineInput,
-) -> Result<PipelineOutput> {
-    let mut pipeline = Pipeline::with_runtime(runtime);
-    pipeline.execute_with_options(input, options.clone()).await
-}
-
-fn handle_pipeline_output(output: PipelineOutput, args: &RunArgs) -> Result<()> {
-    match output {
-        PipelineOutput::Value(value) => {
-            if !matches!(value, Value::Unit(_)) {
-                println!(
-                    "{} {}",
-                    style("Result:").green().bold(),
-                    format_value_brief(&value)
-                );
-            }
-            Ok(())
+fn resolve_magnet_binary() -> Result<PathBuf> {
+    if let Some(path) = std::env::var_os("MAGNET_BIN") {
+        let path = PathBuf::from(path);
+        if path.exists() {
+            return Ok(path);
         }
-        PipelineOutput::RuntimeValue(value) => {
-            if args.print_passes {
-                print_runtime_result(&value)
-            } else {
-                Ok(())
-            }
-        }
-        PipelineOutput::Code(_) | PipelineOutput::Binary(_) => Err(CliError::Compilation(
-            "Run pipeline produced an unexpected artifact".to_string(),
-        )),
-    }
-}
-
-fn print_ast_representation(source: &str, runtime: &str) -> Result<()> {
-    let mut pipeline = Pipeline::with_runtime(runtime);
-    let ast = pipeline.parse_source_public(source, None)?;
-
-    let mut pretty_opts = PrettyOptions::default();
-    pretty_opts.show_types = false;
-    pretty_opts.show_spans = false;
-
-    println!(
-        "{} {}",
-        style("AST:").blue().bold(),
-        pretty(&ast, pretty_opts)
-    );
-
-    Ok(())
-}
-
-// printing is centralized in commands::common::print_runtime_result
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::io::Write;
-    use tempfile::NamedTempFile;
-
-    #[tokio::test]
-    async fn test_run_simple_expression_file() {
-        let config = CliConfig::default();
-
-        let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(temp_file, "1 + 2 * 3").unwrap();
-
-        let args = RunArgs {
-            file: temp_file.path().to_path_buf(),
-            print_ast: false,
-            print_passes: false,
-            runtime: Some("literal".to_string()),
-        };
-
-        let result = run_command(args, &config).await;
-        assert!(result.is_ok());
     }
 
-    #[tokio::test]
-    async fn test_run_main_function_file() {
-        let config = CliConfig::default();
+    if let Some(path) = locate_workspace_magnet() {
+        return Ok(path);
+    }
 
-        let mut temp_file = NamedTempFile::new().unwrap();
-        writeln!(temp_file, "fn main() {{ println!(\"Hello, world!\"); }}").unwrap();
+    if let Some(path) = find_in_path("magnet") {
+        return Ok(path);
+    }
 
-        let args = RunArgs {
-            file: temp_file.path().to_path_buf(),
-            print_ast: false,
-            print_passes: false,
-            runtime: Some("literal".to_string()),
-        };
+    Err(CliError::MissingDependency(
+        "magnet binary not found; set MAGNET_BIN or add it to PATH".to_string(),
+    ))
+}
 
-        let result = run_command(args, &config).await;
-        assert!(result.is_ok());
+fn locate_workspace_magnet() -> Option<PathBuf> {
+    let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")?;
+    let root = Path::new(&manifest_dir).parent()?.parent()?;
+    let candidates = [
+        root.join("target").join("debug").join(binary_name()),
+        root.join("target").join("release").join(binary_name()),
+    ];
+
+    candidates.into_iter().find(|path| path.exists())
+}
+
+fn find_in_path(binary: &str) -> Option<PathBuf> {
+    let binary_name = if cfg!(windows) {
+        format!("{}.exe", binary)
+    } else {
+        binary.to_string()
+    };
+
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|path| path.join(&binary_name))
+        .find(|path| path.exists())
+}
+
+fn binary_name() -> &'static str {
+    if cfg!(windows) {
+        "magnet.exe"
+    } else {
+        "magnet"
     }
 }
