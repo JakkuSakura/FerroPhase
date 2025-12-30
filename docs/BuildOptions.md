@@ -25,7 +25,7 @@ expression that evaluates to a quote token or a list of quote tokens, so you can
 wrap build logic inside functions and control flow:
 
 ```fp
-fn build_items(flag: bool) -> Vec<quote<item>> {
+fn build_items(flag: bool) -> quote<item> {
     if flag {
         [quote<item> { struct Alpha { id: i64 } }]
     } else {
@@ -34,7 +34,7 @@ fn build_items(flag: bool) -> Vec<quote<item>> {
 }
 
 const {
-    splice build_items(true);
+    splice ( build_items(true) );
 }
 ```
 
