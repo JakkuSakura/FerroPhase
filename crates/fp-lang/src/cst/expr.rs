@@ -117,6 +117,31 @@ impl Parser {
         }
     }
 
+    fn split_right_shift(&mut self) {
+        let Some(token) = self.tokens.get(self.idx).cloned() else {
+            return;
+        };
+        if token.raw != ">>" {
+            return;
+        }
+        let first = Classified {
+            raw: ">".to_string(),
+            normalized: ">".to_string(),
+            kind: TokenKind::Symbol,
+            lexeme_kind: token.lexeme_kind,
+            span: token.span,
+        };
+        let second = Classified {
+            raw: ">".to_string(),
+            normalized: ">".to_string(),
+            kind: TokenKind::Symbol,
+            lexeme_kind: token.lexeme_kind,
+            span: token.span,
+        };
+        self.tokens[self.idx] = first;
+        self.tokens.insert(self.idx + 1, second);
+    }
+
     fn parse_root_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let lo = self.tokens.first().map(|t| t.span.lo).unwrap_or(0);
         let hi = self.tokens.last().map(|t| t.span.hi).unwrap_or(0);
@@ -528,14 +553,19 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `splice`
         self.bump_trivia_into(&mut children);
-        self.expect_token_raw("(")?;
-        self.bump_token_into(&mut children);
-        self.bump_trivia_into(&mut children);
-        let token_expr = self.parse_expr_bp(0)?;
-        children.push(SyntaxElement::Node(Box::new(token_expr)));
-        self.bump_trivia_into(&mut children);
-        self.expect_token_raw(")")?;
-        self.bump_token_into(&mut children);
+        if self.peek_non_trivia_raw() == Some("(") {
+            self.expect_token_raw("(")?;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            let token_expr = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(token_expr)));
+            self.bump_trivia_into(&mut children);
+            self.expect_token_raw(")")?;
+            self.bump_token_into(&mut children);
+        } else {
+            let token_expr = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(token_expr)));
+        }
         let span = span_for_children(&children).unwrap_or(start);
         Ok(SyntaxNode::new(SyntaxKind::ExprSplice, children, span))
     }
@@ -1390,6 +1420,10 @@ impl Parser {
                 if self.peek_non_trivia_raw().is_none() {
                     return Err(self.error("unterminated generic args"));
                 }
+                if self.peek_non_trivia_raw() == Some(">>") {
+                    self.split_right_shift();
+                    break;
+                }
 
                 let snapshot = self.idx;
                 if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident) {
@@ -1412,6 +1446,9 @@ impl Parser {
                     continue;
                 }
                 break;
+            }
+            if self.peek_non_trivia_raw() == Some(">>") {
+                self.split_right_shift();
             }
             self.expect_token_raw(">")?;
             self.bump_token_into(&mut children);

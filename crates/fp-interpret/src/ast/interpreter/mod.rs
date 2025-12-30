@@ -593,6 +593,33 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ItemKind::Expr(expr) => {
+                if matches!(self.mode, InterpreterMode::CompileTime) {
+                    if let ExprKind::Splice(splice) = expr.kind_mut() {
+                        let Some(fragments) =
+                            self.resolve_splice_fragments(splice.token.as_mut())
+                        else {
+                            return;
+                        };
+                        let mut pending = Vec::new();
+                        for fragment in fragments {
+                            match fragment {
+                                QuotedFragment::Items(items) => pending.extend(items),
+                                _ => {
+                                    self.emit_error(
+                                        "module-level splice only supports item fragments",
+                                    );
+                                    return;
+                                }
+                            }
+                        }
+                        if !pending.is_empty() {
+                            self.append_pending_items(pending);
+                            *expr = Expr::unit();
+                            self.mark_mutated();
+                        }
+                        return;
+                    }
+                }
                 self.eval_expr(expr);
             }
             ItemKind::DefTrait(trait_def) => {
