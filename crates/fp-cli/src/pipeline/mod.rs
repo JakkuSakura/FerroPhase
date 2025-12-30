@@ -840,10 +840,45 @@ impl Pipeline {
 
     async fn execute_interpret_target(
         &mut self,
-        ast: Node,
+        mut ast: Node,
         options: &PipelineOptions,
         input_path: Option<&Path>,
     ) -> Result<PipelineOutput, CliError> {
+        let diagnostic_manager = DiagnosticManager::new();
+
+        if stage_enabled(options, STAGE_INTRINSIC_NORMALIZE) {
+            self.run_stage(
+                STAGE_INTRINSIC_NORMALIZE,
+                &diagnostic_manager,
+                options,
+                |pipeline| pipeline.stage_normalize_intrinsics(&mut ast, &diagnostic_manager),
+            )?;
+        }
+
+        if stage_enabled(options, STAGE_TYPE_ENRICH) {
+            self.run_stage(
+                STAGE_TYPE_ENRICH,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_ENRICH,
+                        &diagnostic_manager,
+                        options,
+                    )
+                },
+            )?;
+        }
+
+        if stage_enabled(options, STAGE_CONST_EVAL) {
+            self.run_stage(
+                STAGE_CONST_EVAL,
+                &diagnostic_manager,
+                options,
+                |pipeline| pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager),
+            )?;
+        }
         let runtime = if options.runtime.runtime_type.is_empty() {
             self.default_runtime.clone()
         } else {
