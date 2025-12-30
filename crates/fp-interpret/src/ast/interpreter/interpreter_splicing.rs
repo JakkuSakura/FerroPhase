@@ -1,10 +1,33 @@
 use super::*;
+use fp_core::ast::QuoteFragmentKind;
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub(crate) fn build_quoted_fragment(
         &mut self,
         quote: &fp_core::ast::ExprQuote,
     ) -> QuotedFragment {
+        if let Some(kind) = quote.kind {
+            return match kind {
+                QuoteFragmentKind::Expr => {
+                    if let Some(expr) = quote.block.last_expr() {
+                        QuotedFragment::Expr(expr.clone())
+                    } else {
+                        self.emit_error("quote<expr> requires a trailing expression");
+                        QuotedFragment::Stmts(quote.block.stmts.clone())
+                    }
+                }
+                QuoteFragmentKind::Stmt => QuotedFragment::Stmts(quote.block.stmts.clone()),
+                QuoteFragmentKind::Item => match self.collect_items_from_block(&quote.block) {
+                    Some(items) => QuotedFragment::Items(items),
+                    None => QuotedFragment::Items(Vec::new()),
+                },
+                QuoteFragmentKind::Type => {
+                    self.emit_error("quote<type> is not supported for splicing yet");
+                    QuotedFragment::Stmts(quote.block.stmts.clone())
+                }
+            };
+        }
+
         // If kind is explicitly provided, we still infer from block shape to build fragment
         let block = quote.block.clone();
         // If only a single expression without preceding statements ⇒ Expr fragment
@@ -31,6 +54,64 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         // Fallback ⇒ Stmts fragment (keep entire statement list)
         QuotedFragment::Stmts(block.stmts.clone())
+    }
+
+    fn collect_items_from_block(&mut self, block: &ExprBlock) -> Option<Vec<Item>> {
+        let mut items = Vec::new();
+        for stmt in &block.stmts {
+            match stmt {
+                BlockStmt::Item(item) => items.push((**item).clone()),
+                BlockStmt::Expr(expr_stmt) => {
+                    if !self.collect_items_from_expr(expr_stmt.expr.as_ref(), &mut items) {
+                        return None;
+                    }
+                }
+                BlockStmt::Let(_) => {
+                    self.emit_error("quote<item> does not support let statements");
+                    return None;
+                }
+                BlockStmt::Noop => {}
+                BlockStmt::Any(_) => {
+                    self.emit_error("quote<item> contains unsupported statements");
+                    return None;
+                }
+            }
+        }
+        Some(items)
+    }
+
+    fn collect_items_from_expr(&mut self, expr: &Expr, items: &mut Vec<Item>) -> bool {
+        match expr.kind() {
+            ExprKind::Block(block) => match self.collect_items_from_block(block) {
+                Some(mut nested) => {
+                    items.append(&mut nested);
+                    true
+                }
+                None => false,
+            },
+            ExprKind::If(if_expr) => {
+                let mut cond = if_expr.cond.as_ref().clone();
+                match self.eval_expr(&mut cond) {
+                    Value::Bool(flag) => {
+                        if flag.value {
+                            self.collect_items_from_expr(if_expr.then.as_ref(), items)
+                        } else if let Some(elze) = if_expr.elze.as_ref() {
+                            self.collect_items_from_expr(elze.as_ref(), items)
+                        } else {
+                            true
+                        }
+                    }
+                    _ => {
+                        self.emit_error("quote<item> if condition must be boolean");
+                        false
+                    }
+                }
+            }
+            _ => {
+                self.emit_error("quote<item> expects item blocks or item conditionals");
+                false
+            }
+        }
     }
 
     pub(crate) fn resolve_splice_fragments(

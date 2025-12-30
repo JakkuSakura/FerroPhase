@@ -105,6 +105,30 @@ fn parse_expr_ast_supports_typed_quote_fragments() {
 }
 
 #[test]
+fn parse_items_ast_supports_quote_fn() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("quote fn build(flag: bool) -> item { struct A { x: i64 } }")
+        .unwrap();
+    match items.first().map(|item| item.kind()) {
+        Some(ItemKind::DefFunction(func)) => {
+            match func.sig.ret_ty.as_ref() {
+                Some(Ty::QuoteToken(qt)) => assert_eq!(qt.kind, QuoteFragmentKind::Item),
+                other => panic!("expected quote token return type, got {:?}", other),
+            }
+            match func.body.kind() {
+                ExprKind::Quote(quote) => {
+                    assert_eq!(quote.kind, Some(QuoteFragmentKind::Item));
+                }
+                other => panic!("expected quote body, got {:?}", other),
+            }
+        }
+        other => panic!("expected quote fn item, got {:?}", other),
+    }
+}
+
+#[test]
 fn parse_expr_ast_handles_splice_of_quote() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
