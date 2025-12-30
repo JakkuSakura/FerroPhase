@@ -31,6 +31,19 @@ impl<'ctx> AstInterpreter<'ctx> {
                         }
                     }
                     if !pending.is_empty() {
+                        if self.value_env.len() > 1 && self.type_env.len() > 1 {
+                            let current_values = self.value_env.pop().unwrap();
+                            let current_types = self.type_env.pop().unwrap();
+                            for item in pending.iter_mut() {
+                                self.evaluate_item(item);
+                            }
+                            self.value_env.push(current_values);
+                            self.type_env.push(current_types);
+                        } else {
+                            for item in pending.iter_mut() {
+                                self.evaluate_item(item);
+                            }
+                        }
                         self.append_pending_items(pending);
                         self.mark_mutated();
                     }
