@@ -17,7 +17,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
    ```
 2. Scaffold a project:
    ```bash
-   fp init my-project --template basic
+   magnet init my-project --template basic
    cd my-project
    ```
 3. Compile and run:

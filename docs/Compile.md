@@ -22,7 +22,7 @@ $ fp compile --help
 Create a new project using the CLI (this example uses the `basic` template):
 
 ```bash
-$ fp init my_project --template basic
+$ magnet init my_project --template basic
 $ cd my_project
 ```
 
