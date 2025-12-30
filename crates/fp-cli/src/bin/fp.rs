@@ -13,7 +13,7 @@
 //! fp eval --expr "1 + 2 * 3"
 //!
 //! # Initialize a new FerroPhase project
-//! fp init my-project --template basic
+//! magnet init my-project --template basic
 //!
 //! # Check and validate FerroPhase code
 //! fp check src/
@@ -29,8 +29,8 @@ use fp_cli::{
     cli::CliConfig,
     commands::{
         self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        info::InfoArgs, init::InitArgs, parse::ParseArgs, run::RunArgs,
-        syntax_transpile::SyntaxTranspileArgs, transpile::TranspileArgs,
+        parse::ParseArgs, run::RunArgs, syntax_transpile::SyntaxTranspileArgs,
+        transpile::TranspileArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -50,7 +50,7 @@ EXAMPLES:
     fp run hello.fp                       # Run a FerroPhase file
     fp eval --expr "1 + 2 * 3"           # Evaluate expression
     fp compile hello.fp --target rust    # Compile to Rust
-    fp init my-project                    # Create new project
+    magnet init my-project                # Create new project
     "#
 )]
 struct Cli {
@@ -91,17 +91,11 @@ enum Commands {
     /// Parse and display AST for FerroPhase code
     Parse(ParseArgs),
 
-    /// Run a FerroPhase file (alias for eval --file)
+    /// Run a FerroPhase file (delegates to magnet)
     Run(RunArgs),
 
     /// Check and validate FerroPhase code
     Check(CheckArgs),
-
-    /// Initialize a new FerroPhase project
-    Init(InitArgs),
-
-    /// Show information about the installation
-    Info(InfoArgs),
 
     /// Generate shell completions
     Completions(CompletionsArgs),
@@ -143,8 +137,6 @@ async fn main() -> Result<()> {
         Commands::Parse(args) => commands::parse_command(args, &config).await,
         Commands::Run(args) => commands::run_command(args, &config).await,
         Commands::Check(args) => commands::check_command(args, &config).await,
-        Commands::Init(args) => commands::init_command(args, &config).await,
-        Commands::Info(args) => commands::info_command(args, &config).await,
         Commands::Completions(args) => commands::completions_command(args, &config).await,
     };
 
