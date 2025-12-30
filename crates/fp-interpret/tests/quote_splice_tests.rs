@@ -12,6 +12,13 @@ fn i32_ty() -> Ty {
     Ty::Primitive(TypePrimitive::Int(TypeInt::I32))
 }
 
+fn quote_item_expr(item: Item) -> Expr {
+    Expr::from(ExprKind::Quote(ExprQuote {
+        block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(item))]),
+        kind: Some(QuoteFragmentKind::Item),
+    }))
+}
+
 #[test]
 fn splice_stmt_expands_inside_const_block() -> Result<()> {
     // Build: fn demo() -> i32 { const { splice quote { return 42; }; } 0 }
@@ -239,6 +246,91 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         !has_quote_or_splice,
         "quote/splice should not remain after const-eval in function body"
     );
+
+    Ok(())
+}
+
+#[test]
+fn splice_supports_function_returning_item_list() -> Result<()> {
+    let struct_a = Item::from(ItemKind::DefStruct(ItemDefStruct::new(
+        Ident::new("GeneratedA"),
+        vec![],
+    )));
+    let struct_b = Item::from(ItemKind::DefStruct(ItemDefStruct::new(
+        Ident::new("GeneratedB"),
+        vec![],
+    )));
+
+    let then_items = ExprKind::Array(ExprArray {
+        values: vec![quote_item_expr(struct_a)],
+    })
+    .into();
+    let else_items = ExprKind::Array(ExprArray {
+        values: vec![quote_item_expr(struct_b)],
+    })
+    .into();
+
+    let if_expr = ExprKind::If(ExprIf {
+        cond: Box::new(Expr::value(Value::bool(true))),
+        then: Box::new(then_items),
+        elze: Some(Box::new(else_items)),
+    })
+    .into();
+
+    let build_fn = ItemDefFunction::new_simple(Ident::new("build_items"), if_expr.into());
+
+    let invoke = ExprKind::Invoke(ExprInvoke {
+        target: ExprInvokeTarget::Function(Locator::from_ident(Ident::new("build_items"))),
+        args: vec![],
+    })
+    .into();
+    let splice_expr = ExprKind::Splice(ExprSplice {
+        token: Box::new(invoke),
+    })
+    .into();
+    let const_block = ExprKind::IntrinsicCall(IntrinsicCall::new(
+        IntrinsicCallKind::ConstBlock,
+        IntrinsicCallPayload::Args {
+            args: vec![Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
+                BlockStmtExpr::new(splice_expr).with_semicolon(true),
+            )]))],
+        },
+    ))
+    .into();
+
+    let file = File {
+        path: PathBuf::from("quote_splice_items.fp"),
+        items: vec![
+            Item::from(ItemKind::DefFunction(build_fn)),
+            Item::from(ItemKind::Expr(const_block)),
+        ],
+    };
+
+    let mut ast = Node::file(file);
+    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
+    fp_core::ast::register_threadlocal_serializer(serializer.clone());
+
+    let ctx = SharedScopedContext::new();
+    let options = InterpreterOptions {
+        mode: InterpreterMode::CompileTime,
+        debug_assertions: false,
+        diagnostics: None,
+        diagnostic_context: "ast-interpreter",
+    };
+    let mut interpreter = AstInterpreter::new(&ctx, options);
+    interpreter.interpret(&mut ast);
+
+    let file_ref = match ast.kind() {
+        NodeKind::File(f) => f,
+        _ => panic!("expected file node"),
+    };
+
+    let has_generated_a = file_ref.items.iter().any(|item| match item.kind() {
+        ItemKind::DefStruct(def) => def.name.as_str() == "GeneratedA",
+        _ => false,
+    });
+
+    assert!(has_generated_a, "expected GeneratedA to be spliced");
 
     Ok(())
 }

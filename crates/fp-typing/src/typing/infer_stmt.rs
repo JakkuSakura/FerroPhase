@@ -4,6 +4,15 @@ use fp_core::ast::*;
 use fp_core::error::Result;
 
 impl<'ctx> AstTypeInferencer<'ctx> {
+    fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::QuoteToken(qt) => matches!(qt.kind, QuoteFragmentKind::Stmt | QuoteFragmentKind::Item),
+            Ty::Vec(vec) => self.is_stmt_or_item_quote(vec.ty.as_ref()),
+            Ty::Array(array) => self.is_stmt_or_item_quote(array.elem.as_ref()),
+            _ => false,
+        }
+    }
+
     pub(crate) fn infer_block(&mut self, block: &mut ExprBlock) -> Result<TypeVarId> {
         self.enter_scope();
         let mut last = self.fresh_type_var();
@@ -35,16 +44,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
                         let token_var = self.infer_expr(splice.token.as_mut())?;
                         let token_ty = self.resolve_to_ty(token_var)?;
-                        match token_ty {
-                            Ty::QuoteToken(qt) => {
-                                if !matches!(qt.kind, QuoteFragmentKind::Stmt) {
+                        if !self.is_stmt_or_item_quote(&token_ty) {
+                            match token_ty {
+                                Ty::QuoteToken(qt) => {
                                     self.emit_error(format!(
-                                        "splice in statement position requires stmt token, found {:?}",
+                                        "splice in statement position requires stmt/item token, found {:?}",
                                         qt.kind
                                     ));
                                 }
+                                _ => self.emit_error("splice expects a quote token expression"),
                             }
-                            _ => self.emit_error("splice expects a quote token expression"),
                         }
                         // Statements do not contribute a value
                         last = self.fresh_type_var();

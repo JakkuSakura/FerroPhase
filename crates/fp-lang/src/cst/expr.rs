@@ -499,6 +499,21 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `quote`
         self.bump_trivia_into(&mut children);
+        if self.peek_non_trivia_raw() == Some("<") {
+            self.expect_token_raw("<")?;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+            match self.peek_non_trivia_token_kind() {
+                Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                    self.bump_token_into(&mut children);
+                }
+                _ => return Err(self.error("expected quote fragment kind")),
+            }
+            self.bump_trivia_into(&mut children);
+            self.expect_token_raw(">")?;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
         let block = self.parse_block_expr()?;
         children.push(SyntaxElement::Node(Box::new(block)));
         let span = span_for_children(&children).unwrap_or(start);
