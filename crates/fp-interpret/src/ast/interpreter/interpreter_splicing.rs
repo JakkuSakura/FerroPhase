@@ -1,7 +1,91 @@
 use super::*;
-use fp_core::ast::QuoteFragmentKind;
+use fp_core::ast::{ExprQuote, QuoteFragmentKind};
 
 impl<'ctx> AstInterpreter<'ctx> {
+    pub(crate) fn materialize_quote_token(&mut self, value: Value) -> Value {
+        let Value::Expr(expr_box) = value else {
+            return value;
+        };
+        let expr = *expr_box;
+        let ExprKind::Quote(quote) = expr.kind() else {
+            return Value::Expr(Box::new(expr));
+        };
+        let fragment = self.build_quoted_fragment(quote);
+        self.quote_token_from_fragment(fragment)
+    }
+
+    fn quote_token_from_fragment(&mut self, fragment: QuotedFragment) -> Value {
+        match fragment {
+            QuotedFragment::Expr(expr) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
+                ExprQuote {
+                    block: expr.into_block(),
+                    kind: Some(QuoteFragmentKind::Expr),
+                },
+            )))),
+            QuotedFragment::Stmts(stmts) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
+                ExprQuote {
+                    block: ExprBlock::new_stmts(stmts),
+                    kind: Some(QuoteFragmentKind::Stmt),
+                },
+            )))),
+            QuotedFragment::Items(items) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
+                ExprQuote {
+                    block: ExprBlock::new_stmts(
+                        items
+                            .into_iter()
+                            .map(|item| BlockStmt::Item(Box::new(item)))
+                            .collect(),
+                    ),
+                    kind: Some(QuoteFragmentKind::Item),
+                },
+            )))),
+            QuotedFragment::Type(ty) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
+                ExprQuote {
+                    block: ExprBlock::new_expr(Expr::value(Value::Type(ty))),
+                    kind: Some(QuoteFragmentKind::Type),
+                },
+            )))),
+        }
+    }
+
+    pub(crate) fn build_quote_token_from_body(
+        &mut self,
+        kind: QuoteFragmentKind,
+        body: &Expr,
+    ) -> Value {
+        match kind {
+            QuoteFragmentKind::Item => {
+                let mut items = Vec::new();
+                if !self.collect_items_from_expr(body, &mut items) {
+                    return Value::undefined();
+                }
+                self.quote_token_from_fragment(QuotedFragment::Items(items))
+            }
+            QuoteFragmentKind::Expr | QuoteFragmentKind::Stmt | QuoteFragmentKind::Type => {
+                let block = body.clone().into_block();
+                let fragment = match kind {
+                    QuoteFragmentKind::Expr => {
+                        QuotedFragment::Expr(block.into_expr())
+                    }
+                    QuoteFragmentKind::Stmt => QuotedFragment::Stmts(block.stmts),
+                    QuoteFragmentKind::Type => {
+                        let mut block_expr = Expr::block(block);
+                        let value = self.eval_expr(&mut block_expr);
+                        match value {
+                            Value::Type(ty) => QuotedFragment::Type(ty),
+                            _ => {
+                                self.emit_error("quote<type> requires a type expression");
+                                QuotedFragment::Stmts(Vec::new())
+                            }
+                        }
+                    }
+                    QuoteFragmentKind::Item => unreachable!(),
+                };
+                self.quote_token_from_fragment(fragment)
+            }
+        }
+    }
+
     pub(crate) fn build_quoted_fragment(
         &mut self,
         quote: &fp_core::ast::ExprQuote,
@@ -9,12 +93,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(kind) = quote.kind {
             return match kind {
                 QuoteFragmentKind::Expr => {
-                    if let Some(expr) = quote.block.last_expr() {
-                        QuotedFragment::Expr(expr.clone())
-                    } else {
+                    if quote.block.last_expr().is_none() {
                         self.emit_error("quote<expr> requires a trailing expression");
-                        QuotedFragment::Stmts(quote.block.stmts.clone())
+                        return QuotedFragment::Stmts(quote.block.stmts.clone());
                     }
+                    QuotedFragment::Expr(quote.block.clone().into_expr())
                 }
                 QuoteFragmentKind::Stmt => QuotedFragment::Stmts(quote.block.stmts.clone()),
                 QuoteFragmentKind::Item => match self.collect_items_from_block(&quote.block) {
@@ -22,8 +105,27 @@ impl<'ctx> AstInterpreter<'ctx> {
                     None => QuotedFragment::Items(Vec::new()),
                 },
                 QuoteFragmentKind::Type => {
-                    self.emit_error("quote<type> is not supported for splicing yet");
-                    QuotedFragment::Stmts(quote.block.stmts.clone())
+                    let mut value_expr = match quote.block.last_expr() {
+                        Some(expr) => expr.clone(),
+                        None => {
+                            self.emit_error("quote<type> requires a trailing type expression");
+                            return QuotedFragment::Stmts(quote.block.stmts.clone());
+                        }
+                    };
+                    let value = match quote.block.stmts.len() {
+                        1 => self.eval_expr(&mut value_expr),
+                        _ => {
+                            let mut block_expr = Expr::block(quote.block.clone());
+                            self.eval_expr(&mut block_expr)
+                        }
+                    };
+                    match value {
+                        Value::Type(ty) => QuotedFragment::Type(ty),
+                        _ => {
+                            self.emit_error("quote<type> requires a type expression");
+                            QuotedFragment::Stmts(quote.block.stmts.clone())
+                        }
+                    }
                 }
             };
         }
@@ -89,6 +191,28 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 None => false,
             },
+            ExprKind::Splice(splice) => {
+                if !self.in_const_region() {
+                    self.emit_error("splice is only supported in const regions");
+                    return false;
+                }
+                let mut token = splice.token.as_ref().clone();
+                let Some(fragments) = self.resolve_splice_fragments(&mut token) else {
+                    return false;
+                };
+                for fragment in fragments {
+                    match fragment {
+                        QuotedFragment::Items(mut nested) => items.append(&mut nested),
+                        _ => {
+                            self.emit_error(
+                                "quote<item> only accepts item fragments when splicing",
+                            );
+                            return false;
+                        }
+                    }
+                }
+                true
+            }
             ExprKind::If(if_expr) => {
                 let mut cond = if_expr.cond.as_ref().clone();
                 match self.eval_expr(&mut cond) {

@@ -117,11 +117,10 @@ fn parse_items_ast_supports_quote_fn() {
                 Some(Ty::QuoteToken(qt)) => assert_eq!(qt.kind, QuoteFragmentKind::Item),
                 other => panic!("expected quote token return type, got {:?}", other),
             }
+            assert_eq!(func.sig.quote_kind, Some(QuoteFragmentKind::Item));
             match func.body.kind() {
-                ExprKind::Quote(quote) => {
-                    assert_eq!(quote.kind, Some(QuoteFragmentKind::Item));
-                }
-                other => panic!("expected quote body, got {:?}", other),
+                ExprKind::Block(_) => {}
+                other => panic!("expected block body, got {:?}", other),
             }
         }
         other => panic!("expected quote fn item, got {:?}", other),
@@ -133,6 +132,14 @@ fn parse_expr_ast_handles_splice_of_quote() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("splice ( quote { 1 } )").unwrap();
+    assert!(matches!(expr.kind(), ExprKind::Splice(_)));
+}
+
+#[test]
+fn parse_expr_ast_supports_splice_without_parens() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("splice build_items(true)").unwrap();
     assert!(matches!(expr.kind(), ExprKind::Splice(_)));
 }
 
