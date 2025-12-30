@@ -6,6 +6,36 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn eval_stmt(&mut self, stmt: &mut BlockStmt) -> Option<Value> {
         match stmt {
             BlockStmt::Expr(expr_stmt) => {
+                if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
+                    if !self.in_const_region() {
+                        self.emit_error("splice is only valid inside const { ... } regions");
+                        return None;
+                    }
+                    let Some(fragments) =
+                        self.resolve_splice_fragments(splice.token.as_mut())
+                    else {
+                        return None;
+                    };
+                    let mut pending = Vec::new();
+                    for fragment in fragments {
+                        match fragment {
+                            QuotedFragment::Items(items) => pending.extend(items),
+                            QuotedFragment::Expr(_)
+                            | QuotedFragment::Stmts(_)
+                            | QuotedFragment::Type(_) => {
+                                self.emit_error(
+                                    "module-level splice only supports item fragments",
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                    if !pending.is_empty() {
+                        self.append_pending_items(pending);
+                        self.mark_mutated();
+                    }
+                    return None;
+                }
                 let value = self.eval_expr(expr_stmt.expr.as_mut());
                 if expr_stmt.has_value() {
                     Some(value)
