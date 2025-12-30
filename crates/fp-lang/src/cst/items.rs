@@ -355,6 +355,28 @@ fn parse_item_cst(
                 Ok(node(SyntaxKind::ItemConst, children))
             }
         }
+        TokenKind::Keyword(Keyword::Quote) => {
+            if matches!(
+                input.get(1),
+                Some(Token {
+                    kind: TokenKind::Keyword(Keyword::Fn),
+                    ..
+                })
+            ) {
+                children.push(SyntaxElement::Token(syntax_token_from_token(
+                    &advance(input).unwrap(),
+                )));
+                advance(input);
+                let sig = parse_fn_sig_cst(input)?;
+                children.push(SyntaxElement::Node(Box::new(sig)));
+                consume_where_clause(input);
+                let body = parse_expr_prefix_from_tokens(input)?;
+                children.push(SyntaxElement::Node(Box::new(body)));
+                Ok(node(SyntaxKind::ItemFn, children))
+            } else {
+                Err(ErrMode::Cut(ContextError::new()))
+            }
+        }
         TokenKind::Keyword(Keyword::Static) => {
             advance(input);
             let name = expect_ident_token(input)?;
