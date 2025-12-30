@@ -141,6 +141,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::unit()
             }
             IntrinsicCallKind::ConstBlock => {
+                if matches!(self.mode, InterpreterMode::RunTime) {
+                    return Value::unit();
+                }
                 if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
                 {
                     if let Some(expr) = args.first_mut() {
