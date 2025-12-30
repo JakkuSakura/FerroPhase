@@ -1,5 +1,6 @@
 use super::*;
 use fp_core::ast::PatternKind;
+use std::sync::{Arc, Mutex};
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn insert_value(&mut self, name: &str, value: Value) {
@@ -8,10 +9,40 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    pub(super) fn insert_mutable_value(&mut self, name: &str, value: Value) {
+        if let Some(scope) = self.value_env.last_mut() {
+            scope.insert(name.to_string(), StoredValue::shared(value));
+        }
+    }
+
+    pub(super) fn insert_shared_value(&mut self, name: &str, shared: Arc<Mutex<Value>>) {
+        if let Some(scope) = self.value_env.last_mut() {
+            scope.insert(name.to_string(), StoredValue::Shared(shared));
+        }
+    }
+
     pub(super) fn lookup_value(&self, name: &str) -> Option<Value> {
         for scope in self.value_env.iter().rev() {
-            if let Some(StoredValue::Plain(v)) = scope.get(name) {
-                return Some(v.clone());
+            if let Some(value) = scope.get(name) {
+                return Some(value.value());
+            }
+        }
+        None
+    }
+
+    pub(super) fn lookup_stored_value(&self, name: &str) -> Option<StoredValue> {
+        for scope in self.value_env.iter().rev() {
+            if let Some(value) = scope.get(name) {
+                return Some(value.clone());
+            }
+        }
+        None
+    }
+
+    pub(super) fn lookup_stored_value_mut(&mut self, name: &str) -> Option<&mut StoredValue> {
+        for scope in self.value_env.iter_mut().rev() {
+            if scope.contains_key(name) {
+                return scope.get_mut(name);
             }
         }
         None
@@ -25,7 +56,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn bind_pattern(&mut self, pattern: &Pattern, value: Value) {
         match pattern.kind() {
             PatternKind::Ident(ident) => {
-                self.insert_value(ident.ident.as_str(), value);
+                if ident.mutability.unwrap_or(false) {
+                    self.insert_mutable_value(ident.ident.as_str(), value);
+                } else {
+                    self.insert_value(ident.ident.as_str(), value);
+                }
             }
             PatternKind::Type(inner) => self.bind_pattern(&inner.pat, value),
             PatternKind::Tuple(tuple) => {
@@ -58,6 +93,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                 _ => false,
             },
             PatternKind::Variant(variant) => {
+                if let Value::Any(any) = value {
+                    if let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() {
+                        let expected_name = match variant.name.kind() {
+                            ExprKind::Locator(locator) => Self::locator_base_name(locator),
+                            _ => variant.name.to_string(),
+                        };
+                        if enum_value.variant_name != expected_name {
+                            return false;
+                        }
+                        if let Some(inner) = variant.pattern.as_ref() {
+                            if let Some(payload) = enum_value.payload.as_ref() {
+                                return self.pattern_matches(inner, payload);
+                            }
+                            return false;
+                        }
+                        return true;
+                    }
+                }
+
                 if variant.pattern.is_some() {
                     return false;
                 }
@@ -70,6 +124,70 @@ impl<'ctx> AstInterpreter<'ctx> {
                     _ => false,
                 }
             }
+            PatternKind::Struct(pattern_struct) => match value {
+                Value::Struct(struct_value) => pattern_struct.fields.iter().all(|field| {
+                    struct_value
+                        .structural
+                        .fields
+                        .iter()
+                        .find(|existing| existing.name.as_str() == field.name.as_str())
+                        .map(|existing| {
+                            field
+                                .rename
+                                .as_ref()
+                                .map(|pat| self.pattern_matches(pat, &existing.value))
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(false)
+                }),
+                Value::Structural(structural) => pattern_struct.fields.iter().all(|field| {
+                    structural
+                        .fields
+                        .iter()
+                        .find(|existing| existing.name.as_str() == field.name.as_str())
+                        .map(|existing| {
+                            field
+                                .rename
+                                .as_ref()
+                                .map(|pat| self.pattern_matches(pat, &existing.value))
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(false)
+                }),
+                _ => false,
+            },
+            PatternKind::Structural(pattern_struct) => match value {
+                Value::Structural(structural) => pattern_struct.fields.iter().all(|field| {
+                    structural
+                        .fields
+                        .iter()
+                        .find(|existing| existing.name.as_str() == field.name.as_str())
+                        .map(|existing| {
+                            field
+                                .rename
+                                .as_ref()
+                                .map(|pat| self.pattern_matches(pat, &existing.value))
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(false)
+                }),
+                Value::Struct(struct_value) => pattern_struct.fields.iter().all(|field| {
+                    struct_value
+                        .structural
+                        .fields
+                        .iter()
+                        .find(|existing| existing.name.as_str() == field.name.as_str())
+                        .map(|existing| {
+                            field
+                                .rename
+                                .as_ref()
+                                .map(|pat| self.pattern_matches(pat, &existing.value))
+                                .unwrap_or(true)
+                        })
+                        .unwrap_or(false)
+                }),
+                _ => false,
+            },
             _ => false,
         }
     }

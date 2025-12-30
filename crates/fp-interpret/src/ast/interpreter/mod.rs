@@ -1,6 +1,5 @@
 use std::collections::{HashMap, HashSet};
-// use std::mem; // removed unused import
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
@@ -9,16 +8,19 @@ use fp_core::ast::TypeQuoteToken;
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
-    ItemDefFunction, ItemKind, Node, NodeKind, StmtLet, Ty, TypeAny, TypeArray, TypeFunction,
-    TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeTuple, TypeUnit, TypeVec,
-    Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    ItemDefFunction, ItemKind, Node, NodeKind, StmtLet, StructuralField, Ty, TypeAny,
+    Path, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeReference,
+    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit, TypeVec, Value, ValueField,
+    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
+use fp_core::ast::DecimalType;
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
+use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
 mod blocks;
 mod closures;
@@ -43,7 +45,10 @@ pub enum QuotedFragment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InterpreterMode {
+    /// Compile-time evaluation for const regions: allow most operations that do
+    /// not require external access (IO, host bindings, runtime-only intrinsics).
     CompileTime,
+    /// Runtime evaluation with full semantics and side effects.
     RunTime,
 }
 
@@ -87,9 +92,105 @@ struct ConstClosure {
     function_ty: Option<Ty>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 enum StoredValue {
     Plain(Value),
+    Shared(Arc<Mutex<Value>>),
+}
+
+impl StoredValue {
+    fn value(&self) -> Value {
+        match self {
+            StoredValue::Plain(value) => value.clone(),
+            StoredValue::Shared(shared) => shared
+                .lock()
+                .map(|value| value.clone())
+                .unwrap_or_else(|err| err.into_inner().clone()),
+        }
+    }
+
+    fn shared(value: Value) -> Self {
+        StoredValue::Shared(Arc::new(Mutex::new(value)))
+    }
+
+    fn shared_handle(&self) -> Option<Arc<Mutex<Value>>> {
+        match self {
+            StoredValue::Shared(shared) => Some(Arc::clone(shared)),
+            StoredValue::Plain(_) => None,
+        }
+    }
+
+    fn assign(&mut self, value: Value) -> bool {
+        match self {
+            StoredValue::Plain(_) => false,
+            StoredValue::Shared(shared) => {
+                match shared.lock() {
+                    Ok(mut guard) => {
+                        *guard = value;
+                    }
+                    Err(err) => {
+                        *err.into_inner() = value;
+                    }
+                }
+                true
+            }
+        }
+    }
+}
+
+impl PartialEq for StoredValue {
+    fn eq(&self, other: &Self) -> bool {
+        self.value() == other.value()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ImplContext {
+    self_ty: Option<String>,
+    trait_ty: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeEnum {
+    enum_name: String,
+    variant_name: String,
+    payload: Option<Value>,
+    discriminant: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+enum EnumVariantPayload {
+    Unit,
+    Tuple(usize),
+    Struct(Vec<Ident>),
+}
+
+#[derive(Debug, Clone)]
+struct EnumVariantInfo {
+    enum_name: String,
+    variant_name: String,
+    payload: EnumVariantPayload,
+    discriminant: Option<i64>,
+}
+
+#[derive(Debug, Clone)]
+enum StructLiteralType {
+    Struct(TypeStruct),
+    Structural(TypeStructural),
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeFlow {
+    Value(Value),
+    Break(Option<Value>),
+    Continue,
+    Return(Option<Value>),
+}
+
+#[derive(Debug, Clone)]
+struct ReceiverBinding {
+    value: Value,
+    shared: Option<Arc<Mutex<Value>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +226,13 @@ pub struct AstInterpreter<'ctx> {
     closure_types: HashMap<String, Ty>,
     typer: Option<AstTypeInferencer<'ctx>>,
     in_const_region: usize,
+    impl_stack: Vec<ImplContext>,
+    trait_impls: HashMap<String, HashSet<String>>,
+    impl_methods: HashMap<String, HashMap<String, ItemDefFunction>>,
+    trait_methods: HashMap<String, HashMap<String, ItemDefFunction>>,
+    enum_variants: HashMap<String, EnumVariantInfo>,
+    loop_depth: usize,
+    function_depth: usize,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -155,6 +263,13 @@ impl<'ctx> AstInterpreter<'ctx> {
             closure_types: HashMap::new(),
             typer: None,
             in_const_region: 0,
+            impl_stack: Vec::new(),
+            trait_impls: HashMap::new(),
+            impl_methods: HashMap::new(),
+            trait_methods: HashMap::new(),
+            enum_variants: HashMap::new(),
+            loop_depth: 0,
+            function_depth: 0,
         }
     }
 
@@ -193,14 +308,20 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub fn execute_main(&mut self) -> Option<Value> {
-        let mut body_expr = self
-            .functions
-            .get("main")
-            .map(|func| (*func.body).clone())?;
-        self.push_scope();
-        let value = self.eval_expr(&mut body_expr);
-        self.pop_scope();
-        Some(value)
+        let function = self.functions.get("main").cloned()?;
+        match self.mode {
+            InterpreterMode::CompileTime => {
+                let mut body_expr = (*function.body).clone();
+                self.push_scope();
+                let value = self.eval_expr(&mut body_expr);
+                self.pop_scope();
+                Some(value)
+            }
+            InterpreterMode::RunTime => {
+                let flow = self.call_function_runtime(function, Vec::new());
+                Some(self.finish_runtime_flow(flow))
+            }
+        }
     }
 
     pub fn take_outcome(&mut self) -> InterpreterOutcome {
@@ -224,9 +345,19 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub fn evaluate_expression(&mut self, expr: &mut Expr) -> Value {
         self.push_scope();
-        let value = self.eval_expr(expr);
+        let value = self.eval_expr_with_mode(expr);
         self.pop_scope();
         value
+    }
+
+    fn eval_expr_with_mode(&mut self, expr: &mut Expr) -> Value {
+        match self.mode {
+            InterpreterMode::CompileTime => self.eval_expr(expr),
+            InterpreterMode::RunTime => {
+                let flow = self.eval_expr_runtime(expr);
+                self.finish_runtime_flow(flow)
+            }
+        }
     }
 
     fn evaluate_item(&mut self, item: &mut Item) {
@@ -250,22 +381,38 @@ impl<'ctx> AstInterpreter<'ctx> {
                 // We approximate enum values by their discriminant integer.
                 let mut next_discriminant: i64 = 0;
                 for variant in &mut def.value.variants {
+                    let payload = self.enum_payload_from_ty(&variant.value);
+                    let mut discriminant_value: Option<i64> = None;
                     if let Some(discriminant_expr) = variant.discriminant.as_mut() {
                         let mut disc_expr = discriminant_expr.get().clone();
                         let disc_value = self.eval_expr(&mut disc_expr);
                         if let Value::Int(int_value) = disc_value {
                             next_discriminant = int_value.value;
+                            discriminant_value = Some(next_discriminant);
                         } else {
                             self.emit_error(format!(
                                 "enum discriminant for {}::{} must be an integer",
                                 def.name, variant.name
                             ));
                         }
+                    } else {
+                        discriminant_value = Some(next_discriminant);
                     }
 
                     let qualified = self.qualified_name(&format!("{}::{}", def.name, variant.name));
                     self.evaluated_constants
                         .insert(qualified, Value::int(next_discriminant));
+                    let enum_key =
+                        self.qualified_name(&format!("{}::{}", def.name, variant.name));
+                    self.enum_variants.insert(
+                        enum_key,
+                        EnumVariantInfo {
+                            enum_name: def.name.as_str().to_string(),
+                            variant_name: variant.name.as_str().to_string(),
+                            payload,
+                            discriminant: discriminant_value,
+                        },
+                    );
                     next_discriminant += 1;
                 }
             }
@@ -362,15 +509,61 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.module_stack.pop();
             }
             ItemKind::Impl(impl_block) => {
+                let context = self.resolve_impl_context(impl_block);
+                if let Some(ref context) = context {
+                    if let Some(trait_name) = &context.trait_ty {
+                        if let Some(self_name) = &context.self_ty {
+                            self.trait_impls
+                                .entry(self_name.clone())
+                                .or_default()
+                                .insert(trait_name.clone());
+                        }
+                    }
+                }
+                self.impl_stack.push(context.unwrap_or(ImplContext {
+                    self_ty: None,
+                    trait_ty: None,
+                }));
                 self.push_scope();
                 for child in &mut impl_block.items {
                     self.evaluate_item(child);
                 }
                 self.pop_scope();
+                self.impl_stack.pop();
             }
             ItemKind::DefFunction(func) => {
                 let base_name = func.name.as_str().to_string();
                 let qualified_name = self.qualified_name(func.name.as_str());
+                if let Some(context) = self
+                    .impl_stack
+                    .last()
+                    .cloned()
+                    .filter(|ctx| ctx.self_ty.is_some())
+                {
+                    if let Some(self_ty) = context.self_ty {
+                        let method_key = format!("{}::{}", self_ty, func.name.as_str());
+                        self.impl_methods
+                            .entry(self_ty.clone())
+                            .or_default()
+                            .insert(func.name.as_str().to_string(), func.clone());
+                        if func.sig.generics_params.is_empty() {
+                            self.functions.insert(method_key.clone(), func.clone());
+                        } else {
+                            self.generic_functions.insert(
+                                method_key.clone(),
+                                GenericTemplate {
+                                    function: func.clone(),
+                                    generics: func
+                                        .sig
+                                        .generics_params
+                                        .iter()
+                                        .map(|param| param.name.as_str().to_string())
+                                        .collect(),
+                                },
+                            );
+                        }
+                    }
+                }
                 if func.sig.generics_params.is_empty() {
                     self.functions.insert(base_name, func.clone());
                     self.functions.insert(qualified_name, func.clone());
@@ -394,13 +587,71 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Expr(expr) => {
                 self.eval_expr(expr);
             }
+            ItemKind::DefTrait(trait_def) => {
+                let trait_name = trait_def.name.as_str().to_string();
+                let entry = self.trait_methods.entry(trait_name).or_default();
+                for member in &trait_def.items {
+                    if let ItemKind::DefFunction(func) = member.kind() {
+                        entry.insert(func.name.as_str().to_string(), func.clone());
+                    }
+                }
+            }
             ItemKind::DeclConst(_)
             | ItemKind::DeclStatic(_)
             | ItemKind::DeclFunction(_)
             | ItemKind::DeclType(_)
             | ItemKind::Import(_)
-            | ItemKind::DefTrait(_)
             | ItemKind::Any(_) => {}
+        }
+    }
+
+    // Determine enum payload shape for runtime construction/matching.
+    fn enum_payload_from_ty(&self, ty: &Ty) -> EnumVariantPayload {
+        match ty {
+            Ty::Unit(_) => EnumVariantPayload::Unit,
+            Ty::Tuple(tuple) => EnumVariantPayload::Tuple(tuple.types.len()),
+            Ty::Struct(def) => EnumVariantPayload::Struct(
+                def.fields.iter().map(|field| field.name.clone()).collect(),
+            ),
+            Ty::Structural(def) => EnumVariantPayload::Struct(
+                def.fields.iter().map(|field| field.name.clone()).collect(),
+            ),
+            _ => EnumVariantPayload::Unit,
+        }
+    }
+
+    // Extract impl context names to resolve method dispatch and trait bindings.
+    fn resolve_impl_context(&self, impl_block: &fp_core::ast::ItemImpl) -> Option<ImplContext> {
+        let self_ty = self.type_name_from_expr(&impl_block.self_ty);
+        let trait_ty = impl_block
+            .trait_ty
+            .as_ref()
+            .map(|locator| Self::locator_base_name(locator));
+        Some(ImplContext { self_ty, trait_ty })
+    }
+
+    fn type_name_from_expr(&self, expr: &Expr) -> Option<String> {
+        match expr.kind() {
+            ExprKind::Locator(locator) => Some(Self::locator_base_name(locator)),
+            ExprKind::Reference(reference) => self.type_name_from_expr(reference.referee.as_ref()),
+            ExprKind::Paren(paren) => self.type_name_from_expr(paren.expr.as_ref()),
+            _ => None,
+        }
+    }
+
+    fn locator_base_name(locator: &Locator) -> String {
+        match locator {
+            Locator::Ident(ident) => ident.as_str().trim_start_matches('#').to_string(),
+            Locator::Path(path) => path
+                .segments
+                .last()
+                .map(|ident| ident.as_str().trim_start_matches('#').to_string())
+                .unwrap_or_default(),
+            Locator::ParameterPath(path) => path
+                .segments
+                .last()
+                .map(|seg| seg.ident.as_str().trim_start_matches('#').to_string())
+                .unwrap_or_default(),
         }
     }
 
@@ -445,6 +696,19 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::Int(int_val) => Value::int(int_val.value),
                 Value::Bool(bool_val) => Value::int(if bool_val.value { 1 } else { 0 }),
                 Value::Decimal(decimal_val) => Value::int(decimal_val.value as i64),
+                Value::Any(any) => {
+                    if let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() {
+                        if let Some(discriminant) = enum_value.discriminant {
+                            return Value::int(discriminant);
+                        }
+                    }
+                    self.emit_error(format!(
+                        "cannot cast value {} to integer type {}",
+                        Value::Any(any.clone()),
+                        target_ty
+                    ));
+                    Value::undefined()
+                }
                 other => {
                     self.emit_error(format!(
                         "cannot cast value {} to integer type {}",
@@ -790,7 +1054,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         let generics_set: HashSet<String> = template.generics.iter().cloned().collect();
         let mut subst = HashMap::new();
         for (param, arg) in template.function.sig.params.iter().zip(args.iter()) {
-            let arg_ty = arg.ty()?.clone();
+            let Some(arg_ty) = arg.ty().cloned() else {
+                continue;
+            };
             if !self.match_type(&param.ty, &arg_ty, &generics_set, &mut subst) {
                 return None;
             }
@@ -1390,19 +1656,541 @@ impl<'ctx> AstInterpreter<'ctx> {
         last_value
     }
 
-    fn evaluate_struct_literal(&mut self, struct_expr: &mut fp_core::ast::ExprStruct) -> Value {
-        let ty_value = self.eval_expr(struct_expr.name.as_mut());
-        let struct_ty = match ty_value {
-            Value::Type(Ty::Struct(struct_ty)) => struct_ty,
-            Value::Type(other_ty) => {
+    // Convert a control-flow result into a value, emitting diagnostics for stray flow.
+    fn finish_runtime_flow(&mut self, flow: RuntimeFlow) -> Value {
+        match flow {
+            RuntimeFlow::Value(value) => value,
+            RuntimeFlow::Break(_) => {
+                self.emit_error("`break` is not allowed outside of a loop");
+                Value::undefined()
+            }
+            RuntimeFlow::Continue => {
+                self.emit_error("`continue` is not allowed outside of a loop");
+                Value::undefined()
+            }
+            RuntimeFlow::Return(value) => {
+                self.emit_error("`return` is not allowed outside of a function");
+                value.unwrap_or_else(Value::unit)
+            }
+        }
+    }
+
+    // Evaluate a block in runtime-capable mode, propagating control-flow.
+    fn eval_block_runtime(&mut self, block: &mut ExprBlock) -> RuntimeFlow {
+        self.push_scope();
+        let mut last_value = Value::unit();
+        for stmt in &mut block.stmts {
+            match stmt {
+                BlockStmt::Expr(expr_stmt) => {
+                    let flow = self.eval_expr_runtime(expr_stmt.expr.as_mut());
+                    match flow {
+                        RuntimeFlow::Value(value) => {
+                            if expr_stmt.has_value() {
+                                last_value = value;
+                            }
+                        }
+                        other => {
+                            self.pop_scope();
+                            return other;
+                        }
+                    }
+                }
+                BlockStmt::Let(stmt_let) => {
+                    if let Some(init) = stmt_let.init.as_mut() {
+                        let flow = self.eval_expr_runtime(init);
+                        match flow {
+                            RuntimeFlow::Value(value) => {
+                                self.bind_pattern(&stmt_let.pat, value);
+                            }
+                            other => {
+                                self.pop_scope();
+                                return other;
+                            }
+                        }
+                    } else {
+                        self.emit_error(
+                            "let bindings without initializer are not supported in runtime",
+                        );
+                    }
+                }
+                BlockStmt::Item(item) => {
+                    self.evaluate_item(item.as_mut());
+                }
+                BlockStmt::Noop | BlockStmt::Any(_) => {}
+            }
+        }
+        self.pop_scope();
+        RuntimeFlow::Value(last_value)
+    }
+
+    // Resolve receiver bindings, preserving mutability if possible.
+    fn resolve_receiver_binding(&mut self, expr: &mut Expr) -> ReceiverBinding {
+        if let ExprKind::Locator(locator) = expr.kind_mut() {
+            if let Some(ident) = locator.as_ident() {
+                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                    return ReceiverBinding {
+                        value: stored.value(),
+                        shared: stored.shared_handle(),
+                    };
+                }
+            }
+        }
+        let flow = self.eval_expr_runtime(expr);
+        ReceiverBinding {
+            value: self.finish_runtime_flow(flow),
+            shared: None,
+        }
+    }
+
+    // Evaluate assignment with mutation tracking.
+    fn eval_assign_runtime(&mut self, assign: &mut fp_core::ast::ExprAssign) -> RuntimeFlow {
+        let value = match self.eval_expr_runtime(assign.value.as_mut()) {
+            RuntimeFlow::Value(value) => value,
+            other => return other,
+        };
+        match assign.target.kind_mut() {
+            ExprKind::Locator(locator) => {
+                let name = locator
+                    .as_ident()
+                    .map(|ident| ident.as_str().to_string())
+                    .unwrap_or_else(|| locator.to_string());
+                if let Some(stored) = self.lookup_stored_value_mut(&name) {
+                    if stored.assign(value.clone()) {
+                        return RuntimeFlow::Value(value);
+                    }
+                }
                 self.emit_error(format!(
-                    "expected struct type in literal, found {}",
-                    other_ty
+                    "assignment target '{}' is not mutable",
+                    locator
+                ));
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprKind::Select(select) => {
+                if let ExprKind::Locator(locator) = select.obj.kind_mut() {
+                    let name = locator
+                        .as_ident()
+                        .map(|ident| ident.as_str().to_string())
+                        .unwrap_or_else(|| locator.to_string());
+                    if let Some(stored) = self.lookup_stored_value_mut(&name) {
+                        if let Some(shared) = stored.shared_handle() {
+                            match shared.lock() {
+                                Ok(mut guard) => {
+                                    if self.assign_field_value(
+                                        &mut guard,
+                                        &select.field,
+                                        value.clone(),
+                                    ) {
+                                        return RuntimeFlow::Value(value);
+                                    }
+                                }
+                                Err(err) => {
+                                    let mut guard = err.into_inner();
+                                    if self.assign_field_value(
+                                        &mut guard,
+                                        &select.field,
+                                        value.clone(),
+                                    ) {
+                                        return RuntimeFlow::Value(value);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                self.emit_error("cannot assign to field on non-mutable target");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            _ => {
+                self.emit_error("unsupported assignment target in runtime mode");
+                RuntimeFlow::Value(Value::undefined())
+            }
+        }
+    }
+
+    // Run a `loop {}` expression with break/continue support.
+    fn eval_loop_runtime(&mut self, loop_expr: &mut fp_core::ast::ExprLoop) -> RuntimeFlow {
+        self.loop_depth += 1;
+        loop {
+            match self.eval_expr_runtime(loop_expr.body.as_mut()) {
+                RuntimeFlow::Value(_) | RuntimeFlow::Continue => {}
+                RuntimeFlow::Break(value) => {
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Value(value.unwrap_or_else(Value::unit));
+                }
+                RuntimeFlow::Return(value) => {
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Return(value);
+                }
+            }
+        }
+    }
+
+    // Run a `while` expression.
+    fn eval_while_runtime(&mut self, while_expr: &mut fp_core::ast::ExprWhile) -> RuntimeFlow {
+        self.loop_depth += 1;
+        loop {
+            let cond = match self.eval_expr_runtime(while_expr.cond.as_mut()) {
+                RuntimeFlow::Value(value) => value,
+                other => {
+                    self.loop_depth -= 1;
+                    return other;
+                }
+            };
+            match cond {
+                Value::Bool(flag) => {
+                    if !flag.value {
+                        self.loop_depth -= 1;
+                        return RuntimeFlow::Value(Value::unit());
+                    }
+                }
+                _ => {
+                    self.emit_error("expected boolean condition in while loop");
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            }
+
+            match self.eval_expr_runtime(while_expr.body.as_mut()) {
+                RuntimeFlow::Value(_) | RuntimeFlow::Continue => {}
+                RuntimeFlow::Break(value) => {
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Value(value.unwrap_or_else(Value::unit));
+                }
+                RuntimeFlow::Return(value) => {
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Return(value);
+                }
+            }
+        }
+    }
+
+    // Run a `for` expression over lists or ranges.
+    fn eval_for_runtime(&mut self, for_expr: &mut fp_core::ast::ExprFor) -> RuntimeFlow {
+        let iter_value = match self.eval_expr_runtime(for_expr.iter.as_mut()) {
+            RuntimeFlow::Value(value) => value,
+            other => return other,
+        };
+        let values = match iter_value {
+            Value::List(list) => list.values,
+            other => {
+                self.emit_error(format!(
+                    "for loop expects iterable list, found {}",
+                    other
+                ));
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        };
+
+        self.loop_depth += 1;
+        for value in values {
+            self.push_scope();
+            self.bind_pattern(&for_expr.pat, value);
+            match self.eval_expr_runtime(for_expr.body.as_mut()) {
+                RuntimeFlow::Value(_) => {
+                    self.pop_scope();
+                }
+                RuntimeFlow::Continue => {
+                    self.pop_scope();
+                    continue;
+                }
+                RuntimeFlow::Break(value) => {
+                    self.pop_scope();
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Value(value.unwrap_or_else(Value::unit));
+                }
+                RuntimeFlow::Return(value) => {
+                    self.pop_scope();
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Return(value);
+                }
+            }
+        }
+        self.loop_depth -= 1;
+        RuntimeFlow::Value(Value::unit())
+    }
+
+    // Runtime-friendly array repeat evaluation.
+    fn eval_array_repeat_runtime(&mut self, repeat: &mut fp_core::ast::ExprArrayRepeat) -> Value {
+        let elem_value = match self.eval_expr_runtime(repeat.elem.as_mut()) {
+            RuntimeFlow::Value(value) => value,
+            other => return self.finish_runtime_flow(other),
+        };
+        let len_value = match self.eval_expr_runtime(repeat.len.as_mut()) {
+            RuntimeFlow::Value(value) => value,
+            other => return self.finish_runtime_flow(other),
+        };
+
+        let len = match len_value {
+            Value::Int(int) if int.value >= 0 => int.value as usize,
+            Value::Int(_) => {
+                self.emit_error("array repeat length must be non-negative");
+                return Value::undefined();
+            }
+            Value::Decimal(decimal) if decimal.value >= 0.0 => decimal.value as usize,
+            other => {
+                self.emit_error(format!(
+                    "array repeat length must be an integer constant, found {}",
+                    other
                 ));
                 return Value::undefined();
             }
+        };
+
+        let mut values = Vec::with_capacity(len);
+        for _ in 0..len {
+            values.push(elem_value.clone());
+        }
+        Value::List(ValueList::new(values))
+    }
+
+    // Build a struct literal, handling enum struct variants when needed.
+    fn evaluate_struct_literal_runtime(
+        &mut self,
+        struct_expr: &mut fp_core::ast::ExprStruct,
+    ) -> Value {
+        if let ExprKind::Locator(locator) = struct_expr.name.kind_mut() {
+            if let Some(info) = self.lookup_enum_variant(locator) {
+                if matches!(info.payload, EnumVariantPayload::Struct(_)) {
+                    let mut fields = Vec::new();
+                    for field in &mut struct_expr.fields {
+                        let value = if let Some(expr) = field.value.as_mut() {
+                            match self.eval_expr_runtime(expr) {
+                                RuntimeFlow::Value(value) => value,
+                                other => return self.finish_runtime_flow(other),
+                            }
+                        } else {
+                            Value::undefined()
+                        };
+                        fields.push(ValueField::new(field.name.clone(), value));
+                    }
+                    return self.build_enum_value(
+                        &info,
+                        Some(Value::Structural(ValueStructural::new(fields))),
+                    );
+                }
+            }
+        }
+
+        let ty_value = match self.eval_expr_runtime(struct_expr.name.as_mut()) {
+            RuntimeFlow::Value(value) => value,
+            other => return self.finish_runtime_flow(other),
+        };
+        let struct_ty = match self.resolve_struct_literal_type(ty_value) {
+            Some(struct_ty) => struct_ty,
+            None => {
+                self.emit_error("expected struct type in literal");
+                return Value::undefined();
+            }
+        };
+
+        let mut fields = Vec::new();
+        for field in &mut struct_expr.fields {
+            let value = field
+                .value
+                .as_mut()
+                .map(|expr| {
+                    let flow = self.eval_expr_runtime(expr);
+                    self.finish_runtime_flow(flow)
+                })
+                .unwrap_or_else(|| {
+                    self.lookup_value(field.name.as_str()).unwrap_or_else(|| {
+                        self.emit_error(format!(
+                            "missing initializer for field '{}' in struct literal",
+                            field.name
+                        ));
+                        Value::undefined()
+                    })
+                });
+            fields.push(ValueField::new(field.name.clone(), value));
+        }
+
+        match struct_ty {
+            StructLiteralType::Struct(struct_ty) => Value::Struct(ValueStruct::new(struct_ty, fields)),
+            StructLiteralType::Structural(_) => Value::Structural(ValueStructural::new(fields)),
+        }
+    }
+
+    // Evaluate indexing on list/tuple values.
+    fn evaluate_index(&mut self, target: Value, index: Value) -> Value {
+        let idx = match index {
+            Value::Int(int) if int.value >= 0 => int.value as usize,
             other => {
-                self.emit_error(format!("expected struct type in literal, found {}", other));
+                self.emit_error(format!("index must be a non-negative integer, found {}", other));
+                return Value::undefined();
+            }
+        };
+
+        match target {
+            Value::List(list) => list.values.get(idx).cloned().unwrap_or_else(|| {
+                self.emit_error("index out of bounds for list");
+                Value::undefined()
+            }),
+            Value::Tuple(tuple) => tuple.values.get(idx).cloned().unwrap_or_else(|| {
+                self.emit_error("index out of bounds for tuple");
+                Value::undefined()
+            }),
+            other => {
+                self.emit_error(format!("cannot index into value {}", other));
+                Value::undefined()
+            }
+        }
+    }
+
+    // Assign into a struct/structural value.
+    fn assign_field_value(&mut self, target: &mut Value, field: &Ident, value: Value) -> bool {
+        match target {
+            Value::Struct(struct_value) => {
+                if let Some(existing) = struct_value
+                    .structural
+                    .fields
+                    .iter_mut()
+                    .find(|f| f.name.as_str() == field.as_str())
+                {
+                    existing.value = value;
+                    return true;
+                }
+            }
+            Value::Structural(structural) => {
+                if let Some(existing) = structural
+                    .fields
+                    .iter_mut()
+                    .find(|f| f.name.as_str() == field.as_str())
+                {
+                    existing.value = value;
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        self.emit_error(format!("field '{}' not found on struct", field));
+        false
+    }
+
+    fn lookup_enum_variant(&self, locator: &Locator) -> Option<EnumVariantInfo> {
+        let mut candidates = vec![locator.to_string()];
+        if let Some(ident) = locator.as_ident() {
+            candidates.push(ident.as_str().to_string());
+        }
+        for candidate in candidates {
+            if let Some(info) = self.enum_variants.get(&candidate) {
+                return Some(info.clone());
+            }
+        }
+        None
+    }
+
+    fn resolve_enum_variant(&self, locator: &Locator) -> Option<Value> {
+        let info = self.lookup_enum_variant(locator)?;
+        if !matches!(info.payload, EnumVariantPayload::Unit) {
+            return None;
+        }
+        Some(self.build_enum_value(&info, None))
+    }
+
+    fn build_enum_value(&self, info: &EnumVariantInfo, payload: Option<Value>) -> Value {
+        Value::Any(AnyBox::new(RuntimeEnum {
+            enum_name: info.enum_name.clone(),
+            variant_name: info.variant_name.clone(),
+            payload,
+            discriminant: info.discriminant,
+        }))
+    }
+
+    fn value_type_name(&self, value: &Value) -> Option<String> {
+        match value {
+            Value::Struct(struct_value) => Some(struct_value.ty.name.as_str().to_string()),
+            Value::Type(Ty::Struct(struct_ty)) => Some(struct_ty.name.as_str().to_string()),
+            Value::Any(any) => any
+                .downcast_ref::<RuntimeEnum>()
+                .map(|enm| enm.enum_name.clone()),
+            _ => None,
+        }
+    }
+
+    fn infer_value_ty(&self, value: &Value) -> Option<Ty> {
+        match value {
+            Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
+            Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
+            Value::Bool(_) => Some(Ty::Primitive(TypePrimitive::Bool)),
+            Value::Char(_) => Some(Ty::Primitive(TypePrimitive::Char)),
+            Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
+            Value::List(_) => Some(Ty::Primitive(TypePrimitive::List)),
+            Value::Struct(struct_value) => Some(Ty::Struct(struct_value.ty.clone())),
+            Value::Function(function) => Some(Ty::Function(TypeFunction {
+                params: function
+                    .sig
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                generics_params: function.sig.generics_params.clone(),
+                ret_ty: function.sig.ret_ty.as_ref().map(|ty| Box::new(ty.clone())),
+            })),
+            Value::Any(any) => any
+                .downcast_ref::<ConstClosure>()
+                .and_then(|closure| closure.function_ty.clone()),
+            _ => None,
+        }
+    }
+
+    fn resolve_method_function(
+        &mut self,
+        receiver: &ReceiverBinding,
+        method_name: &str,
+        args: &mut [Expr],
+    ) -> Option<ItemDefFunction> {
+        let type_name = self.value_type_name(&receiver.value)?;
+        let method_key = format!("{}::{}", type_name, method_name);
+
+        let local_method = self
+            .impl_methods
+            .get(&type_name)
+            .and_then(|methods| methods.get(method_name))
+            .filter(|function| function.sig.generics_params.is_empty())
+            .cloned();
+        if let Some(function) = local_method {
+            self.annotate_invoke_args_slice(args, &function.sig.params);
+            return Some(function);
+        }
+
+        if let Some(function) = self.functions.get(&method_key).cloned() {
+            self.annotate_invoke_args_slice(args, &function.sig.params);
+            return Some(function);
+        }
+
+        if let Some(template) = self.generic_functions.get(&method_key).cloned() {
+            let mut locator = Locator::path(Path::new(vec![
+                Ident::new(type_name.clone()),
+                Ident::new(method_name.to_string()),
+            ]));
+            if let Some(function) =
+                self.instantiate_generic_function(&method_key, template, &mut locator, args)
+            {
+                self.annotate_invoke_args_slice(args, &function.sig.params);
+                return Some(function);
+            }
+        }
+
+        if let Some(traits) = self.trait_impls.get(&type_name) {
+            for trait_name in traits {
+                if let Some(methods) = self.trait_methods.get(trait_name) {
+                    if let Some(function) = methods.get(method_name) {
+                        return Some(function.clone());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn evaluate_struct_literal(&mut self, struct_expr: &mut fp_core::ast::ExprStruct) -> Value {
+        let ty_value = self.eval_expr(struct_expr.name.as_mut());
+        let struct_ty = match self.resolve_struct_literal_type(ty_value) {
+            Some(struct_ty) => struct_ty,
+            None => {
+                self.emit_error("expected struct type in literal");
                 return Value::undefined();
             }
         };
@@ -1425,7 +2213,106 @@ impl<'ctx> AstInterpreter<'ctx> {
             fields.push(ValueField::new(field.name.clone(), value));
         }
 
-        Value::Struct(ValueStruct::new(struct_ty, fields))
+        match struct_ty {
+            StructLiteralType::Struct(struct_ty) => Value::Struct(ValueStruct::new(struct_ty, fields)),
+            StructLiteralType::Structural(_) => Value::Structural(ValueStructural::new(fields)),
+        }
+    }
+
+    fn resolve_struct_literal_type(&mut self, ty_value: Value) -> Option<StructLiteralType> {
+        match ty_value {
+            Value::Type(Ty::Struct(struct_ty)) => Some(StructLiteralType::Struct(struct_ty)),
+            Value::Type(Ty::Structural(structural)) => {
+                Some(StructLiteralType::Structural(structural))
+            }
+            Value::Type(other_ty) => {
+                let mut visiting = HashSet::new();
+                let fields = self.resolve_structural_fields(&other_ty, &mut visiting)?;
+                Some(StructLiteralType::Structural(TypeStructural { fields }))
+            }
+            _ => None,
+        }
+    }
+
+    fn resolve_structural_fields(
+        &self,
+        ty: &Ty,
+        visiting: &mut HashSet<String>,
+    ) -> Option<Vec<StructuralField>> {
+        match ty {
+            Ty::Struct(struct_ty) => Some(struct_ty.fields.clone()),
+            Ty::Structural(structural) => Some(structural.fields.clone()),
+            Ty::TypeBinaryOp(op) => {
+                let lhs = self.resolve_structural_fields(op.lhs.as_ref(), visiting)?;
+                let rhs = self.resolve_structural_fields(op.rhs.as_ref(), visiting)?;
+                match op.kind {
+                    TypeBinaryOpKind::Add => Some(self.merge_structural_fields(lhs, rhs)),
+                    TypeBinaryOpKind::Intersect => {
+                        Some(self.intersect_structural_fields(lhs, rhs))
+                    }
+                    TypeBinaryOpKind::Subtract => {
+                        Some(self.subtract_structural_fields(lhs, rhs))
+                    }
+                    TypeBinaryOpKind::Union => None,
+                }
+            }
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Locator(locator) => {
+                    let key = Self::locator_base_name(locator);
+                    if visiting.contains(&key) {
+                        return None;
+                    }
+                    let ty = self
+                        .lookup_type(&key)
+                        .or_else(|| self.global_types.get(&key).cloned())?;
+                    visiting.insert(key.clone());
+                    let result = self.resolve_structural_fields(&ty, visiting);
+                    visiting.remove(&key);
+                    result
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn merge_structural_fields(
+        &self,
+        mut lhs: Vec<StructuralField>,
+        rhs: Vec<StructuralField>,
+    ) -> Vec<StructuralField> {
+        for rhs_field in rhs {
+            if lhs
+                .iter()
+                .any(|field| field.name.as_str() == rhs_field.name.as_str())
+            {
+                continue;
+            }
+            lhs.push(rhs_field);
+        }
+        lhs
+    }
+
+    fn intersect_structural_fields(
+        &self,
+        lhs: Vec<StructuralField>,
+        rhs: Vec<StructuralField>,
+    ) -> Vec<StructuralField> {
+        let rhs_names: HashSet<&str> = rhs.iter().map(|f| f.name.as_str()).collect();
+        lhs.into_iter()
+            .filter(|f| rhs_names.contains(f.name.as_str()))
+            .collect()
+    }
+
+    fn subtract_structural_fields(
+        &self,
+        lhs: Vec<StructuralField>,
+        rhs: Vec<StructuralField>,
+    ) -> Vec<StructuralField> {
+        let rhs_names: HashSet<&str> = rhs.iter().map(|f| f.name.as_str()).collect();
+        lhs.into_iter()
+            .filter(|f| !rhs_names.contains(f.name.as_str()))
+            .collect()
     }
 
     fn eval_array_repeat(&mut self, repeat: &mut fp_core::ast::ExprArrayRepeat) -> Value {
@@ -1530,6 +2417,21 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn resolve_qualified(&mut self, symbol: String) -> Value {
         if let Some(value) = self.evaluated_constants.get(&symbol) {
             return value.clone();
+        }
+        if symbol == "Self" {
+            if let Some(context) = self.impl_stack.last() {
+                if let Some(self_ty) = &context.self_ty {
+                    if let Some(ty) = self.lookup_type(self_ty) {
+                        return Value::Type(ty);
+                    }
+                    if let Some(ty) = self.global_types.get(self_ty) {
+                        return Value::Type(ty.clone());
+                    }
+                }
+            }
+        }
+        if let Some(ty) = self.lookup_type(&symbol) {
+            return Value::Type(ty);
         }
         if let Some(ty) = self.global_types.get(&symbol) {
             return Value::Type(ty.clone());

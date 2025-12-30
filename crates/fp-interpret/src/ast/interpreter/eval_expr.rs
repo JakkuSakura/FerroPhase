@@ -1,6 +1,360 @@
 use super::*;
 
 impl<'ctx> AstInterpreter<'ctx> {
+    /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
+    pub(super) fn eval_expr_runtime(&mut self, expr: &mut Expr) -> RuntimeFlow {
+        let expr_ty_snapshot = expr.ty().cloned();
+        match expr.kind_mut() {
+            ExprKind::IntrinsicContainer(collection) => {
+                let new_expr = collection.clone().into_const_expr();
+                *expr = new_expr;
+                self.eval_expr_runtime(expr)
+            }
+            ExprKind::Quote(_quote) => {
+                self.emit_error("quote is only supported in const regions");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprKind::Splice(_splice) => {
+                if !self.in_const_region() {
+                    self.emit_error("splice is only supported in const regions");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let ExprKind::Splice(splice) = expr.kind_mut() else {
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                match splice.token.kind() {
+                    ExprKind::Quote(quote) => match self.build_quoted_fragment(quote) {
+                        QuotedFragment::Expr(mut quoted) => self.eval_expr_runtime(&mut quoted),
+                        QuotedFragment::Stmts(stmts) => {
+                            let mut block = ExprBlock::new_stmts(stmts);
+                            self.eval_block_runtime(&mut block)
+                        }
+                        QuotedFragment::Items(_) | QuotedFragment::Type(_) => {
+                            self.emit_error("cannot splice non-expression token in expression position");
+                            RuntimeFlow::Value(Value::undefined())
+                        }
+                    },
+                    _ => {
+                        self.emit_error("splice expects a quote token expression");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::Expr(inner) => {
+                    let mut cloned = inner.as_ref().clone();
+                    self.eval_expr_runtime(&mut cloned)
+                }
+                other => RuntimeFlow::Value(other.clone()),
+            },
+            ExprKind::Locator(locator) => {
+                if let Some(variant) = self.resolve_enum_variant(locator) {
+                    return RuntimeFlow::Value(variant);
+                }
+                if let Some(expected_ty) = expr_ty_snapshot.clone() {
+                    if matches!(expected_ty, Ty::Function(_)) {
+                        self.specialize_function_reference(locator, &expected_ty);
+                    }
+                }
+                if let Some(ident) = locator.as_ident() {
+                    if let Some(value) = self.lookup_value(ident.as_str()) {
+                        return RuntimeFlow::Value(value);
+                    }
+                }
+                if let Some(function) = self.functions.get(&locator.to_string()) {
+                    return RuntimeFlow::Value(Value::Function(ValueFunction {
+                        sig: function.sig.clone(),
+                        body: function.body.clone(),
+                    }));
+                }
+                let mut candidate_names = vec![locator.to_string()];
+                if let Some(ident) = locator.as_ident() {
+                    candidate_names.push(ident.as_str().to_string());
+                }
+                for name in candidate_names {
+                    if let Some(template) = self.generic_functions.get(&name) {
+                        return RuntimeFlow::Value(Value::Function(ValueFunction {
+                            sig: template.function.sig.clone(),
+                            body: template.function.body.clone(),
+                        }));
+                    }
+                }
+                RuntimeFlow::Value(self.resolve_qualified(locator.to_string()))
+            }
+            ExprKind::BinOp(binop) => {
+                let lhs = match self.eval_value_runtime(binop.lhs.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let rhs = match self.eval_value_runtime(binop.rhs.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.handle_result(self.evaluate_binop(binop.kind, lhs, rhs)))
+            }
+            ExprKind::UnOp(unop) => {
+                let value = match self.eval_value_runtime(unop.val.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.handle_result(self.evaluate_unary(unop.op.clone(), value)))
+            }
+            ExprKind::If(if_expr) => {
+                let cond = match self.eval_value_runtime(if_expr.cond.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                match cond {
+                    Value::Bool(b) => {
+                        if b.value {
+                            self.eval_expr_runtime(if_expr.then.as_mut())
+                        } else if let Some(else_) = if_expr.elze.as_mut() {
+                            self.eval_expr_runtime(else_)
+                        } else {
+                            RuntimeFlow::Value(Value::unit())
+                        }
+                    }
+                    _ => {
+                        self.emit_error("expected boolean condition in runtime expression");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_mut() {
+                    let scrutinee_value = match self.eval_value_runtime(scrutinee.as_mut()) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    };
+                    for case in &mut expr_match.cases {
+                        self.push_scope();
+                        let pat_matches = case
+                            .pat
+                            .as_ref()
+                            .map(|pat| self.pattern_matches(pat, &scrutinee_value))
+                            .unwrap_or(false);
+
+                        if pat_matches {
+                            if let Some(guard) = case.guard.as_mut() {
+                                let guard_value = match self.eval_value_runtime(guard.as_mut()) {
+                                    Ok(value) => value,
+                                    Err(flow) => {
+                                        self.pop_scope();
+                                        return flow;
+                                    }
+                                };
+                                match guard_value {
+                                    Value::Bool(b) if b.value => {
+                                        let out = self.eval_expr_runtime(case.body.as_mut());
+                                        self.pop_scope();
+                                        return out;
+                                    }
+                                    Value::Bool(_) => {}
+                                    _ => {
+                                        self.emit_error(
+                                            "expected boolean match guard in runtime expression",
+                                        );
+                                        self.pop_scope();
+                                        return RuntimeFlow::Value(Value::undefined());
+                                    }
+                                }
+                            } else {
+                                let out = self.eval_expr_runtime(case.body.as_mut());
+                                self.pop_scope();
+                                return out;
+                            }
+                        }
+                        self.pop_scope();
+                    }
+                    return RuntimeFlow::Value(Value::unit());
+                }
+
+                for case in &mut expr_match.cases {
+                    let cond = match self.eval_value_runtime(case.cond.as_mut()) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    };
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                return self.eval_expr_runtime(case.body.as_mut());
+                            }
+                        }
+                        _ => {
+                            self.emit_error("expected boolean match condition in runtime expression");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                    }
+                }
+                RuntimeFlow::Value(Value::unit())
+            }
+            ExprKind::Block(block) => self.eval_block_runtime(block),
+            ExprKind::Tuple(tuple) => {
+                let mut values = Vec::with_capacity(tuple.values.len());
+                for expr in tuple.values.iter_mut() {
+                    match self.eval_value_runtime(expr) {
+                        Ok(value) => values.push(value),
+                        Err(flow) => return flow,
+                    }
+                }
+                RuntimeFlow::Value(Value::Tuple(ValueTuple::new(values)))
+            }
+            ExprKind::Array(array) => {
+                let mut values = Vec::with_capacity(array.values.len());
+                for expr in array.values.iter_mut() {
+                    match self.eval_value_runtime(expr) {
+                        Ok(value) => values.push(value),
+                        Err(flow) => return flow,
+                    }
+                }
+                RuntimeFlow::Value(Value::List(ValueList::new(values)))
+            }
+            ExprKind::ArrayRepeat(repeat) => {
+                RuntimeFlow::Value(self.eval_array_repeat_runtime(repeat))
+            }
+            ExprKind::Range(range) => {
+                let start = match range.start.as_mut() {
+                    Some(expr) => match self.eval_value_runtime(expr) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    },
+                    None => Value::int(0),
+                };
+                let end = match range.end.as_mut() {
+                    Some(expr) => match self.eval_value_runtime(expr) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    },
+                    None => Value::int(0),
+                };
+                let (start, end) = match (start, end) {
+                    (Value::Int(start), Value::Int(end)) => (start.value, end.value),
+                    _ => {
+                        self.emit_error("range bounds must be integers");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                };
+                let mut values = Vec::new();
+                let mut current = start;
+                let inclusive = matches!(range.limit, fp_core::ast::ExprRangeLimit::Inclusive);
+                while if inclusive { current <= end } else { current < end } {
+                    values.push(Value::int(current));
+                    current += 1;
+                }
+                RuntimeFlow::Value(Value::List(ValueList::new(values)))
+            }
+            ExprKind::Struct(struct_expr) => {
+                RuntimeFlow::Value(self.evaluate_struct_literal_runtime(struct_expr))
+            }
+            ExprKind::Structural(struct_expr) => {
+                let mut fields = Vec::with_capacity(struct_expr.fields.len());
+                for field in struct_expr.fields.iter_mut() {
+                    let value = if let Some(expr) = field.value.as_mut() {
+                        match self.eval_value_runtime(expr) {
+                            Ok(value) => value,
+                            Err(flow) => return flow,
+                        }
+                    } else {
+                        self.lookup_value(field.name.as_str()).unwrap_or_else(|| {
+                            self.emit_error(format!(
+                                "missing initializer for field '{}' in structural literal",
+                                field.name
+                            ));
+                            Value::undefined()
+                        })
+                    };
+                    fields.push(ValueField::new(field.name.clone(), value));
+                }
+                RuntimeFlow::Value(Value::Structural(ValueStructural::new(fields)))
+            }
+            ExprKind::Select(select) => {
+                let target = match self.eval_value_runtime(select.obj.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.evaluate_select(target, &select.field.name))
+            }
+            ExprKind::Index(index_expr) => {
+                let target = match self.eval_value_runtime(index_expr.obj.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let index_value = match self.eval_value_runtime(index_expr.index.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(self.evaluate_index(target, index_value))
+            }
+            ExprKind::IntrinsicCall(call) => self.eval_intrinsic_runtime(call),
+            ExprKind::Reference(reference) => self.eval_expr_runtime(reference.referee.as_mut()),
+            ExprKind::Paren(paren) => self.eval_expr_runtime(paren.expr.as_mut()),
+            ExprKind::Assign(assign) => self.eval_assign_runtime(assign),
+            ExprKind::Let(expr_let) => {
+                let value = match self.eval_value_runtime(expr_let.expr.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                self.bind_pattern(&expr_let.pat, value.clone());
+                RuntimeFlow::Value(value)
+            }
+            ExprKind::Invoke(invoke) => self.eval_invoke_runtime_flow(invoke),
+            ExprKind::Macro(macro_expr) => {
+                self.emit_error(format!(
+                    "macro `{}` should have been lowered before runtime evaluation",
+                    macro_expr.invocation.path
+                ));
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprKind::Closure(closure) => {
+                RuntimeFlow::Value(self.capture_runtime_closure(closure, expr_ty_snapshot.clone()))
+            }
+            ExprKind::Closured(closured) => {
+                let mut inner = closured.expr.as_ref().clone();
+                self.eval_expr_runtime(&mut inner)
+            }
+            ExprKind::Cast(cast) => {
+                let target_ty = cast.ty.clone();
+                let value = match self.eval_value_runtime(cast.expr.as_mut()) {
+                    Ok(value) => value,
+                    Err(flow) => return flow,
+                };
+                let result = self.cast_value_to_type(value, &target_ty);
+                expr.set_ty(target_ty);
+                RuntimeFlow::Value(result)
+            }
+            ExprKind::Loop(loop_expr) => self.eval_loop_runtime(loop_expr),
+            ExprKind::While(while_expr) => self.eval_while_runtime(while_expr),
+            ExprKind::For(for_expr) => self.eval_for_runtime(for_expr),
+            ExprKind::Try(expr_try) => self.eval_expr_runtime(expr_try.expr.as_mut()),
+            ExprKind::FormatString(template) => {
+                if let Ok(output) = self.render_format_template_runtime(template) {
+                    self.stdout.push(output);
+                }
+                RuntimeFlow::Value(Value::unit())
+            }
+            ExprKind::Any(_any) => {
+                self.emit_error(
+                    "expression not supported in runtime interpretation: unsupported Raw expression",
+                );
+                RuntimeFlow::Value(Value::undefined())
+            }
+            other => {
+                self.emit_error(format!(
+                    "expression not supported in runtime interpretation: {:?}",
+                    other
+                ));
+                RuntimeFlow::Value(Value::undefined())
+            }
+        }
+    }
+
+    fn eval_value_runtime(&mut self, expr: &mut Expr) -> std::result::Result<Value, RuntimeFlow> {
+        match self.eval_expr_runtime(expr) {
+            RuntimeFlow::Value(value) => Ok(value),
+            other => Err(other),
+        }
+    }
+
     pub(super) fn eval_expr(&mut self, expr: &mut Expr) -> Value {
         let expr_ty_snapshot = expr.ty().cloned();
 
@@ -73,9 +427,26 @@ impl<'ctx> AstInterpreter<'ctx> {
                     } else if let Some(ty) = self.lookup_type(ident.as_str()) {
                         Value::Type(ty)
                     } else {
+                        let mut candidate_names = vec![locator.to_string(), ident.as_str().to_string()];
+                        candidate_names.sort();
+                        candidate_names.dedup();
+                        for name in candidate_names {
+                            if let Some(template) = self.generic_functions.get(&name) {
+                                return Value::Function(ValueFunction {
+                                    sig: template.function.sig.clone(),
+                                    body: template.function.body.clone(),
+                                });
+                            }
+                        }
                         self.resolve_qualified(locator.to_string())
                     }
                 } else {
+                    if let Some(template) = self.generic_functions.get(&locator.to_string()) {
+                        return Value::Function(ValueFunction {
+                            sig: template.function.sig.clone(),
+                            body: template.function.body.clone(),
+                        });
+                    }
                     self.resolve_qualified(locator.to_string())
                 }
             }
@@ -213,6 +584,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let target = self.eval_expr(select.obj.as_mut());
                 self.evaluate_select(target, &select.field.name)
             }
+            ExprKind::Index(index_expr) => {
+                let target = self.eval_expr(index_expr.obj.as_mut());
+                let index_value = self.eval_expr(index_expr.index.as_mut());
+                self.evaluate_index(target, index_value)
+            }
             ExprKind::IntrinsicCall(call) => {
                 let kind = call.kind;
                 let value = self.eval_intrinsic(call);
@@ -229,8 +605,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Reference(reference) => self.eval_expr(reference.referee.as_mut()),
             ExprKind::Paren(paren) => self.eval_expr(paren.expr.as_mut()),
             ExprKind::Assign(assign) => {
-                self.emit_error("assignment is not allowed during AST interpretation");
-                self.eval_expr(assign.value.as_mut())
+                let flow = self.eval_assign_runtime(assign);
+                self.finish_runtime_flow(flow)
             }
             ExprKind::Let(expr_let) => {
                 let value = self.eval_expr(expr_let.expr.as_mut());
@@ -256,8 +632,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Self::annotate_expr_closure(closure, fn_sig);
                 }
                 let captured = self.capture_closure(closure, expr_ty_snapshot.clone());
-                self.pending_closure = Some(captured);
-                Value::unit()
+                self.pending_closure = Some(captured.clone());
+                Value::Any(AnyBox::new(captured))
             }
             ExprKind::Closured(closured) => {
                 let mut inner = closured.expr.as_ref().clone();
@@ -269,6 +645,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let result = self.cast_value_to_type(value, &target_ty);
                 expr.set_ty(target_ty);
                 result
+            }
+            ExprKind::Loop(loop_expr) => {
+                let flow = self.eval_loop_runtime(loop_expr);
+                self.finish_runtime_flow(flow)
+            }
+            ExprKind::While(while_expr) => {
+                let flow = self.eval_while_runtime(while_expr);
+                self.finish_runtime_flow(flow)
+            }
+            ExprKind::For(for_expr) => {
+                let flow = self.eval_for_runtime(for_expr);
+                self.finish_runtime_flow(flow)
             }
             ExprKind::Any(_any) => {
                 self.emit_error(
@@ -330,8 +718,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
             }
 
-            self.emit_error("method calls are not supported in const evaluation yet");
-            return Value::undefined();
+            let flow = self.eval_invoke_runtime_flow(invoke);
+            return self.finish_runtime_flow(flow);
         }
 
         match &mut invoke.target {
@@ -387,36 +775,282 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke_runtime(&mut self, invoke: &mut ExprInvoke) -> Value {
-        if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
-            if self.is_printf_symbol(&locator.to_string()) {
-                let mut evaluated = Vec::with_capacity(invoke.args.len());
-                for arg in invoke.args.iter_mut() {
-                    evaluated.push(self.eval_expr(arg));
+        let flow = self.eval_invoke_runtime_flow(invoke);
+        self.finish_runtime_flow(flow)
+    }
+
+    pub(super) fn eval_invoke_runtime_flow(&mut self, invoke: &mut ExprInvoke) -> RuntimeFlow {
+        match &mut invoke.target {
+            ExprInvokeTarget::Method(select) => {
+                return self.eval_method_call_runtime(select, &mut invoke.args);
+            }
+            ExprInvokeTarget::Function(locator) => {
+                if let Some(info) = self.lookup_enum_variant(locator) {
+                    if let EnumVariantPayload::Tuple(_) = info.payload {
+                        let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
+                        let payload = if args.len() == 1 {
+                            args.into_iter().next()
+                        } else {
+                            Some(Value::Tuple(ValueTuple::new(args)))
+                        };
+                        return RuntimeFlow::Value(self.build_enum_value(&info, payload));
+                    }
                 }
-                if let Some(Value::String(format_str)) = evaluated.first() {
-                    match format_runtime_string(&format_str.value, &evaluated[1..]) {
-                        Ok(output) => {
-                            if !output.is_empty() {
-                                self.stdout.push(output);
+
+                if self.is_printf_symbol(&locator.to_string()) {
+                    let evaluated = match self.evaluate_args_runtime(&mut invoke.args) {
+                        Ok(values) => values,
+                        Err(flow) => return flow,
+                    };
+                    if let Some(Value::String(format_str)) = evaluated.first() {
+                        match format_runtime_string(&format_str.value, &evaluated[1..]) {
+                            Ok(output) => {
+                                if !output.is_empty() {
+                                    self.stdout.push(output);
+                                }
+                            }
+                            Err(err) => self.emit_error(err.to_string()),
+                        }
+                    } else {
+                        self.emit_error(
+                            "printf expects a string literal as the first argument at runtime",
+                        );
+                    }
+                    return RuntimeFlow::Value(Value::unit());
+                }
+
+                if let Some(value) =
+                    self.try_handle_const_collection_invoke(locator, &mut invoke.args)
+                {
+                    return RuntimeFlow::Value(value);
+                }
+
+                let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                    Ok(values) => values,
+                    Err(flow) => return flow,
+                };
+                for (expr, value) in invoke.args.iter_mut().zip(args.iter()) {
+                    if expr.ty().is_none() {
+                        if let Some(ty) = self.infer_value_ty(value) {
+                            expr.set_ty(ty);
+                        }
+                    }
+                }
+
+                if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
+                    let mut impl_context = None;
+                    let segments = Self::locator_segments(locator);
+                    if segments.len() >= 2 {
+                        let self_ty = segments[segments.len() - 2].clone();
+                        let method_name = segments[segments.len() - 1].as_str();
+                        if let Some(methods) = self.impl_methods.get(&self_ty) {
+                            if methods.contains_key(method_name) {
+                                impl_context = Some(ImplContext {
+                                    self_ty: Some(self_ty),
+                                    trait_ty: None,
+                                });
                             }
                         }
-                        Err(err) => self.emit_error(err.to_string()),
                     }
-                } else {
-                    self.emit_error(
-                        "printf expects a string literal as the first argument at runtime",
-                    );
+
+                    if let Some(context) = impl_context {
+                        self.impl_stack.push(context);
+                        let flow = self.call_function_runtime(function, args);
+                        self.impl_stack.pop();
+                        return flow;
+                    }
+                    return self.call_function_runtime(function, args);
                 }
-                return Value::unit();
+
+                let mut candidate_names = vec![locator.to_string()];
+                if let Some(ident) = locator.as_ident() {
+                    candidate_names.push(ident.as_str().to_string());
+                }
+                for name in candidate_names {
+                    if let Some(template) = self.generic_functions.get(&name) {
+                        return self.call_function_runtime(template.function.clone(), args);
+                    }
+                }
+
+                if let Some(value) = self.lookup_callable_value(locator) {
+                    match value {
+                        Value::Function(function) => {
+                            return self.call_value_function_runtime(&function, args);
+                        }
+                        Value::Any(any) => {
+                            if let Some(closure) = any.downcast_ref::<ConstClosure>() {
+                                return self.call_const_closure_runtime(closure, args);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+
+                self.emit_error(format!("cannot resolve function '{}'", locator));
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprInvokeTarget::Expr(expr) => {
+                let target = match self.eval_expr_runtime(expr.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                match target {
+                    Value::Function(function) => {
+                        let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                            Ok(values) => values,
+                            Err(flow) => return flow,
+                        };
+                        self.call_value_function_runtime(&function, args)
+                    }
+                    Value::Any(any) => {
+                        if let Some(closure) = any.downcast_ref::<ConstClosure>() {
+                            let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                                Ok(values) => values,
+                                Err(flow) => return flow,
+                            };
+                            return self.call_const_closure_runtime(closure, args);
+                        }
+                        self.emit_error("attempted to call a non-function value at runtime");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                    _ => {
+                        self.emit_error("attempted to call a non-function value at runtime");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
+            ExprInvokeTarget::Closure(func) => {
+                let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                    Ok(values) => values,
+                    Err(flow) => return flow,
+                };
+                let ret_ty = Self::value_function_ret_ty(func);
+                self.set_pending_expr_ty(ret_ty);
+                self.call_value_function_runtime(func, args)
+            }
+            ExprInvokeTarget::Type(_) | ExprInvokeTarget::BinOp(_) => {
+                let args = match self.evaluate_args_runtime(&mut invoke.args) {
+                    Ok(values) => values,
+                    Err(flow) => return flow,
+                };
+                RuntimeFlow::Value(Value::Tuple(ValueTuple::new(args)))
+            }
+        }
+    }
+
+    fn evaluate_args_runtime(
+        &mut self,
+        args: &mut Vec<Expr>,
+    ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args.iter_mut() {
+            match self.eval_expr_runtime(arg) {
+                RuntimeFlow::Value(value) => values.push(value),
+                other => return Err(other),
+            }
+        }
+        Ok(values)
+    }
+
+    fn eval_method_call_runtime(
+        &mut self,
+        select: &mut fp_core::ast::ExprSelect,
+        args: &mut Vec<Expr>,
+    ) -> RuntimeFlow {
+        let receiver = self.resolve_receiver_binding(select.obj.as_mut());
+        let method_name = select.field.name.as_str().to_string();
+
+        if args.is_empty() {
+            match method_name.as_str() {
+                "len" => match receiver.value {
+                    Value::List(list) => {
+                        return RuntimeFlow::Value(Value::int(list.values.len() as i64));
+                    }
+                    Value::Tuple(tuple) => {
+                        return RuntimeFlow::Value(Value::int(tuple.values.len() as i64));
+                    }
+                    Value::String(string) => {
+                        return RuntimeFlow::Value(Value::int(string.value.chars().count() as i64));
+                    }
+                    Value::Map(map) => {
+                        return RuntimeFlow::Value(Value::int(map.entries.len() as i64));
+                    }
+                    _ => {}
+                },
+                "iter" => match receiver.value {
+                    Value::List(list) => return RuntimeFlow::Value(Value::List(list)),
+                    Value::String(string) => {
+                        let chars = string
+                            .value
+                            .chars()
+                            .map(|ch| Value::Char(fp_core::ast::ValueChar::new(ch)))
+                            .collect();
+                        return RuntimeFlow::Value(Value::List(ValueList::new(chars)));
+                    }
+                    _ => {}
+                },
+                "enumerate" => match receiver.value {
+                    Value::List(list) => {
+                        let items = list
+                            .values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                Value::Tuple(ValueTuple::new(vec![Value::int(idx as i64), value]))
+                            })
+                            .collect();
+                        return RuntimeFlow::Value(Value::List(ValueList::new(items)));
+                    }
+                    Value::String(string) => {
+                        let items = string
+                            .value
+                            .chars()
+                            .enumerate()
+                            .map(|(idx, ch)| {
+                                Value::Tuple(ValueTuple::new(vec![
+                                    Value::int(idx as i64),
+                                    Value::Char(fp_core::ast::ValueChar::new(ch)),
+                                ]))
+                            })
+                            .collect();
+                        return RuntimeFlow::Value(Value::List(ValueList::new(items)));
+                    }
+                    _ => {}
+                },
+                "to_string" => {
+                    let value = match receiver.value {
+                        Value::String(value) => Value::String(value),
+                        Value::Int(value) => Value::string(value.value.to_string()),
+                        Value::Decimal(value) => Value::string(value.value.to_string()),
+                        Value::Bool(value) => Value::string(value.value.to_string()),
+                        Value::Char(value) => Value::string(value.value.to_string()),
+                        other => {
+                            self.emit_error(format!(
+                                "'to_string' is only supported on primitive runtime values, found {:?}",
+                                other
+                            ));
+                            Value::undefined()
+                        }
+                    };
+                    return RuntimeFlow::Value(value);
+                }
+                _ => {}
             }
         }
 
-        for arg in invoke.args.iter_mut() {
-            self.eval_expr(arg);
-        }
+        let Some(function) = self.resolve_method_function(&receiver, &method_name, args) else {
+            self.emit_error(format!("cannot resolve method '{}'", method_name));
+            return RuntimeFlow::Value(Value::undefined());
+        };
 
-        self.emit_error("runtime function calls are not yet supported in interpreter mode");
-        Value::undefined()
+        let arg_values = match self.evaluate_args_runtime(args) {
+            Ok(values) => values,
+            Err(flow) => return flow,
+        };
+        self.call_method_runtime(function, receiver, arg_values)
     }
 
     pub(super) fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
