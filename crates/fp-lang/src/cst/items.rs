@@ -306,6 +306,21 @@ fn parse_item_cst(
             Ok(node(SyntaxKind::ItemTypeAlias, children))
         }
         TokenKind::Keyword(Keyword::Const) => {
+            if matches!(
+                input.get(1),
+                Some(Token {
+                    kind: TokenKind::Symbol,
+                    lexeme,
+                    ..
+                }) if lexeme == "{"
+            ) {
+                let expr = parse_expr_prefix_from_tokens(input)?;
+                children.push(SyntaxElement::Node(Box::new(expr)));
+                if match_symbol(input, ";") {
+                    // optional
+                }
+                return Ok(node(SyntaxKind::ItemExpr, children));
+            }
             // const fn ...
             if matches!(
                 input.get(1),

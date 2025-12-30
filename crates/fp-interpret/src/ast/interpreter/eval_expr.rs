@@ -10,9 +10,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                 *expr = new_expr;
                 self.eval_expr_runtime(expr)
             }
-            ExprKind::Quote(_quote) => {
-                self.emit_error("quote is only supported in const regions");
-                RuntimeFlow::Value(Value::undefined())
+            ExprKind::Quote(quote) => {
+                if !self.in_const_region() {
+                    self.emit_error("quote is only supported in const regions");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let expr = Expr::new(ExprKind::Quote(quote.clone()));
+                RuntimeFlow::Value(Value::Expr(expr.into()))
             }
             ExprKind::Splice(_splice) => {
                 if !self.in_const_region() {
@@ -676,6 +680,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if self.in_const_region() {
+            return self.eval_invoke_compile_time(invoke);
+        }
         match self.mode {
             InterpreterMode::CompileTime => self.eval_invoke_compile_time(invoke),
             InterpreterMode::RunTime => self.eval_invoke_runtime(invoke),
