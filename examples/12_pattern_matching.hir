@@ -1,0 +1,115 @@
+hir::Program {
+    pub enum Color {
+        Red,
+        Green,
+        Rgb,
+    }
+
+    pub enum Option {
+        Some,
+        None,
+    }
+
+    pub fn describe(color: &Color) -> &str {
+        // params: [color: &Color]
+        {
+            match (color)
+            {
+                Color::Red =>
+                    "red"
+                Color::Green =>
+                    "green"
+                Color::Rgb(255, 0, 0) =>
+                    "red rgb"
+                Color::Rgb(r, g, b) =>
+                    "custom rgb"
+            }
+            match (color)
+            {
+                Color::Red =>
+                    "red"
+                Color::Green =>
+                    "green"
+                Color::Rgb(255, 0, 0) =>
+                    "red rgb"
+                Color::Rgb(r, g, b) =>
+                    "custom rgb"
+            }
+        }
+    }
+
+    pub fn classify(n: i64) -> &str {
+        // params: [n: i64]
+        {
+            match (n)
+            {
+                0 =>
+                    "zero"
+                n if (n < 0) =>
+                    "negative"
+                n if ((n % 2) == 0) =>
+                    "even"
+                _ =>
+                    "odd"
+            }
+            match (n)
+            {
+                0 =>
+                    "zero"
+                n if (n < 0) =>
+                    "negative"
+                n if ((n % 2) == 0) =>
+                    "even"
+                _ =>
+                    "odd"
+            }
+        }
+    }
+
+    pub fn unwrap_or(opt: Option<i64>, default: i64) -> i64 {
+        // params: [opt: Option<i64>, default: i64]
+        {
+            match (opt)
+            {
+                Option::Some(v) =>
+                    v
+                Option::None =>
+                    default
+            }
+            match (opt)
+            {
+                Option::Some(v) =>
+                    v
+                Option::None =>
+                    default
+            }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            let red = Color::Red;
+            let rgb = Color::Rgb(128, 64, 32);
+            printf("%s
+", describe(red));
+            printf("%s
+", describe(rgb));
+            printf("%s
+", classify((-5)));
+            printf("%s
+", classify(0));
+            printf("%s
+", classify(4));
+            printf("%s
+", classify(7));
+            printf("%d
+", unwrap_or(Option::Some(42), 0));
+            printf("%d
+", unwrap_or(Option::None, 99));
+            pub const CODE: i64 =
+                0;
+            printf("0x%06X
+", CODE);
+        }
+    }
+}

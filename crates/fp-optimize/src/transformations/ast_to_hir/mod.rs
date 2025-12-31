@@ -38,6 +38,7 @@ pub struct HirGenerator {
     global_type_defs: HashMap<String, SymbolEntry>,
     preassigned_def_ids: HashMap<usize, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
+    type_aliases: HashMap<String, ast::Ty>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -93,6 +94,7 @@ impl HirGenerator {
             global_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
+            type_aliases: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -197,7 +199,11 @@ impl HirGenerator {
 
             if value_res.is_none() && type_res.is_none() {
                 if let Some(first) = path_segments.first() {
-                    if first == "std" || first == "core" || first == "alloc" {
+                    if first == "std"
+                        || first == "core"
+                        || first == "alloc"
+                        || first == "fp_rust"
+                    {
                         // Standard library imports are not yet modeled; ignore them so
                         // user code can continue through the pipeline.
                         continue;
@@ -386,6 +392,7 @@ impl HirGenerator {
             global_type_defs: HashMap::new(),
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
+            type_aliases: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -522,6 +529,7 @@ impl HirGenerator {
         self.module_visibility.push(true);
         self.next_hir_id = 0;
         self.current_position = 0;
+        self.type_aliases.clear();
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
@@ -568,6 +576,13 @@ impl HirGenerator {
                 ItemKind::DefFunction(def_fn) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_value_def(&def_fn.name.name, def_id, &def_fn.visibility);
+                }
+                ItemKind::DefTrait(def_trait) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_type_def(&def_trait.name.name, def_id, &def_trait.visibility);
+                }
+                ItemKind::DefType(def_type) => {
+                    self.register_type_alias(&def_type.name.name, &def_type.value);
                 }
                 ItemKind::Impl(_) => {
                     self.allocate_def_id_for_item(item);
@@ -737,6 +752,10 @@ impl HirGenerator {
                 self.handle_import(import)?;
                 Ok(())
             }
+            ItemKind::DefType(def_type) => {
+                self.register_type_alias(&def_type.name.name, &def_type.value);
+                Ok(())
+            }
             ItemKind::DeclFunction(_) => Ok(()),
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
@@ -753,6 +772,20 @@ impl HirGenerator {
         match item.as_ref().kind() {
             ItemKind::Import(import) => {
                 self.handle_import(import)?;
+                let unit_block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                let unit_expr = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Block(unit_block),
+                    span: self.create_span(1),
+                };
+                Ok(hir::StmtKind::Expr(unit_expr))
+            }
+            ItemKind::DefType(def_type) => {
+                self.register_type_alias(&def_type.name.name, &def_type.value);
                 let unit_block = hir::Block {
                     hir_id: self.next_id(),
                     stmts: Vec::new(),
@@ -893,6 +926,30 @@ impl HirGenerator {
                 let hir_impl = self.transform_impl(impl_block)?;
                 (hir::ItemKind::Impl(hir_impl), hir::Visibility::Private)
             }
+            ItemKind::DefType(def_type) => {
+                self.register_type_alias(&def_type.name.name, &def_type.value);
+                let unit_block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                let unit_expr = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Block(unit_block),
+                    span: self.create_span(1),
+                };
+                let body = hir::Body {
+                    hir_id: self.next_id(),
+                    params: Vec::new(),
+                    value: unit_expr,
+                };
+                let konst = hir::Const {
+                    name: hir::Symbol::new(self.qualify_name(&def_type.name.name)),
+                    ty: self.create_unit_type(),
+                    body,
+                };
+                (hir::ItemKind::Const(konst), hir::Visibility::Private)
+            }
             _ => {
                 return Err(crate::error::optimization_error(format!(
                     "Unimplemented AST item type for HIR transformation: {:?}",
@@ -936,6 +993,12 @@ impl HirGenerator {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
+                if let Some(alias) =
+                    self.lookup_type_alias(&[struct_ty.name.name.to_string()])
+                {
+                    let alias = alias.clone();
+                    return self.transform_type_to_hir(&alias);
+                }
                 let path = self.locator_to_hir_path_with_scope(
                     &Locator::Ident(struct_ty.name.clone()),
                     PathResolutionScope::Type,
@@ -955,6 +1018,16 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::Unit(_) => Ok(self.create_unit_type()),
+            ast::Ty::Any(_) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Infer,
+                Span::new(self.current_file, 0, 0),
+            )),
+            ast::Ty::Unknown(_) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Infer,
+                Span::new(self.current_file, 0, 0),
+            )),
             ast::Ty::Tuple(tuple) => {
                 let elements = tuple
                     .types
@@ -995,14 +1068,54 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::QuoteToken(_) => {
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "quote token types should be removed by const-eval; substituting error type"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    Ok(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Error,
+                        Span::new(self.current_file, 0, 0),
+                    ))
+                } else {
+                    Err(crate::error::optimization_error(
+                        "quote token types must be resolved during const evaluation",
+                    ))
+                }
+            }
             ast::Ty::Expr(expr) => {
-                let path = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type)?;
+                if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
+                    let segments = path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.name.as_str().to_string())
+                        .collect::<Vec<_>>();
+                    if let Some(alias) = self.lookup_type_alias(&segments) {
+                        let alias = alias.clone();
+                        return self.transform_type_to_hir(&alias);
+                    }
+                    return Ok(hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Path(path),
+                        Span::new(self.current_file, 0, 0),
+                    ));
+                }
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Path(path),
+                    hir::TypeExprKind::Error,
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::ImplTraits(_) => Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Infer,
+                Span::new(self.current_file, 0, 0),
+            )),
             ast::Ty::Function(fn_ty) => {
                 let inputs = fn_ty
                     .params
@@ -1076,6 +1189,22 @@ impl HirGenerator {
             hir::TypeExprKind::Tuple(Vec::new()),
             Span::new(self.current_file, 0, 0),
         )
+    }
+
+    fn register_type_alias(&mut self, name: &str, ty: &ast::Ty) {
+        let qualified = self.qualify_name(name);
+        self.type_aliases.insert(qualified, ty.clone());
+    }
+
+    fn lookup_type_alias(&self, segments: &[String]) -> Option<&ast::Ty> {
+        let qualified = if segments.len() == 1 {
+            self.qualify_name(&segments[0])
+        } else {
+            segments.join("::")
+        };
+        self.type_aliases
+            .get(&qualified)
+            .or_else(|| segments.get(0).and_then(|name| self.type_aliases.get(name)))
     }
 }
 

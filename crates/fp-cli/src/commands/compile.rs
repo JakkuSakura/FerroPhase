@@ -161,7 +161,15 @@ async fn compile_file(
         _ => PipelineTarget::Interpret,
     };
 
-    let execute_const_main = args.exec;
+    let execute_const_main = false;
+
+    let mut disabled_stages = args.disable_stage.clone();
+    if !disabled_stages
+        .iter()
+        .any(|stage| stage == "ast→typed(post-closure)")
+    {
+        disabled_stages.push("ast→typed(post-closure)".to_string());
+    }
 
     let pipeline_options = PipelineOptions {
         target,
@@ -192,7 +200,7 @@ async fn compile_file(
         execute_main: execute_const_main,
         bootstrap_mode: std::env::var_os("FERROPHASE_BOOTSTRAP").is_some(),
         emit_bootstrap_snapshot: false,
-        disabled_stages: args.disable_stage.clone(),
+        disabled_stages,
     };
 
     // Execute pipeline with new options
