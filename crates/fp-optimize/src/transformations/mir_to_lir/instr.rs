@@ -988,8 +988,10 @@ impl LirGenerator {
             mir::PlaceElem::Field(idx, field_ty) => {
                 self.apply_field_projection(&base_place, base_access, place.local, idx, &field_ty)
             }
-            mir::PlaceElem::Index(_)
-            | mir::PlaceElem::ConstantIndex { .. }
+            mir::PlaceElem::Index(index_local) => {
+                self.apply_index_projection(&base_place, base_access, index_local)
+            }
+            mir::PlaceElem::ConstantIndex { .. }
             | mir::PlaceElem::Subslice { .. }
             | mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
                 "MIR→LIR: unsupported place projection for lowering",
@@ -1170,6 +1172,164 @@ impl LirGenerator {
             ty: field_ty.clone(),
             lir_ty: field_lir_ty,
             alignment,
+        }))
+    }
+
+    fn apply_index_projection(
+        &mut self,
+        base_place: &mir::Place,
+        access: PlaceAccess,
+        index_local: mir::LocalId,
+    ) -> Result<PlaceAccess> {
+        let base_ty = self.lookup_place_type(base_place).ok_or_else(|| {
+            crate::error::optimization_error("MIR→LIR: missing type for index projection")
+        })?;
+
+        let element_ty = match &base_ty.kind {
+            TyKind::Array(elem, _) => (*elem.clone()),
+            TyKind::Slice(elem) => (*elem.clone()),
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "MIR→LIR: index projection requires array or slice type",
+                ))
+            }
+        };
+
+        let element_lir_ty = self.lir_type_from_ty(&element_ty);
+        let element_alignment = Self::alignment_for_lir_type(&element_lir_ty);
+
+        let base_ptr = match access {
+            PlaceAccess::Address(addr) => match base_ty.kind {
+                TyKind::Slice(_) => {
+                    let load_id = self.next_id();
+                    self.queued_instructions.push(lir::LirInstruction {
+                        id: load_id,
+                        kind: lir::LirInstructionKind::Load {
+                            address: addr.ptr.clone(),
+                            alignment: Some(addr.alignment),
+                            volatile: false,
+                        },
+                        type_hint: Some(addr.lir_ty.clone()),
+                        debug_info: None,
+                    });
+                    lir::LirValue::Register(load_id)
+                }
+                _ => addr.ptr,
+            },
+            PlaceAccess::Value { value, lir_ty, .. } => match base_ty.kind {
+                TyKind::Slice(_) => value,
+                _ => {
+                    let alignment = Self::alignment_for_lir_type(&lir_ty).max(1);
+                    let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                    let size_value =
+                        lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                    let alloca_id = self.next_id();
+                    self.queued_instructions.push(lir::LirInstruction {
+                        id: alloca_id,
+                        kind: lir::LirInstructionKind::Alloca {
+                            size: size_value,
+                            alignment,
+                        },
+                        type_hint: Some(pointer_type.clone()),
+                        debug_info: None,
+                    });
+                    let ptr_value = lir::LirValue::Register(alloca_id);
+
+                    let store_id = self.next_id();
+                    self.queued_instructions.push(lir::LirInstruction {
+                        id: store_id,
+                        kind: lir::LirInstructionKind::Store {
+                            value,
+                            address: ptr_value.clone(),
+                            alignment: Some(alignment),
+                            volatile: false,
+                        },
+                        type_hint: None,
+                        debug_info: None,
+                    });
+
+                    ptr_value
+                }
+            },
+        };
+
+        let index_place = mir::Place::from_local(index_local);
+        let index_operand = mir::Operand::Copy(index_place);
+        let mut index_value = self.transform_operand(&index_operand)?;
+        let index_lir_ty = self
+            .type_of_operand(&index_operand)
+            .unwrap_or(lir::LirType::I64);
+        if index_lir_ty != lir::LirType::I64 {
+            let cast_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: cast_id,
+                kind: lir::LirInstructionKind::SextOrTrunc(
+                    index_value.clone(),
+                    lir::LirType::I64,
+                ),
+                type_hint: Some(lir::LirType::I64),
+                debug_info: None,
+            });
+            index_value = lir::LirValue::Register(cast_id);
+        }
+
+        let element_size = Self::size_of_lir_type(&element_lir_ty);
+        let offset_value = if element_size == 1 {
+            index_value
+        } else {
+            let scale = lir::LirValue::Constant(lir::LirConstant::Int(
+                element_size as i64,
+                lir::LirType::I64,
+            ));
+            let mul_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: mul_id,
+                kind: lir::LirInstructionKind::Mul(index_value, scale),
+                type_hint: Some(lir::LirType::I64),
+                debug_info: None,
+            });
+            lir::LirValue::Register(mul_id)
+        };
+
+        let i8_ptr_ty = lir::LirType::Ptr(Box::new(lir::LirType::I8));
+        let base_i8_ptr_id = self.next_id();
+        self.queued_instructions.push(lir::LirInstruction {
+            id: base_i8_ptr_id,
+            kind: lir::LirInstructionKind::Bitcast(base_ptr.clone(), i8_ptr_ty.clone()),
+            type_hint: Some(i8_ptr_ty.clone()),
+            debug_info: None,
+        });
+        let base_i8_ptr = lir::LirValue::Register(base_i8_ptr_id);
+
+        let gep_id = self.next_id();
+        self.queued_instructions.push(lir::LirInstruction {
+            id: gep_id,
+            kind: lir::LirInstructionKind::GetElementPtr {
+                ptr: base_i8_ptr,
+                indices: vec![offset_value],
+                inbounds: true,
+            },
+            type_hint: Some(i8_ptr_ty.clone()),
+            debug_info: None,
+        });
+
+        let target_ptr_ty = lir::LirType::Ptr(Box::new(element_lir_ty.clone()));
+        let cast_id = self.next_id();
+        self.queued_instructions.push(lir::LirInstruction {
+            id: cast_id,
+            kind: lir::LirInstructionKind::Bitcast(
+                lir::LirValue::Register(gep_id),
+                target_ptr_ty.clone(),
+            ),
+            type_hint: Some(target_ptr_ty.clone()),
+            debug_info: None,
+        });
+
+        Ok(PlaceAccess::Address(PlaceAddress {
+            ptr: lir::LirValue::Register(cast_id),
+            ty: element_ty.clone(),
+            lir_ty: element_lir_ty,
+            alignment: element_alignment,
         }))
     }
 
@@ -2340,8 +2500,18 @@ impl LirGenerator {
                 mir::PlaceElem::Field(_, field_ty) => {
                     ty = field_ty.clone();
                 }
-                mir::PlaceElem::Index(_)
-                | mir::PlaceElem::ConstantIndex { .. }
+                mir::PlaceElem::Index(_) => match &ty.kind {
+                    TyKind::Array(elem, _) => {
+                        ty = (*elem.clone());
+                    }
+                    TyKind::Slice(elem) => {
+                        ty = (*elem.clone());
+                    }
+                    _ => {
+                        return None;
+                    }
+                },
+                mir::PlaceElem::ConstantIndex { .. }
                 | mir::PlaceElem::Subslice { .. }
                 | mir::PlaceElem::Downcast(_, _) => {
                     return None;

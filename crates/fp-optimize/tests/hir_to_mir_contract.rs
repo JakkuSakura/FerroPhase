@@ -1,7 +1,7 @@
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::hir::{
-    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind,
-    Program, TypeExpr, TypeExprKind, Visibility,
+    self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind, Path,
+    PathSegment, Program, Res, Symbol, TypeExpr, TypeExprKind, Visibility,
 };
 use fp_core::mir::{
     self,
@@ -19,6 +19,20 @@ fn primitive_type(kind: TypePrimitive) -> TypeExpr {
     TypeExpr {
         hir_id: 0,
         kind: TypeExprKind::Primitive(kind),
+        span: span(),
+    }
+}
+
+fn path_type(name: &str) -> TypeExpr {
+    TypeExpr {
+        hir_id: 0,
+        kind: TypeExprKind::Path(Path {
+            segments: vec![PathSegment {
+                name: Symbol::new(name),
+                args: None,
+            }],
+            res: None,
+        }),
         span: span(),
     }
 }
@@ -237,4 +251,121 @@ fn lowers_const_item_to_mir_static_with_integer_initializer() {
         }
         other => panic!("expected MIR static item, found {other:?}"),
     }
+}
+
+#[test]
+fn lowers_index_expression_into_place_projection() {
+    let values_pat = Pat {
+        hir_id: 20,
+        kind: PatKind::Binding {
+            name: Symbol::new("values"),
+            mutable: false,
+        },
+    };
+    let idx_pat = Pat {
+        hir_id: 21,
+        kind: PatKind::Binding {
+            name: Symbol::new("idx"),
+            mutable: false,
+        },
+    };
+
+    let array_len = Expr::new(22, ExprKind::Literal(Lit::Integer(3)), span());
+    let values_ty = TypeExpr {
+        hir_id: 23,
+        kind: TypeExprKind::Array(
+            Box::new(primitive_type(TypePrimitive::Int(TypeInt::I64))),
+            Some(Box::new(array_len)),
+        ),
+        span: span(),
+    };
+    let idx_ty = path_type("usize");
+
+    let values_param = hir::Param {
+        hir_id: 24,
+        pat: values_pat.clone(),
+        ty: values_ty,
+    };
+    let idx_param = hir::Param {
+        hir_id: 25,
+        pat: idx_pat.clone(),
+        ty: idx_ty,
+    };
+
+    let values_path = Expr::new(
+        26,
+        ExprKind::Path(Path {
+            segments: vec![PathSegment {
+                name: Symbol::new("values"),
+                args: None,
+            }],
+            res: Some(Res::Local(values_pat.hir_id)),
+        }),
+        span(),
+    );
+    let idx_path = Expr::new(
+        27,
+        ExprKind::Path(Path {
+            segments: vec![PathSegment {
+                name: Symbol::new("idx"),
+                args: None,
+            }],
+            res: Some(Res::Local(idx_pat.hir_id)),
+        }),
+        span(),
+    );
+
+    let body_expr = Expr::new(
+        28,
+        ExprKind::Index(Box::new(values_path), Box::new(idx_path)),
+        span(),
+    );
+    let body = hir::Body {
+        hir_id: 29,
+        params: vec![values_param.clone(), idx_param.clone()],
+        value: body_expr,
+    };
+
+    let sig = FunctionSig {
+        name: Symbol::new("pick"),
+        inputs: vec![values_param, idx_param],
+        output: primitive_type(TypePrimitive::Int(TypeInt::I64)),
+        generics: Generics::default(),
+    };
+
+    let function = Function::new(sig, Some(body), false);
+    let item = Item {
+        hir_id: 30,
+        def_id: 40,
+        visibility: Visibility::Public,
+        kind: ItemKind::Function(function),
+        span: span(),
+    };
+
+    let program = program_with_items(vec![item]);
+
+    let mut lowering = mir_lowering();
+    let mir_program = lowering
+        .transform(program)
+        .expect("HIR→MIR lowering should succeed");
+
+    let mir_item = &mir_program.items[0];
+    let mir_function = match &mir_item.kind {
+        MirItemKind::Function(func) => func,
+        other => panic!("expected MIR function item, found {other:?}"),
+    };
+
+    let body = mir_program
+        .bodies
+        .get(&mir_function.body_id)
+        .expect("function body present");
+    let block = &body.basic_blocks[0];
+    let has_index_projection = block.statements.iter().any(|stmt| match &stmt.kind {
+        StatementKind::Assign(_, Rvalue::Use(Operand::Copy(place))) => {
+            matches!(place.projection.last(), Some(mir::PlaceElem::Index(_)))
+        }
+        _ => false,
+    });
+
+    assert!(has_index_projection, "expected index projection in MIR");
 }
