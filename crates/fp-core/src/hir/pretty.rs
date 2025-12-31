@@ -401,6 +401,11 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         ExprKind::FieldAccess(base, field) => {
             format!("{}.{}", format_expr_inline(base, ctx), field)
         }
+        ExprKind::Index(base, index) => format!(
+            "{}[{}]",
+            format_expr_inline(base, ctx),
+            format_expr_inline(index, ctx)
+        ),
         ExprKind::Struct(path, fields) => {
             let fields = fields
                 .iter()
@@ -602,6 +607,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
                 .unwrap_or_else(|| "_".into());
             format!("[{}; {}]", fmt_type_expr(elem, ctx), len_str)
         }
+        TypeExprKind::Slice(elem) => format!("[{}]", fmt_type_expr(elem, ctx)),
         TypeExprKind::Ptr(inner) => format!("*{}", fmt_type_expr(inner, ctx)),
         TypeExprKind::Ref(inner) => format!("&{}", fmt_type_expr(inner, ctx)),
         TypeExprKind::FnPtr(fn_ptr) => {
