@@ -666,8 +666,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ty::Unit(TypeUnit)
             }
             ItemKind::Expr(expr) => {
-                let var = self.infer_expr(expr)?;
-                self.resolve_to_ty(var)?
+                if let ExprKind::Splice(splice) = expr.kind_mut() {
+                    let token_var = self.infer_expr(splice.token.as_mut())?;
+                    let token_ty = self.resolve_to_ty(token_var)?;
+                    if !self.is_item_quote(&token_ty) {
+                        match token_ty {
+                            Ty::QuoteToken(qt) => {
+                                self.emit_error(format!(
+                                    "splice in item position requires item token, found {:?}",
+                                    qt.kind
+                                ));
+                            }
+                            _ => self.emit_error("splice expects a quote token expression"),
+                        }
+                    }
+                    Ty::Unit(TypeUnit)
+                } else {
+                    let var = self.infer_expr(expr)?;
+                    self.resolve_to_ty(var)?
+                }
             }
             _ => {
                 self.emit_error("type inference for item not implemented");
@@ -753,7 +770,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             param_vars.push(var);
         }
 
-        let body_var = {
+        let body_var = if let Some(kind) = func.sig.quote_kind {
+            let body_block = func.body.as_ref().clone().into_block();
+            let mut quote_expr = Expr::from(ExprKind::Quote(ExprQuote {
+                block: body_block,
+                kind: Some(kind),
+            }));
+            self.infer_expr(&mut quote_expr)?
+        } else {
             let mut body = func.body.as_mut();
             self.infer_expr(&mut body)?
         };
