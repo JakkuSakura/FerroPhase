@@ -413,6 +413,12 @@ impl MirLowering {
                     ),
                 }
             }
+            hir::TypeExprKind::Slice(elem) => {
+                let elem_ty = self.lower_type_expr(elem);
+                Ty {
+                    kind: TyKind::Slice(Box::new(elem_ty)),
+                }
+            }
             hir::TypeExprKind::Ref(inner) => {
                 let inner_ty = self.lower_type_expr(inner);
                 Ty {
@@ -3065,6 +3071,67 @@ impl<'a> BodyBuilder<'a> {
                     struct_def: field_info.struct_def,
                 }))
             }
+            hir::ExprKind::Index(base, index) => {
+                let base_place = match self.lower_place(base)? {
+                    Some(info) => info,
+                    None => {
+                        self.lowering
+                            .emit_error(base.span, "unsupported base expression for index access");
+                        return Ok(None);
+                    }
+                };
+
+                let index_ty = Ty {
+                    kind: TyKind::Uint(UintTy::Usize),
+                };
+                let index_operand = self.lower_operand(index, Some(&index_ty))?;
+                let index_local = self.allocate_temp(index_operand.ty.clone(), index.span);
+                let index_place = mir::Place::from_local(index_local);
+                let assign = mir::Statement {
+                    source_info: index.span,
+                    kind: mir::StatementKind::Assign(
+                        index_place.clone(),
+                        mir::Rvalue::Use(index_operand.operand),
+                    ),
+                };
+                self.push_statement(assign);
+
+                let mut place = base_place.place.clone();
+                let mut base_ty = base_place.ty.clone();
+
+                loop {
+                    match &base_ty.kind {
+                        TyKind::Ref(_, inner, _) => {
+                            place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = inner.as_ref().clone();
+                        }
+                        TyKind::RawPtr(type_and_mut) => {
+                            place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = type_and_mut.ty.as_ref().clone();
+                        }
+                        _ => break,
+                    }
+                }
+
+                let element_ty = match &base_ty.kind {
+                    TyKind::Array(elem, _) => (*elem.clone()),
+                    TyKind::Slice(elem) => (*elem.clone()),
+                    _ => {
+                        self.lowering
+                            .emit_error(base.span, "index access requires array or slice type");
+                        return Ok(None);
+                    }
+                };
+
+                place.projection.push(mir::PlaceElem::Index(index_local));
+                let struct_def = self.struct_def_from_ty(&element_ty);
+
+                Ok(Some(PlaceInfo {
+                    place,
+                    ty: element_ty,
+                    struct_def,
+                }))
+            }
             _ => Ok(None),
         }
     }
@@ -3076,7 +3143,7 @@ impl<'a> BodyBuilder<'a> {
         expected_ty: &Ty,
     ) -> Result<()> {
         match &expr.kind {
-            hir::ExprKind::Literal(_) | hir::ExprKind::Path(_) => {
+            hir::ExprKind::Literal(_) | hir::ExprKind::Path(_) | hir::ExprKind::Index(_, _) => {
                 let assignment_place = place.clone();
                 let value = self.lower_operand(expr, Some(expected_ty))?;
                 let statement = mir::Statement {

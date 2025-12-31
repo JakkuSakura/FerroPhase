@@ -49,6 +49,82 @@ fn test_simple_type_creation() -> Result<()> {
 }
 
 #[test]
+fn transform_slice_type_to_hir() -> Result<()> {
+    let printer = Arc::new(RustPrinter::new());
+    register_threadlocal_serializer(printer.clone());
+
+    let items = shll_parse_items! {
+        fn take(values: [i64]) {
+            let _ = values;
+        }
+    };
+
+    let ast_file = ast::File {
+        path: "slice.fp".into(),
+        items,
+    };
+
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_file(&ast_file)?;
+
+    let take = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "take" => Some(func),
+            _ => None,
+        })
+        .expect("take function present");
+
+    let param_ty = &take.sig.inputs[0].ty;
+    assert!(matches!(param_ty.kind, hir::TypeExprKind::Slice(_)));
+
+    Ok(())
+}
+
+#[test]
+fn transform_index_expression_to_hir() -> Result<()> {
+    let printer = Arc::new(RustPrinter::new());
+    register_threadlocal_serializer(printer.clone());
+
+    let items = shll_parse_items! {
+        fn pick(values: [i64; 3], idx: usize) -> i64 {
+            values[idx]
+        }
+    };
+
+    let ast_file = ast::File {
+        path: "index.fp".into(),
+        items,
+    };
+
+    let mut generator = HirGenerator::new();
+    let program = generator.transform_file(&ast_file)?;
+
+    let pick = program
+        .items
+        .iter()
+        .find_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) if func.sig.name.as_str() == "pick" => Some(func),
+            _ => None,
+        })
+        .expect("pick function present");
+
+    let body_expr = &pick.body.as_ref().expect("body present").value;
+    let target_expr = match &body_expr.kind {
+        hir::ExprKind::Block(block) => block
+            .expr
+            .as_deref()
+            .expect("expression present in block"),
+        _ => body_expr,
+    };
+
+    assert!(matches!(target_expr.kind, hir::ExprKind::Index(_, _)));
+
+    Ok(())
+}
+
+#[test]
 fn transform_file_with_function_and_struct() -> Result<()> {
     let printer = Arc::new(RustPrinter::new());
     register_threadlocal_serializer(printer.clone());
@@ -282,6 +358,10 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             hir::ExprKind::ArrayRepeat { elem, len } => {
                 collect_paths(elem, out);
                 collect_paths(len, out);
+            }
+            hir::ExprKind::Index(base, index) => {
+                collect_paths(base, out);
+                collect_paths(index, out);
             }
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}
         }
