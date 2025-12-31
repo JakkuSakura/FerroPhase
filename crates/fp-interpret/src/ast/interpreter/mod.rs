@@ -237,6 +237,11 @@ pub struct AstInterpreter<'ctx> {
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub fn new(ctx: &'ctx SharedScopedContext, options: InterpreterOptions) -> Self {
+        let in_const_region = if matches!(options.mode, InterpreterMode::CompileTime) {
+            1
+        } else {
+            0
+        };
         Self {
             ctx,
             diag_manager: options.diagnostics.clone(),
@@ -262,7 +267,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             pending_expr_ty: None,
             closure_types: HashMap::new(),
             typer: None,
-            in_const_region: 0,
+            in_const_region,
             impl_stack: Vec::new(),
             trait_impls: HashMap::new(),
             impl_methods: HashMap::new(),
