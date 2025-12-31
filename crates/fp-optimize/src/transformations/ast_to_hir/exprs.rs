@@ -35,6 +35,11 @@ impl HirGenerator {
             ExprKind::ArrayRepeat(array_repeat) => {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
+            ExprKind::Index(index_expr) => {
+                let base = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
+                let index = self.transform_expr_to_hir(index_expr.index.as_ref())?;
+                hir::ExprKind::Index(Box::new(base), Box::new(index))
+            }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
                 if self.error_tolerance {

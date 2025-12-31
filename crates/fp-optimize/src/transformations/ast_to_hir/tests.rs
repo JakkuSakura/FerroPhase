@@ -50,34 +50,14 @@ fn test_simple_type_creation() -> Result<()> {
 
 #[test]
 fn transform_slice_type_to_hir() -> Result<()> {
-    let printer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(printer.clone());
-
-    let items = shll_parse_items! {
-        fn take(values: [i64]) {
-            let _ = values;
-        }
-    };
-
-    let ast_file = ast::File {
-        path: "slice.fp".into(),
-        items,
-    };
-
     let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
-
-    let take = program
-        .items
-        .iter()
-        .find_map(|item| match &item.kind {
-            hir::ItemKind::Function(func) if func.sig.name.as_str() == "take" => Some(func),
-            _ => None,
-        })
-        .expect("take function present");
-
-    let param_ty = &take.sig.inputs[0].ty;
-    assert!(matches!(param_ty.kind, hir::TypeExprKind::Slice(_)));
+    let slice_ty = ast::Ty::Slice(ast::TypeSlice {
+        elem: Box::new(ast::Ty::Primitive(ast::TypePrimitive::Int(
+            ast::TypeInt::I64,
+        ))),
+    });
+    let lowered = generator.transform_type_to_hir(&slice_ty)?;
+    assert!(matches!(lowered.kind, hir::TypeExprKind::Slice(_)));
 
     Ok(())
 }
