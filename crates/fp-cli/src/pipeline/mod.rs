@@ -928,6 +928,22 @@ impl Pipeline {
             )?;
         }
 
+        if stage_enabled(options, STAGE_TYPE_ENRICH) {
+            self.run_stage(
+                STAGE_TYPE_ENRICH,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_ENRICH,
+                        &diagnostic_manager,
+                        options,
+                    )
+                },
+            )?;
+        }
+
         let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
             ConstEvalOutcome::default()
         } else {
@@ -956,11 +972,6 @@ impl Pipeline {
         if options.save_intermediates {
             self.save_pretty(&ast, base_path, EXT_AST, options)?;
             self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
-        }
-
-        // Remove generic template functions after specialization.
-        if stage_enabled(options, STAGE_CONST_EVAL) {
-            remove_generic_templates(&mut ast)?;
         }
 
         if options.save_intermediates && !options.bootstrap_mode {
@@ -1003,6 +1014,11 @@ impl Pipeline {
                         )
                     },
                 )?;
+            }
+
+            // Remove generic template functions after type checking completes.
+            if stage_enabled(options, STAGE_CONST_EVAL) {
+                remove_generic_templates(&mut ast)?;
             }
 
             // Closure lowering is required for lower-level backends. For the Rust

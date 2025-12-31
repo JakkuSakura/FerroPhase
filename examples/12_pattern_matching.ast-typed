@@ -110,22 +110,7 @@ ast::File {
           intrinsic println : ()
             template: "{}" unwrap_or(Option::None, 99)
         pub const CODE: i64 : i64
-          match : i64
-            case #0
-              cond:
-                value true : _
-              body:
-                value 0 : i64
-            case #1
-              cond:
-                value true : _
-              body:
-                value 0 : i64
-            case #2
-              cond:
-                value true : _
-              body:
-                value 0 : i64
+          value 0 : i64
         expr_stmt ;
           intrinsic println : ()
             template: "0x{:06X}" CODE

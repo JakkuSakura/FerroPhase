@@ -564,6 +564,11 @@ impl LirGenerator {
                     .clone()
                     .expect("destination LIR type must be known for cast operation");
 
+                if matches!(target_ty, lir::LirType::Void) {
+                    result_value = Some(lir::LirValue::Undef(target_ty));
+                    return Ok(instructions);
+                }
+
                 let instr_id = self.next_id();
                 let instr_kind = self.lower_cast(
                     cast_kind.clone(),
@@ -1506,6 +1511,9 @@ impl LirGenerator {
         target_ty: lir::LirType,
         block: &mut lir::LirBasicBlock,
     ) -> lir::LirValue {
+        if matches!(target_ty, lir::LirType::Void) {
+            return lir::LirValue::Undef(target_ty);
+        }
         let id = self.next_id();
         block.instructions.push(lir::LirInstruction {
             id,
@@ -1632,6 +1640,16 @@ impl LirGenerator {
                         .unwrap_or(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
                 })
                 .collect();
+        }
+
+        for (idx, ty) in expected_field_tys.iter_mut().enumerate() {
+            if matches!(ty, lir::LirType::Void) {
+                if let Some(operand) = fields.get(idx) {
+                    if let Some(operand_ty) = self.type_of_operand(operand) {
+                        *ty = operand_ty;
+                    }
+                }
+            }
         }
 
         if fields.is_empty() {

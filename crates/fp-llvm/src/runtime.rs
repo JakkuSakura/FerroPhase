@@ -1,7 +1,7 @@
 use fp_core::ast::{
-    DecimalType, Expr, ExprFormatString, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
-    FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypePrimitive,
-    TypeUnit, Value,
+    DecimalType, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, FormatArgRef,
+    FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypePrimitive, TypeUnit,
+    Value,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
@@ -58,8 +58,9 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
         ));
     }
 
-    let printf_format = build_printf_format(&payload, newline)?;
-    let mut args = payload.args;
+    let fp_core::ast::ExprFormatString { parts, args, .. } = payload;
+    let mut args = args;
+    let printf_format = build_printf_format(&parts, &mut args, newline)?;
 
     let mut invoke_args = Vec::with_capacity(args.len() + 1);
     invoke_args.push(make_string_literal_expr(printf_format));
@@ -80,12 +81,16 @@ fn make_string_literal_expr(literal: String) -> Expr {
     expr
 }
 
-fn build_printf_format(template: &ExprFormatString, newline: bool) -> Result<String> {
+fn build_printf_format(
+    parts: &[FormatTemplatePart],
+    args: &mut [Expr],
+    newline: bool,
+) -> Result<String> {
     // info!("Building printf format for template: {:?}", template);
     let mut result = String::new();
     let mut implicit_index = 0usize;
 
-    for part in &template.parts {
+    for part in parts {
         match part {
             FormatTemplatePart::Literal(text) => result.push_str(text),
             FormatTemplatePart::Placeholder(placeholder) => {
@@ -103,22 +108,27 @@ fn build_printf_format(template: &ExprFormatString, newline: bool) -> Result<Str
                     }
                 };
 
-                let arg = template.args.get(arg_index).ok_or_else(|| {
+                let arg = args.get_mut(arg_index).ok_or_else(|| {
                     fp_core::error::Error::from(format!(
                         "format placeholder references missing argument at index {arg_index}"
                     ))
                 })?;
 
-                let spec = if let Some(explicit) = placeholder.format_spec.clone() {
-                    if !explicit.trim().starts_with('%') {
-                        return Err(fp_core::error::Error::from(format!(
-                            "format spec '{explicit}' is not a printf spec (expected leading '%')"
-                        )));
+                let (spec, replacement) = if let Some(explicit) = placeholder.format_spec.clone()
+                {
+                    let trimmed = explicit.trim();
+                    if trimmed.starts_with('%') {
+                        (explicit, None)
+                    } else {
+                        (format!("%{}", explicit), None)
                     }
-                    explicit
                 } else {
-                    infer_printf_spec(arg.ty())?
+                    infer_printf_spec_with_replacement(arg.ty())?
                 };
+
+                if let Some(replacement) = replacement {
+                    *arg = replacement;
+                }
 
                 result.push_str(&spec);
             }
@@ -132,7 +142,7 @@ fn build_printf_format(template: &ExprFormatString, newline: bool) -> Result<Str
     Ok(result)
 }
 
-fn infer_printf_spec(ty: Option<&Ty>) -> Result<String> {
+fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option<Expr>)> {
     let ty = ty.ok_or_else(|| {
         fp_core::error::Error::from("missing type information for printf argument".to_string())
     })?;
@@ -150,7 +160,7 @@ fn infer_printf_spec(ty: Option<&Ty>) -> Result<String> {
         Ty::Primitive(TypePrimitive::Bool) => "%d".to_string(),
         Ty::Primitive(TypePrimitive::Char) => "%c".to_string(),
         Ty::Primitive(TypePrimitive::String) => "%s".to_string(),
-        Ty::Reference(reference) => infer_printf_spec(Some(&reference.ty))?,
+        Ty::Reference(reference) => infer_printf_spec_with_replacement(Some(&reference.ty))?.0,
         Ty::Any(_) => "%s".to_string(),
         Ty::Struct(struct_ty) => {
             return Err(fp_core::error::Error::from(format!(
@@ -179,11 +189,7 @@ fn infer_printf_spec(ty: Option<&Ty>) -> Result<String> {
                 "cannot print function values with printf".to_string(),
             ));
         }
-        Ty::Unit(_) => {
-            return Err(fp_core::error::Error::from(
-                "cannot format unit type with printf".to_string(),
-            ));
-        }
+        Ty::Unit(_) | Ty::Nothing(_) | Ty::Unknown(_) => "%s".to_string(),
         other => {
             return Err(fp_core::error::Error::from(format!(
                 "printf argument type could not be inferred: {:?}",
@@ -191,5 +197,11 @@ fn infer_printf_spec(ty: Option<&Ty>) -> Result<String> {
             )));
         }
     };
-    Ok(spec)
+    let replacement = match ty {
+        Ty::Unit(_) => Some(make_string_literal_expr("()".to_string())),
+        Ty::Nothing(_) => Some(make_string_literal_expr("<none>".to_string())),
+        Ty::Unknown(_) => Some(make_string_literal_expr("<unknown>".to_string())),
+        _ => None,
+    };
+    Ok((spec, replacement))
 }

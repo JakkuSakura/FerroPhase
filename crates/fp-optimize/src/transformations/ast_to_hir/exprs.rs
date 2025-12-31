@@ -1,5 +1,5 @@
 use super::*;
-use fp_rust::parser::{parse_type as parse_raw_type, RustParser};
+use fp_rust::parser::RustParser;
 use fp_rust::RawExpr;
 
 fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<ast::Expr> {
@@ -26,6 +26,7 @@ impl HirGenerator {
             ExprKind::Struct(struct_expr) => self.transform_struct_to_hir(struct_expr)?,
             ExprKind::Block(block) => self.transform_block_to_hir(block)?,
             ExprKind::If(if_expr) => self.transform_if_to_hir(if_expr)?,
+            ExprKind::Match(match_expr) => self.transform_match_to_hir(match_expr)?,
             ExprKind::Loop(loop_expr) => self.transform_loop_to_hir(loop_expr)?,
             ExprKind::While(while_expr) => self.transform_while_to_hir(while_expr)?,
             ExprKind::Assign(assign) => self.transform_assign_to_hir(assign)?,
@@ -39,6 +40,48 @@ impl HirGenerator {
                 let base = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
                 let index = self.transform_expr_to_hir(index_expr.index.as_ref())?;
                 hir::ExprKind::Index(Box::new(base), Box::new(index))
+            }
+            ExprKind::Quote(_quote) => {
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "quote expressions should be removed by const-eval; substituting unit"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    let block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    hir::ExprKind::Block(block)
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "quote expressions must be resolved during const evaluation",
+                    ));
+                }
+            }
+            ExprKind::Splice(_splice) => {
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "splice expressions should be removed by const-eval; substituting unit"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    let block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    hir::ExprKind::Block(block)
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "splice expressions must be resolved during const evaluation",
+                    ));
+                }
             }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
@@ -104,25 +147,8 @@ impl HirGenerator {
                 }
             }
             ExprKind::For(for_expr) => {
-                let inner_expr = self.transform_expr_to_hir(for_expr.body.as_ref())?;
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "`for` loop lowering is lossy during bootstrap; treating body as expression"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    return Ok(hir::Expr {
-                        hir_id,
-                        kind: inner_expr.kind,
-                        span,
-                    });
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "`for` loop lowering not implemented",
-                    ));
-                }
+                let kind = self.transform_for_to_hir(for_expr)?;
+                return Ok(hir::Expr { hir_id, kind, span });
             }
             ExprKind::Closure(_closure) => {
                 if self.error_tolerance {
@@ -156,40 +182,34 @@ impl HirGenerator {
             }
             ExprKind::Any(any) => {
                 if let Some(raw_expr) = any.downcast_ref::<RawExpr>() {
-                    match &raw_expr.raw {
-                        syn::Expr::Cast(cast_expr) => {
-                            let operand_syn = (*cast_expr.expr).clone();
-                            let ty_syn = (*cast_expr.ty).clone();
-
-                            let operand_ast = parse_raw_expr(operand_syn).map_err(|err| {
-                                crate::error::optimization_error(format!(
-                                    "failed to parse cast operand: {}",
-                                    err
-                                ))
-                            })?;
-                            let operand_hir = self.transform_expr_to_hir(&operand_ast)?;
-
-                            let ty_ast = parse_raw_type(ty_syn).map_err(|err| {
-                                crate::error::optimization_error(format!(
-                                    "failed to parse cast type: {}",
-                                    err
-                                ))
-                            })?;
-                            let ty_hir = self.transform_type_to_hir(&ty_ast)?;
-
-                            hir::ExprKind::Cast(Box::new(operand_hir), Box::new(ty_hir))
-                        }
-                        other => {
-                            return Err(crate::error::optimization_error(format!(
-                                "unsupported dynamic expression in cast lowering: {:?}",
-                                other
-                            )));
-                        }
-                    }
+                    let parsed = parse_raw_expr(raw_expr.raw.clone()).map_err(|err| {
+                        crate::error::optimization_error(format!(
+                            "failed to parse dynamic expression: {}",
+                            err
+                        ))
+                    })?;
+                    let lowered = self.transform_expr_to_hir(&parsed)?;
+                    lowered.kind
+                } else if let Some(expr) = any.downcast_ref::<ast::Expr>() {
+                    let lowered = self.transform_expr_to_hir(expr)?;
+                    lowered.kind
+                } else if let Some(value) = any.downcast_ref::<ast::Value>() {
+                    let boxed: ast::BValue = Box::new(value.clone());
+                    self.transform_value_to_hir(&boxed)?
                 } else {
-                    return Err(crate::error::optimization_error(
-                        "unsupported dynamic expression payload for `Any` node",
-                    ));
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "unsupported dynamic expression payload for `Any` node; substituting unit"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    let block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    hir::ExprKind::Block(block)
                 }
             }
             ExprKind::Macro(mac) => {
@@ -489,6 +509,55 @@ impl HirGenerator {
         Ok(hir::ExprKind::If(cond, then_branch, else_branch))
     }
 
+    pub(super) fn transform_match_to_hir(
+        &mut self,
+        match_expr: &ast::ExprMatch,
+    ) -> Result<hir::ExprKind> {
+        let scrutinee = match_expr
+            .scrutinee
+            .as_ref()
+            .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+            .transpose()?;
+
+        let scrutinee = match scrutinee {
+            Some(expr) => expr,
+            None => {
+                return Err(crate::error::optimization_error(
+                    "match expressions without scrutinee are not supported",
+                ));
+            }
+        };
+
+        let mut arms = Vec::with_capacity(match_expr.cases.len());
+        for case in &match_expr.cases {
+            let pat = if let Some(pat) = case.pat.as_ref() {
+                self.transform_pattern(pat.as_ref())?
+            } else {
+                hir::Pat {
+                    hir_id: self.next_id(),
+                    kind: hir::PatKind::Wild,
+                }
+            };
+            self.register_pattern_bindings(&pat);
+
+            let guard = case
+                .guard
+                .as_ref()
+                .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                .transpose()?;
+            let body = self.transform_expr_to_hir(case.body.as_ref())?;
+
+            arms.push(hir::MatchArm {
+                hir_id: self.next_id(),
+                pat,
+                guard,
+                body,
+            });
+        }
+
+        Ok(hir::ExprKind::Match(Box::new(scrutinee), arms))
+    }
+
     /// Transform loop to HIR
     pub(super) fn transform_loop_to_hir(
         &mut self,
@@ -528,6 +597,164 @@ impl HirGenerator {
         };
 
         Ok(hir::ExprKind::While(cond, body_block))
+    }
+
+    pub(super) fn transform_for_to_hir(
+        &mut self,
+        for_expr: &ast::ExprFor,
+    ) -> Result<hir::ExprKind> {
+        let mut stmts = Vec::new();
+
+        let (mut pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
+        let (loop_name, loop_res) = match &mut pat.kind {
+            hir::PatKind::Binding { name, .. } => (name.clone(), Some(hir::Res::Local(pat.hir_id))),
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "`for` loop pattern must be a simple binding",
+                ));
+            }
+        };
+        if let hir::PatKind::Binding { mutable, .. } = &mut pat.kind {
+            *mutable = true;
+        }
+
+        let (start_expr, end_expr, step_expr, inclusive) = match for_expr.iter.kind() {
+            ast::ExprKind::Range(range) => {
+                let start = range
+                    .start
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?;
+                let end = range
+                    .end
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?;
+                let step = range
+                    .step
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?;
+                let inclusive = matches!(range.limit, ast::ExprRangeLimit::Inclusive);
+                (start, end, step, inclusive)
+            }
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "`for` loop lowering currently only supports range iterators",
+                ));
+            }
+        };
+
+        let init_expr = start_expr.unwrap_or_else(|| hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Literal(hir::Lit::Integer(0)),
+            span: Span::new(self.current_file, 0, 0),
+        });
+
+        let local = hir::Local {
+            hir_id: self.next_id(),
+            pat: pat.clone(),
+            ty: None,
+            init: Some(init_expr),
+        };
+        self.register_pattern_bindings(&local.pat);
+        stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Local(local),
+        });
+
+        let loop_var = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: loop_name.clone(),
+                    args: None,
+                }],
+                res: loop_res,
+            }),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let end_expr = end_expr.ok_or_else(|| {
+            crate::error::optimization_error("`for` loop range missing end expression")
+        })?;
+
+        let cmp_op = if inclusive { hir::BinOp::Le } else { hir::BinOp::Lt };
+        let cond_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Binary(
+                cmp_op,
+                Box::new(loop_var.clone()),
+                Box::new(end_expr),
+            ),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let step_expr = step_expr.unwrap_or_else(|| hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
+            span: Span::new(self.current_file, 0, 0),
+        });
+        let increment = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Assign(
+                Box::new(loop_var.clone()),
+                Box::new(hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Binary(
+                        hir::BinOp::Add,
+                        Box::new(loop_var.clone()),
+                        Box::new(step_expr),
+                    ),
+                    span: Span::new(self.current_file, 0, 0),
+                }),
+            ),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let body_expr = self.transform_expr_to_hir(for_expr.body.as_ref())?;
+        let mut body_stmts = Vec::new();
+        if let hir::ExprKind::Block(block) = &body_expr.kind {
+            body_stmts.extend(block.stmts.clone());
+            if let Some(expr) = &block.expr {
+                body_stmts.push(hir::Stmt {
+                    hir_id: self.next_id(),
+                    kind: hir::StmtKind::Semi(*expr.clone()),
+                });
+            }
+        } else {
+            body_stmts.push(hir::Stmt {
+                hir_id: self.next_id(),
+                kind: hir::StmtKind::Semi(body_expr),
+            });
+        }
+
+        body_stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Semi(increment),
+        });
+
+        let while_block = hir::Block {
+            hir_id: self.next_id(),
+            stmts: body_stmts,
+            expr: None,
+        };
+
+        let while_expr = hir::ExprKind::While(Box::new(cond_expr), while_block);
+        stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Expr(hir::Expr {
+                hir_id: self.next_id(),
+                kind: while_expr,
+                span: Span::new(self.current_file, 0, 0),
+            }),
+        });
+
+        Ok(hir::ExprKind::Block(hir::Block {
+            hir_id: self.next_id(),
+            stmts,
+            expr: None,
+        }))
     }
 
     /// Transform assignment to HIR
