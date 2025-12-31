@@ -122,8 +122,22 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             self.insert_value(param.name.as_str(), value);
         }
-        let mut body = function.body.as_ref().clone();
-        let result = self.eval_expr(&mut body);
+        let body = function.body.as_ref().clone();
+        let result = if let Some(kind) = function.sig.quote_kind {
+            let was_in_const = self.in_const_region();
+            if !was_in_const {
+                self.enter_const_region();
+            }
+            let result = self.build_quote_token_from_body(kind, &body);
+            if !was_in_const {
+                self.exit_const_region();
+            }
+            result
+        } else {
+            let mut body = body;
+            let result = self.eval_expr(&mut body);
+            self.materialize_quote_token(result)
+        };
         self.pop_scope();
         result
     }
@@ -148,8 +162,22 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             self.insert_value(param.name.as_str(), value);
         }
-        let mut body = function.body.as_ref().clone();
-        let result = self.eval_expr(&mut body);
+        let body = function.body.as_ref().clone();
+        let result = if let Some(kind) = function.sig.quote_kind {
+            let was_in_const = self.in_const_region();
+            if !was_in_const {
+                self.enter_const_region();
+            }
+            let result = self.build_quote_token_from_body(kind, &body);
+            if !was_in_const {
+                self.exit_const_region();
+            }
+            result
+        } else {
+            let mut body = body;
+            let result = self.eval_expr(&mut body);
+            self.materialize_quote_token(result)
+        };
         self.pop_scope();
         result
     }
@@ -160,6 +188,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         function: ItemDefFunction,
         args: Vec<Value>,
     ) -> RuntimeFlow {
+        if function.sig.quote_kind.is_some() {
+            self.emit_error("quote functions can only be invoked in const evaluation");
+            return RuntimeFlow::Value(Value::undefined());
+        }
         if function.sig.params.len() != args.len() {
             self.emit_error(format!(
                 "function '{}' expected {} arguments, found {}",
@@ -280,6 +312,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         function: &ValueFunction,
         args: Vec<Value>,
     ) -> RuntimeFlow {
+        if function.sig.quote_kind.is_some() {
+            self.emit_error("quote functions can only be invoked in const evaluation");
+            return RuntimeFlow::Value(Value::undefined());
+        }
         if function.sig.params.len() != args.len() {
             self.emit_error(format!(
                 "function literal expected {} arguments, found {}",

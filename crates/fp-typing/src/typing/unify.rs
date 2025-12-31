@@ -695,6 +695,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 // Array typing is handled via `TypeTerm::Custom` and compared structurally.
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
+            Ty::QuoteToken(_) => {
+                // Quote tokens are currently opaque to the typer.
+                self.bind(var, TypeTerm::Custom(ty.clone()));
+            }
             Ty::Expr(expr) => {
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {

@@ -81,6 +81,7 @@ impl RustParser {
             params,
             generics_params,
             is_const: sig.constness.is_some(),
+            quote_kind: None,
             ret_ty: match sig.output {
                 ReturnType::Default => None,
                 ReturnType::Type(_, ty) => Some(self.parse_type(*ty)?),

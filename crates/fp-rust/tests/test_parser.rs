@@ -37,6 +37,7 @@ fn test_parse_fn() -> Result<()> {
                 )],
                 generics_params: vec![],
                 is_const: false,
+                quote_kind: None,
                 ret_ty: Some(Ty::Primitive(TypePrimitive::i64()))
             },
             body: block.into(),
@@ -252,6 +253,7 @@ fn test_parse_fn_self() -> Result<()> {
                 params: vec![],
                 generics_params: vec![],
                 is_const: false,
+                quote_kind: None,
                 ret_ty: None
             },
             body: Expr::block(ExprBlock::new()).into(),
@@ -276,6 +278,7 @@ fn test_parse_fn_self() -> Result<()> {
                 params: vec![],
                 generics_params: vec![],
                 is_const: false,
+                quote_kind: None,
                 ret_ty: None
             },
             body: Expr::block(ExprBlock::new()).into(),

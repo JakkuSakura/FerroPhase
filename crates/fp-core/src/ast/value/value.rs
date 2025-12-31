@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, Ident, Ty, TySlot, TypeBounds, TypeStruct, Value,
+    get_threadlocal_serializer, BExpr, Ident, QuoteFragmentKind, Ty, TySlot, TypeBounds,
+    TypeStruct, Value,
 };
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
@@ -717,6 +718,8 @@ common_struct! {
         pub generics_params: Vec<GenericParam>,
         #[serde(default)]
         pub is_const: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub quote_kind: Option<QuoteFragmentKind>,
         pub ret_ty: Option<Ty>,
     }
 }
@@ -728,6 +731,7 @@ impl FunctionSignature {
             params: vec![],
             generics_params: vec![],
             is_const: false,
+            quote_kind: None,
             ret_ty: None,
         }
     }
