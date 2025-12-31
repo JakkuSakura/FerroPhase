@@ -346,6 +346,24 @@ fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
             ctx.writeln(f, format!("while ({})", format_expr_inline(cond, ctx)))?;
             ctx.with_indent(|ctx| write_block(block, f, ctx))
         }
+        ExprKind::Match(scrutinee, arms) => {
+            ctx.writeln(f, format!("match ({})", format_expr_inline(scrutinee, ctx)))?;
+            ctx.writeln(f, "{")?;
+            ctx.with_indent(|ctx| {
+                for arm in arms {
+                    let guard = arm
+                        .guard
+                        .as_ref()
+                        .map(|expr| format!(" if {}", format_expr_inline(expr, ctx)))
+                        .unwrap_or_default();
+                    let pat = format_pat(&arm.pat, ctx);
+                    ctx.writeln(f, format!("{}{} =>", pat, guard))?;
+                    ctx.with_indent(|ctx| write_expr(&arm.body, f, ctx))?;
+                }
+                Ok(())
+            })?;
+            ctx.writeln(f, "}")
+        }
         ExprKind::Return(value) => {
             let suffix = value
                 .as_ref()
@@ -429,6 +447,21 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 format_expr_inline(len, ctx)
             )
         }
+        ExprKind::Match(scrutinee, arms) => {
+            let arms = arms
+                .iter()
+                .map(|arm| {
+                    let guard = arm
+                        .guard
+                        .as_ref()
+                        .map(|expr| format!(" if {}", format_expr_inline(expr, ctx)))
+                        .unwrap_or_default();
+                    format!("{}{} => {}", format_pat(&arm.pat, ctx), guard, format_expr_inline(&arm.body, ctx))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("match {} {{ {} }}", format_expr_inline(scrutinee, ctx), arms)
+        }
         ExprKind::IntrinsicCall(call) => match &call.payload {
             crate::intrinsics::IntrinsicCallPayload::Format { template } => {
                 let arg_count = template.args.len() + template.kwargs.len();
@@ -497,14 +530,35 @@ fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {
                 String::from(name.clone())
             }
         }
-        PatKind::Struct(path, fields) => {
+        PatKind::Struct(path, fields, has_rest) => {
             let fields = fields
                 .iter()
                 .map(|field| format!("{}: {}", field.name, format_pat(&field.pat, ctx)))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("{} {{ {} }}", fmt_path(path, ctx), fields)
+            let rest = if *has_rest { ".." } else { "" };
+            let separator = if fields.is_empty() || rest.is_empty() {
+                ""
+            } else {
+                ", "
+            };
+            format!(
+                "{} {{ {}{}{} }}",
+                fmt_path(path, ctx),
+                fields,
+                separator,
+                rest
+            )
         }
+        PatKind::TupleStruct(path, parts) => {
+            let parts = parts
+                .iter()
+                .map(|pat| format_pat(pat, ctx))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{}({})", fmt_path(path, ctx), parts)
+        }
+        PatKind::Variant(path) => fmt_path(path, ctx),
         PatKind::Tuple(parts) => {
             let parts = parts
                 .iter()

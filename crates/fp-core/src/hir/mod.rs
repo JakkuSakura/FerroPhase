@@ -149,6 +149,7 @@ pub enum ExprKind {
     Cast(Box<Expr>, Box<TypeExpr>),
     Struct(Path, Vec<StructExprField>),
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
+    Match(Box<Expr>, Vec<MatchArm>),
     Block(Block),
     IntrinsicCall(IntrinsicCallExpr),
     Let(Pat, Box<TypeExpr>, Option<Box<Expr>>),
@@ -160,6 +161,14 @@ pub enum ExprKind {
     While(Box<Expr>, Block),
     Array(Vec<Expr>),
     ArrayRepeat { elem: Box<Expr>, len: Box<Expr> },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MatchArm {
+    pub hir_id: HirId,
+    pub pat: Pat,
+    pub guard: Option<Expr>,
+    pub body: Expr,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -243,7 +252,9 @@ pub struct Pat {
 pub enum PatKind {
     Wild,
     Binding { name: Symbol, mutable: bool },
-    Struct(Path, Vec<PatField>),
+    Struct(Path, Vec<PatField>, bool),
+    TupleStruct(Path, Vec<Pat>),
+    Variant(Path),
     Tuple(Vec<Pat>),
     Lit(Lit),
 }

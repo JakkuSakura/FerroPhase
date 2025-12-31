@@ -64,6 +64,7 @@ struct StructFieldInfo {
     struct_def: Option<hir::DefId>,
 }
 
+#[derive(Clone)]
 struct ConstInfo {
     ty: Ty,
     value: mir::Constant,
@@ -456,9 +457,9 @@ impl MirLowering {
                 kind: TyKind::Never,
             },
             hir::TypeExprKind::Infer => {
-                self.emit_error(
+                self.emit_warning(
                     ty_expr.span,
-                    "type inference markers not supported in HIR→MIR",
+                    "type inference markers not supported in HIR→MIR; using error type",
                 );
                 self.error_ty()
             }
@@ -592,6 +593,31 @@ impl MirLowering {
         if let Some(segment) = path.segments.last() {
             let name = segment.name.clone();
             match name.as_str() {
+                "i8" => {
+                    return Ty {
+                        kind: TyKind::Int(IntTy::I8),
+                    }
+                }
+                "i16" => {
+                    return Ty {
+                        kind: TyKind::Int(IntTy::I16),
+                    }
+                }
+                "i32" => {
+                    return Ty {
+                        kind: TyKind::Int(IntTy::I32),
+                    }
+                }
+                "i64" => {
+                    return Ty {
+                        kind: TyKind::Int(IntTy::I64),
+                    }
+                }
+                "i128" => {
+                    return Ty {
+                        kind: TyKind::Int(IntTy::I128),
+                    }
+                }
                 "usize" => {
                     return Ty {
                         kind: TyKind::Uint(UintTy::Usize),
@@ -602,8 +628,43 @@ impl MirLowering {
                         kind: TyKind::Int(IntTy::Isize),
                     }
                 }
+                "u8" => {
+                    return Ty {
+                        kind: TyKind::Uint(UintTy::U8),
+                    }
+                }
+                "u16" => {
+                    return Ty {
+                        kind: TyKind::Uint(UintTy::U16),
+                    }
+                }
+                "u32" => {
+                    return Ty {
+                        kind: TyKind::Uint(UintTy::U32),
+                    }
+                }
+                "u64" => {
+                    return Ty {
+                        kind: TyKind::Uint(UintTy::U64),
+                    }
+                }
+                "u128" => {
+                    return Ty {
+                        kind: TyKind::Uint(UintTy::U128),
+                    }
+                }
                 "bool" => return Ty { kind: TyKind::Bool },
                 "char" => return Ty { kind: TyKind::Char },
+                "f32" => {
+                    return Ty {
+                        kind: TyKind::Float(FloatTy::F32),
+                    }
+                }
+                "f64" => {
+                    return Ty {
+                        kind: TyKind::Float(FloatTy::F64),
+                    }
+                }
                 "str" => {
                     return Ty {
                         kind: TyKind::Slice(Box::new(Ty {
@@ -1240,6 +1301,7 @@ struct BodyBuilder<'a> {
     sig: &'a mir::FunctionSig,
     locals: Vec<mir::LocalDecl>,
     local_map: HashMap<hir::HirId, mir::LocalId>,
+    fallback_locals: HashMap<String, mir::LocalId>,
     local_structs: HashMap<mir::LocalId, hir::DefId>,
     const_items: HashMap<hir::DefId, hir::Const>,
     blocks: Vec<mir::BasicBlockData>,
@@ -1306,6 +1368,7 @@ impl<'a> BodyBuilder<'a> {
             sig,
             locals,
             local_map: HashMap::new(),
+            fallback_locals: HashMap::new(),
             local_structs: HashMap::new(),
             const_items: HashMap::new(),
             blocks: vec![mir::BasicBlockData::new(None)],
@@ -1345,6 +1408,8 @@ impl<'a> BodyBuilder<'a> {
         match &pat.kind {
             hir::PatKind::Binding { name, mutable } => {
                 self.local_map.insert(pat.hir_id, local);
+                self.fallback_locals
+                    .insert(name.as_str().to_string(), local);
                 if let Some(decl) = self.locals.get_mut(local as usize) {
                     if *mutable {
                         decl.mutability = mir::Mutability::Mut;
@@ -1700,6 +1765,241 @@ impl<'a> BodyBuilder<'a> {
         self.lower_expr_into_place(expr, place, &return_ty)
     }
 
+    fn lower_match_expr(
+        &mut self,
+        span: Span,
+        scrutinee: &hir::Expr,
+        arms: &[hir::MatchArm],
+        destination: mir::Place,
+        expected_ty: &Ty,
+    ) -> Result<()> {
+        let scrutinee_info = self.lower_operand(scrutinee, None)?;
+        let scrutinee_local = self.allocate_temp(scrutinee_info.ty.clone(), scrutinee.span);
+        let scrutinee_place = mir::Place::from_local(scrutinee_local);
+        self.push_statement(mir::Statement {
+            source_info: scrutinee.span,
+            kind: mir::StatementKind::Assign(
+                scrutinee_place.clone(),
+                mir::Rvalue::Use(scrutinee_info.operand),
+            ),
+        });
+
+        let continue_block = self.new_block();
+        let mut next_block = self.current_block;
+        let mut fallthrough_block = None;
+
+        for (idx, arm) in arms.iter().enumerate() {
+            let body_block = self.new_block();
+            let is_last = idx == arms.len() - 1;
+            let mut next_arm_block = self.new_block();
+            let always_matches = self.pattern_always_matches(&arm.pat);
+            if is_last && always_matches {
+                next_arm_block = continue_block;
+            } else if is_last {
+                fallthrough_block = Some(next_arm_block);
+            }
+
+            self.current_block = next_block;
+            if always_matches {
+                self.set_current_terminator(mir::Terminator {
+                    source_info: span,
+                    kind: mir::TerminatorKind::Goto { target: body_block },
+                });
+            } else {
+                let cond_operand = self.lower_match_condition(
+                    &arm.pat,
+                    &scrutinee_place,
+                    &scrutinee_info.ty,
+                    span,
+                )?;
+                let switch = mir::Terminator {
+                    source_info: span,
+                    kind: mir::TerminatorKind::SwitchInt {
+                        discr: cond_operand,
+                        switch_ty: Ty { kind: TyKind::Bool },
+                        targets: mir::SwitchTargets {
+                            values: vec![1],
+                            targets: vec![body_block],
+                            otherwise: next_arm_block,
+                        },
+                    },
+                };
+                self.set_current_terminator(switch);
+            }
+
+            self.current_block = body_block;
+            let saved_locals = self.local_map.clone();
+            let saved_fallback = self.fallback_locals.clone();
+            self.bind_match_pattern(&arm.pat, &scrutinee_place, &scrutinee_info.ty, span);
+
+            let mut guard_body_block = body_block;
+            if let Some(guard) = &arm.guard {
+                let guard_operand = self.lower_operand(guard, Some(&Ty { kind: TyKind::Bool }))?;
+                let guard_block = self.new_block();
+                let guard_switch = mir::Terminator {
+                    source_info: guard.span,
+                    kind: mir::TerminatorKind::SwitchInt {
+                        discr: guard_operand.operand,
+                        switch_ty: Ty { kind: TyKind::Bool },
+                        targets: mir::SwitchTargets {
+                            values: vec![1],
+                            targets: vec![guard_block],
+                            otherwise: next_arm_block,
+                        },
+                    },
+                };
+                self.set_current_terminator(guard_switch);
+                guard_body_block = guard_block;
+                self.current_block = guard_body_block;
+            }
+
+            self.lower_expr_into_place(&arm.body, destination.clone(), expected_ty)?;
+            self.set_current_terminator(mir::Terminator {
+                source_info: arm.body.span,
+                kind: mir::TerminatorKind::Goto {
+                    target: continue_block,
+                },
+            });
+            self.local_map = saved_locals;
+            self.fallback_locals = saved_fallback;
+
+            next_block = next_arm_block;
+        }
+
+        if let Some(fallthrough) = fallthrough_block {
+            self.current_block = fallthrough;
+            self.lowering
+                .emit_warning(span, "match arms did not cover all cases");
+            self.push_statement(mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    destination.clone(),
+                    mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                ),
+            });
+            self.set_current_terminator(mir::Terminator {
+                source_info: span,
+                kind: mir::TerminatorKind::Goto {
+                    target: continue_block,
+                },
+            });
+        }
+
+        self.current_block = continue_block;
+        Ok(())
+    }
+
+    fn pattern_always_matches(&self, pat: &hir::Pat) -> bool {
+        matches!(pat.kind, hir::PatKind::Wild | hir::PatKind::Binding { .. })
+    }
+
+    fn lower_match_condition(
+        &mut self,
+        pat: &hir::Pat,
+        scrutinee_place: &mir::Place,
+        _scrutinee_ty: &Ty,
+        span: Span,
+    ) -> Result<mir::Operand> {
+        let literal = match &pat.kind {
+            hir::PatKind::Lit(lit) => {
+                let (literal, _) = self.lower_literal(lit, None);
+                mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal,
+                })
+            }
+            hir::PatKind::Variant(path)
+            | hir::PatKind::Struct(path, _, _)
+            | hir::PatKind::TupleStruct(path, _) => {
+                let expr = hir::Expr {
+                    hir_id: 0,
+                    kind: hir::ExprKind::Path(path.clone()),
+                    span,
+                };
+                let operand = self.lower_operand(&expr, None)?;
+                operand.operand
+            }
+            _ => {
+                self.lowering.emit_error(span, "unsupported pattern in match condition");
+                mir::Operand::Constant(self.lowering.error_constant(span))
+            }
+        };
+
+        let temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+        let place = mir::Place::from_local(temp);
+        let assign = mir::Statement {
+            source_info: span,
+            kind: mir::StatementKind::Assign(
+                place.clone(),
+                mir::Rvalue::BinaryOp(
+                    mir::BinOp::Eq,
+                    mir::Operand::Copy(scrutinee_place.clone()),
+                    literal,
+                ),
+            ),
+        };
+        self.push_statement(assign);
+        Ok(mir::Operand::Copy(place))
+    }
+
+    fn bind_match_pattern(
+        &mut self,
+        pat: &hir::Pat,
+        scrutinee_place: &mir::Place,
+        scrutinee_ty: &Ty,
+        span: Span,
+    ) {
+        match &pat.kind {
+            hir::PatKind::Binding { name, .. } => {
+                self.bind_match_binding(name, pat, scrutinee_place, scrutinee_ty, span);
+            }
+            hir::PatKind::Tuple(parts) => {
+                for part in parts {
+                    self.bind_match_pattern(part, scrutinee_place, scrutinee_ty, span);
+                }
+            }
+            hir::PatKind::TupleStruct(_, parts) => {
+                for part in parts {
+                    self.bind_match_pattern(part, scrutinee_place, scrutinee_ty, span);
+                }
+            }
+            hir::PatKind::Struct(_, fields, _) => {
+                for field in fields {
+                    self.bind_match_pattern(&field.pat, scrutinee_place, scrutinee_ty, span);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn bind_match_binding(
+        &mut self,
+        name: &hir::Symbol,
+        pat: &hir::Pat,
+        scrutinee_place: &mir::Place,
+        scrutinee_ty: &Ty,
+        span: Span,
+    ) {
+        let mut decl = self.lowering.make_local_decl(scrutinee_ty, span);
+        decl.mutability = mir::Mutability::Not;
+        let local_id = self.push_local(decl);
+        let place = mir::Place::from_local(local_id);
+        self.push_statement(mir::Statement {
+            source_info: span,
+            kind: mir::StatementKind::Assign(
+                place.clone(),
+                mir::Rvalue::Use(mir::Operand::Copy(scrutinee_place.clone())),
+            ),
+        });
+        self.local_map.insert(pat.hir_id, local_id);
+        self.fallback_locals
+            .insert(name.as_str().to_string(), local_id);
+        if let Some(def_id) = self.struct_def_from_ty(scrutinee_ty) {
+            self.local_structs.insert(local_id, def_id);
+        }
+    }
+
     fn lower_local(&mut self, local: &hir::Local) -> Result<()> {
         let init_span = local
             .init
@@ -1880,21 +2180,69 @@ impl<'a> BodyBuilder<'a> {
         let def_id = match &resolved_path.res {
             Some(hir::Res::Def(def_id)) => *def_id,
             _ => {
-                self.lowering
-                    .emit_error(span, "struct literal without resolved definition");
-                return Ok(());
+                self.lowering.emit_warning(
+                    span,
+                    "struct literal without resolved definition; using tuple aggregate",
+                );
+                return self.lower_unknown_struct_literal(
+                    local_id,
+                    annotated_ty,
+                    fields,
+                    span,
+                );
             }
         };
 
-        let (struct_fields, struct_ty) = match self.lowering.struct_defs.get(&def_id) {
-            Some(info) => (info.fields.clone(), info.ty.clone()),
-            None => {
-                self.lowering
-                    .emit_error(span, "struct not registered during HIR→MIR lowering");
-                return Ok(());
-            }
-        };
+        if let Some(info) = self.lowering.struct_defs.get(&def_id) {
+            let struct_fields = info.fields.clone();
+            let struct_ty = info.ty.clone();
+            return self.lower_registered_struct_literal(
+                local_id,
+                annotated_ty,
+                &struct_fields,
+                &struct_ty,
+                fields,
+                span,
+                def_id,
+            );
+        }
 
+        if let Some(const_info) = self.lowering.const_values.get(&def_id).cloned() {
+            if !fields.is_empty() {
+                self.lowering.emit_warning(
+                    span,
+                    "struct literal for enum variant payload ignored; using discriminant",
+                );
+            }
+            let statement = mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    mir::Place::from_local(local_id),
+                    mir::Rvalue::Use(mir::Operand::Constant(const_info.value.clone())),
+                ),
+            };
+            self.push_statement(statement);
+            self.locals[local_id as usize].ty = const_info.ty.clone();
+            return Ok(());
+        }
+
+        self.lowering.emit_warning(
+            span,
+            "struct literal without registered definition; using tuple aggregate",
+        );
+        self.lower_unknown_struct_literal(local_id, annotated_ty, fields, span)
+    }
+
+    fn lower_registered_struct_literal(
+        &mut self,
+        local_id: mir::LocalId,
+        annotated_ty: Option<&Ty>,
+        struct_fields: &[StructFieldInfo],
+        struct_ty: &Ty,
+        fields: &[hir::StructExprField],
+        span: Span,
+        def_id: hir::DefId,
+    ) -> Result<()> {
         let mut operands = Vec::with_capacity(struct_fields.len());
         let mut field_map: HashMap<String, &hir::StructExprField> = HashMap::new();
         for field in fields {
@@ -1929,7 +2277,43 @@ impl<'a> BodyBuilder<'a> {
         if let Some(ty) = annotated_ty {
             self.locals[local_id as usize].ty = ty.clone();
         } else {
-            self.locals[local_id as usize].ty = struct_ty;
+            self.locals[local_id as usize].ty = struct_ty.clone();
+        }
+
+        Ok(())
+    }
+
+    fn lower_unknown_struct_literal(
+        &mut self,
+        local_id: mir::LocalId,
+        annotated_ty: Option<&Ty>,
+        fields: &[hir::StructExprField],
+        span: Span,
+    ) -> Result<()> {
+        let mut operands = Vec::with_capacity(fields.len());
+        let mut tuple_types: Vec<Box<Ty>> = Vec::with_capacity(fields.len());
+
+        for field in fields {
+            let operand = self.lower_operand(&field.expr, None)?;
+            tuple_types.push(Box::new(operand.ty.clone()));
+            operands.push(operand.operand);
+        }
+
+        let assign = mir::Statement {
+            source_info: span,
+            kind: mir::StatementKind::Assign(
+                mir::Place::from_local(local_id),
+                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+            ),
+        };
+        self.push_statement(assign);
+
+        if let Some(ty) = annotated_ty {
+            self.locals[local_id as usize].ty = ty.clone();
+        } else {
+            self.locals[local_id as usize].ty = Ty {
+                kind: TyKind::Tuple(tuple_types),
+            };
         }
 
         Ok(())
@@ -2331,6 +2715,11 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Path(path) => {
                 let mut resolved_path = path.clone();
                 self.resolve_self_path(&mut resolved_path);
+                let fallback_local = resolved_path
+                    .segments
+                    .first()
+                    .filter(|_| resolved_path.segments.len() == 1)
+                    .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                     if let Some(const_info) = self.lowering.const_values.get(def_id) {
                         return Ok(OperandInfo {
@@ -2384,12 +2773,40 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
+                if let Some(local_id) = fallback_local {
+                    let ty = self.locals[local_id as usize].ty.clone();
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(mir::Place::from_local(local_id)),
+                        ty,
+                    });
+                }
+
                 let name = resolved_path
                     .segments
                     .iter()
                     .map(|seg| seg.name.as_str())
                     .collect::<Vec<_>>()
                     .join("::");
+
+                for (def_id, item) in &self.program.def_map {
+                    if let hir::ItemKind::Function(func) = &item.kind {
+                        if func.sig.name.as_str() == name {
+                            let sig = self.lowering.lower_function_sig(&func.sig, None);
+                            let fn_ty = self.lowering.function_pointer_ty(&sig);
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Fn(
+                                        mir::Symbol::from(func.sig.name.clone()),
+                                        fn_ty.clone(),
+                                    ),
+                                }),
+                                ty: fn_ty,
+                            });
+                        }
+                    }
+                }
                 self.lowering.emit_warning(
                     expr.span,
                     format!(
@@ -2948,6 +3365,11 @@ impl<'a> BodyBuilder<'a> {
     fn lower_place(&mut self, expr: &hir::Expr) -> Result<Option<PlaceInfo>> {
         match &expr.kind {
             hir::ExprKind::Path(path) => {
+                let fallback_local = path
+                    .segments
+                    .first()
+                    .filter(|_| path.segments.len() == 1)
+                    .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
                 match &path.res {
                     Some(hir::Res::Local(hir_id)) => {
                         if let Some(local_id) = self.local_map.get(hir_id) {
@@ -2960,6 +3382,15 @@ impl<'a> BodyBuilder<'a> {
                                     struct_def = Some(derived);
                                 }
                             }
+                            return Ok(Some(PlaceInfo {
+                                place: mir::Place::from_local(local_id),
+                                ty,
+                                struct_def,
+                            }));
+                        }
+                        if let Some(local_id) = fallback_local {
+                            let ty = self.locals[local_id as usize].ty.clone();
+                            let struct_def = self.struct_def_from_ty(&ty);
                             return Ok(Some(PlaceInfo {
                                 place: mir::Place::from_local(local_id),
                                 ty,
@@ -3006,7 +3437,17 @@ impl<'a> BodyBuilder<'a> {
                             }));
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if let Some(local_id) = fallback_local {
+                            let ty = self.locals[local_id as usize].ty.clone();
+                            let struct_def = self.struct_def_from_ty(&ty);
+                            return Ok(Some(PlaceInfo {
+                                place: mir::Place::from_local(local_id),
+                                ty,
+                                struct_def,
+                            }));
+                        }
+                    }
                 }
                 Ok(None)
             }
@@ -3348,6 +3789,9 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 self.current_block = continue_block;
+            }
+            hir::ExprKind::Match(scrutinee, arms) => {
+                self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
             hir::ExprKind::IntrinsicCall(call) => match call.kind {
                 IntrinsicCallKind::ConstBlock => {
