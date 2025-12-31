@@ -142,6 +142,7 @@ fn build_function_decl_item(
         params,
         generics_params: Vec::new(),
         is_const: false,
+        quote_kind: None,
         ret_ty: Some(ret_ty),
     };
 

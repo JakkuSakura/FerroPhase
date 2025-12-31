@@ -4,11 +4,20 @@ use fp_core::ast::*;
 use fp_core::error::Result;
 
 impl<'ctx> AstTypeInferencer<'ctx> {
-    fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
+    pub(crate) fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
         match ty {
             Ty::QuoteToken(qt) => matches!(qt.kind, QuoteFragmentKind::Stmt | QuoteFragmentKind::Item),
             Ty::Vec(vec) => self.is_stmt_or_item_quote(vec.ty.as_ref()),
             Ty::Array(array) => self.is_stmt_or_item_quote(array.elem.as_ref()),
+            _ => false,
+        }
+    }
+
+    pub(crate) fn is_item_quote(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::QuoteToken(qt) => matches!(qt.kind, QuoteFragmentKind::Item),
+            Ty::Vec(vec) => self.is_item_quote(vec.ty.as_ref()),
+            Ty::Array(array) => self.is_item_quote(array.elem.as_ref()),
             _ => false,
         }
     }

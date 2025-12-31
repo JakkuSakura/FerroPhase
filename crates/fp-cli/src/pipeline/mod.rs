@@ -141,7 +141,13 @@ fn ast_contains_quote_or_splice(node: &Node) -> bool {
     }
     fn item_has(i: &ast::Item) -> bool {
         match i.kind() {
-            ast::ItemKind::DefFunction(f) => expr_has(f.body.as_ref()),
+            ast::ItemKind::DefFunction(f) => {
+                if f.sig.is_const || f.sig.quote_kind.is_some() {
+                    false
+                } else {
+                    expr_has(f.body.as_ref())
+                }
+            }
             ast::ItemKind::DefConst(c) => expr_has(&c.value),
             ast::ItemKind::DefStatic(s) => expr_has(&s.value),
             ast::ItemKind::Module(m) => m.items.iter().any(item_has),
@@ -855,6 +861,15 @@ impl Pipeline {
             )?;
         }
 
+        if stage_enabled(options, STAGE_CONST_EVAL) {
+            self.run_stage(
+                STAGE_CONST_EVAL,
+                &diagnostic_manager,
+                options,
+                |pipeline| pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager),
+            )?;
+        }
+
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
             self.run_stage(
                 STAGE_TYPE_ENRICH,
@@ -868,15 +883,6 @@ impl Pipeline {
                         options,
                     )
                 },
-            )?;
-        }
-
-        if stage_enabled(options, STAGE_CONST_EVAL) {
-            self.run_stage(
-                STAGE_CONST_EVAL,
-                &diagnostic_manager,
-                options,
-                |pipeline| pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager),
             )?;
         }
         let runtime = if options.runtime.runtime_type.is_empty() {
@@ -922,6 +928,15 @@ impl Pipeline {
             )?;
         }
 
+        let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
+            ConstEvalOutcome::default()
+        } else {
+            self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
+                pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager)
+            })?
+        };
+        self.last_const_eval = Some(outcome.clone());
+
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
             self.run_stage(
                 STAGE_TYPE_ENRICH,
@@ -942,15 +957,6 @@ impl Pipeline {
             self.save_pretty(&ast, base_path, EXT_AST, options)?;
             self.save_pretty(&ast, base_path, EXT_AST_TYPED, options)?;
         }
-
-        let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
-            ConstEvalOutcome::default()
-        } else {
-            self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
-                pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager)
-            })?
-        };
-        self.last_const_eval = Some(outcome.clone());
 
         // Remove generic template functions after specialization.
         if stage_enabled(options, STAGE_CONST_EVAL) {
