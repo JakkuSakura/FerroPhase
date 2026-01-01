@@ -39,6 +39,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 BlockStmt::Let(stmt_let) => {
                     let init_var = if let Some(init) = stmt_let.init.as_mut() {
+                        if let PatternKind::Type(typed) = &stmt_let.pat.kind {
+                            init.set_ty(typed.ty.clone());
+                        }
                         self.infer_expr(init)?
                     } else {
                         let unit = self.fresh_type_var();
@@ -169,10 +172,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         if let Some(scrutinee) = match_expr.scrutinee.as_mut() {
             let scrutinee_var = self.infer_expr(scrutinee.as_mut())?;
+            let scrutinee_ty = self.resolve_to_ty(scrutinee_var).ok();
             for case in &mut match_expr.cases {
                 self.enter_scope();
 
                 if let Some(pat) = case.pat.as_mut() {
+                    if let Some(Ty::Enum(enum_ty)) = scrutinee_ty.as_ref() {
+                        qualify_enum_variant_pattern(pat, enum_ty);
+                    }
                     let pat_info = self.infer_pattern(pat.as_mut())?;
                     self.unify(pat_info.var, scrutinee_var)?;
                     self.apply_pattern_generalization(&pat_info)?;
@@ -214,4 +221,29 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
     }
+}
+
+fn qualify_enum_variant_pattern(pat: &mut Pattern, enum_ty: &TypeEnum) {
+    let PatternKind::Variant(variant) = pat.kind_mut() else {
+        return;
+    };
+    let ExprKind::Locator(locator) = variant.name.kind() else {
+        return;
+    };
+    let variant_name = match locator {
+        Locator::Ident(ident) => ident.clone(),
+        Locator::Path(path) if path.segments.len() == 1 => path.segments[0].clone(),
+        _ => return,
+    };
+    if !enum_ty
+        .variants
+        .iter()
+        .any(|variant| variant.name.as_str() == variant_name.as_str())
+    {
+        return;
+    }
+
+    let enum_ident = enum_ty.name.clone();
+    let path = Path::new(vec![enum_ident, variant_name]);
+    variant.name = Expr::path(path);
 }

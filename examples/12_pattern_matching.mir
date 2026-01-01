@@ -4,13 +4,9 @@ mir::Program {
 
         fn classify(arg0: i64) -> <??> [body: body1]
 
-        fn unwrap_or(arg0: isize, arg1: i64) -> i64 [body: body2]
+        fn unwrap_or(arg0: (isize, i64), arg1: i64) -> i64 [body: body2]
 
         fn main() -> () [body: body3]
-
-        fn Color::Rgb(arg0: i64, arg1: i64, arg2: i64) -> <??> [body: body4]
-
-        fn Option::Some(arg0: i64) -> isize [body: body5]
     bodies:
         body0 { arg_count: 1, locals: 19 }
             return_local: _0
@@ -113,20 +109,20 @@ mir::Program {
                 _7: i64
                 _8: bool
                 _9: i64
-                _10: <??>
+                _10: i64
                 _11: bool
-                _12: <??>
+                _12: i64
                 _13: bool
-                _14: <??>
+                _14: i64
                 _15: bool
-                _16: <??>
+                _16: i64
             blocks:
                 bb0:
                     s0: _3 = copy _1
                     s1: _4 = Eq(copy _3, 0)
                     terminator: switch copy _4 [1 -> bb2] otherwise -> bb3
                 bb1:
-                    s0: _10 = global n
+                    s0: _10 = copy _1
                     s1: _11 = Eq(copy _10, 0)
                     terminator: switch copy _11 [1 -> bb13] otherwise -> bb14
                 bb2:
@@ -194,32 +190,32 @@ mir::Program {
             return_local: _0
             locals:
                 _0: i64
-                _1: isize
+                _1: (isize, i64)
                 _2: i64
                 _3: i64
-                _4: isize
+                _4: (isize, i64)
                 _5: bool
-                _6: isize
+                _6: i64
                 _7: bool
-                _8: isize
+                _8: (isize, i64)
                 _9: bool
-                _10: isize
+                _10: i64
                 _11: bool
             blocks:
                 bb0:
                     s0: _4 = copy _1
-                    s1: _5 = Eq(copy _4, 0)
+                    s1: _5 = Eq(copy _4[Field(0, Ty { kind: Int(Isize) })], 0)
                     terminator: switch copy _5 [1 -> bb2] otherwise -> bb3
                 bb1:
                     s0: _8 = copy _1
-                    s1: _9 = Eq(copy _8, 0)
+                    s1: _9 = Eq(copy _8[Field(0, Ty { kind: Int(Isize) })], 0)
                     terminator: switch copy _9 [1 -> bb7] otherwise -> bb8
                 bb2:
-                    s0: _6 = copy _4
+                    s0: _6 = copy _4[Field(1, Ty { kind: Int(I64) })]
                     s1: _3 = copy _6
                     terminator: goto -> bb1
                 bb3:
-                    s0: _7 = Eq(copy _4, 1)
+                    s0: _7 = Eq(copy _4[Field(0, Ty { kind: Int(Isize) })], 1)
                     terminator: switch copy _7 [1 -> bb4] otherwise -> bb5
                 bb4:
                     s0: _3 = copy _2
@@ -230,11 +226,11 @@ mir::Program {
                 bb6:
                     terminator: <none>
                 bb7:
-                    s0: _10 = copy _8
+                    s0: _10 = copy _8[Field(1, Ty { kind: Int(I64) })]
                     s1: _0 = copy _10
                     terminator: goto -> bb6
                 bb8:
-                    s0: _11 = Eq(copy _8, 1)
+                    s0: _11 = Eq(copy _8[Field(0, Ty { kind: Int(Isize) })], 1)
                     terminator: switch copy _11 [1 -> bb9] otherwise -> bb10
                 bb9:
                     s0: _0 = copy _2
@@ -242,98 +238,80 @@ mir::Program {
                 bb10:
                     s0: _0 = aggregate(tuple; [])
                     terminator: goto -> bb6
-        body3 { arg_count: 0, locals: 25 }
+        body3 { arg_count: 0, locals: 27 }
             return_local: _0
             locals:
                 _0: ()
-                _1: isize
-                _2: <??>
-                _3: <??>
+                _1: (isize, u8, u8, u8)
+                _2: (isize, u8, u8, u8)
+                _3: (isize, u8, u8, u8)
                 _4: <??>
-                _5: i32
-                _6: <??>
+                _5: <??>
+                _6: i32
                 _7: <??>
-                _8: i32
-                _9: <??>
-                _10: i64
-                _11: i32
-                _12: <??>
-                _13: i32
-                _14: <??>
-                _15: i32
-                _16: <??>
-                _17: i32
-                _18: i64
-                _19: isize
-                _20: i32
-                _21: i64
-                _22: i32
-                _23: i64
+                _8: <??>
+                _9: i32
+                _10: <??>
+                _11: i64
+                _12: i32
+                _13: <??>
+                _14: i32
+                _15: <??>
+                _16: i32
+                _17: <??>
+                _18: i32
+                _19: i64
+                _20: (isize, i64)
+                _21: i32
+                _22: i64
+                _23: (isize, i64)
                 _24: i32
+                _25: i64
+                _26: i32
             blocks:
                 bb0:
-                    s0: _1 = 0
-                    terminator: call fn Color::Rgb(128, 64, 32) -> _2 then bb1
+                    s0: _2 = aggregate(tuple; [0, 0u, 0u, 0u])
+                    s1: _1 = copy _2
+                    s2: _3 = aggregate(tuple; [2, 128u, 64u, 32u])
+                    s3: _5 = ref(Shared, _1)
+                    terminator: call fn describe(copy _5) -> _4 then bb1
                 bb1:
-                    s0: _4 = ref(Shared, _1)
-                    terminator: call fn describe(copy _4) -> _3 then bb2
+                    terminator: call global printf("%s\n", copy _4) -> _6 then bb2
                 bb2:
-                    terminator: call global printf("%s\n", copy _3) -> _5 then bb3
+                    s0: _8 = ref(Shared, _3)
+                    terminator: call fn describe(copy _8) -> _7 then bb3
                 bb3:
-                    s0: _7 = ref(Shared, _2)
-                    terminator: call fn describe(copy _7) -> _6 then bb4
+                    terminator: call global printf("%s\n", copy _7) -> _9 then bb4
                 bb4:
-                    terminator: call global printf("%s\n", copy _6) -> _8 then bb5
+                    s0: _11 = Neg(5)
+                    terminator: call fn classify(copy _11) -> _10 then bb5
                 bb5:
-                    s0: _10 = Neg(5)
-                    terminator: call fn classify(copy _10) -> _9 then bb6
+                    terminator: call global printf("%s\n", copy _10) -> _12 then bb6
                 bb6:
-                    terminator: call global printf("%s\n", copy _9) -> _11 then bb7
+                    terminator: call fn classify(0) -> _13 then bb7
                 bb7:
-                    terminator: call fn classify(0) -> _12 then bb8
+                    terminator: call global printf("%s\n", copy _13) -> _14 then bb8
                 bb8:
-                    terminator: call global printf("%s\n", copy _12) -> _13 then bb9
+                    terminator: call fn classify(4) -> _15 then bb9
                 bb9:
-                    terminator: call fn classify(4) -> _14 then bb10
+                    terminator: call global printf("%s\n", copy _15) -> _16 then bb10
                 bb10:
-                    terminator: call global printf("%s\n", copy _14) -> _15 then bb11
+                    terminator: call fn classify(7) -> _17 then bb11
                 bb11:
-                    terminator: call fn classify(7) -> _16 then bb12
+                    terminator: call global printf("%s\n", copy _17) -> _18 then bb12
                 bb12:
-                    terminator: call global printf("%s\n", copy _16) -> _17 then bb13
+                    s0: _20 = aggregate(tuple; [0, 42])
+                    terminator: call fn unwrap_or(copy _20, 0) -> _19 then bb13
                 bb13:
-                    terminator: call fn Option::Some(42) -> _19 then bb14
+                    terminator: call global printf("%lld\n", copy _19) -> _21 then bb14
                 bb14:
-                    terminator: call fn unwrap_or(copy _19, 0) -> _18 then bb15
+                    s0: _23 = aggregate(tuple; [1, 0])
+                    terminator: call fn unwrap_or(copy _23, 99) -> _22 then bb15
                 bb15:
-                    terminator: call global printf("%d\n", copy _18) -> _20 then bb16
+                    terminator: call global printf("%lld\n", copy _22) -> _24 then bb16
                 bb16:
-                    terminator: call fn unwrap_or(1, 99) -> _21 then bb17
+                    s0: _25 = 0
+                    terminator: call global printf("0x%06X\n", copy _25) -> _26 then bb17
                 bb17:
-                    terminator: call global printf("%d\n", copy _21) -> _22 then bb18
-                bb18:
-                    s0: _23 = 0
-                    terminator: call global printf("0x%06X\n", copy _23) -> _24 then bb19
-                bb19:
-                    terminator: return
-        body4 { arg_count: 3, locals: 4 }
-            return_local: _0
-            locals:
-                _0: <??>
-                _1: i64
-                _2: i64
-                _3: i64
-            blocks:
-                bb0:
-                    s0: _0 = 0u
-                    terminator: return
-        body5 { arg_count: 1, locals: 2 }
-            return_local: _0
-            locals:
-                _0: isize
-                _1: i64
-            blocks:
-                bb0:
-                    s0: _0 = 0
                     terminator: return
 }

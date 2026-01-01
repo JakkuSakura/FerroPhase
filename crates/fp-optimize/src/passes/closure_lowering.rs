@@ -286,6 +286,7 @@ impl ClosureLowering {
         let mut struct_expr = Expr::new(ExprKind::Struct(ExprStruct {
             name: struct_name_expr.into(),
             fields,
+            update: None,
         }));
         struct_expr.set_ty(env_struct_ty.clone());
 

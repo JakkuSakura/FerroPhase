@@ -39,6 +39,7 @@ pub struct HirGenerator {
     preassigned_def_ids: HashMap<usize, hir::DefId>,
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
+    struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -95,6 +96,7 @@ impl HirGenerator {
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
+            struct_field_defs: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -393,6 +395,7 @@ impl HirGenerator {
             preassigned_def_ids: HashMap::new(),
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
+            struct_field_defs: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -421,6 +424,7 @@ impl HirGenerator {
         self.global_type_defs.clear();
         self.preassigned_def_ids.clear();
         self.enum_variant_def_ids.clear();
+        self.struct_field_defs.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -530,6 +534,7 @@ impl HirGenerator {
         self.next_hir_id = 0;
         self.current_position = 0;
         self.type_aliases.clear();
+        self.struct_field_defs.clear();
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
@@ -548,6 +553,18 @@ impl HirGenerator {
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
+                    self.struct_field_defs
+                        .insert(def_id, def_struct.value.fields.clone());
+                }
+                ItemKind::DefStructural(def_structural) => {
+                    let def_id = self.allocate_def_id_for_item(item);
+                    self.register_type_def(
+                        &def_structural.name.name,
+                        def_id,
+                        &def_structural.visibility,
+                    );
+                    self.struct_field_defs
+                        .insert(def_id, def_structural.value.fields.clone());
                 }
                 ItemKind::DefEnum(def_enum) => {
                     let def_id = self.allocate_def_id_for_item(item);
@@ -865,6 +882,32 @@ impl HirGenerator {
                         name,
                         fields,
                         generics,
+                    }),
+                    self.map_visibility(&struct_def.visibility),
+                )
+            }
+            ItemKind::DefStructural(struct_def) => {
+                self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
+                let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
+                let fields = struct_def
+                    .value
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        Ok(hir::StructField {
+                            hir_id: self.next_id(),
+                            name: hir::Symbol::new(field.name.name.clone()),
+                            ty: self.transform_type_to_hir(&field.value)?,
+                            vis: hir::Visibility::Public,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                (
+                    hir::ItemKind::Struct(hir::Struct {
+                        name,
+                        fields,
+                        generics: hir::Generics::default(),
                     }),
                     self.map_visibility(&struct_def.visibility),
                 )

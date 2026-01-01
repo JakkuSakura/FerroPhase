@@ -886,8 +886,15 @@ impl LirGenerator {
 
         if let Some(place_ty) = self.lookup_place_type(place) {
             if Self::is_zero_sized(&place_ty) {
-                let lir_ty = self.lir_type_from_ty(&place_ty);
-                let value = lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty));
+                // Use a dedicated empty-struct constant for zero-sized values to avoid
+                // creating "struct ptr i8 { }" constants when the place type lowers to Ptr(I8).
+                let empty_ty = lir::LirType::Struct {
+                    fields: Vec::new(),
+                    packed: false,
+                    name: None,
+                };
+                let value =
+                    lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), empty_ty));
                 self.register_map.insert(place.local, value.clone());
                 return Ok(value);
             }
@@ -1725,11 +1732,16 @@ impl LirGenerator {
         let mut instructions = Vec::new();
         let mut raw_values = Vec::with_capacity(fields.len());
         let mut constants = Vec::with_capacity(fields.len());
+        // Track operand types so we can coerce register values into aggregate field types.
+        // Without this, registers have no local type info and we can emit invalid insertvalue
+        // operands (e.g. inserting i64 into a ptr field).
+        let mut operand_types = Vec::with_capacity(fields.len());
         let mut all_constants = true;
 
         for operand in fields {
             let value = self.transform_operand(operand)?;
             instructions.extend(self.take_queued_instructions());
+            operand_types.push(self.type_of_operand(operand));
             let is_constant = matches!(value, lir::LirValue::Constant(_));
             if let lir::LirValue::Constant(ref constant) = value {
                 constants.push(constant.clone());
@@ -1748,7 +1760,9 @@ impl LirGenerator {
             raw_values.len(),
         );
 
-        // If we could not infer field types from place/aggregate, derive them from values
+        // If we could not infer field types from place/aggregate, derive them from operands.
+        // This avoids falling back to Ptr(I8) for non-constant array elements (e.g. `-1`),
+        // which can corrupt aggregate layouts and cause invalid insertvalue operands.
         if expected_field_tys.is_empty()
             || (matches!(aggregate_ty, Some(lir::LirType::Ptr(_)))
                 && raw_values.len() == expected_field_tys.len()
@@ -1756,10 +1770,13 @@ impl LirGenerator {
                     .iter()
                     .all(|t| matches!(t, lir::LirType::Ptr(_))))
         {
-            expected_field_tys = raw_values
+            expected_field_tys = operand_types
                 .iter()
-                .map(|v| {
-                    self.infer_lir_value_type(v)
+                .zip(raw_values.iter())
+                .map(|(operand_ty, value)| {
+                    operand_ty
+                        .clone()
+                        .or_else(|| self.infer_lir_value_type(value))
                         .unwrap_or(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
                 })
                 .collect();
@@ -1777,7 +1794,18 @@ impl LirGenerator {
 
         if fields.is_empty() {
             if let Some(lir_ty) = aggregate_ty {
-                let value = lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty));
+                let value = match lir_ty {
+                    lir::LirType::Struct { .. } => {
+                        lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty))
+                    }
+                    lir::LirType::Array(elem, _len) => lir::LirValue::Constant(
+                        lir::LirConstant::Array(Vec::new(), *elem),
+                    ),
+                    _ => {
+                        // Non-aggregate zero-field values should not emit struct constants.
+                        return Ok((instructions, None));
+                    }
+                };
                 return Ok((instructions, Some(value)));
             }
             return Ok((instructions, None));
@@ -1797,50 +1825,65 @@ impl LirGenerator {
 
         // Choose an aggregate type suitable for InsertValue construction.
         // Prefer a real struct/array type; otherwise synthesize a struct from expected fields.
-        let agg_construction_ty: Option<lir::LirType> = match aggregate_ty.clone() {
-            Some(lir::LirType::Struct {
-                fields,
-                packed,
-                name,
-            }) => {
-                if fields.len() == raw_values.len() {
-                    Some(lir::LirType::Struct {
-                        fields,
-                        packed,
-                        name,
-                    })
-                } else {
-                    Some(lir::LirType::Struct {
-                        fields: expected_field_tys.clone(),
-                        packed: false,
-                        name: None,
-                    })
+        let agg_construction_ty: Option<lir::LirType> = if matches!(kind, mir::AggregateKind::Array(_)) {
+            match aggregate_ty.clone() {
+                Some(lir::LirType::Array(elem, _n)) => {
+                    Some(lir::LirType::Array(elem, raw_values.len() as u64))
+                }
+                _ => {
+                    let elem_ty = expected_field_tys
+                        .get(0)
+                        .cloned()
+                        .unwrap_or(lir::LirType::I64);
+                    Some(lir::LirType::Array(Box::new(elem_ty), raw_values.len() as u64))
                 }
             }
-            Some(lir::LirType::Array(elem, _n)) => {
-                Some(lir::LirType::Array(elem, raw_values.len() as u64))
-            }
-            Some(_other) => {
-                // Not an aggregate; synthesize a struct if multiple fields; if single field, just return it below
-                if raw_values.len() > 1 {
-                    Some(lir::LirType::Struct {
-                        fields: expected_field_tys.clone(),
-                        packed: false,
-                        name: None,
-                    })
-                } else {
-                    None
+        } else {
+            match aggregate_ty.clone() {
+                Some(lir::LirType::Struct {
+                    fields,
+                    packed,
+                    name,
+                }) => {
+                    if fields.len() == raw_values.len() {
+                        Some(lir::LirType::Struct {
+                            fields,
+                            packed,
+                            name,
+                        })
+                    } else {
+                        Some(lir::LirType::Struct {
+                            fields: expected_field_tys.clone(),
+                            packed: false,
+                            name: None,
+                        })
+                    }
                 }
-            }
-            None => {
-                if raw_values.len() > 1 {
-                    Some(lir::LirType::Struct {
-                        fields: expected_field_tys.clone(),
-                        packed: false,
-                        name: None,
-                    })
-                } else {
-                    None
+                Some(lir::LirType::Array(elem, _n)) => {
+                    Some(lir::LirType::Array(elem, raw_values.len() as u64))
+                }
+                Some(_other) => {
+                    // Not an aggregate; synthesize a struct if multiple fields; if single field, just return it below
+                    if raw_values.len() > 1 {
+                        Some(lir::LirType::Struct {
+                            fields: expected_field_tys.clone(),
+                            packed: false,
+                            name: None,
+                        })
+                    } else {
+                        None
+                    }
+                }
+                None => {
+                    if raw_values.len() > 1 {
+                        Some(lir::LirType::Struct {
+                            fields: expected_field_tys.clone(),
+                            packed: false,
+                            name: None,
+                        })
+                    } else {
+                        None
+                    }
                 }
             }
         };
@@ -1852,7 +1895,13 @@ impl LirGenerator {
             for (index, value) in raw_values.into_iter().enumerate() {
                 let mut element = value;
                 if let Some(field_ty) = expected_field_tys.get(index) {
-                    element = self.coerce_aggregate_value(element, field_ty, &mut instructions);
+                    let source_ty = operand_types.get(index).and_then(|ty| ty.clone());
+                    element = self.coerce_aggregate_value_with_source(
+                        element,
+                        source_ty.as_ref(),
+                        field_ty,
+                        &mut instructions,
+                    );
                 }
                 let instr_id = self.next_id();
                 instructions.push(lir::LirInstruction {
@@ -1944,11 +1993,26 @@ impl LirGenerator {
         target_ty: &lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
     ) -> lir::LirValue {
+        self.coerce_aggregate_value_with_source(value, None, target_ty, instructions)
+    }
+
+    fn coerce_aggregate_value_with_source(
+        &mut self,
+        value: lir::LirValue,
+        source_ty: Option<&lir::LirType>,
+        target_ty: &lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> lir::LirValue {
         match value {
             lir::LirValue::Constant(constant) => {
                 lir::LirValue::Constant(self.cast_constant_to_lir_type(constant, target_ty))
             }
-            other => self.cast_runtime_value_to_lir_type(other, target_ty.clone(), instructions),
+            other => self.cast_runtime_value_to_lir_type_with_source(
+                other,
+                source_ty,
+                target_ty.clone(),
+                instructions,
+            ),
         }
     }
 
@@ -1958,7 +2022,18 @@ impl LirGenerator {
         target_ty: lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
     ) -> lir::LirValue {
-        if let Some(current_ty) = self.infer_lir_value_type(&value) {
+        self.cast_runtime_value_to_lir_type_with_source(value, None, target_ty, instructions)
+    }
+
+    fn cast_runtime_value_to_lir_type_with_source(
+        &mut self,
+        value: lir::LirValue,
+        source_ty: Option<&lir::LirType>,
+        target_ty: lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> lir::LirValue {
+        let current_ty = source_ty.cloned().or_else(|| self.infer_lir_value_type(&value));
+        if let Some(current_ty) = current_ty {
             if current_ty == target_ty {
                 return value;
             }
@@ -2090,6 +2165,9 @@ impl LirGenerator {
                         })
                         .collect();
                     lir::LirConstant::Struct(adjusted, target_ty.clone())
+                } else if fields.len() == 1 {
+                    let field = fields.into_iter().next().expect("len checked");
+                    self.cast_constant_to_lir_type(field, target_ty)
                 } else {
                     lir::LirConstant::Struct(fields, target_ty.clone())
                 }
@@ -2606,6 +2684,12 @@ impl LirGenerator {
     ) -> Option<lir::LirConstant> {
         match kind {
             mir::AggregateKind::Tuple => {
+                // Only emit struct constants when the place itself is a tuple.
+                // If the place type is non-aggregate, returning a struct constant
+                // produces invalid LLVM IR like "struct i64 { i64 1 }".
+                if !matches!(place_ty.kind, TyKind::Tuple(_)) {
+                    return None;
+                }
                 let lir_ty = self.lir_type_from_ty(place_ty);
                 Some(lir::LirConstant::Struct(constants, lir_ty))
             }

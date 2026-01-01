@@ -296,6 +296,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .insert(def.name.as_str().to_string(), def.value.clone());
                 self.register_symbol(&def.name);
             }
+            ItemKind::DefStructural(def) => {
+                let struct_ty = TypeStruct {
+                    name: def.name.clone(),
+                    generics_params: Vec::new(),
+                    fields: def.value.fields.clone(),
+                };
+                self.struct_defs
+                    .insert(def.name.as_str().to_string(), struct_ty);
+                self.register_symbol(&def.name);
+            }
             ItemKind::DefType(def) => {
                 // Type aliases / type-level expressions introduce a named type.
                 // The concrete shape (e.g. structural fields) is resolved during `infer_item`.
@@ -459,6 +469,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = match item.kind_mut() {
             ItemKind::DefStruct(def) => {
                 let ty = Ty::Struct(def.value.clone());
+                let placeholder = self.symbol_var(&def.name);
+                let var = self.type_from_ast_ty(&ty)?;
+                self.unify(placeholder, var)?;
+                self.generalize_symbol(def.name.as_str(), placeholder)?;
+                ty
+            }
+            ItemKind::DefStructural(def) => {
+                let ty = Ty::Struct(TypeStruct {
+                    name: def.name.clone(),
+                    generics_params: Vec::new(),
+                    fields: def.value.fields.clone(),
+                });
                 let placeholder = self.symbol_var(&def.name);
                 let var = self.type_from_ast_ty(&ty)?;
                 self.unify(placeholder, var)?;

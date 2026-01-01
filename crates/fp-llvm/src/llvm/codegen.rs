@@ -174,8 +174,14 @@ impl<'a> LirCodegen<'a> {
             .module
             .add_global(global_ty, Some(AddressSpace::default()), &llvm_name);
 
-        gvar.set_linkage(self.convert_linkage(global.linkage));
-        gvar.set_visibility(self.convert_visibility(global.visibility));
+        let linkage = self.convert_linkage(global.linkage);
+        gvar.set_linkage(linkage);
+        let visibility = if matches!(linkage, inkwell::module::Linkage::Internal) {
+            GlobalVisibility::Default
+        } else {
+            self.convert_visibility(global.visibility)
+        };
+        gvar.set_visibility(visibility);
         gvar.set_constant(global.is_constant);
         gvar.set_alignment(global.alignment.unwrap_or(0));
         gvar.set_section(global.section.as_deref());
@@ -190,14 +196,36 @@ impl<'a> LirCodegen<'a> {
 
     fn generate_function(&mut self, lir_func: lir::LirFunction) -> Result<()> {
         let llvm_name = self.llvm_symbol_for(&lir_func.name);
-        let signature = lir_func.signature.clone();
+        let mut signature = lir_func.signature.clone();
+        let is_main = llvm_name == "main";
+        let linkage = self.convert_linkage(lir_func.linkage.clone());
+        if is_main && matches!(signature.return_type, lir::LirType::Void) {
+            signature.return_type = lir::LirType::I32;
+        }
         let fn_type = self.function_type_from_signature(signature.clone())?;
-        let function = self
-            .llvm_ctx
-            .module
-            .add_function(&llvm_name, fn_type, Some(self.convert_linkage(lir_func.linkage)));
+        // Reuse any pre-declared function to avoid LLVM auto-renaming (e.g. `foo` -> `foo.1`).
+        // Calls can emit a declaration before we define the body; if we re-add here, the linker
+        // will look for the unsuffixed symbol and fail.
+        let function = if let Some(existing) = self.llvm_ctx.module.get_function(&llvm_name) {
+            existing
+        } else {
+            self.llvm_ctx.module.add_function(
+                &llvm_name,
+                fn_type,
+                Some(if is_main {
+                    inkwell::module::Linkage::External
+                } else {
+                    linkage
+                }),
+            )
+        };
 
         function.set_call_conventions(self.convert_calling_convention(&lir_func.calling_convention));
+        if is_main {
+            function.set_linkage(inkwell::module::Linkage::External);
+        } else {
+            function.set_linkage(linkage);
+        }
         self.defined_functions.insert(llvm_name.clone());
         self.current_function = Some(function);
         self.llvm_ctx.current_function = Some(function);
@@ -406,17 +434,27 @@ impl<'a> LirCodegen<'a> {
                     .builder
                     .build_store(ptr_value, value)
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                store.set_volatile(volatile);
+                let _ = store.set_volatile(volatile);
                 if let Some(align) = alignment {
                     store.set_alignment(align).map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 }
             }
-            lir::LirInstructionKind::Alloca { size, alignment } => {
+            lir::LirInstructionKind::Alloca { size, alignment: _alignment } => {
                 let element_lir_type = match ty_hint.clone() {
                     Some(lir::LirType::Ptr(inner)) => *inner,
                     _ => lir::LirType::I8,
                 };
                 let llvm_element_type = self.llvm_basic_type(&element_lir_type)?;
+                let saved_block = self.llvm_ctx.builder.get_insert_block();
+                let entry_block = self
+                    .current_function
+                    .and_then(|func| func.get_first_basic_block())
+                    .ok_or_else(|| report_error_with_context(LOG_AREA, "missing entry block"))?;
+                if let Some(first_inst) = entry_block.get_first_instruction() {
+                    self.llvm_ctx.builder.position_at(entry_block, &first_inst);
+                } else {
+                    self.llvm_ctx.builder.position_at_end(entry_block);
+                }
                 let alloca = self
                     .llvm_ctx
                     .builder
@@ -430,8 +468,14 @@ impl<'a> LirCodegen<'a> {
                         .builder
                         .build_array_alloca(llvm_element_type, count, &format!("alloca_count_{}", instr_id))
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                    if let Some(block) = saved_block {
+                        self.llvm_ctx.builder.position_at_end(block);
+                    }
                     self.record_result(instr_id, ty_hint, array_alloca.into());
                 } else {
+                    if let Some(block) = saved_block {
+                        self.llvm_ctx.builder.position_at_end(block);
+                    }
                     self.record_result(instr_id, ty_hint, alloca.into());
                 }
             }

@@ -1,46 +1,63 @@
 ast::File {
   items:
-    pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
-      block (1 stmt) : i64
+    pub import std::fmt::Display : ()
+    pub import std::ops::Add : ()
+    pub fn<T: Add<T
+> + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy>(unknown, unknown) -> unknown : fn<T: Add<T
+> + Copy>(unknown, unknown) -> unknown
+      block (1 stmt) : unknown
         expr_stmt (value)
-          binop + : i64
+          binop + : unknown
             lhs:
-              locator a : i64
+              locator a : unknown
             rhs:
-              locator b : i64
-    pub fn double(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
-      block (1 stmt) : i64
+              locator b : unknown
+    pub fn<T: Add<T
+> + Copy> double(x: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy>(unknown) -> unknown : fn<T: Add<T
+> + Copy>(unknown) -> unknown
+      block (1 stmt) : unknown
         expr_stmt (value)
-          binop * : i64
+          binop + : unknown
             lhs:
-              locator x : i64
+              locator x : unknown
             rhs:
-              value 2 : i64
-    pub fn compose(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
-      block (1 stmt) : i64
+              locator x : unknown
+    pub fn<T: Add<T
+> + Copy + Display> pipeline(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy + Display>(unknown, unknown) -> unknown : fn<T: Add<T
+> + Copy + Display>(unknown, unknown) -> unknown
+      block (3 stmts) : unknown
+        let result
+          init:
+            invoke : unknown
+              target: double
+              args:
+                invoke : unknown
+                  target: add
+                  args:
+                    locator a : unknown
+                    locator b : unknown
+        expr_stmt ;
+          intrinsic println : ()
+            template: "specialized result: {}" result
         expr_stmt (value)
-          invoke : i64
-            target: double
-            args:
-              invoke : i64
-                target: add
-                args:
-                  locator x : i64
-                  value 1 : i64
+          locator result : unknown
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (5 stmts) : ()
-        expr_stmt ;
-          intrinsic println : ()
-            template: "{}" add(2, 3)
-        expr_stmt ;
-          intrinsic println : ()
-            template: "{}" double(5)
-        expr_stmt ;
-          intrinsic println : ()
-            template: "{}" compose(10)
-        pub const RESULT: i64 : i64
-          value 30 : i64
-        expr_stmt ;
-          intrinsic println : ()
-            template: "const: {}" RESULT
+      block (2 stmts) : ()
+        let _
+          init:
+            invoke : i64
+              target: pipeline
+              args:
+                value 10 : i64
+                value 20 : i64
+        let _
+          init:
+            invoke : f64
+              target: pipeline
+              args:
+                value 1.5 : f64
+                value 2.5 : f64
 }

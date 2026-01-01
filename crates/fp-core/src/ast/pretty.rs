@@ -176,7 +176,14 @@ impl PrettyPrintable for ast::Expr {
                         suffix
                     ),
                 )?;
-                ctx.with_indent(|ctx| fmt_expr_fields(&expr_struct.fields, f, ctx))
+                ctx.with_indent(|ctx| {
+                    fmt_expr_fields(&expr_struct.fields, f, ctx)?;
+                    if let Some(update) = &expr_struct.update {
+                        ctx.writeln(f, "..")?;
+                        ctx.with_indent(|ctx| update.fmt_pretty(f, ctx))?;
+                    }
+                    Ok(())
+                })
             }
             ast::ExprKind::Structural(expr_structural) => {
                 ctx.writeln(f, format!("structural{}", suffix))?;
@@ -1170,10 +1177,14 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
                 .join(", ");
             format!("{}({})", render_invoke_target(&invoke.target), args)
         }
-        ast::ExprKind::Struct(expr_struct) => format!(
-            "{} {{ ... }}",
-            render_expr_inline(expr_struct.name.as_ref())
-        ),
+        ast::ExprKind::Struct(expr_struct) => {
+            let update = if expr_struct.update.is_some() { " .." } else { "" };
+            format!(
+                "{} {{ ...{} }}",
+                render_expr_inline(expr_struct.name.as_ref()),
+                update
+            )
+        }
         ast::ExprKind::Tuple(tuple) => tuple
             .values
             .iter()

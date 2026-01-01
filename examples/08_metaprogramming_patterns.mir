@@ -2,9 +2,9 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
 
-        fn type_name() -> <??> [body: body1]
+        fn Point3D::type_name() -> <??> [body: body1]
 
-        fn field_count() -> usize [body: body2]
+        fn Point3D::field_count() -> usize [body: body2]
     bodies:
         body0 { arg_count: 0, locals: 8 }
             return_local: _0
@@ -19,9 +19,9 @@ mir::Program {
                 _7: i32
             blocks:
                 bb0:
-                    terminator: call fn type_name() -> _1 then bb1
+                    terminator: call fn Point3D::type_name() -> _1 then bb1
                 bb1:
-                    terminator: call fn field_count() -> _2 then bb2
+                    terminator: call fn Point3D::field_count() -> _2 then bb2
                 bb2:
                     terminator: call global printf("%s has %llu fields\n", copy _1, copy _2) -> _3 then bb3
                 bb3:

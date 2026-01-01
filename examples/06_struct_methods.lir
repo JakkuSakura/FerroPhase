@@ -1,6 +1,6 @@
 lir::Program {
     functions:
-        fn new(arg0: i64, arg1: i64) -> { i64, i64 } [cc: c, linkage: internal] {
+        fn Point__new(arg0: i64, arg1: i64) -> { i64, i64 } [cc: c, linkage: internal] {
             locals:
                 %0: { i64, i64 }
                 %1: i64 // arg
@@ -17,7 +17,7 @@ lir::Program {
                 terminator: ret %r6
         }
 
-        fn translate(arg0: ptr { i64, i64 }, arg1: i64, arg2: i64) -> void [cc: c, linkage: internal] {
+        fn Point__translate(arg0: ptr { i64, i64 }, arg1: i64, arg2: i64) -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
                 %1: ptr { i64, i64 } // arg
@@ -41,7 +41,7 @@ lir::Program {
                 terminator: ret void
         }
 
-        fn distance2(arg0: ptr { i64, i64 }, arg1: ptr { i64, i64 }) -> i64 [cc: c, linkage: internal] {
+        fn Point__distance2(arg0: ptr { i64, i64 }, arg1: ptr { i64, i64 }) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: ptr { i64, i64 } // arg
@@ -114,7 +114,7 @@ lir::Program {
                 terminator: ret %r75
         }
 
-        fn new(arg0: i64, arg1: i64) -> { i64, i64 } [cc: c, linkage: internal] {
+        fn Rectangle__new(arg0: i64, arg1: i64) -> { i64, i64 } [cc: c, linkage: internal] {
             locals:
                 %0: { i64, i64 }
                 %1: i64 // arg
@@ -131,7 +131,7 @@ lir::Program {
                 terminator: ret %r82
         }
 
-        fn area(arg0: ptr { i64, i64 }) -> i64 [cc: c, linkage: internal] {
+        fn Rectangle__area(arg0: ptr { i64, i64 }) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: ptr { i64, i64 } // arg
@@ -159,7 +159,7 @@ lir::Program {
                 terminator: ret %r101
         }
 
-        fn perimeter(arg0: ptr { i64, i64 }) -> i64 [cc: c, linkage: internal] {
+        fn Rectangle__perimeter(arg0: ptr { i64, i64 }) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: ptr { i64, i64 } // arg
@@ -197,7 +197,7 @@ lir::Program {
                 terminator: ret %r128
         }
 
-        fn is_square(arg0: ptr { i64, i64 }) -> i1 [cc: c, linkage: internal] {
+        fn Rectangle__is_square(arg0: ptr { i64, i64 }) -> i1 [cc: c, linkage: internal] {
             locals:
                 %0: i1
                 %1: ptr { i64, i64 } // arg
@@ -257,10 +257,10 @@ lir::Program {
 ") : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i149: %r149 = call c @new(i64 10, i64 20) : { i64, i64 }
+                i149: %r149 = call c @Point__new(i64 10, i64 20) : { i64, i64 }
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i150: %r150 = call c @new(i64 5, i64 15) : { i64, i64 }
+                i150: %r150 = call c @Point__new(i64 5, i64 15) : { i64, i64 }
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i151: %r151 = alloca i32 1 align 8 : ptr { i64, i64 }
@@ -297,7 +297,7 @@ lir::Program {
                 i176: %r176 = sub i64 0, i64 4 : i64
                 i177: store %r176, %r175 align 8
                 i178: %r178 = load %r175 align 8 : i64
-                i179: %r179 = call c @translate(%r173, i64 3, %r178)
+                i179: %r179 = call c @Point__translate(%r173, i64 3, %r178)
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
                 i180: %r180 = alloca i32 1 align 8 : ptr { i64, i64 }
@@ -318,14 +318,14 @@ lir::Program {
                 i192: store %r149, %r191 align 8
                 i193: %r193 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i194: store %r150, %r193 align 8
-                i195: %r195 = call c @distance2(%r191, %r193) : i64
+                i195: %r195 = call c @Point__distance2(%r191, %r193) : i64
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
                 i196: %r196 = call c @printf(c"Distance²(p1, p2) = %lld
 ", %r195) : i32
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i197: %r197 = call c @new(i64 10, i64 5) : { i64, i64 }
+                i197: %r197 = call c @Rectangle__new(i64 10, i64 5) : { i64, i64 }
                 terminator: br bb10
             bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
                 i198: %r198 = alloca i32 1 align 8 : ptr { i64, i64 }
@@ -344,7 +344,7 @@ lir::Program {
             bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
                 i209: %r209 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i210: store %r197, %r209 align 8
-                i211: %r211 = call c @area(%r209) : i64
+                i211: %r211 = call c @Rectangle__area(%r209) : i64
                 terminator: br bb12
             bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
                 i212: %r212 = call c @printf(c"  area = %lld
@@ -353,7 +353,7 @@ lir::Program {
             bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
                 i213: %r213 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i214: store %r197, %r213 align 8
-                i215: %r215 = call c @perimeter(%r213) : i64
+                i215: %r215 = call c @Rectangle__perimeter(%r213) : i64
                 terminator: br bb14
             bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
                 i216: %r216 = call c @printf(c"  perimeter = %lld
@@ -362,7 +362,7 @@ lir::Program {
             bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
                 i217: %r217 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i218: store %r197, %r217 align 8
-                i219: %r219 = call c @is_square(%r217) : i1
+                i219: %r219 = call c @Rectangle__is_square(%r217) : i1
                 terminator: br bb16
             bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
                 i220: %r220 = zext %r219 to i32 : i32

@@ -1,6 +1,6 @@
 use fp_core::ast::{
-    ExprKind, Item, ItemDefStructural, ItemKind, Locator, Node, NodeKind, Path, StructuralField,
-    Ty, TypeBinaryOpKind, TypeStructural,
+    Expr, ExprKind, Ident, Item, ItemDefEnum, ItemDefStructural, ItemKind, Locator, Node, NodeKind,
+    Path, StructuralField, Ty, TypeBinaryOpKind, TypeEnum, TypeStructural, Value, ValueNone,
 };
 use fp_core::error::Result;
 use std::collections::{HashMap, HashSet};
@@ -80,6 +80,28 @@ fn materialize_items(items: &mut Vec<Item>) -> Result<()> {
                 // Direct structural aliases are handled below.
             }
 
+            if let Ty::TypeBinaryOp(op) = &def.value {
+                if matches!(op.kind, TypeBinaryOpKind::Union) {
+                    if let (Some(lhs), Some(rhs)) = (
+                        union_variant_from_ty(&op.lhs),
+                        union_variant_from_ty(&op.rhs),
+                    ) {
+                        let enum_def = ItemDefEnum {
+                            visibility: def.visibility.clone(),
+                            name: def.name.clone(),
+                            value: TypeEnum {
+                                name: def.name.clone(),
+                                generics_params: Vec::new(),
+                                variants: vec![lhs, rhs],
+                            },
+                        };
+                        *item = Item::new(ItemKind::DefEnum(enum_def));
+                        changed = true;
+                        continue;
+                    }
+                }
+            }
+
             if let Some(fields) =
                 resolve_structural_fields(&def.value, &shapes, &mut HashSet::new())
             {
@@ -103,6 +125,40 @@ fn materialize_items(items: &mut Vec<Item>) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn union_variant_from_ty(ty: &Ty) -> Option<fp_core::ast::EnumTypeVariant> {
+    let (ident, payload) = match ty {
+        Ty::Struct(struct_ty) => (Some(struct_ty.name.clone()), Some(Ty::expr(Expr::ident(struct_ty.name.clone())))),
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Locator(locator) => match locator {
+                Locator::Path(path) => {
+                    let ident = path.segments.last().cloned();
+                    (ident.clone(), ident.map(|name| Ty::expr(Expr::ident(name))))
+                }
+                Locator::Ident(ident) => (Some(ident.clone()), Some(Ty::expr(Expr::ident(ident.clone())))),
+                Locator::ParameterPath(path) => {
+                    let ident = path.segments.last().map(|seg| seg.ident.clone());
+                    (ident.clone(), ident.map(|name| Ty::expr(Expr::ident(name))))
+                }
+            },
+            _ => (None, None),
+        },
+        Ty::Value(value) => match value.value.as_ref() {
+            Value::None(ValueNone) => (Some(Ident::new("None")), Some(Ty::unit())),
+            _ => (None, None),
+        },
+        _ => (None, None),
+    };
+
+    let ident = ident?;
+    let payload = payload?;
+
+    Some(fp_core::ast::EnumTypeVariant {
+        name: ident,
+        value: payload,
+        discriminant: None,
+    })
 }
 
 fn resolve_structural_fields(

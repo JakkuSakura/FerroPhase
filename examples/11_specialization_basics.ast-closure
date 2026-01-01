@@ -1,73 +1,22 @@
 ast::File {
   items:
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
-    pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
-      block (1 stmt) : i64
-        expr_stmt (value)
-          binop + : i64
-            lhs:
-              locator a : i64
-            rhs:
-              locator b : i64
-    pub fn double(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
-      block (1 stmt) : i64
-        expr_stmt (value)
-          binop * : i64
-            lhs:
-              locator x : i64
-            rhs:
-              value 2 : i64
-    pub fn compose(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
-      block (1 stmt) : i64
-        expr_stmt (value)
-          invoke : i64
-            target: double
-            args:
-              invoke : i64
-                target: add
-                args:
-                  locator x : i64
-                  value 1 : i64
+    pub import std::fmt::Display : ()
+    pub import std::ops::Add : ()
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (5 stmts) : ()
-        expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: add
-                args:
-                  value 2 : i64
-                  value 3 : i64
-        expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: double
-                args:
-                  value 5 : i64
-        expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: compose
-                args:
-                  value 10 : i64
-        pub const RESULT: i64 : i64
-          value 30 : i64
-        expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "const: %lld
-" : &string
-              locator RESULT : i64
+      block (2 stmts) : ()
+        let _
+          init:
+            invoke : i64
+              target: pipeline
+              args:
+                value 10 : i64
+                value 20 : i64
+        let _
+          init:
+            invoke : f64
+              target: pipeline
+              args:
+                value 1.5 : f64
+                value 2.5 : f64
 }
