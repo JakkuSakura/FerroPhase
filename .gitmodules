@@ -1,3 +1,0 @@
-[submodule "crates/magnet"]
-	path = crates/magnet
-	url = ../Magnet
