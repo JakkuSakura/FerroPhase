@@ -1,31 +1,25 @@
 #!/usr/bin/env fp run
-//! Function specialization and inlining
+//! Function specialization via generic monomorphization
 
-fn add(a: i64, b: i64) -> i64 {
+use std::fmt::Display;
+use std::ops::Add;
+
+fn add<T: Add<Output = T> + Copy>(a: T, b: T) -> T {
     a + b
 }
 
-fn double(x: i64) -> i64 {
-    x * 2
+fn double<T: Add<Output = T> + Copy>(x: T) -> T {
+    x + x
 }
 
-fn compose(x: i64) -> i64 {
-    double(add(x, 1))
+fn pipeline<T: Add<Output = T> + Copy + Display>(a: T, b: T) -> T {
+    let result = double(add(a, b));
+    println!("specialized result: {}", result);
+    result
 }
 
 fn main() {
-    // Simple calls (should inline)
-    println!("{}", add(2, 3));
-    println!("{}", double(5));
-
-    // Composition (should inline entire chain)
-    println!("{}", compose(10)); // (10 + 1) * 2 = 22
-
-    // Const evaluation (compile-time)
-    const RESULT: i64 = {
-        let x = 5;
-        let y = x + 10; // add inlined
-        y * 2           // double inlined
-    };
-    println!("const: {}", RESULT);
+    // Each concrete type generates a specialized version of the generic functions.
+    let _ = pipeline(10i64, 20i64);
+    let _ = pipeline(1.5f64, 2.5f64);
 }
