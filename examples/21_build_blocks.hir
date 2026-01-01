@@ -1,0 +1,58 @@
+hir::Program {
+    pub fn build_items(flag: bool) -> <error> {
+        // params: [flag: bool]
+        {
+            {
+            }
+            {
+            }
+        }
+    }
+
+    pub fn build_items_2(flag: bool) -> <error> {
+        // params: [flag: bool]
+        {
+            if (flag)
+                {
+                    pub struct Alpha {
+                        pub id: i64,
+                    }
+                }
+            else
+                {
+                    pub struct Beta {
+                        pub id: i64,
+                    }
+                }
+            if (flag)
+                {
+                    pub struct Alpha {
+                        pub id: i64,
+                    }
+                }
+            else
+                {
+                    pub struct Beta {
+                        pub id: i64,
+                    }
+                }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            let alpha = Alpha { id: 1 };
+            let _ = alpha.id;
+            let beta = Beta { id: 2 };
+            let _ = beta.id;
+        }
+    }
+
+    pub struct Alpha {
+        pub id: i64,
+    }
+
+    pub struct Beta {
+        pub id: i64,
+    }
+}

@@ -1,0 +1,44 @@
+hir::Program {
+    pub const Shape: bool =
+        false;
+
+    pub struct Circle {
+        pub radius: f64,
+    }
+
+    impl Shape for Circle {
+        fn area(self: &Circle) -> f64 {
+            // params: [self: &Circle]
+            {
+                ((3.14159 * self.radius) * self.radius)
+                ((3.14159 * self.radius) * self.radius)
+            }
+        }
+    }
+
+    pub struct Rectangle {
+        pub width: f64,
+        pub height: f64,
+    }
+
+    impl Shape for Rectangle {
+        fn area(self: &Rectangle) -> f64 {
+            // params: [self: &Rectangle]
+            {
+                (self.width * self.height)
+                (self.width * self.height)
+            }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            let circle = Circle { radius: 5 };
+            let rect = Rectangle { width: 4, height: 6 };
+            circle.describe();
+            rect.describe();
+            print_area(circle);
+            print_area(rect);
+        }
+    }
+}

@@ -1,13 +1,13 @@
 ast::File {
   items:
-    priv import std::collections::HashMap : ()
-    priv const PRIME_COUNT: i64 : i64
+    pub import std::collections::HashMap : ()
+    pub const PRIME_COUNT: i64 : i64
       value 6 : i64
-    priv const ZERO_BUFFER_CAPACITY: i64 : i64
+    pub const ZERO_BUFFER_CAPACITY: i64 : i64
       value 16 : i64
-    priv const HTTP_STATUS_COUNT: i64 : i64
+    pub const HTTP_STATUS_COUNT: i64 : i64
       value 4 : i64
-    priv fn main() -> () : fn() -> () : fn() -> ()
+    pub fn main() -> () : fn() -> () : fn() -> ()
       block (6 stmts) : ()
         expr_stmt ;
           intrinsic println : ()

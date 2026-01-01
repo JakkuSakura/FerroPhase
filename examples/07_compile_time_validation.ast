@@ -1,69 +1,37 @@
 ast::File {
   items:
-    priv fn main() -> () : fn() -> ()
+    pub fn main() -> () : fn() -> ()
       block (13 stmts)
-        priv struct Data {
-          a: i64
-          b: i64
-          c: [u8; 16]
+        pub struct Data {
+          a: Expr(i64)
+          b: Expr(i64)
+          c: [Expr(u8); 16]
         }
-        priv const SIZE: u64
-          intrinsic size_of
-            args:
-              locator Data
-        priv const FIELDS: u64
-          intrinsic field_count
-            args:
-              locator Data
-        priv const HAS_A: bool
-          intrinsic has_field
-            args:
-              locator Data
-              value "a"
-        priv const HAS_X: bool
-          intrinsic has_field
-            args:
-              locator Data
-              value "x"
+        pub const SIZE: u64
+          value 24
+        pub const FIELDS: u64
+          value 3
+        pub const HAS_A: bool
+          value true
+        pub const HAS_X: bool
+          value false
         expr_stmt ;
           intrinsic println
             template: "sizeof={}, fields={}" SIZE, FIELDS
         expr_stmt ;
           intrinsic println
             template: "has_a={}, has_x={}" HAS_A, HAS_X
-        priv const MAX_SIZE: u64
+        pub const MAX_SIZE: u64
           value 64
-        priv const SIZE_OK: bool
-          binop <=
-            lhs:
-              locator SIZE
-            rhs:
-              locator MAX_SIZE
-        priv const IS_ALIGNED: bool
-          binop ==
-            lhs:
-              binop %
-                lhs:
-                  locator SIZE
-                rhs:
-                  value 8
-            rhs:
-              value 0
+        pub const SIZE_OK: bool
+          value true
+        pub const IS_ALIGNED: bool
+          value true
         expr_stmt ;
           intrinsic println
             template: "size_ok={}, aligned={}" SIZE_OK, IS_ALIGNED
-        priv const MODE: &string
-          if
-            cond:
-              binop &&
-                lhs:
-                  locator SIZE_OK
-                rhs:
-                  locator IS_ALIGNED
-            then:
-              value "optimized"
-            else:
-              value "default"
+        pub const MODE: &string
+          value "optimized"
         expr_stmt ;
           intrinsic println
             template: "mode: {}" MODE

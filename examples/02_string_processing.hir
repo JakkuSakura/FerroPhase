@@ -1,31 +1,31 @@
 hir::Program {
-    fn main() -> () {
+    pub fn main() -> () {
         {
-            const NAME: &str =
+            pub const NAME: &str =
                 "FerroPhase";
-            const VERSION: &str =
+            pub const VERSION: &str =
                 "0.1.0";
-            const NAME_LEN: u64 =
+            pub const NAME_LEN: usize =
                 10;
-            const VERSION_LEN: u64 =
+            pub const VERSION_LEN: usize =
                 5;
-            printf("name='%s' len=%d
+            printf("name='%s' len=%llu
 ", NAME, NAME_LEN);
-            printf("version='%s' len=%d
+            printf("version='%s' len=%llu
 ", VERSION, VERSION_LEN);
-            const IS_EMPTY: bool =
+            pub const IS_EMPTY: bool =
                 false;
-            const IS_LONG: bool =
+            pub const IS_LONG: bool =
                 true;
             printf("empty=%d, long=%d
 ", IS_EMPTY, IS_LONG);
-            const BANNER: &str =
+            pub const BANNER: &str =
                 "FerroPhase v0.1.0";
             printf("banner='%s'
 ", BANNER);
-            const BUFFER_SIZE: u64 =
+            pub const BUFFER_SIZE: usize =
                 256;
-            printf("buffer_size=%d
+            printf("buffer_size=%llu
 ", BUFFER_SIZE);
         }
     }

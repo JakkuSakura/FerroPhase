@@ -1,0 +1,29 @@
+ast::File {
+  items:
+    pub import fp_rust::t
+    pub import std::fmt::Display
+    pub fn print(i: impl Display) -> () : fn(any) -> ()
+      block (1 stmt)
+        expr_stmt (value)
+          intrinsic println
+            template: "{}" i
+    pub type Int = Expr(i64)
+    pub type FooUnnamedStruct = structural{a: Expr(Int), b: Expr(Int)}
+    pub struct BarNamedStruct {
+      c: Expr(Int)
+      d: Expr(Int)
+    }
+    pub type FooPlusBar = TypeBinaryOp
+    pub fn main() -> () : fn() -> ()
+      block (1 stmt)
+        expr_stmt ;
+          struct FooPlusBar
+            a:
+              value 1
+            b:
+              value 2
+            c:
+              value 3
+            d:
+              value 4
+}

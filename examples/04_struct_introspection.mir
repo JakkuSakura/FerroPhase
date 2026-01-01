@@ -20,11 +20,11 @@ mir::Program {
                 _12: (f64, f64)
                 _13: (u8, u8, u8)
                 _14: i32
-                _15: u64
+                _15: usize
                 _16: i32
-                _17: u64
+                _17: usize
                 _18: i32
-                _19: u64
+                _19: usize
                 _20: i32
                 _21: i32
                 _22: i32
@@ -34,21 +34,21 @@ mir::Program {
                 bb0:
                     terminator: call global printf("=== Struct Introspection ===\n") -> _1 then bb1
                 bb1:
-                    terminator: call global printf("Point size: %d bytes\n", 16u) -> _2 then bb2
+                    terminator: call global printf("Point size: %llu bytes\n", 16u) -> _2 then bb2
                 bb2:
-                    terminator: call global printf("Color size: %d bytes\n", 3u) -> _3 then bb3
+                    terminator: call global printf("Color size: %llu bytes\n", 3u) -> _3 then bb3
                 bb3:
-                    terminator: call global printf("Point fields: %d\n", 2u) -> _4 then bb4
+                    terminator: call global printf("Point fields: %llu\n", 2u) -> _4 then bb4
                 bb4:
-                    terminator: call global printf("Color fields: %d\n", 3u) -> _5 then bb5
+                    terminator: call global printf("Color fields: %llu\n", 3u) -> _5 then bb5
                 bb5:
                     terminator: call global printf("Point has x: %d\n", true) -> _6 then bb6
                 bb6:
                     terminator: call global printf("Point has z: %d\n", false) -> _7 then bb7
                 bb7:
-                    terminator: call global printf("Point methods: %d\n", 0u) -> _8 then bb8
+                    terminator: call global printf("Point methods: %llu\n", 0u) -> _8 then bb8
                 bb8:
-                    terminator: call global printf("Color methods: %d\n", 0u) -> _9 then bb9
+                    terminator: call global printf("Color methods: %llu\n", 0u) -> _9 then bb9
                 bb9:
                     terminator: call global printf("\n✓ Introspection completed!\n") -> _10 then bb10
                 bb10:
@@ -59,19 +59,19 @@ mir::Program {
                     terminator: call global printf("Transpilation target sizes:\n") -> _14 then bb12
                 bb12:
                     s0: _15 = 16u
-                    terminator: call global printf("  Point: %d bytes (const)\n", copy _15) -> _16 then bb13
+                    terminator: call global printf("  Point: %llu bytes (const)\n", copy _15) -> _16 then bb13
                 bb13:
                     s0: _17 = 24u
-                    terminator: call global printf("  Color: %d bytes (const)\n", copy _17) -> _18 then bb14
+                    terminator: call global printf("  Color: %llu bytes (const)\n", copy _17) -> _18 then bb14
                 bb14:
                     s0: _19 = 40u
-                    terminator: call global printf("  Combined: %d bytes\n", copy _19) -> _20 then bb15
+                    terminator: call global printf("  Combined: %llu bytes\n", copy _19) -> _20 then bb15
                 bb15:
                     terminator: call global printf("Runtime instances:\n") -> _21 then bb16
                 bb16:
                     terminator: call global printf("  Origin: (%f, %f)\n", copy _12[Field(0, Ty { kind: Float(F64) })], copy _12[Field(1, Ty { kind: Float(F64) })]) -> _22 then bb17
                 bb17:
-                    terminator: call global printf("  Red: rgb(%d, %d, %d)\n", copy _13[Field(0, Ty { kind: Uint(U8) })], copy _13[Field(1, Ty { kind: Uint(U8) })], copy _13[Field(2, Ty { kind: Uint(U8) })]) -> _23 then bb18
+                    terminator: call global printf("  Red: rgb(%hhu, %hhu, %hhu)\n", copy _13[Field(0, Ty { kind: Uint(U8) })], copy _13[Field(1, Ty { kind: Uint(U8) })], copy _13[Field(2, Ty { kind: Uint(U8) })]) -> _23 then bb18
                 bb18:
                     terminator: call global printf("\n✓ Introspection enables external code generation!\n") -> _24 then bb19
                 bb19:

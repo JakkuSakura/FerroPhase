@@ -24,14 +24,14 @@ mir::Program {
                 bb0:
                     s0: _1 = 25
                     s1: _2 = "warm"
-                    terminator: call global printf("%d°C is %s\n", copy _1, copy _2) -> _3 then bb1
+                    terminator: call global printf("%lld°C is %s\n", copy _1, copy _2) -> _3 then bb1
                 bb1:
                     s0: _4 = "outdoor"
                     terminator: call global printf("Suggested: %s\n", copy _4) -> _5 then bb2
                 bb2:
                     s0: _6 = 85
                     s1: _7 = "B"
-                    terminator: call global printf("Score %d = grade %s\n", copy _6, copy _7) -> _8 then bb3
+                    terminator: call global printf("Score %lld = grade %s\n", copy _6, copy _7) -> _8 then bb3
                 bb3:
                     s0: _9 = 42
                     s1: _12 = Gt(copy _9, 50)
@@ -44,7 +44,7 @@ mir::Program {
                     terminator: switch copy _13 [1 -> bb7] otherwise -> bb8
                 bb6:
                     s0: _10 = copy _11
-                    terminator: call global printf("Value %d is %s\n", copy _9, copy _10) -> _14 then bb10
+                    terminator: call global printf("Value %lld is %s\n", copy _9, copy _10) -> _14 then bb10
                 bb7:
                     s0: _11 = "medium"
                     terminator: goto -> bb9

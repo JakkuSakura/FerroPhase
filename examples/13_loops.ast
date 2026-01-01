@@ -1,11 +1,11 @@
 ast::File {
   items:
-    priv fn factorial(n: i64) -> i64 : fn(i64) -> i64
+    pub fn factorial(n: Expr(i64)) -> Expr(i64) : fn(i64) -> i64
       block (4 stmts)
-        let mut result : unknown
+        let mut result
           init:
             value 1
-        let mut i : unknown
+        let mut i
           init:
             value 1
         expr_stmt (value)
@@ -40,65 +40,36 @@ ast::File {
                           value 1
         expr_stmt (value)
           locator result
-    priv fn sum_range(start: i64, end: i64) -> i64 : fn(i64, i64) -> i64
+    pub fn sum_range(start: Expr(i64), end: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64
       block (3 stmts)
-        let mut sum : unknown
+        let mut sum
           init:
             value 0
         expr_stmt (value)
-          block (3 stmts)
-            let mut __fp_for_iter_0 : unknown
-              init:
-                locator start
-            let __fp_for_end_0 : unknown
-              init:
-                locator end
-            expr_stmt (value)
-              loop
-                block (4 stmts)
-                  expr_stmt (value)
-                    if
-                      cond:
-                        binop >=
-                          lhs:
-                            locator __fp_for_iter_0
-                          rhs:
-                            locator __fp_for_end_0
-                      then:
-                        block (1 stmt)
-                          expr_stmt ;
-                            intrinsic break
-                              args: []
-                  let i : unknown
-                    init:
-                      locator __fp_for_iter_0
-                  expr_stmt ;
-                    assign
-                      target:
-                        locator __fp_for_iter_0
-                      value:
-                        binop +
-                          lhs:
-                            locator __fp_for_iter_0
-                          rhs:
-                            value 1
-                  expr_stmt (value)
-                    block (1 stmt)
-                      expr_stmt ;
-                        assign
-                          target:
-                            locator sum
-                          value:
-                            binop +
-                              lhs:
-                                locator sum
-                              rhs:
-                                locator i
+          for
+            iter:
+              range [exclusive]
+                start:
+                  locator start
+                end:
+                  locator end
+            body:
+              block (1 stmt)
+                expr_stmt ;
+                  assign
+                    target:
+                      locator sum
+                    value:
+                      binop +
+                        lhs:
+                          locator sum
+                        rhs:
+                          locator i
         expr_stmt (value)
           locator sum
-    priv fn find_first_divisor(n: i64) -> i64 : fn(i64) -> i64
+    pub fn find_first_divisor(n: Expr(i64)) -> Expr(i64) : fn(i64) -> i64
       block (2 stmts)
-        let mut i : unknown
+        let mut i
           init:
             value 2
         expr_stmt (value)
@@ -150,12 +121,12 @@ ast::File {
                         locator i
                       rhs:
                         value 1
-    priv fn sum_even_numbers(limit: i64) -> i64 : fn(i64) -> i64
+    pub fn sum_even_numbers(limit: Expr(i64)) -> Expr(i64) : fn(i64) -> i64
       block (4 stmts)
-        let mut sum : unknown
+        let mut sum
           init:
             value 0
-        let mut i : unknown
+        let mut i
           init:
             value 0
         expr_stmt (value)
@@ -207,7 +178,7 @@ ast::File {
                           locator i
         expr_stmt (value)
           locator sum
-    priv fn main() -> () : fn() -> ()
+    pub fn main() -> () : fn() -> ()
       block (20 stmts)
         expr_stmt ;
           intrinsic println
@@ -253,108 +224,52 @@ ast::File {
           intrinsic println
             template: "
 5. Nested loops:"
-        let mut count : unknown
+        let mut count
           init:
             value 0
         expr_stmt (value)
-          block (3 stmts)
-            let mut __fp_for_iter_1 : unknown
-              init:
-                value 1
-            let __fp_for_end_1 : unknown
-              init:
-                value 4
-            expr_stmt (value)
-              loop
-                block (4 stmts)
-                  expr_stmt (value)
-                    if
-                      cond:
-                        binop >=
-                          lhs:
-                            locator __fp_for_iter_1
-                          rhs:
-                            locator __fp_for_end_1
-                      then:
-                        block (1 stmt)
-                          expr_stmt ;
-                            intrinsic break
-                              args: []
-                  let i : unknown
-                    init:
-                      locator __fp_for_iter_1
-                  expr_stmt ;
-                    assign
-                      target:
-                        locator __fp_for_iter_1
-                      value:
-                        binop +
-                          lhs:
-                            locator __fp_for_iter_1
-                          rhs:
-                            value 1
-                  expr_stmt (value)
-                    block (3 stmts)
-                      let mut __fp_for_iter_2 : unknown
-                        init:
+          for
+            iter:
+              range [exclusive]
+                start:
+                  value 1
+                end:
+                  value 4
+            body:
+              block (1 stmt)
+                expr_stmt (value)
+                  for
+                    iter:
+                      range [exclusive]
+                        start:
                           value 1
-                      let __fp_for_end_2 : unknown
-                        init:
+                        end:
                           value 4
-                      expr_stmt (value)
-                        loop
-                          block (4 stmts)
-                            expr_stmt (value)
-                              if
-                                cond:
-                                  binop >=
-                                    lhs:
-                                      locator __fp_for_iter_2
-                                    rhs:
-                                      locator __fp_for_end_2
-                                then:
-                                  block (1 stmt)
-                                    expr_stmt ;
-                                      intrinsic break
-                                        args: []
-                            let j : unknown
-                              init:
-                                locator __fp_for_iter_2
-                            expr_stmt ;
-                              assign
-                                target:
-                                  locator __fp_for_iter_2
-                                value:
-                                  binop +
-                                    lhs:
-                                      locator __fp_for_iter_2
-                                    rhs:
-                                      value 1
-                            expr_stmt (value)
-                              block (2 stmts)
+                    body:
+                      block (2 stmts)
+                        expr_stmt ;
+                          assign
+                            target:
+                              locator count
+                            value:
+                              binop +
+                                lhs:
+                                  locator count
+                                rhs:
+                                  value 1
+                        expr_stmt (value)
+                          if
+                            cond:
+                              binop ==
+                                lhs:
+                                  locator i
+                                rhs:
+                                  locator j
+                            then:
+                              block (1 stmt)
                                 expr_stmt ;
-                                  assign
-                                    target:
-                                      locator count
-                                    value:
-                                      binop +
-                                        lhs:
-                                          locator count
-                                        rhs:
-                                          value 1
-                                expr_stmt (value)
-                                  if
-                                    cond:
-                                      binop ==
-                                        lhs:
-                                          locator i
-                                        rhs:
-                                          locator j
-                                    then:
-                                      block (1 stmt)
-                                        expr_stmt ;
-                                          intrinsic print
-                                            template: "[{}] " i
+                                  intrinsic print
+                                    template: "[{}] " i
         expr_stmt ;
           intrinsic println
             template: "
@@ -363,24 +278,8 @@ ast::File {
           intrinsic println
             template: "
 6. Compile-time iteration (simulated):"
-        priv const FACTORIAL_CONST: i64
-          binop *
-            lhs:
-              binop *
-                lhs:
-                  binop *
-                    lhs:
-                      binop *
-                        lhs:
-                          value 5
-                        rhs:
-                          value 4
-                    rhs:
-                      value 3
-                rhs:
-                  value 2
-            rhs:
-              value 1
+        pub const FACTORIAL_CONST: i64
+          value 120
         expr_stmt ;
           intrinsic println
             template: "  const 5! = {}" FACTORIAL_CONST

@@ -16,15 +16,17 @@ mir::Program {
 
         fn main() -> () [body: body7]
     bodies:
-        body0 { arg_count: 2, locals: 3 }
+        body0 { arg_count: 2, locals: 4 }
             return_local: _0
             locals:
                 _0: (i64, i64)
                 _1: i64
                 _2: i64
+                _3: ()
             blocks:
                 bb0:
-                    s0: _0 = aggregate(tuple; [copy _1, copy _2])
+                    s0: _3 = aggregate(tuple; [copy _1, copy _2])
+                    s1: _0 = aggregate(tuple; [copy _1, copy _2])
                     terminator: return
         body1 { arg_count: 3, locals: 4 }
             return_local: _0
@@ -66,26 +68,19 @@ mir::Program {
                     s8: _11 = Mul(copy _5, copy _5)
                     s9: _0 = Add(copy _10, copy _11)
                     terminator: return
-        body3 { arg_count: 2, locals: 3 }
+        body3 { arg_count: 2, locals: 4 }
             return_local: _0
             locals:
                 _0: (i64, i64)
                 _1: i64
                 _2: i64
+                _3: ()
             blocks:
                 bb0:
-                    s0: _0 = aggregate(tuple; [copy _1, copy _2])
+                    s0: _3 = aggregate(tuple; [copy _1, copy _2])
+                    s1: _0 = aggregate(tuple; [copy _1, copy _2])
                     terminator: return
-        body4 { arg_count: 1, locals: 2 }
-            return_local: _0
-            locals:
-                _0: i64
-                _1: <??>
-            blocks:
-                bb0:
-                    s0: _0 = Mul(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
-                    terminator: return
-        body5 { arg_count: 1, locals: 3 }
+        body4 { arg_count: 1, locals: 3 }
             return_local: _0
             locals:
                 _0: i64
@@ -93,17 +88,34 @@ mir::Program {
                 _2: i64
             blocks:
                 bb0:
-                    s0: _2 = Add(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
-                    s1: _0 = Mul(2, copy _2)
+                    s0: _2 = Mul(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
+                    s1: _0 = Mul(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
                     terminator: return
-        body6 { arg_count: 1, locals: 2 }
+        body5 { arg_count: 1, locals: 5 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: <??>
+                _2: i64
+                _3: i64
+                _4: i64
+            blocks:
+                bb0:
+                    s0: _3 = Add(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
+                    s1: _2 = Mul(2, copy _3)
+                    s2: _4 = Add(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
+                    s3: _0 = Mul(2, copy _4)
+                    terminator: return
+        body6 { arg_count: 1, locals: 3 }
             return_local: _0
             locals:
                 _0: bool
                 _1: <??>
+                _2: bool
             blocks:
                 bb0:
-                    s0: _0 = Eq(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
+                    s0: _2 = Eq(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
+                    s1: _0 = Eq(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
                     terminator: return
         body7 { arg_count: 0, locals: 25 }
             return_local: _0
@@ -141,35 +153,35 @@ mir::Program {
                 bb2:
                     terminator: call fn new(5, 15) -> _3 then bb3
                 bb3:
-                    terminator: call global printf("p1 = (%d, %d)\n", copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _4 then bb4
+                    terminator: call global printf("p1 = (%lld, %lld)\n", copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _4 then bb4
                 bb4:
-                    terminator: call global printf("p2 = (%d, %d)\n", copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })]) -> _5 then bb5
+                    terminator: call global printf("p2 = (%lld, %lld)\n", copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })]) -> _5 then bb5
                 bb5:
                     s0: _7 = ref(Shared, _2)
                     s1: _8 = Neg(4)
                     terminator: call fn translate(copy _7, 3, copy _8) -> _6 then bb6
                 bb6:
-                    terminator: call global printf("p1 after translate = (%d, %d)\n", copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _9 then bb7
+                    terminator: call global printf("p1 after translate = (%lld, %lld)\n", copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _9 then bb7
                 bb7:
                     s0: _11 = ref(Shared, _2)
                     s1: _12 = ref(Shared, _3)
                     terminator: call fn distance2(copy _11, copy _12) -> _10 then bb8
                 bb8:
-                    terminator: call global printf("Distance²(p1, p2) = %d\n", copy _10) -> _13 then bb9
+                    terminator: call global printf("Distance²(p1, p2) = %lld\n", copy _10) -> _13 then bb9
                 bb9:
                     terminator: call fn new(10, 5) -> _14 then bb10
                 bb10:
-                    terminator: call global printf("Rectangle: %d×%d\n", copy _14[Field(0, Ty { kind: Int(I64) })], copy _14[Field(1, Ty { kind: Int(I64) })]) -> _15 then bb11
+                    terminator: call global printf("Rectangle: %lld×%lld\n", copy _14[Field(0, Ty { kind: Int(I64) })], copy _14[Field(1, Ty { kind: Int(I64) })]) -> _15 then bb11
                 bb11:
                     s0: _17 = ref(Shared, _14)
                     terminator: call fn area(copy _17) -> _16 then bb12
                 bb12:
-                    terminator: call global printf("  area = %d\n", copy _16) -> _18 then bb13
+                    terminator: call global printf("  area = %lld\n", copy _16) -> _18 then bb13
                 bb13:
                     s0: _20 = ref(Shared, _14)
                     terminator: call fn perimeter(copy _20) -> _19 then bb14
                 bb14:
-                    terminator: call global printf("  perimeter = %d\n", copy _19) -> _21 then bb15
+                    terminator: call global printf("  perimeter = %lld\n", copy _19) -> _21 then bb15
                 bb15:
                     s0: _23 = ref(Shared, _14)
                     terminator: call fn is_square(copy _23) -> _22 then bb16

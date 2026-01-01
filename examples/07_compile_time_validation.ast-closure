@@ -1,26 +1,26 @@
 ast::File {
   items:
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
-    priv fn main() -> () : fn() -> () : fn() -> ()
+    pub fn main() -> () : fn() -> () : fn() -> ()
       block (13 stmts) : ()
-        priv struct Data : Data{a: i64, b: i64, c: [u8; 16]} {
-          a: i64
-          b: i64
-          c: [u8; 16]
+        pub struct Data : Data{a: Expr(i64), b: Expr(i64), c: [Expr(u8); 16]} {
+          a: Expr(i64)
+          b: Expr(i64)
+          c: [Expr(u8); 16]
         }
-        priv const SIZE: u64 : u64
+        pub const SIZE: u64 : u64
           value 24 : u64
-        priv const FIELDS: u64 : u64
+        pub const FIELDS: u64 : u64
           value 3 : u64
-        priv const HAS_A: bool : bool
+        pub const HAS_A: bool : bool
           value true : bool
-        priv const HAS_X: bool : bool
+        pub const HAS_X: bool : bool
           value false : bool
         expr_stmt ;
           invoke : ()
             target: printf
             args:
-              value "sizeof=%d, fields=%d
+              value "sizeof=%llu, fields=%llu
 " : &string
               locator SIZE : u64
               locator FIELDS : u64
@@ -32,11 +32,11 @@ ast::File {
 " : &string
               locator HAS_A : bool
               locator HAS_X : bool
-        priv const MAX_SIZE: u64 : u64
+        pub const MAX_SIZE: u64 : u64
           value 64 : u64
-        priv const SIZE_OK: bool : bool
+        pub const SIZE_OK: bool : bool
           value true : bool
-        priv const IS_ALIGNED: bool : bool
+        pub const IS_ALIGNED: bool : bool
           value true : bool
         expr_stmt ;
           invoke : ()
@@ -46,7 +46,7 @@ ast::File {
 " : &string
               locator SIZE_OK : bool
               locator IS_ALIGNED : bool
-        priv const MODE: &string : &string
+        pub const MODE: &string : &string
           value "optimized" : &string
         expr_stmt ;
           invoke : ()

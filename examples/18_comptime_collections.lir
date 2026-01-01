@@ -28,14 +28,14 @@ lir::Program {
                 i5: %r5 = alloca i32 1 align 8 : ptr i64
                 i6: store i64 6, %r5 align 8
                 i7: %r7 = load %r5 align 8 : i64
-                i8: %r8 = call c @printf(c"  primes: %d elements
+                i8: %r8 = call c @printf(c"  primes: %lld elements
 ", %r7) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i9: %r9 = alloca i32 1 align 8 : ptr i64
                 i10: store i64 16, %r9 align 8
                 i11: %r11 = load %r9 align 8 : i64
-                i12: %r12 = call c @printf(c"  zero buffer: %d elements
+                i12: %r12 = call c @printf(c"  zero buffer: %lld elements
 ", %r11) : i32
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
@@ -47,7 +47,7 @@ HashMap literal via HashMap::from:
                 i14: %r14 = alloca i32 1 align 8 : ptr i64
                 i15: store i64 4, %r14 align 8
                 i16: %r16 = load %r14 align 8 : i64
-                i17: %r17 = call c @printf(c"  tracked HTTP statuses: %d entries
+                i17: %r17 = call c @printf(c"  tracked HTTP statuses: %lld entries
 ", %r16) : i32
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5]:

@@ -1,29 +1,29 @@
 hir::Program {
-    fn main() -> () {
+    pub fn main() -> () {
         {
-            const BUFFER_SIZE: i64 =
+            pub const BUFFER_SIZE: i64 =
                 4096;
-            const MAX_CONNECTIONS: i64 =
+            pub const MAX_CONNECTIONS: i64 =
                 150;
-            const FACTORIAL_5: i64 =
+            pub const FACTORIAL_5: i64 =
                 120;
-            const IS_LARGE: bool =
+            pub const IS_LARGE: bool =
                 true;
-            printf("Buffer: %dKB, factorial(5)=%d, large=%d
+            printf("Buffer: %lldKB, factorial(5)=%lld, large=%d
 ", (BUFFER_SIZE / 1024), FACTORIAL_5, IS_LARGE);
-            struct Config {
+            pub struct Config {
                 pub buffer_size: i64,
                 pub max_connections: i64,
             }
-            const DEFAULT_CONFIG: Config =
+            pub const DEFAULT_CONFIG: Config =
                 Config { buffer_size: 4096, max_connections: 150 };
-            printf("Config: %dKB buffer, %d connections
+            printf("Config: %lldKB buffer, %lld connections
 ", (DEFAULT_CONFIG.buffer_size / 1024), DEFAULT_CONFIG.max_connections);
             let runtime_multiplier = 3;
-            let optimized_size = std::ConstBlock(1 args);
-            let cache_strategy = std::ConstBlock(1 args);
+            let optimized_size = 8192;
+            let cache_strategy = "large";
             let total_memory = (runtime_multiplier * std::ConstBlock(1 args));
-            printf("Const blocks: size=%d, strategy=%s, memory=%d
+            printf("Const blocks: size=%lld, strategy=%s, memory=%lld
 ", optimized_size, cache_strategy, total_memory);
         }
     }
