@@ -33,6 +33,10 @@ pub(crate) enum TypeTerm {
     Enum(TypeEnum),
     Slice(TypeVarId),
     Vec(TypeVarId),
+    // NOTE(jakku): Array terms now keep the element var plus the length expr
+    // (if known). This avoids forcing arrays through TypeTerm::Custom, which
+    // caused mismatches with slice/array unification and generic substitution.
+    Array(TypeVarId, Option<BExpr>),
     Reference(TypeVarId),
     Any,
     Custom(Ty),
@@ -115,6 +119,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Vec(elem) => {
                 let elem = self.build_scheme_type(elem, mapping, next)?;
                 SchemeType::Vec(Box::new(elem))
+            }
+            TypeTerm::Array(elem, _) => {
+                let elem = self.build_scheme_type(elem, mapping, next)?;
+                SchemeType::Array(Box::new(elem))
             }
             TypeTerm::Reference(elem) => {
                 let elem = self.build_scheme_type(elem, mapping, next)?;
@@ -219,6 +227,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let elem_var = self.instantiate_scheme_type(elem, mapping);
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Vec(elem_var));
+                var
+            }
+            SchemeType::Array(elem) => {
+                let elem_var = self.instantiate_scheme_type(elem, mapping);
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Array(elem_var, None));
                 var
             }
             SchemeType::Reference(elem) => {
@@ -335,7 +349,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 func.params.iter().any(|param| self.occurs_in(var, *param))
                     || self.occurs_in(var, func.ret)
             }
-            TypeTerm::Slice(elem) | TypeTerm::Vec(elem) | TypeTerm::Reference(elem) => {
+            TypeTerm::Slice(elem)
+            | TypeTerm::Vec(elem)
+            | TypeTerm::Array(elem, _)
+            | TypeTerm::Reference(elem) => {
                 self.occurs_in(var, *elem)
             }
             _ => false,
@@ -386,6 +403,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Ok(())
                 } else {
                     Err(Error::from("enum type mismatch"))
+                }
+            }
+            (TypeTerm::Array(a_elem, _), TypeTerm::Array(b_elem, _)) => {
+                self.unify(a_elem, b_elem)
+            }
+            (TypeTerm::Array(array_elem, _), TypeTerm::Slice(slice_elem))
+            | (TypeTerm::Slice(slice_elem), TypeTerm::Array(array_elem, _)) => {
+                self.unify(array_elem, slice_elem)
+            }
+            (TypeTerm::Array(array_elem, _), TypeTerm::Custom(ty))
+            | (TypeTerm::Custom(ty), TypeTerm::Array(array_elem, _))
+                if matches!(ty, Ty::Array(_)) =>
+            {
+                if let Ty::Array(array_ty) = ty {
+                    let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
+                    self.unify(array_elem, elem_var)
+                } else {
+                    Ok(())
                 }
             }
             (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
@@ -518,6 +553,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let elem_ty = self.resolve_to_ty(elem)?;
                 Ty::Slice(TypeSlice {
                     elem: Box::new(elem_ty),
+                })
+            }
+            TypeTerm::Array(elem, len_expr) => {
+                let elem_ty = self.resolve_to_ty(elem)?;
+                let len = len_expr.unwrap_or_else(|| Expr::value(Value::int(0)).into());
+                Ty::Array(TypeArray {
+                    elem: Box::new(elem_ty),
+                    len,
                 })
             }
             TypeTerm::Vec(elem) => {
@@ -710,10 +753,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let inner = self.type_from_ast_ty(&v.ty)?;
                 self.bind(var, TypeTerm::Vec(inner));
             }
-            Ty::Array(_) => {
-                // Preserve the full AST representation for now.
-                // Array typing is handled via `TypeTerm::Custom` and compared structurally.
-                self.bind(var, TypeTerm::Custom(ty.clone()));
+            Ty::Array(array_ty) => {
+                let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
+                self.bind(var, TypeTerm::Array(elem_var, Some(array_ty.len.clone())));
             }
             Ty::QuoteToken(_) => {
                 // Quote tokens are currently opaque to the typer.
