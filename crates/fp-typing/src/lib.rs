@@ -502,6 +502,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 normalized
             }
             ItemKind::DefEnum(def) => {
+                self.enter_scope();
+                if !def.value.generics_params.is_empty() {
+                    for param in &def.value.generics_params {
+                        let var = self.register_generic_param(param.name.as_str());
+                        let bounds = Self::extract_trait_bounds(&param.bounds);
+                        if !bounds.is_empty() {
+                            self.generic_trait_bounds.insert(var, bounds);
+                        }
+                    }
+                }
+
                 let ty = Ty::Enum(def.value.clone());
                 let placeholder = self.symbol_var(&def.name);
                 let var = self.type_from_ast_ty(&ty)?;
@@ -511,13 +522,45 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let enum_name = def.name.as_str().to_string();
                 if let Some(variant_keys) = self.enum_variants.get(&enum_name).cloned() {
                     let enum_var = placeholder;
-                    for qualified in variant_keys {
+                    for (variant, qualified) in
+                        def.value.variants.iter().zip(variant_keys.into_iter())
+                    {
                         if let Some(variant_var) = self.lookup_env_var(qualified.as_str()) {
-                            let _ = self.unify(enum_var, variant_var);
+                            let variant_type_var = if matches!(variant.value, Ty::Unit(_)) {
+                                enum_var
+                            } else if let Ty::Tuple(tuple) = &variant.value {
+                                let mut param_vars = Vec::new();
+                                for elem in &tuple.types {
+                                    param_vars.push(self.type_from_ast_ty(elem)?);
+                                }
+                                let fn_var = self.fresh_type_var();
+                                self.bind(
+                                    fn_var,
+                                    TypeTerm::Function(FunctionTerm {
+                                        params: param_vars,
+                                        ret: enum_var,
+                                    }),
+                                );
+                                fn_var
+                            } else {
+                                let payload_var = self.type_from_ast_ty(&variant.value)?;
+                                let fn_var = self.fresh_type_var();
+                                self.bind(
+                                    fn_var,
+                                    TypeTerm::Function(FunctionTerm {
+                                        params: vec![payload_var],
+                                        ret: enum_var,
+                                    }),
+                                );
+                                fn_var
+                            };
+                            let _ = self.unify(variant_var, variant_type_var);
                             let _ = self.generalize_symbol(qualified.as_str(), variant_var);
                         }
                     }
                 }
+
+                self.exit_scope();
 
                 ty
             }
@@ -1129,9 +1172,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .iter()
                             .find(|v| v.name.as_str() == method_name)
                         {
+                            self.enter_scope();
+                            if !enum_def.generics_params.is_empty() {
+                                for param in &enum_def.generics_params {
+                                    let var = self.register_generic_param(param.name.as_str());
+                                    let bounds = Self::extract_trait_bounds(&param.bounds);
+                                    if !bounds.is_empty() {
+                                        self.generic_trait_bounds.insert(var, bounds);
+                                    }
+                                }
+                            }
                             let mut params = Vec::new();
-                            if let Ty::Tuple(tuple_ty) = &variant.value {
-                                params.extend(tuple_ty.types.clone());
+                            match &variant.value {
+                                Ty::Unit(_) => {}
+                                Ty::Tuple(tuple_ty) => params.extend(tuple_ty.types.clone()),
+                                other => params.push(other.clone()),
                             }
 
                             let func_ty = Ty::Function(TypeFunction {
@@ -1140,6 +1195,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 ret_ty: Some(Box::new(Ty::Enum(enum_def.clone()))),
                             });
                             let func_var = self.type_from_ast_ty(&func_ty)?;
+                            self.exit_scope();
                             return Ok(Some(func_var));
                         }
                     }
