@@ -15,7 +15,6 @@ use anyhow::Context as AnyhowContext;
 use fp_core::diagnostics::report_error;
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
-// use llvm_ir::Module; // Not needed currently
 use std::path::{Path, PathBuf};
 
 /// Configuration for LLVM compilation
@@ -169,18 +168,9 @@ impl LlvmCompiler {
 
         tracing::debug!(
             "LLVM module contains {} functions and {} globals",
-            llvm_ctx.module.functions.len(),
-            llvm_ctx.module.global_vars.len()
+            llvm_ctx.module.get_functions().count(),
+            llvm_ctx.module.get_globals().count()
         );
-        for func in &llvm_ctx.module.functions {
-            let instr_count: usize = func.basic_blocks.iter().map(|bb| bb.instrs.len()).sum();
-            tracing::debug!(
-                "LLVM function: {} with {} blocks and {} instructions",
-                func.name,
-                func.basic_blocks.len(),
-                instr_count
-            );
-        }
 
         // Finalize debug info
         if let Some(ref debug_info) = debug_builder {
@@ -288,6 +278,6 @@ impl LlvmCompiler {
 
 /// Check if LLVM backend is available
 pub fn is_available() -> bool {
-    // For now, always return true since we're using llvm-ir which is pure Rust
+    // For now, always return true since inkwell is configured in Cargo.
     true
 }

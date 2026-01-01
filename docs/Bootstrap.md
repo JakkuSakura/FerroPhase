@@ -17,7 +17,7 @@
 | Source parsing / LAST | `fp-lang`, `fp-rust`, language frontends | `syn`, `tree-sitter`, `swc`, `cargo-metadata`, language runtimes | Cannot run without network-only crates; must ingest AST from JSON instead. |
 | AST storage & diagnostics | `fp-core`, `fp-cli` (diagnostics) | `serde`, `dashmap`, `derive_more`, `miette`, `tracing` | Replace `dashmap` with `HashMap` on a `bootstrap` feature; keep `serde` (already vendored via crates.io snapshot) or bake a minimal serializer. |
 | Typing & const-eval | `fp-typing`, `fp-interpret`, `fp-optimize` | `syn`, `proc-macro2`, `dashmap`, `tokio` (through CLI), `serde_json` | Gate parsing helpers; allow injecting pre-typed AST/const snapshots to skip `syn`. Need single-threaded context alternative. |
-| Backends (LLVM, TS, etc.) | `fp-llvm`, `fp-typescript`, `fp-python`, `fp-csharp`, `fp-zig`, `fp-wit` | `llvm-ir`, system LLVM/clang, `swc`, language printers | Treat outputs as precomputed JSON/IR blobs; bootstrap mode only verifies AST transformations or transpiles via simplified emitters. |
+| Backends (LLVM, TS, etc.) | `fp-llvm`, `fp-typescript`, `fp-python`, `fp-csharp`, `fp-zig`, `fp-wit` | `inkwell`, system LLVM/clang, `swc`, language printers | Treat outputs as precomputed JSON/IR blobs; bootstrap mode only verifies AST transformations or transpiles via simplified emitters. |
 | CLI orchestration | `fp-cli` | `clap`, `tokio`, `indicatif`, `miette` | For bootstrap, ship a tiny driver (no async, minimal CLI) or expose library entrypoints callable from an external script. |
 
 ## Bootstrap-Friendly Building Blocks

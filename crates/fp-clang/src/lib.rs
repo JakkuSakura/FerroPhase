@@ -13,7 +13,7 @@ pub mod parser;
 pub use codegen::{ClangCodegen, FunctionSignature};
 pub use error::{ClangError, Result};
 pub use intrinsics::CRuntimeIntrinsics;
-pub use parser::ClangParser;
+pub use parser::{ClangModule, ClangParser};
 
 /// Supported C/C++ standards
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

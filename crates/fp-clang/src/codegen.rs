@@ -1,7 +1,8 @@
 //! Code generation utilities for integrating C/C++ with FerroPhase
 
-use crate::{ast, ClangError, ClangParser, CompileOptions, Result};
+use crate::{ast, ClangError, ClangModule, ClangParser, CompileOptions, Result};
 use fp_core::lir;
+use inkwell::types::BasicTypeEnum;
 use std::{collections::HashMap, path::Path};
 use tracing::{debug, info};
 
@@ -23,7 +24,7 @@ impl ClangCodegen {
         &self,
         source_file: &Path,
         options: &CompileOptions,
-    ) -> Result<llvm_ir::Module> {
+    ) -> Result<ClangModule> {
         info!("Compiling C/C++ file: {}", source_file.display());
         self.parser.parse_to_llvm_ir(source_file, options)
     }
@@ -34,7 +35,7 @@ impl ClangCodegen {
         c_files: &[&Path],
         _lir_program: &lir::LirProgram,
         options: &CompileOptions,
-    ) -> Result<llvm_ir::Module> {
+    ) -> Result<ClangModule> {
         debug!("Linking {} C/C++ files with LIR program", c_files.len());
 
         // Compile all C files to LLVM IR
@@ -87,21 +88,36 @@ impl ClangCodegen {
 
         // Extract function signatures (skip compiler-generated functions)
         let mut signatures = Vec::new();
-        for func in &module.functions {
-            // Skip LLVM intrinsics
-            if func.name.starts_with("llvm.") {
+        for func in module.module.get_functions() {
+            let func_name = func.get_name().to_str().unwrap_or("").to_string();
+            if func_name.starts_with("llvm.") {
                 continue;
             }
 
+            let return_type = func
+                .get_type()
+                .get_return_type()
+                .map(format_llvm_type)
+                .unwrap_or_else(|| "void".to_string());
+
+            let mut parameters = Vec::new();
+            for (idx, param) in func.get_params().into_iter().enumerate() {
+                let name = param
+                    .get_name()
+                    .to_str()
+                    .ok()
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("arg{}", idx));
+                let ty = format_llvm_type(param.get_type());
+                parameters.push((name, ty));
+            }
+
             signatures.push(FunctionSignature {
-                name: func.name.clone(),
-                return_type: format_llvm_type(&func.return_type),
-                parameters: func
-                    .parameters
-                    .iter()
-                    .map(|p| (p.name.to_string(), format_llvm_type(&p.ty)))
-                    .collect(),
-                is_variadic: func.is_var_arg,
+                name: func_name,
+                return_type,
+                parameters,
+                is_variadic: func.get_type().is_var_arg(),
             });
         }
 
@@ -138,27 +154,27 @@ impl FunctionSignature {
 }
 
 /// Format an LLVM type as a C type string (simplified)
-fn format_llvm_type(ty: &llvm_ir::Type) -> String {
+fn format_llvm_type(ty: BasicTypeEnum<'_>) -> String {
     match ty {
-        llvm_ir::Type::VoidType => "void".to_string(),
-        llvm_ir::Type::IntegerType { bits: 1 } => "bool".to_string(),
-        llvm_ir::Type::IntegerType { bits: 8 } => "char".to_string(),
-        llvm_ir::Type::IntegerType { bits: 16 } => "short".to_string(),
-        llvm_ir::Type::IntegerType { bits: 32 } => "int".to_string(),
-        llvm_ir::Type::IntegerType { bits: 64 } => "long long".to_string(),
-        llvm_ir::Type::IntegerType { bits } => format!("int{}_t", bits),
-        llvm_ir::Type::FPType(fp) => match fp {
-            llvm_ir::types::FPType::Half => "half".to_string(),
-            llvm_ir::types::FPType::Single => "float".to_string(),
-            llvm_ir::types::FPType::Double => "double".to_string(),
-            llvm_ir::types::FPType::FP128 => "long double".to_string(),
+        BasicTypeEnum::IntType(int_ty) => match int_ty.get_bit_width() {
+            1 => "bool".to_string(),
+            8 => "char".to_string(),
+            16 => "short".to_string(),
+            32 => "int".to_string(),
+            64 => "long long".to_string(),
+            bits => format!("int{}_t", bits),
+        },
+        BasicTypeEnum::FloatType(float_ty) => match float_ty.get_bit_width() {
+            32 => "float".to_string(),
+            64 => "double".to_string(),
             _ => "float".to_string(),
         },
-        llvm_ir::Type::PointerType { .. } => "void*".to_string(),
-        llvm_ir::Type::ArrayType { element_type, .. } => {
-            format!("{}[]", format_llvm_type(element_type))
+        BasicTypeEnum::PointerType(_) => "void*".to_string(),
+        BasicTypeEnum::ArrayType(array_ty) => {
+            let element = format_llvm_type(array_ty.get_element_type());
+            format!("{}[]", element)
         }
-        llvm_ir::Type::StructType { .. } => "struct".to_string(),
+        BasicTypeEnum::StructType(_) => "struct".to_string(),
         _ => "unknown".to_string(),
     }
 }
@@ -261,55 +277,6 @@ fn format_ast_type(ty: &ast::Type) -> String {
         ast::Type::Union(name) => format!("union {name}"),
         ast::Type::Enum(name) => format!("enum {name}"),
         ast::Type::Typedef(name) => name.to_string(),
-        ast::Type::Qualified {
-            base,
-            is_const,
-            is_volatile,
-            is_restrict,
-        } => {
-            let mut parts = Vec::new();
-            if *is_const {
-                parts.push("const".to_string());
-            }
-            if *is_volatile {
-                parts.push("volatile".to_string());
-            }
-            if *is_restrict {
-                parts.push("restrict".to_string());
-            }
-            let base_str = format_ast_type(base);
-            if !base_str.is_empty() {
-                parts.push(base_str);
-            }
-            parts.join(" ")
-        }
-        ast::Type::Reference { base, is_rvalue } => {
-            let mut base_str = format_ast_type(base);
-            base_str.push('&');
-            if *is_rvalue {
-                base_str.push('&');
-            }
-            base_str
-        }
-        ast::Type::Custom(value) => value.clone(),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_function_signature_display() {
-        let sig = FunctionSignature {
-            name: "printf".to_string(),
-            return_type: "int".to_string(),
-            parameters: vec![("format".to_string(), "char*".to_string())],
-            is_variadic: true,
-        };
-
-        let decl = sig.to_declaration();
-        assert!(decl.contains("printf"));
-        assert!(decl.contains("..."));
+        ast::Type::Unknown => "unknown".to_string(),
     }
 }

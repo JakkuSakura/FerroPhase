@@ -31,7 +31,7 @@ let mut options = CompileOptions::default();
 options.standard = Some(Standard::C11);
 options.optimization = Some("2".to_string());
 
-// Parse C file to LLVM IR
+// Parse C file to LLVM IR (inkwell-backed module)
 let source = Path::new("example.c");
 let module = parser.parse_to_llvm_ir(source, &options)?;
 ```

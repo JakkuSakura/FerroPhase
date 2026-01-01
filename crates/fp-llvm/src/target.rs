@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use llvm_ir::Module;
+use inkwell::module::Module;
 use std::path::Path;
 
 /// Target configuration for LLVM code generation
@@ -131,28 +131,24 @@ impl TargetCodegen {
     }
 
     /// Write module to object file (placeholder implementation)
-    pub fn write_object_file(&self, module: &Module, output_path: &Path) -> Result<()> {
-        // For now, write LLVM IR to file instead of object code
-        let ir_content = format!(
-            "Module: {} with {} functions",
-            module.name,
-            module.functions.len()
-        );
+    pub fn write_object_file(&self, module: &Module<'_>, output_path: &Path) -> Result<()> {
+        let module_name = module.get_name().to_str().unwrap_or("module");
+        let func_count = module.get_functions().count();
+        let ir_content = format!("Module: {} with {} functions", module_name, func_count);
         std::fs::write(output_path.with_extension("ll"), ir_content)
             .with_context(|| format!("Failed to write IR file to {}", output_path.display()))?;
 
-        tracing::info!("Generated LLVM IR file instead of object file (actual object file generation requires LLVM compilation)");
+        tracing::info!(
+            "Generated LLVM IR file instead of object file (actual object file generation requires LLVM compilation)"
+        );
         Ok(())
     }
 
     /// Write module to assembly file (placeholder implementation)
-    pub fn write_assembly_file(&self, module: &Module, output_path: &Path) -> Result<()> {
-        // For now, write LLVM IR to file instead of assembly
-        let ir_content = format!(
-            "Module: {} with {} functions",
-            module.name,
-            module.functions.len()
-        );
+    pub fn write_assembly_file(&self, module: &Module<'_>, output_path: &Path) -> Result<()> {
+        let module_name = module.get_name().to_str().unwrap_or("module");
+        let func_count = module.get_functions().count();
+        let ir_content = format!("Module: {} with {} functions", module_name, func_count);
         std::fs::write(output_path.with_extension("s"), ir_content).with_context(|| {
             format!("Failed to write assembly file to {}", output_path.display())
         })?;
