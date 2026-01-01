@@ -756,6 +756,26 @@ impl HirGenerator {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 Ok(())
             }
+            ItemKind::Expr(expr) => {
+                if let ast::ExprKind::Value(value) = expr.kind() {
+                    if matches!(value.as_ref(), ast::Value::Unit(_)) {
+                        return Ok(());
+                    }
+                }
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "dropping unsupported module-level expression item".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    return Ok(());
+                }
+                Err(crate::error::optimization_error(format!(
+                    "Unimplemented AST item type for HIR transformation: {:?}",
+                    item
+                )))
+            }
             ItemKind::DeclFunction(_) => Ok(()),
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
@@ -928,14 +948,9 @@ impl HirGenerator {
             }
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
-                let unit_block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
                 let unit_expr = hir::Expr {
                     hir_id: self.next_id(),
-                    kind: hir::ExprKind::Block(unit_block),
+                    kind: hir::ExprKind::Literal(hir::Lit::Bool(false)),
                     span: self.create_span(1),
                 };
                 let body = hir::Body {
@@ -945,10 +960,31 @@ impl HirGenerator {
                 };
                 let konst = hir::Const {
                     name: hir::Symbol::new(self.qualify_name(&def_type.name.name)),
-                    ty: self.create_unit_type(),
+                    ty: self.create_simple_type("bool"),
                     body,
                 };
                 (hir::ItemKind::Const(konst), hir::Visibility::Private)
+            }
+            ItemKind::DefTrait(def_trait) => {
+                let unit_expr = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Literal(hir::Lit::Bool(false)),
+                    span: self.create_span(1),
+                };
+                let body = hir::Body {
+                    hir_id: self.next_id(),
+                    params: Vec::new(),
+                    value: unit_expr,
+                };
+                let konst = hir::Const {
+                    name: hir::Symbol::new(self.qualify_name(&def_trait.name.name)),
+                    ty: self.create_simple_type("bool"),
+                    body,
+                };
+                (
+                    hir::ItemKind::Const(konst),
+                    self.map_visibility(&def_trait.visibility),
+                )
             }
             _ => {
                 return Err(crate::error::optimization_error(format!(
@@ -1069,24 +1105,18 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::QuoteToken(_) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "quote token types should be removed by const-eval; substituting error type"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    Ok(hir::TypeExpr::new(
-                        self.next_id(),
-                        hir::TypeExprKind::Error,
-                        Span::new(self.current_file, 0, 0),
-                    ))
-                } else {
-                    Err(crate::error::optimization_error(
-                        "quote token types must be resolved during const evaluation",
-                    ))
-                }
+                self.add_warning(
+                    Diagnostic::warning(
+                        "quote token types should be removed by const-eval; substituting error type"
+                            .to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT),
+                );
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Error,
+                    Span::new(self.current_file, 0, 0),
+                ))
             }
             ast::Ty::Expr(expr) => {
                 if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {

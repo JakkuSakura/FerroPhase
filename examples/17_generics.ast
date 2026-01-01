@@ -1,0 +1,93 @@
+ast::File {
+  items:
+    pub struct Pair {
+      first: Expr(T)
+      second: Expr(U)
+    }
+    impl<T, U> Pair<T
+, U
+> {
+      pub fn new(first: Expr(T), second: Expr(U)) -> Expr(Self) : fn(any, any) -> Pair{first: Expr(T), second: Expr(U)}
+        block (1 stmt)
+          expr_stmt (value)
+            struct Self
+              first:
+                locator first
+              second:
+                locator second
+    }
+    pub enum Option {
+      Some: (Expr(T))
+      None: any
+    }
+    impl<T> Option<T
+> {
+      pub fn unwrap_or(self, default: Expr(T)) -> Expr(T) : fn(any) -> any
+        block (1 stmt)
+          expr_stmt (value)
+            match
+              case #0
+                cond:
+                  value true
+                body:
+                  locator v
+              case #1
+                cond:
+                  value true
+                body:
+                  locator default
+    }
+    pub fn<T: PartialOrd> max(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: PartialOrd>(unknown, unknown) -> unknown
+      block (1 stmt)
+        expr_stmt (value)
+          if
+            cond:
+              binop >
+                lhs:
+                  locator a
+                rhs:
+                  locator b
+            then:
+              block (1 stmt)
+                expr_stmt (value)
+                  locator a
+            else:
+              block (1 stmt)
+                expr_stmt (value)
+                  locator b
+    pub fn main() -> () : fn() -> ()
+      block (8 stmts)
+        let pair
+          init:
+            invoke
+              target: Pair::new
+              args:
+                value 42
+                value "hello"
+        expr_stmt ;
+          intrinsic println
+            template: "({}, {})" pair.first, pair.second
+        expr_stmt ;
+          intrinsic println
+            template: "max(10, 20) = {}" max(10, 20)
+        expr_stmt ;
+          intrinsic println
+            template: "max(3.5, 2.1) = {}" max(3.5, 2.1)
+        let some: Expr(Option<i64
+>)
+          init:
+            invoke
+              target: Option::Some
+              args:
+                value 100
+        let none: Expr(Option<i64
+>)
+          init:
+            locator Option::None
+        expr_stmt ;
+          intrinsic println
+            template: "{}" some.unwrap_or(0)
+        expr_stmt ;
+          intrinsic println
+            template: "{}" none.unwrap_or(99)
+}

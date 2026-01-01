@@ -2,18 +2,6 @@ use super::*;
 use fp_core::ast::{ExprQuote, QuoteFragmentKind};
 
 impl<'ctx> AstInterpreter<'ctx> {
-    pub(crate) fn materialize_quote_token(&mut self, value: Value) -> Value {
-        let Value::Expr(expr_box) = value else {
-            return value;
-        };
-        let expr = *expr_box;
-        let ExprKind::Quote(quote) = expr.kind() else {
-            return Value::Expr(Box::new(expr));
-        };
-        let fragment = self.build_quoted_fragment(quote);
-        self.quote_token_from_fragment(fragment)
-    }
-
     fn quote_token_from_fragment(&mut self, fragment: QuotedFragment) -> Value {
         match fragment {
             QuotedFragment::Expr(expr) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(

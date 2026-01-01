@@ -147,14 +147,14 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
         fp_core::error::Error::from("missing type information for printf argument".to_string())
     })?;
     let spec = match ty {
-        Ty::Primitive(TypePrimitive::Int(TypeInt::I8))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::I16))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::I32))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::I64))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::U8))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::U16))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::U32))
-        | Ty::Primitive(TypePrimitive::Int(TypeInt::U64)) => "%d".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I8)) => "%hhd".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I16)) => "%hd".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I32)) => "%d".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I64)) => "%lld".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U8)) => "%hhu".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U16)) => "%hu".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U32)) => "%u".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U64)) => "%llu".to_string(),
         Ty::Primitive(TypePrimitive::Decimal(DecimalType::F32))
         | Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64)) => "%f".to_string(),
         Ty::Primitive(TypePrimitive::Bool) => "%d".to_string(),

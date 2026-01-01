@@ -1,0 +1,61 @@
+hir::Program {
+    pub struct Pair {
+        pub first: T,
+        pub second: U,
+    }
+
+    impl Pair<T, U> {
+        fn new(first: T, second: U) -> Self {
+            // params: [first: T, second: U]
+            {
+                Self { first: first, second: second }
+                Self { first: first, second: second }
+            }
+        }
+    }
+
+    pub enum Option {
+        Some,
+        None,
+    }
+
+    impl Option<T> {
+        fn unwrap_or(self: Option<T>, default: T) -> T {
+            // params: [self: Option<T>, default: T]
+            {
+                match (self)
+                {
+                    Option::Some(v) =>
+                        v
+                    Option::None =>
+                        default
+                }
+                match (self)
+                {
+                    Option::Some(v) =>
+                        v
+                    Option::None =>
+                        default
+                }
+            }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            let pair = Pair::new(42, "hello");
+            printf("(%s, %s)
+", pair.first, pair.second);
+            printf("max(10, 20) = %lld
+", max(10, 20));
+            printf("max(3.5, 2.1) = %f
+", max(3.5, 2.1));
+            let some: Option<i64> = Option::Some(100);
+            let none: Option<i64> = Option::None;
+            printf("%s
+", some.unwrap_or(0));
+            printf("%s
+", none.unwrap_or(99));
+        }
+    }
+}

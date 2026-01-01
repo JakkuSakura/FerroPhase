@@ -6,7 +6,10 @@ use fp_core::error::Result;
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::QuoteToken(qt) => matches!(qt.kind, QuoteFragmentKind::Stmt | QuoteFragmentKind::Item),
+            Ty::QuoteToken(qt) => matches!(
+                qt.kind,
+                QuoteFragmentKind::Stmt | QuoteFragmentKind::Item | QuoteFragmentKind::Expr
+            ),
             Ty::Vec(vec) => self.is_stmt_or_item_quote(vec.ty.as_ref()),
             Ty::Array(array) => self.is_stmt_or_item_quote(array.elem.as_ref()),
             _ => false,
@@ -57,9 +60,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             match token_ty {
                                 Ty::QuoteToken(qt) => {
                                     self.emit_error(format!(
-                                        "splice in statement position requires stmt/item token, found {:?}",
-                                        qt.kind
-                                    ));
+                                    "splice in statement position requires stmt/item/expr token, found {:?}",
+                                    qt.kind
+                                ));
                                 }
                                 _ => self.emit_error("splice expects a quote token expression"),
                             }

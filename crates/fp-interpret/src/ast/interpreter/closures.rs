@@ -124,6 +124,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         let body = function.body.as_ref().clone();
         let result = if let Some(kind) = function.sig.quote_kind {
+            // Quote functions lower their body into a quote token internally.
+            // Call sites always receive a quote token, never a raw value.
             let was_in_const = self.in_const_region();
             if !was_in_const {
                 self.enter_const_region();
@@ -135,8 +137,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             result
         } else {
             let mut body = body;
-            let result = self.eval_expr(&mut body);
-            self.materialize_quote_token(result)
+            self.eval_expr(&mut body)
         };
         self.pop_scope();
         result
@@ -164,6 +165,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         let body = function.body.as_ref().clone();
         let result = if let Some(kind) = function.sig.quote_kind {
+            // Quote functions lower their body into a quote token internally.
             let was_in_const = self.in_const_region();
             if !was_in_const {
                 self.enter_const_region();
@@ -175,8 +177,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             result
         } else {
             let mut body = body;
-            let result = self.eval_expr(&mut body);
-            self.materialize_quote_token(result)
+            self.eval_expr(&mut body)
         };
         self.pop_scope();
         result

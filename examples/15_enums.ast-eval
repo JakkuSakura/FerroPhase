@@ -1,0 +1,110 @@
+ast::File {
+  items:
+    pub enum Shape : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}] {
+      Point: any
+      Circle: (Expr(i64))
+      Rectangle: structural{w: Expr(i64), h: Expr(i64)}
+    }
+    impl Shape : () {
+      pub fn describe(&self) -> &''static Expr(str) : fn() -> &string : fn() -> &string
+        block (1 stmt) : &string
+          expr_stmt (value)
+            match : &string
+              case #0
+                cond:
+                  value true : _
+                body:
+                  value "point" : &string
+              case #1
+                cond:
+                  value true : _
+                body:
+                  value "circle" : &string
+              case #2
+                cond:
+                  value true : _
+                body:
+                  value "rectangle" : &string
+    }
+    pub enum Value : Value [A: any | B: any | C: any] {
+      A: any = 1
+      B: any = 2
+      C: any = 5
+    }
+    pub enum Option : Option [Some: (Expr(T)) | None: any] {
+      Some: (Expr(T))
+      None: any
+    }
+    impl<T> Option<T
+> : () {
+      pub fn unwrap_or(self, default: Expr(T)) -> Expr(T) : fn(any) -> any : fn(any) -> any
+        block (1 stmt) : any
+          expr_stmt (value)
+            match : any
+              case #0
+                cond:
+                  value true : _
+                body:
+                  locator v : any
+              case #1
+                cond:
+                  value true : _
+                body:
+                  locator default : any
+    }
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (14 stmts) : ()
+        let point
+          init:
+            locator Shape::Point : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
+        let circle
+          init:
+            invoke : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
+              target: Shape::Circle
+              args:
+                value 10 : i64
+        let rect
+          init:
+            struct Shape::Rectangle : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
+              w:
+                value 5 : i64
+              h:
+                value 3 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" point.describe()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" circle.describe()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" rect.describe()
+        let val
+          init:
+            locator Value::C : Value [A: any | B: any | C: any]
+        expr_stmt ;
+          intrinsic println : ()
+            template: "discriminant: {}" (val) as i32
+        let some: Expr(Option<i64
+>)
+          init:
+            invoke : Option [Some: (Expr(T)) | None: any]
+              target: Option::Some
+              args:
+                value 42 : i64
+        let none: Expr(Option<i64
+>)
+          init:
+            locator Option::None : Option [Some: (Expr(T)) | None: any]
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" some.unwrap_or(0)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" none.unwrap_or(99)
+        pub const CODE: i32 : i32
+          value 2 : i32
+        expr_stmt ;
+          intrinsic println : ()
+            template: "const: {}" CODE
+}
