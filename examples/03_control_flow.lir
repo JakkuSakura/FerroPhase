@@ -25,7 +25,7 @@ lir::Program {
                 i4: store c"warm", %r3 align 8
                 i5: %r5 = load %r1 align 8 : i64
                 i6: %r6 = load %r3 align 8 : ptr i8
-                i7: %r7 = call c @printf(c"%d°C is %s
+                i7: %r7 = call c @printf(c"%lld°C is %s
 ", %r5, %r6) : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
@@ -42,7 +42,7 @@ lir::Program {
                 i15: store c"B", %r14 align 8
                 i16: %r16 = load %r12 align 8 : i64
                 i17: %r17 = load %r14 align 8 : ptr i8
-                i18: %r18 = call c @printf(c"Score %d = grade %s
+                i18: %r18 = call c @printf(c"Score %lld = grade %s
 ", %r16, %r17) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4, bb5]:
@@ -70,7 +70,7 @@ lir::Program {
                 i34: store %r33, %r32 align 8
                 i35: %r35 = load %r19 align 8 : i64
                 i36: %r36 = load %r32 align 8 : ptr i8
-                i37: %r37 = call c @printf(c"Value %d is %s
+                i37: %r37 = call c @printf(c"Value %lld is %s
 ", %r35, %r36) : i32
                 terminator: br bb10
             bb7 // label: bb7 // preds: [bb5] // succs: [bb9]:

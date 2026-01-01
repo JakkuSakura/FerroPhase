@@ -23,7 +23,7 @@ lir::Program {
                 i3: store i64 10, %r2 align 8
                 i4: %r4 = load %r0 align 8 : ptr i8
                 i5: %r5 = load %r2 align 8 : i64
-                i6: %r6 = call c @printf(c"name='%s' len=%d
+                i6: %r6 = call c @printf(c"name='%s' len=%llu
 ", %r4, %r5) : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
@@ -33,7 +33,7 @@ lir::Program {
                 i10: store i64 5, %r9 align 8
                 i11: %r11 = load %r7 align 8 : ptr i8
                 i12: %r12 = load %r9 align 8 : i64
-                i13: %r13 = call c @printf(c"version='%s' len=%d
+                i13: %r13 = call c @printf(c"version='%s' len=%llu
 ", %r11, %r12) : i32
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
@@ -59,7 +59,7 @@ lir::Program {
                 i27: %r27 = alloca i32 1 align 8 : ptr i64
                 i28: store i64 256, %r27 align 8
                 i29: %r29 = load %r27 align 8 : i64
-                i30: %r30 = call c @printf(c"buffer_size=%d
+                i30: %r30 = call c @printf(c"buffer_size=%llu
 ", %r29) : i32
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4]:

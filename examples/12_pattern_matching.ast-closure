@@ -1,16 +1,16 @@
 ast::File {
   items:
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
-    pub enum Color : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))] {
-      Red: any
-      Green: any
+    pub enum Color : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))] {
+      Red: ()
+      Green: ()
       Rgb: (Expr(u8), Expr(u8), Expr(u8))
     }
-    pub enum Option : Option [Some: (Expr(T)) | None: any] {
+    pub enum Option : Option [Some: (Expr(T)) | None: ()] {
       Some: (Expr(T))
-      None: any
+      None: ()
     }
-    pub fn describe(color: &Expr(Color)) -> &''static Expr(str) : fn(&Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string : fn(&Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string
+    pub fn describe(color: &Expr(Color)) -> &''static Expr(str) : fn(&Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string : fn(&Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string
       block (1 stmt) : &string
         expr_stmt (value)
           match : &string
@@ -59,7 +59,7 @@ ast::File {
               body:
                 value "odd" : &string
     pub fn unwrap_or(opt: Expr(Option<i64
->), default: Expr(i64)) -> Expr(i64) : fn(Option [Some: (Expr(T)) | None: any], i64) -> i64 : fn(Option [Some: (Expr(T)) | None: any], i64) -> i64
+>), default: Expr(i64)) -> Expr(i64) : fn(Option [Some: (Expr(T)) | None: ()], i64) -> i64 : fn(Option [Some: (Expr(T)) | None: ()], i64) -> i64
       block (1 stmt) : any
         expr_stmt (value)
           match : any
@@ -77,10 +77,10 @@ ast::File {
       block (12 stmts) : ()
         let red
           init:
-            locator Color::Red : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+            locator Color::Red : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
         let rgb
           init:
-            invoke : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+            invoke : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
               target: Color::Rgb
               args:
                 value 128 : i64
@@ -95,8 +95,8 @@ ast::File {
               invoke : &string
                 target: describe
                 args:
-                  reference (mutable: const) : &Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
-                    locator red : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+                  reference (mutable: const) : &Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+                    locator red : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
         expr_stmt ;
           invoke : ()
             target: printf
@@ -106,8 +106,8 @@ ast::File {
               invoke : &string
                 target: describe
                 args:
-                  reference (mutable: const) : &Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
-                    locator rgb : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+                  reference (mutable: const) : &Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+                    locator rgb : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
         expr_stmt ;
           invoke : ()
             target: printf
@@ -154,12 +154,12 @@ ast::File {
           invoke : ()
             target: printf
             args:
-              value "%d
+              value "%lld
 " : &string
               invoke : i64
                 target: unwrap_or
                 args:
-                  invoke : Option [Some: (Expr(T)) | None: any]
+                  invoke : Option [Some: (Expr(T)) | None: ()]
                     target: Option::Some
                     args:
                       value 42 : i64
@@ -168,12 +168,12 @@ ast::File {
           invoke : ()
             target: printf
             args:
-              value "%d
+              value "%lld
 " : &string
               invoke : i64
                 target: unwrap_or
                 args:
-                  locator Option::None : Option [Some: (Expr(T)) | None: any]
+                  locator Option::None : Option [Some: (Expr(T)) | None: ()]
                   value 99 : i64
         pub const CODE: i64 : i64
           value 0 : i64

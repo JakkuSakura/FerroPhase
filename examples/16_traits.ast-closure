@@ -1,0 +1,83 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    pub trait Shape : () {
+      declare fn area(&self) -> Expr(f64) : fn() -> Expr(f64) : _
+      fn describe(&self) -> () : fn() -> () : _
+        block (1 stmt) : ()
+          expr_stmt ;
+            intrinsic println : ()
+              template: "area={:.2}" self.area()
+    }
+    pub struct Circle : Circle{radius: Expr(f64)} {
+      radius: Expr(f64)
+    }
+    impl Shape for Circle : () {
+      pub fn area(&self) -> Expr(f64) : fn() -> f64 : fn() -> f64
+        block (1 stmt) : f64
+          expr_stmt (value)
+            binop * : f64
+              lhs:
+                binop * : f64
+                  lhs:
+                    value 3.14159 : f64
+                  rhs:
+                    select .radius [unknown] : f64
+                      object:
+                        locator self : &Circle{radius: Expr(f64)}
+              rhs:
+                select .radius [unknown] : f64
+                  object:
+                    locator self : &Circle{radius: Expr(f64)}
+    }
+    pub struct Rectangle : Rectangle{width: Expr(f64), height: Expr(f64)} {
+      width: Expr(f64)
+      height: Expr(f64)
+    }
+    impl Shape for Rectangle : () {
+      pub fn area(&self) -> Expr(f64) : fn() -> f64 : fn() -> f64
+        block (1 stmt) : f64
+          expr_stmt (value)
+            binop * : f64
+              lhs:
+                select .width [unknown] : f64
+                  object:
+                    locator self : &Rectangle{width: Expr(f64), height: Expr(f64)}
+              rhs:
+                select .height [unknown] : f64
+                  object:
+                    locator self : &Rectangle{width: Expr(f64), height: Expr(f64)}
+    }
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (6 stmts) : ()
+        let circle
+          init:
+            struct Circle : Circle{radius: Expr(f64)}
+              radius:
+                value 5 : f64
+        let rect
+          init:
+            struct Rectangle : Rectangle{width: Expr(f64), height: Expr(f64)}
+              width:
+                value 4 : f64
+              height:
+                value 6 : f64
+        expr_stmt ;
+          invoke : ()
+            target: circle.describe
+        expr_stmt ;
+          invoke : ()
+            target: rect.describe
+        expr_stmt ;
+          invoke : ()
+            target: print_area
+            args:
+              reference (mutable: unspecified) : &Circle{radius: Expr(f64)}
+                locator circle : Circle{radius: Expr(f64)}
+        expr_stmt ;
+          invoke : ()
+            target: print_area
+            args:
+              reference (mutable: unspecified) : &Rectangle{width: Expr(f64), height: Expr(f64)}
+                locator rect : Rectangle{width: Expr(f64), height: Expr(f64)}
+}

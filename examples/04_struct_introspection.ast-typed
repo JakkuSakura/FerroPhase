@@ -1,50 +1,32 @@
 ast::File {
   items:
-    priv fn main() -> () : fn() -> () : fn() -> ()
+    pub fn main() -> () : fn() -> () : fn() -> ()
       block (34 stmts) : ()
-        priv struct Point : Point{x: f64, y: f64} {
-          x: f64
-          y: f64
+        pub struct Point : Point{x: Expr(f64), y: Expr(f64)} {
+          x: Expr(f64)
+          y: Expr(f64)
         }
-        priv struct Color : Color{r: u8, g: u8, b: u8} {
-          r: u8
-          g: u8
-          b: u8
+        pub struct Color : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)} {
+          r: Expr(u8)
+          g: Expr(u8)
+          b: Expr(u8)
         }
-        priv const POINT_SIZE: u64 : u64
-          intrinsic size_of : u64
-            args:
-              locator Point : Point{x: f64, y: f64}
-        priv const COLOR_SIZE: u64 : u64
-          intrinsic size_of : u64
-            args:
-              locator Color : Color{r: u8, g: u8, b: u8}
-        priv const POINT_FIELDS: u64 : u64
-          intrinsic field_count : u64
-            args:
-              locator Point : Point{x: f64, y: f64}
-        priv const COLOR_FIELDS: u64 : u64
-          intrinsic field_count : u64
-            args:
-              locator Color : Color{r: u8, g: u8, b: u8}
-        priv const POINT_HAS_X: bool : bool
-          intrinsic has_field : bool
-            args:
-              locator Point : Point{x: f64, y: f64}
-              value "x" : &string
-        priv const POINT_HAS_Z: bool : bool
-          intrinsic has_field : bool
-            args:
-              locator Point : Point{x: f64, y: f64}
-              value "z" : &string
-        priv const POINT_METHODS: u64 : u64
-          intrinsic method_count : u64
-            args:
-              locator Point : Point{x: f64, y: f64}
-        priv const COLOR_METHODS: u64 : u64
-          intrinsic method_count : u64
-            args:
-              locator Color : Color{r: u8, g: u8, b: u8}
+        pub const POINT_SIZE: u64 : u64
+          value 16 : u64
+        pub const COLOR_SIZE: u64 : u64
+          value 24 : u64
+        pub const POINT_FIELDS: u64 : u64
+          value 2 : u64
+        pub const COLOR_FIELDS: u64 : u64
+          value 3 : u64
+        pub const POINT_HAS_X: bool : bool
+          value true : bool
+        pub const POINT_HAS_Z: bool : bool
+          value false : bool
+        pub const POINT_METHODS: u64 : u64
+          value 0 : u64
+        pub const COLOR_METHODS: u64 : u64
+          value 0 : u64
         expr_stmt ;
           intrinsic println : ()
             template: "=== Struct Introspection ==="
@@ -80,30 +62,22 @@ ast::File {
           intrinsic println : ()
             template: "
 === Transpilation Demo ==="
-        priv const POINT_SIZE_CONST: u64 : u64
-          intrinsic size_of : u64
-            args:
-              locator Point : Point{x: f64, y: f64}
-        priv const COLOR_SIZE_CONST: u64 : u64
-          intrinsic size_of : u64
-            args:
-              locator Color : Color{r: u8, g: u8, b: u8}
-        priv const TOTAL_SIZE: u64 : u64
-          binop + : u64
-            lhs:
-              locator POINT_SIZE_CONST : u64
-            rhs:
-              locator COLOR_SIZE_CONST : u64
-        let origin : unknown
+        pub const POINT_SIZE_CONST: u64 : u64
+          value 16 : u64
+        pub const COLOR_SIZE_CONST: u64 : u64
+          value 24 : u64
+        pub const TOTAL_SIZE: u64 : u64
+          value 40 : u64
+        let origin
           init:
-            struct Point : Point{x: f64, y: f64}
+            struct Point : Point{x: Expr(f64), y: Expr(f64)}
               x:
                 value 0 : f64
               y:
                 value 0 : f64
-        let red : unknown
+        let red
           init:
-            struct Color : Color{r: u8, g: u8, b: u8}
+            struct Color : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
               r:
                 value 255 : i64
               g:
