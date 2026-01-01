@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-llvm-ir = { version = "0.11.3", features = ["llvm-19"] }
+inkwell = { version = "0.7.1", features = ["llvm21-1"] }
 fp-core = { path = "../fp-core" }
 fp-clang = { path = "../fp-clang" }
 anyhow = "1.0"

@@ -1,10 +1,18 @@
 //! Clang parser for C/C++ source files
 
 use crate::{ast::TranslationUnit, clang_ast_lowering, ClangError, CompileOptions, Result};
+use inkwell::context::Context;
+use inkwell::memory_buffer::MemoryBuffer;
+use inkwell::module::Module;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tempfile::NamedTempFile;
 use tracing::{debug, info, warn};
+
+/// Inkwell-backed LLVM module that keeps the backing context alive.
+pub struct ClangModule {
+    _context: &'static Context,
+    pub module: Module<'static>,
+}
 
 /// Main interface for parsing C/C++ files using clang
 pub struct ClangParser {
@@ -15,6 +23,8 @@ impl ClangParser {
     /// Create a new ClangParser, finding clang in PATH
     pub fn new() -> Result<Self> {
         let clang_path = which::which("clang")
+            .or_else(|_| which::which("clang-21"))
+            .or_else(|_| which::which("clang-20"))
             .or_else(|_| which::which("clang-19"))
             .or_else(|_| which::which("clang-18"))
             .or_else(|_| which::which("clang-17"))
@@ -38,7 +48,7 @@ impl ClangParser {
         &self,
         source_file: &Path,
         options: &CompileOptions,
-    ) -> Result<llvm_ir::Module> {
+    ) -> Result<ClangModule> {
         // First, compile to LLVM IR text
         let ir_text = self.compile_to_ir_text(source_file, options)?;
 
@@ -232,23 +242,19 @@ impl ClangParser {
         }
     }
 
-    /// Parse LLVM IR text into an llvm_ir::Module
-    fn parse_llvm_ir(&self, ir_text: &str) -> Result<llvm_ir::Module> {
-        // Create a temporary file that persists
-        let temp_file = NamedTempFile::new()?;
-        let temp_path = temp_file.path().to_path_buf();
+    /// Parse LLVM IR text into an inkwell Module
+    fn parse_llvm_ir(&self, ir_text: &str) -> Result<ClangModule> {
+        let context = Box::leak(Box::new(Context::create()));
+        let buffer = MemoryBuffer::create_from_memory_range_copy(ir_text.as_bytes(), "clang_ir");
 
-        use std::io::Write;
-        let mut file = std::fs::File::create(&temp_path)?;
-        file.write_all(ir_text.as_bytes())?;
-        file.flush()?;
-        drop(file);
-
-        // Parse the LLVM IR
-        let module = llvm_ir::Module::from_ir_path(&temp_path)
+        let module = context
+            .create_module_from_ir(buffer)
             .map_err(|e| ClangError::LlvmIrError(e.to_string()))?;
 
-        Ok(module)
+        Ok(ClangModule {
+            _context: context,
+            module,
+        })
     }
 
     /// Get clang version information

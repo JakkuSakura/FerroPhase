@@ -45,30 +45,51 @@ int main() {
 
     // Display module information
     println!("\n=== LLVM Module Information ===");
-    println!("Module name: {}", module.name);
-    println!("Source filename: {}", module.source_file_name);
+    println!("Module name: {}", module.module.get_name().to_str().unwrap_or(""));
     println!(
         "Target triple: {}",
-        module.target_triple.as_deref().unwrap_or("unknown")
+        module
+            .module
+            .get_target_triple()
+            .as_str()
+            .to_string_lossy()
     );
-    println!("Data layout: {:?}", module.data_layout);
+    println!(
+        "Data layout: {}",
+        module
+            .module
+            .get_data_layout()
+            .as_str()
+            .to_string_lossy()
+    );
 
     println!("\n=== Functions ===");
-    for func in &module.functions {
+    for func in module.module.get_functions() {
+        let name = func.get_name().to_str().unwrap_or("");
         println!(
             "  {} {} ({:?})",
-            if func.is_var_arg { "variadic" } else { "fixed" },
-            func.name,
-            func.linkage
+            if func.get_type().is_var_arg() {
+                "variadic"
+            } else {
+                "fixed"
+            },
+            name,
+            func.get_linkage()
         );
-        println!("    Return type: {:?}", func.return_type);
-        println!("    Parameters: {}", func.parameters.len());
-        println!("    Basic blocks: {}", func.basic_blocks.len());
+        let ret = func
+            .get_type()
+            .get_return_type()
+            .map(|ty| format!("{:?}", ty))
+            .unwrap_or_else(|| "void".to_string());
+        println!("    Return type: {}", ret);
+        println!("    Parameters: {}", func.count_params());
+        println!("    Basic blocks: {}", func.count_basic_blocks());
     }
 
     println!("\n=== Global Variables ===");
-    for global in &module.global_vars {
-        println!("  {} ({:?})", global.name, global.linkage);
+    for global in module.module.get_globals() {
+        let name = global.get_name().to_str().unwrap_or("");
+        println!("  {} ({:?})", name, global.get_linkage());
     }
 
     // Get the IR as text
