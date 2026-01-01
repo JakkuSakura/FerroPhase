@@ -7,8 +7,9 @@ lir::Program {
                 %2: i64
                 %3: i32
                 %4: i64
-                %5: i8
-                %6: i32
+                %5: i64
+                %6: i8
+                %7: i32
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = call c @type_name() : ptr ptr i8
                 terminator: br bb1
@@ -16,20 +17,23 @@ lir::Program {
                 i1: %r1 = call c @field_count() : i64
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i2: %r2 = call c @printf(c"%s has %d fields
+                i2: %r2 = call c @printf(c"%s has %llu fields
 ", %r0, %r1) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i3: %r3 = alloca i32 1 align 8 : ptr i64
-                i4: store i64 1, %r3 align 8
-                i5: %r5 = alloca i32 1 align 1 : ptr i8
+                i4: store struct i64 { i64 1 }, %r3 align 8
+                i5: %r5 = alloca i32 1 align 8 : ptr i64
                 i6: %r6 = load %r3 align 8 : i64
-                i7: %r7 = sext_or_trunc %r6 to i8 : i8
-                i8: store %r7, %r5 align 1
-                i9: %r9 = load %r5 align 1 : i8
-                i10: %r10 = zext %r9 to i32 : i32
-                i11: %r11 = call c @printf(c"tag discriminant: %d
-", %r10) : i32
+                i7: store %r6, %r5 align 8
+                i8: %r8 = alloca i32 1 align 1 : ptr i8
+                i9: %r9 = load %r5 align 8 : i64
+                i10: %r10 = sext_or_trunc %r9 to i8 : i8
+                i11: store %r10, %r8 align 1
+                i12: %r12 = load %r8 align 1 : i8
+                i13: %r13 = zext %r12 to i32 : i32
+                i14: %r14 = call c @printf(c"tag discriminant: %hhu
+", %r13) : i32
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3]:
                 terminator: ret void
@@ -39,19 +43,19 @@ lir::Program {
             locals:
                 %0: ptr ptr i8
             bb0 // label: bb0:
-                i12: %r12 = alloca i32 1 align 8 : ptr ptr ptr i8
-                i13: store c"Point3D", %r12 align 8
-                i14: %r14 = load %r12 align 8 : ptr ptr i8
-                terminator: ret %r14
+                i15: %r15 = alloca i32 1 align 8 : ptr ptr ptr i8
+                i16: store c"Point3D", %r15 align 8
+                i17: %r17 = load %r15 align 8 : ptr ptr i8
+                terminator: ret %r17
         }
 
         fn field_count() -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
             bb0 // label: bb0:
-                i15: %r15 = alloca i32 1 align 8 : ptr i64
-                i16: store i64 3, %r15 align 8
-                i17: %r17 = load %r15 align 8 : i64
-                terminator: ret %r17
+                i18: %r18 = alloca i32 1 align 8 : ptr i64
+                i19: store i64 3, %r18 align 8
+                i20: %r20 = load %r18 align 8 : i64
+                terminator: ret %r20
         }
 }

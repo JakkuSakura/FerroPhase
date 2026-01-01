@@ -102,9 +102,9 @@ hir::Program {
 ", classify(4));
             printf("%s
 ", classify(7));
-            printf("%d
+            printf("%lld
 ", unwrap_or(Option::Some(42), 0));
-            printf("%d
+            printf("%lld
 ", unwrap_or(Option::None, 99));
             pub const CODE: i64 =
                 0;

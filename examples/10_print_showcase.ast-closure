@@ -1,0 +1,130 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    pub const fn main() -> () : fn() -> () : fn() -> ()
+      block (20 stmts) : ()
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Hello" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "World with newlines" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Number: %lld" : &string
+              value 42 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Boolean: %d %d" : &string
+              value true : bool
+              value false : bool
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Mixed: %lld %f %s %d" : &string
+              value 1 : i64
+              value 2.5 : f64
+              value "text" : &string
+              value true : bool
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Namespace test %s" : &string
+              value "still works" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+" : &string
+        let value
+          init:
+            value 7 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "value = %lld
+" : &string
+              locator value : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "math: %lld + %lld = %lld
+" : &string
+              value 2 : i64
+              value 3 : i64
+              value 5 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "This %s %s %s %s" : &string
+              value "stays" : &string
+              value "on" : &string
+              value "one" : &string
+              value "line" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Continuing without newline" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value " - appended content" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Unit: %s" : &string
+              value "()" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Null: %s" : &string
+              value "<none>" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "
+" : &string
+}

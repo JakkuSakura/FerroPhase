@@ -1,15 +1,15 @@
 ast::File {
   items:
     pub enum Color {
-      Red: any
-      Green: any
+      Red: ()
+      Green: ()
       Rgb: (Expr(u8), Expr(u8), Expr(u8))
     }
     pub enum Option {
       Some: (Expr(T))
-      None: any
+      None: ()
     }
-    pub fn describe(color: &Expr(Color)) -> &''static Expr(str) : fn(&Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string
+    pub fn describe(color: &Expr(Color)) -> &''static Expr(str) : fn(&Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string
       block (1 stmt)
         expr_stmt (value)
           match
@@ -58,7 +58,7 @@ ast::File {
               body:
                 value "odd"
     pub fn unwrap_or(opt: Expr(Option<i64
->), default: Expr(i64)) -> Expr(i64) : fn(Option [Some: (Expr(T)) | None: any], i64) -> i64
+>), default: Expr(i64)) -> Expr(i64) : fn(Option [Some: (Expr(T)) | None: ()], i64) -> i64
       block (1 stmt)
         expr_stmt (value)
           match

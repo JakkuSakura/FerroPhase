@@ -770,8 +770,9 @@ impl HirGenerator {
         if !invoke.args.is_empty() {
             return Ok(None);
         }
-        let ast::ExprKind::Locator(locator) = invoke.target.kind() else {
-            return Ok(None);
+        let locator = match &invoke.target {
+            ast::ExprInvokeTarget::Function(locator) => locator,
+            _ => return Ok(None),
         };
         let path = match locator {
             ast::Locator::Path(path) => path,
@@ -801,32 +802,28 @@ impl HirGenerator {
                 ));
             }
         };
-        if tuple.values.len() != 2 {
+        if tuple.patterns.len() != 2 {
             return Err(crate::error::optimization_error(
                 "enumerate() loop pattern must bind (index, value)",
             ));
         }
 
-        let index_ident = tuple
-            .values
-            .get(0)
-            .and_then(|pat| pat.as_ident())
-            .cloned()
-            .ok_or_else(|| {
-                crate::error::optimization_error(
+        let index_ident = match tuple.patterns.get(0).and_then(|pat| pat.as_ident()) {
+            Some(ident) => ident.clone(),
+            None => {
+                return Err(crate::error::optimization_error(
                     "enumerate() loop index must be a simple binding",
-                )
-            })?;
-        let value_ident = tuple
-            .values
-            .get(1)
-            .and_then(|pat| pat.as_ident())
-            .cloned()
-            .ok_or_else(|| {
-                crate::error::optimization_error(
+                ));
+            }
+        };
+        let value_ident = match tuple.patterns.get(1).and_then(|pat| pat.as_ident()) {
+            Some(ident) => ident.clone(),
+            None => {
+                return Err(crate::error::optimization_error(
                     "enumerate() loop value must be a simple binding",
-                )
-            })?;
+                ));
+            }
+        };
 
         Ok(Some(EnumerateLoopSpec {
             base_segments,

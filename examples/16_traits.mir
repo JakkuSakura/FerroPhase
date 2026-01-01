@@ -1,0 +1,80 @@
+mir::Program {
+    items:
+        static <static>: bool = false
+
+        fn area(arg0: <??>) -> f64 [body: body0]
+
+        fn area(arg0: <??>) -> f64 [body: body1]
+
+        fn main() -> () [body: body2]
+
+        fn opaque::describe(arg0: <??>) -> () [body: body3]
+
+        fn print_area(arg0: <??>) -> () [body: body4]
+    bodies:
+        body0 { arg_count: 1, locals: 5 }
+            return_local: _0
+            locals:
+                _0: f64
+                _1: <??>
+                _2: f64
+                _3: f64
+                _4: f64
+            blocks:
+                bb0:
+                    s0: _3 = Mul(3.14159, copy _1[Deref, Field(0, Ty { kind: Float(F64) })])
+                    s1: _2 = Mul(copy _3, copy _1[Deref, Field(0, Ty { kind: Float(F64) })])
+                    s2: _4 = Mul(3.14159, copy _1[Deref, Field(0, Ty { kind: Float(F64) })])
+                    s3: _0 = Mul(copy _4, copy _1[Deref, Field(0, Ty { kind: Float(F64) })])
+                    terminator: return
+        body1 { arg_count: 1, locals: 3 }
+            return_local: _0
+            locals:
+                _0: f64
+                _1: <??>
+                _2: f64
+            blocks:
+                bb0:
+                    s0: _2 = Mul(copy _1[Deref, Field(0, Ty { kind: Float(F64) })], copy _1[Deref, Field(1, Ty { kind: Float(F64) })])
+                    s1: _0 = Mul(copy _1[Deref, Field(0, Ty { kind: Float(F64) })], copy _1[Deref, Field(1, Ty { kind: Float(F64) })])
+                    terminator: return
+        body2 { arg_count: 0, locals: 7 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+                _2: <??>
+                _3: ()
+                _4: ()
+                _5: ()
+                _6: ()
+            blocks:
+                bb0:
+                    s0: _1 = aggregate(tuple; [5])
+                    s1: _2 = aggregate(tuple; [4, 6])
+                    terminator: call fn opaque::describe(copy _1) -> _3 then bb1
+                bb1:
+                    terminator: call fn opaque::describe(copy _2) -> _4 then bb2
+                bb2:
+                    terminator: call fn print_area(copy _1) -> _5 then bb3
+                bb3:
+                    terminator: call global print_area(copy _2) -> _6 then bb4
+                bb4:
+                    terminator: return
+        body3 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+            blocks:
+                bb0:
+                    terminator: return
+        body4 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+            blocks:
+                bb0:
+                    terminator: return
+}

@@ -28,15 +28,15 @@ mir::Program {
                     terminator: call global printf("Vec literals:\n") -> _2 then bb2
                 bb2:
                     s0: _3 = 6
-                    terminator: call global printf("  primes: %d elements\n", copy _3) -> _4 then bb3
+                    terminator: call global printf("  primes: %lld elements\n", copy _3) -> _4 then bb3
                 bb3:
                     s0: _5 = 16
-                    terminator: call global printf("  zero buffer: %d elements\n", copy _5) -> _6 then bb4
+                    terminator: call global printf("  zero buffer: %lld elements\n", copy _5) -> _6 then bb4
                 bb4:
                     terminator: call global printf("\nHashMap literal via HashMap::from:\n") -> _7 then bb5
                 bb5:
                     s0: _8 = 4
-                    terminator: call global printf("  tracked HTTP statuses: %d entries\n", copy _8) -> _9 then bb6
+                    terminator: call global printf("  tracked HTTP statuses: %lld entries\n", copy _8) -> _9 then bb6
                 bb6:
                     terminator: return
 }

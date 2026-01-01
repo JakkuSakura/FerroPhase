@@ -1,22 +1,52 @@
-fn main () -> (){
-    const BUFFER_SIZE : i64 = 1024 * 4 ;
-    const MAX_CONNECTIONS : i64 = 150 ;
-    const FACTORIAL_5 : i64 = 5 * 4 * 3 * 2 * 1 ;
-    const IS_LARGE : bool = BUFFER_SIZE > 2048 ;
-    println ! ("Buffer: {}KB, factorial(5)={}, large={}" , BUFFER_SIZE / 1024 , FACTORIAL_5 , IS_LARGE) ;
-    struct Config{
-        pub buffer_size : i64 , pub max_connections : i64
-    }
-    const DEFAULT_CONFIG : Config = Config{
-        buffer_size : BUFFER_SIZE , max_connections : MAX_CONNECTIONS
-    };
-    println ! ("Config: {}KB buffer, {} connections" , DEFAULT_CONFIG . buffer_size / 1024 , DEFAULT_CONFIG . max_connections) ;
-    let runtime_multiplier = 3 ;
-    let optimized_size = intrinsic_const_block (BUFFER_SIZE * 2) ;
-    let cache_strategy = intrinsic_const_block (if BUFFER_SIZE > 2048{
-        "large"
-    }
-    else "small") ;
-    let total_memory = runtime_multiplier * intrinsic_const_block (BUFFER_SIZE * MAX_CONNECTIONS) ;
-    println ! ("Const blocks: size={}, strategy={}, memory={}" , optimized_size , cache_strategy , total_memory) ;
+ast::File {
+  items:
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (13 stmts) : ()
+        pub const BUFFER_SIZE: i64 : i64
+          value 4096 : i64
+        pub const MAX_CONNECTIONS: i64 : i64
+          value 150 : i64
+        pub const FACTORIAL_5: i64 : i64
+          value 120 : i64
+        pub const IS_LARGE: bool : bool
+          value true : bool
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Buffer: {}KB, factorial(5)={}, large={}" (BUFFER_SIZE / 1024), FACTORIAL_5, IS_LARGE
+        pub struct Config : Config{buffer_size: Expr(i64), max_connections: Expr(i64)} {
+          buffer_size: Expr(i64)
+          max_connections: Expr(i64)
+        }
+        pub const DEFAULT_CONFIG: Config{buffer_size: Expr(i64), max_connections: Expr(i64)} : Config{buffer_size: Expr(i64), max_connections: Expr(i64)}
+          value Config { 2 fields } : Config{buffer_size: Expr(i64), max_connections: Expr(i64)}
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Config: {}KB buffer, {} connections" (DEFAULT_CONFIG.buffer_size / 1024), DEFAULT_CONFIG.max_connections
+        let runtime_multiplier
+          init:
+            value 3 : i64
+        let optimized_size
+          init:
+            value 8192 : i64
+        let cache_strategy
+          init:
+            value "large" : &string
+        let total_memory
+          init:
+            binop * : i64
+              lhs:
+                locator runtime_multiplier : i64
+              rhs:
+                intrinsic const_block : i64
+                  args:
+                    block (1 stmt) : i64
+                      expr_stmt (value)
+                        binop * : i64
+                          lhs:
+                            locator BUFFER_SIZE : i64
+                          rhs:
+                            locator MAX_CONNECTIONS : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Const blocks: size={}, strategy={}, memory={}" optimized_size, cache_strategy, total_memory
 }

@@ -1,34 +1,38 @@
 ast::File {
   items:
-    priv fn main() -> () : fn() -> ()
+    pub fn main() -> () : fn() -> ()
       block (10 stmts)
-        priv const FIELD_COUNT: u64
+        pub const FIELD_COUNT: u64
           value 3
-        priv const TYPE_NAME: &string
+        pub const TYPE_NAME: &string
           value "Point3D"
-        priv struct Point3D {
-          x: i64
-          y: i64
-          z: i64
+        pub struct Point3D {
+          x: Expr(i64)
+          y: Expr(i64)
+          z: Expr(i64)
         }
         impl Point3D {
-          priv fn type_name() -> &'static Expr(str) : fn() -> &string
-            locator TYPE_NAME
-          priv fn field_count() -> u64 : fn() -> u64
-            locator FIELD_COUNT
+          pub fn type_name() -> &''static Expr(str) : fn() -> &string
+            block (1 stmt)
+              expr_stmt (value)
+                locator TYPE_NAME
+          pub fn field_count() -> Expr(usize) : fn() -> u64
+            block (1 stmt)
+              expr_stmt (value)
+                locator FIELD_COUNT
         }
         expr_stmt ;
           intrinsic println
             template: "{} has {} fields" Point3D::type_name(), Point3D::field_count()
-        priv const VARIANT_A: u8
+        pub const VARIANT_A: u8
           value 1
-        priv const VARIANT_B: u8
+        pub const VARIANT_B: u8
           value 2
-        priv enum Tag {
-          A: any = (VARIANT_A) as Expr(isize)
-          B: any = (VARIANT_B) as Expr(isize)
+        pub enum Tag {
+          A: () = (VARIANT_A) as Expr(isize)
+          B: () = (VARIANT_B) as Expr(isize)
         }
-        let tag : unknown
+        let tag
           init:
             locator Tag::A
         expr_stmt ;

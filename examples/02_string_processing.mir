@@ -7,27 +7,27 @@ mir::Program {
             locals:
                 _0: ()
                 _1: <??>
-                _2: u64
+                _2: usize
                 _3: i32
                 _4: <??>
-                _5: u64
+                _5: usize
                 _6: i32
                 _7: bool
                 _8: bool
                 _9: i32
                 _10: <??>
                 _11: i32
-                _12: u64
+                _12: usize
                 _13: i32
             blocks:
                 bb0:
                     s0: _1 = "FerroPhase"
                     s1: _2 = 10u
-                    terminator: call global printf("name='%s' len=%d\n", copy _1, copy _2) -> _3 then bb1
+                    terminator: call global printf("name='%s' len=%llu\n", copy _1, copy _2) -> _3 then bb1
                 bb1:
                     s0: _4 = "0.1.0"
                     s1: _5 = 5u
-                    terminator: call global printf("version='%s' len=%d\n", copy _4, copy _5) -> _6 then bb2
+                    terminator: call global printf("version='%s' len=%llu\n", copy _4, copy _5) -> _6 then bb2
                 bb2:
                     s0: _7 = false
                     s1: _8 = true
@@ -37,7 +37,7 @@ mir::Program {
                     terminator: call global printf("banner='%s'\n", copy _10) -> _11 then bb4
                 bb4:
                     s0: _12 = 256u
-                    terminator: call global printf("buffer_size=%d\n", copy _12) -> _13 then bb5
+                    terminator: call global printf("buffer_size=%llu\n", copy _12) -> _13 then bb5
                 bb5:
                     terminator: return
 }

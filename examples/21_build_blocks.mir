@@ -1,0 +1,60 @@
+mir::Program {
+    items:
+        fn build_items(arg0: bool) -> <??> [body: body0]
+
+        fn build_items_2(arg0: bool) -> <??> [body: body1]
+
+        fn main() -> () [body: body2]
+    bodies:
+        body0 { arg_count: 1, locals: 3 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: bool
+                _2: ()
+            blocks:
+                bb0:
+                    s0: _2 = aggregate(tuple; [])
+                    s1: _0 = aggregate(tuple; [])
+                    terminator: return
+        body1 { arg_count: 1, locals: 3 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: bool
+                _2: ()
+            blocks:
+                bb0:
+                    terminator: switch copy _1 [1 -> bb1] otherwise -> bb2
+                bb1:
+                    s0: _2 = aggregate(tuple; [])
+                    terminator: goto -> bb3
+                bb2:
+                    s0: _2 = aggregate(tuple; [])
+                    terminator: goto -> bb3
+                bb3:
+                    terminator: switch copy _1 [1 -> bb4] otherwise -> bb5
+                bb4:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb5:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb6:
+                    terminator: return
+        body2 { arg_count: 0, locals: 5 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: (i64)
+                _2: i64
+                _3: (i64)
+                _4: i64
+            blocks:
+                bb0:
+                    s0: _1 = aggregate(tuple; [1])
+                    s1: _2 = copy _1[Field(0, Ty { kind: Int(I64) })]
+                    s2: _3 = aggregate(tuple; [2])
+                    s3: _4 = copy _3[Field(0, Ty { kind: Int(I64) })]
+                    terminator: return
+}

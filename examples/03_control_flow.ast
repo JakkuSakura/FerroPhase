@@ -1,39 +1,63 @@
-fn main () -> (){
-    const TEMP : i64 = 25 ;
-    const WEATHER : & str = if TEMP > 30{
-        "hot"
-    }
-    else if TEMP > 20{
-        "warm"
-    }
-    else "cold" ;
-    println ! ("{}°C is {}" , TEMP , WEATHER) ;
-    const IS_SUNNY : bool = true ;
-    const IS_WARM : bool = TEMP > 20 ;
-    const ACTIVITY : & str = if IS_SUNNY && IS_WARM{
-        "outdoor"
-    }
-    else "indoor" ;
-    println ! ("Suggested: {}" , ACTIVITY) ;
-    const SCORE : i64 = 85 ;
-    const GRADE : & str = if SCORE >= 90{
-        "A"
-    }
-    else if SCORE >= 80{
-        "B"
-    }
-    else if SCORE >= 70{
-        "C"
-    }
-    else "F" ;
-    println ! ("Score {} = grade {}" , SCORE , GRADE) ;
-    let value = 42 ;
-    let category = if value > 50{
-        "high"
-    }
-    else if value > 25{
-        "medium"
-    }
-    else "low" ;
-    println ! ("Value {} is {}" , value , category) ;
+ast::File {
+  items:
+    pub fn main() -> () : fn() -> ()
+      block (13 stmts)
+        pub const TEMP: i64
+          value 25
+        pub const WEATHER: &string
+          value "warm"
+        expr_stmt ;
+          intrinsic println
+            template: "{}°C is {}" TEMP, WEATHER
+        pub const IS_SUNNY: bool
+          value true
+        pub const IS_WARM: bool
+          value true
+        pub const ACTIVITY: &string
+          value "outdoor"
+        expr_stmt ;
+          intrinsic println
+            template: "Suggested: {}" ACTIVITY
+        pub const SCORE: i64
+          value 85
+        pub const GRADE: &string
+          value "B"
+        expr_stmt ;
+          intrinsic println
+            template: "Score {} = grade {}" SCORE, GRADE
+        let value
+          init:
+            value 42
+        let category
+          init:
+            if
+              cond:
+                binop >
+                  lhs:
+                    locator value
+                  rhs:
+                    value 50
+              then:
+                block (1 stmt)
+                  expr_stmt (value)
+                    value "high"
+              else:
+                if
+                  cond:
+                    binop >
+                      lhs:
+                        locator value
+                      rhs:
+                        value 25
+                  then:
+                    block (1 stmt)
+                      expr_stmt (value)
+                        value "medium"
+                  else:
+                    block (1 stmt)
+                      expr_stmt (value)
+                        value "low"
+        expr_stmt ;
+          intrinsic println
+            template: "Value {} is {}" value, category
 }

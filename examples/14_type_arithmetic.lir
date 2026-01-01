@@ -1,0 +1,27 @@
+lir::Program {
+    functions:
+        fn print(arg0: ptr i8) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i8 // arg
+                %2: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = call c @printf(c"%s
+", %local1) : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i1: %r1 = call c @printf(c"%s
+", %local1)
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1]:
+                terminator: ret void
+        }
+
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: void
+            bb0 // label: bb0:
+                terminator: ret void
+        }
+}

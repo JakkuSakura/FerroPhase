@@ -1,48 +1,48 @@
 hir::Program {
-    fn main() -> () {
+    pub fn main() -> () {
         {
-            struct Point {
+            pub struct Point {
                 pub x: f64,
                 pub y: f64,
             }
-            struct Color {
+            pub struct Color {
                 pub r: u8,
                 pub g: u8,
                 pub b: u8,
             }
-            const POINT_SIZE: u64 =
+            pub const POINT_SIZE: usize =
                 16;
-            const COLOR_SIZE: u64 =
+            pub const COLOR_SIZE: usize =
                 24;
-            const POINT_FIELDS: u64 =
+            pub const POINT_FIELDS: usize =
                 2;
-            const COLOR_FIELDS: u64 =
+            pub const COLOR_FIELDS: usize =
                 3;
-            const POINT_HAS_X: bool =
+            pub const POINT_HAS_X: bool =
                 true;
-            const POINT_HAS_Z: bool =
+            pub const POINT_HAS_Z: bool =
                 false;
-            const POINT_METHODS: u64 =
+            pub const POINT_METHODS: usize =
                 0;
-            const COLOR_METHODS: u64 =
+            pub const COLOR_METHODS: usize =
                 0;
             printf("=== Struct Introspection ===
 ");
-            printf("Point size: %d bytes
+            printf("Point size: %llu bytes
 ", std::SizeOf(1 args));
-            printf("Color size: %d bytes
+            printf("Color size: %llu bytes
 ", std::SizeOf(1 args));
-            printf("Point fields: %d
+            printf("Point fields: %llu
 ", std::FieldCount(1 args));
-            printf("Color fields: %d
+            printf("Color fields: %llu
 ", std::FieldCount(1 args));
             printf("Point has x: %d
 ", std::HasField(2 args));
             printf("Point has z: %d
 ", std::HasField(2 args));
-            printf("Point methods: %d
+            printf("Point methods: %llu
 ", std::MethodCount(1 args));
-            printf("Color methods: %d
+            printf("Color methods: %llu
 ", std::MethodCount(1 args));
             printf("
 ✓ Introspection completed!
@@ -50,27 +50,27 @@ hir::Program {
             printf("
 === Transpilation Demo ===
 ");
-            const POINT_SIZE_CONST: u64 =
+            pub const POINT_SIZE_CONST: usize =
                 16;
-            const COLOR_SIZE_CONST: u64 =
+            pub const COLOR_SIZE_CONST: usize =
                 24;
-            const TOTAL_SIZE: u64 =
+            pub const TOTAL_SIZE: usize =
                 40;
             let origin = Point { x: 0, y: 0 };
             let red = Color { r: 255, g: 0, b: 0 };
             printf("Transpilation target sizes:
 ");
-            printf("  Point: %d bytes (const)
+            printf("  Point: %llu bytes (const)
 ", POINT_SIZE_CONST);
-            printf("  Color: %d bytes (const)
+            printf("  Color: %llu bytes (const)
 ", COLOR_SIZE_CONST);
-            printf("  Combined: %d bytes
+            printf("  Combined: %llu bytes
 ", TOTAL_SIZE);
             printf("Runtime instances:
 ");
             printf("  Origin: (%f, %f)
 ", origin.x, origin.y);
-            printf("  Red: rgb(%d, %d, %d)
+            printf("  Red: rgb(%hhu, %hhu, %hhu)
 ", red.r, red.g, red.b);
             printf("
 ✓ Introspection enables external code generation!

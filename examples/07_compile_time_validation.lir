@@ -21,7 +21,7 @@ lir::Program {
                 i3: store i64 3, %r2 align 8
                 i4: %r4 = load %r0 align 8 : i64
                 i5: %r5 = load %r2 align 8 : i64
-                i6: %r6 = call c @printf(c"sizeof=%d, fields=%d
+                i6: %r6 = call c @printf(c"sizeof=%llu, fields=%llu
 ", %r4, %r5) : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:

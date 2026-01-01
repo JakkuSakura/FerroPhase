@@ -8,7 +8,19 @@ mir::Program {
 
         fn main() -> () [body: body3]
     bodies:
-        body0 { arg_count: 2, locals: 3 }
+        body0 { arg_count: 2, locals: 4 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+                _3: i64
+            blocks:
+                bb0:
+                    s0: _3 = Add(copy _1, copy _2)
+                    s1: _0 = Add(copy _1, copy _2)
+                    terminator: return
+        body1 { arg_count: 1, locals: 3 }
             return_local: _0
             locals:
                 _0: i64
@@ -16,29 +28,27 @@ mir::Program {
                 _2: i64
             blocks:
                 bb0:
-                    s0: _0 = Add(copy _1, copy _2)
+                    s0: _2 = Mul(copy _1, 2)
+                    s1: _0 = Mul(copy _1, 2)
                     terminator: return
-        body1 { arg_count: 1, locals: 2 }
-            return_local: _0
-            locals:
-                _0: i64
-                _1: i64
-            blocks:
-                bb0:
-                    s0: _0 = Mul(copy _1, 2)
-                    terminator: return
-        body2 { arg_count: 1, locals: 3 }
+        body2 { arg_count: 1, locals: 5 }
             return_local: _0
             locals:
                 _0: i64
                 _1: i64
                 _2: i64
+                _3: i64
+                _4: i64
             blocks:
                 bb0:
                     terminator: call fn add(copy _1, 1) -> _2 then bb1
                 bb1:
-                    terminator: call fn double(copy _2) -> _0 then bb2
+                    terminator: call fn double(copy _2) -> _3 then bb2
                 bb2:
+                    terminator: call fn add(copy _1, 1) -> _4 then bb3
+                bb3:
+                    terminator: call fn double(copy _4) -> _0 then bb4
+                bb4:
                     terminator: return
         body3 { arg_count: 0, locals: 9 }
             return_local: _0
@@ -56,18 +66,18 @@ mir::Program {
                 bb0:
                     terminator: call fn add(2, 3) -> _1 then bb1
                 bb1:
-                    terminator: call global printf("%d\n", copy _1) -> _2 then bb2
+                    terminator: call global printf("%lld\n", copy _1) -> _2 then bb2
                 bb2:
                     terminator: call fn double(5) -> _3 then bb3
                 bb3:
-                    terminator: call global printf("%d\n", copy _3) -> _4 then bb4
+                    terminator: call global printf("%lld\n", copy _3) -> _4 then bb4
                 bb4:
                     terminator: call fn compose(10) -> _5 then bb5
                 bb5:
-                    terminator: call global printf("%d\n", copy _5) -> _6 then bb6
+                    terminator: call global printf("%lld\n", copy _5) -> _6 then bb6
                 bb6:
                     s0: _7 = 30
-                    terminator: call global printf("const: %d\n", copy _7) -> _8 then bb7
+                    terminator: call global printf("const: %lld\n", copy _7) -> _8 then bb7
                 bb7:
                     terminator: return
 }

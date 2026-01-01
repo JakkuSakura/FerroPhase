@@ -18,7 +18,7 @@ ast::File {
     }
     pub enum Option {
       Some: (Expr(T))
-      None: any
+      None: ()
     }
     impl<T> Option<T
 > {

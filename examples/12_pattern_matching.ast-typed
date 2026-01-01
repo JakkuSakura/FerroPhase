@@ -1,15 +1,15 @@
 ast::File {
   items:
-    pub enum Color : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))] {
-      Red: any
-      Green: any
+    pub enum Color : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))] {
+      Red: ()
+      Green: ()
       Rgb: (Expr(u8), Expr(u8), Expr(u8))
     }
-    pub enum Option : Option [Some: (Expr(T)) | None: any] {
+    pub enum Option : Option [Some: (Expr(T)) | None: ()] {
       Some: (Expr(T))
-      None: any
+      None: ()
     }
-    pub fn describe(color: &Expr(Color)) -> &''static Expr(str) : fn(&Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string : fn(&Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string
+    pub fn describe(color: &Expr(Color)) -> &''static Expr(str) : fn(&Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string : fn(&Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]) -> &string
       block (1 stmt) : &string
         expr_stmt (value)
           match : &string
@@ -58,7 +58,7 @@ ast::File {
               body:
                 value "odd" : &string
     pub fn unwrap_or(opt: Expr(Option<i64
->), default: Expr(i64)) -> Expr(i64) : fn(Option [Some: (Expr(T)) | None: any], i64) -> i64 : fn(Option [Some: (Expr(T)) | None: any], i64) -> i64
+>), default: Expr(i64)) -> Expr(i64) : fn(Option [Some: (Expr(T)) | None: ()], i64) -> i64 : fn(Option [Some: (Expr(T)) | None: ()], i64) -> i64
       block (1 stmt) : any
         expr_stmt (value)
           match : any
@@ -76,10 +76,10 @@ ast::File {
       block (12 stmts) : ()
         let red
           init:
-            locator Color::Red : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+            locator Color::Red : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
         let rgb
           init:
-            invoke : Color [Red: any | Green: any | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+            invoke : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
               target: Color::Rgb
               args:
                 value 128 : i64

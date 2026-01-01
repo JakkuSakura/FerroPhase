@@ -1,22 +1,46 @@
-fn add(a: i64, b: i64) -> i64 {
-    a + b
+ast::File {
+  items:
+    pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          binop + : i64
+            lhs:
+              locator a : i64
+            rhs:
+              locator b : i64
+    pub fn double(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          binop * : i64
+            lhs:
+              locator x : i64
+            rhs:
+              value 2 : i64
+    pub fn compose(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          invoke : i64
+            target: double
+            args:
+              invoke : i64
+                target: add
+                args:
+                  locator x : i64
+                  value 1 : i64
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (5 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" add(2, 3)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" double(5)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" compose(10)
+        pub const RESULT: i64 : i64
+          value 30 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "const: {}" RESULT
 }
-fn double(x: i64) -> i64 {
-    x * 2
-}
-fn compose(x: i64) -> i64 {
-    double(add(x, 1))
-}
-fn main() -> () {
-    println!("{}", add(2, 3));
-    println!("{}", double(5));
-    println!("{}", compose(10));
-    const RESULT: i64 = {
-        let x = 5;
-        let y = x + 10;
-        y * 2
-    };
-    println!("const: {}", RESULT);
-}
-
-// Type: ()

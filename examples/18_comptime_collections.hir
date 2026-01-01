@@ -1,27 +1,27 @@
 hir::Program {
-    const PRIME_COUNT: i64 =
+    pub const PRIME_COUNT: i64 =
         6;
 
-    const ZERO_BUFFER_CAPACITY: i64 =
+    pub const ZERO_BUFFER_CAPACITY: i64 =
         16;
 
-    const HTTP_STATUS_COUNT: i64 =
+    pub const HTTP_STATUS_COUNT: i64 =
         4;
 
-    fn main() -> () {
+    pub fn main() -> () {
         {
             printf("=== Compile-time Collections ===
 ");
             printf("Vec literals:
 ");
-            printf("  primes: %d elements
+            printf("  primes: %lld elements
 ", PRIME_COUNT);
-            printf("  zero buffer: %d elements
+            printf("  zero buffer: %lld elements
 ", ZERO_BUFFER_CAPACITY);
             printf("
 HashMap literal via HashMap::from:
 ");
-            printf("  tracked HTTP statuses: %d entries
+            printf("  tracked HTTP statuses: %lld entries
 ", HTTP_STATUS_COUNT);
         }
     }

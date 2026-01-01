@@ -32,19 +32,19 @@ lir::Program {
 ") : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i1: %r1 = call c @printf(c"Point size: %d bytes
+                i1: %r1 = call c @printf(c"Point size: %llu bytes
 ", i64 16) : i32
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i2: %r2 = call c @printf(c"Color size: %d bytes
+                i2: %r2 = call c @printf(c"Color size: %llu bytes
 ", i64 3) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i3: %r3 = call c @printf(c"Point fields: %d
+                i3: %r3 = call c @printf(c"Point fields: %llu
 ", i64 2) : i32
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i4: %r4 = call c @printf(c"Color fields: %d
+                i4: %r4 = call c @printf(c"Color fields: %llu
 ", i64 3) : i32
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
@@ -58,11 +58,11 @@ lir::Program {
 ", %r7) : i32
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i9: %r9 = call c @printf(c"Point methods: %d
+                i9: %r9 = call c @printf(c"Point methods: %llu
 ", i64 0) : i32
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i10: %r10 = call c @printf(c"Color methods: %d
+                i10: %r10 = call c @printf(c"Color methods: %llu
 ", i64 0) : i32
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
@@ -87,21 +87,21 @@ lir::Program {
                 i18: %r18 = alloca i32 1 align 8 : ptr i64
                 i19: store i64 16, %r18 align 8
                 i20: %r20 = load %r18 align 8 : i64
-                i21: %r21 = call c @printf(c"  Point: %d bytes (const)
+                i21: %r21 = call c @printf(c"  Point: %llu bytes (const)
 ", %r20) : i32
                 terminator: br bb13
             bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
                 i22: %r22 = alloca i32 1 align 8 : ptr i64
                 i23: store i64 24, %r22 align 8
                 i24: %r24 = load %r22 align 8 : i64
-                i25: %r25 = call c @printf(c"  Color: %d bytes (const)
+                i25: %r25 = call c @printf(c"  Color: %llu bytes (const)
 ", %r24) : i32
                 terminator: br bb14
             bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
                 i26: %r26 = alloca i32 1 align 8 : ptr i64
                 i27: store i64 40, %r26 align 8
                 i28: %r28 = load %r26 align 8 : i64
-                i29: %r29 = call c @printf(c"  Combined: %d bytes
+                i29: %r29 = call c @printf(c"  Combined: %llu bytes
 ", %r28) : i32
                 terminator: br bb15
             bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
@@ -132,7 +132,7 @@ lir::Program {
                 i48: %r48 = bitcast %r47 to ptr i8 : ptr i8
                 i49: %r49 = load %r48 align 1 : i8
                 i50: %r50 = zext %r49 to i32 : i32
-                i51: %r51 = call c @printf(c"  Red: rgb(%d, %d, %d)
+                i51: %r51 = call c @printf(c"  Red: rgb(%hhu, %hhu, %hhu)
 ", %r40, %r45, %r50) : i32
                 terminator: br bb18
             bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:

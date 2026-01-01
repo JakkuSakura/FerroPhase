@@ -1,7 +1,7 @@
 ast::File {
   items:
-    pub enum Shape : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}] {
-      Point: any
+    pub enum Shape : Shape [Point: () | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}] {
+      Point: ()
       Circle: (Expr(i64))
       Rectangle: structural{w: Expr(i64), h: Expr(i64)}
     }
@@ -26,14 +26,14 @@ ast::File {
                 body:
                   value "rectangle" : &string
     }
-    pub enum Value : Value [A: any | B: any | C: any] {
-      A: any = 1
-      B: any = 2
-      C: any = 5
+    pub enum Value : Value [A: () | B: () | C: ()] {
+      A: () = 1
+      B: () = 2
+      C: () = 5
     }
-    pub enum Option : Option [Some: (Expr(T)) | None: any] {
+    pub enum Option : Option [Some: (Expr(T)) | None: ()] {
       Some: (Expr(T))
-      None: any
+      None: ()
     }
     impl<T> Option<T
 > : () {
@@ -56,16 +56,16 @@ ast::File {
       block (14 stmts) : ()
         let point
           init:
-            locator Shape::Point : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
+            locator Shape::Point : Shape [Point: () | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
         let circle
           init:
-            invoke : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
+            invoke : Shape [Point: () | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
               target: Shape::Circle
               args:
                 value 10 : i64
         let rect
           init:
-            struct Shape::Rectangle : Shape [Point: any | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
+            struct Shape::Rectangle : Shape [Point: () | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
               w:
                 value 5 : i64
               h:
@@ -81,21 +81,21 @@ ast::File {
             template: "{}" rect.describe()
         let val
           init:
-            locator Value::C : Value [A: any | B: any | C: any]
+            locator Value::C : Value [A: () | B: () | C: ()]
         expr_stmt ;
           intrinsic println : ()
             template: "discriminant: {}" (val) as i32
         let some: Expr(Option<i64
 >)
           init:
-            invoke : Option [Some: (Expr(T)) | None: any]
+            invoke : Option [Some: (Expr(T)) | None: ()]
               target: Option::Some
               args:
                 value 42 : i64
         let none: Expr(Option<i64
 >)
           init:
-            locator Option::None : Option [Some: (Expr(T)) | None: any]
+            locator Option::None : Option [Some: (Expr(T)) | None: ()]
         expr_stmt ;
           intrinsic println : ()
             template: "{}" some.unwrap_or(0)

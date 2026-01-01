@@ -1,32 +1,32 @@
 hir::Program {
-    fn main() -> () {
+    pub fn main() -> () {
         {
-            struct Data {
+            pub struct Data {
                 pub a: i64,
                 pub b: i64,
                 pub c: [u8; 16],
             }
-            const SIZE: u64 =
+            pub const SIZE: usize =
                 24;
-            const FIELDS: u64 =
+            pub const FIELDS: usize =
                 3;
-            const HAS_A: bool =
+            pub const HAS_A: bool =
                 true;
-            const HAS_X: bool =
+            pub const HAS_X: bool =
                 false;
-            printf("sizeof=%d, fields=%d
+            printf("sizeof=%llu, fields=%llu
 ", SIZE, FIELDS);
             printf("has_a=%d, has_x=%d
 ", HAS_A, HAS_X);
-            const MAX_SIZE: u64 =
+            pub const MAX_SIZE: usize =
                 64;
-            const SIZE_OK: bool =
+            pub const SIZE_OK: bool =
                 true;
-            const IS_ALIGNED: bool =
+            pub const IS_ALIGNED: bool =
                 true;
             printf("size_ok=%d, aligned=%d
 ", SIZE_OK, IS_ALIGNED);
-            const MODE: &str =
+            pub const MODE: &str =
                 "optimized";
             printf("mode: %s
 ", MODE);

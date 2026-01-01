@@ -1,0 +1,30 @@
+mir::Program {
+    items:
+        fn print(arg0: <??>) -> () [body: body0]
+
+        fn main() -> () [body: body1]
+    bodies:
+        body0 { arg_count: 1, locals: 3 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+                _2: i32
+            blocks:
+                bb0:
+                    terminator: call global printf("%s\n", copy _1) -> _2 then bb1
+                bb1:
+                    terminator: call global printf("%s\n", copy _1) -> _0 then bb2
+                bb2:
+                    s0: _0 = false
+                    terminator: return
+        body1 { arg_count: 0, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: ()
+            blocks:
+                bb0:
+                    s0: _1 = aggregate(tuple; [1, 2, 3, 4])
+                    terminator: return
+}

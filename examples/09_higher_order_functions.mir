@@ -102,9 +102,9 @@ mir::Program {
                 bb0:
                     terminator: call global printf("Generic operations:\n") -> _1 then bb1
                 bb1:
-                    terminator: call fn apply(10, 20, global add) -> _2 then bb2
+                    terminator: call fn apply(10, 20, fn add__spec0) -> _2 then bb2
                 bb2:
-                    terminator: call global apply(1.5, 2.5, global add) -> _3 then bb3
+                    terminator: call global apply(1.5, 2.5, fn add__spec0) -> _3 then bb3
                 bb3:
                     terminator: call global printf("\nConditional:\n") -> _4 then bb4
                 bb4:
