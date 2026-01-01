@@ -34,6 +34,32 @@ struct MethodLoweringInfo {
     struct_def: Option<hir::DefId>,
 }
 
+// TODO(jakku): The current MIR lowering is missing a real monomorphization pass.
+// We have to create monomorphic method/function bodies when generic impls are
+// invoked with concrete types. The intended flow is:
+// - Cache the generic method definition here (method_defs).
+// - On call, compute concrete type substitutions from the callee path's
+//   generic args and/or the expected return type.
+// - Build a specialized MethodLoweringInfo and emit a cloned MIR body using
+//   lower_function_sig_with_substs + BodyBuilder (type_substs).
+// - Avoid re-emitting by caching MethodSpecializationKey in method_specializations.
+// This is required to fix generic enum payloads and to eliminate invalid
+// bitcasts (e.g., in examples/17_generics).
+#[derive(Clone)]
+struct MethodDefinition {
+    function: hir::Function,
+    impl_generics: hir::Generics,
+    self_ty: hir::TypeExpr,
+    self_def: Option<hir::DefId>,
+    method_name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct MethodSpecializationKey {
+    method_name: String,
+    args: Vec<Ty>,
+}
+
 #[derive(Clone, Debug)]
 struct EnumLayout {
     tag_ty: Ty,
@@ -124,6 +150,8 @@ pub struct MirLowering {
     runtime_functions: HashMap<String, mir::FunctionSig>,
     struct_methods: HashMap<String, HashMap<String, MethodLoweringInfo>>,
     method_lookup: HashMap<String, MethodLoweringInfo>,
+    method_defs: HashMap<String, MethodDefinition>,
+    method_specializations: HashMap<MethodSpecializationKey, MethodLoweringInfo>,
     extra_items: Vec<mir::Item>,
     extra_bodies: Vec<(mir::BodyId, mir::Body)>,
     opaque_types: HashMap<String, Ty>,
@@ -164,6 +192,8 @@ impl MirLowering {
             runtime_functions: Self::default_runtime_signatures(),
             struct_methods: HashMap::new(),
             method_lookup: HashMap::new(),
+            method_defs: HashMap::new(),
+            method_specializations: HashMap::new(),
             extra_items: Vec::new(),
             extra_bodies: Vec::new(),
             opaque_types: HashMap::new(),
@@ -343,6 +373,47 @@ impl MirLowering {
         }
     }
 
+    fn lower_function_sig_with_substs(
+        &mut self,
+        sig: &hir::FunctionSig,
+        method_context: Option<&MethodContext>,
+        substs: &HashMap<String, Ty>,
+    ) -> mir::FunctionSig {
+        mir::FunctionSig {
+            inputs: sig
+                .inputs
+                .iter()
+                .map(|param| {
+                    self.lower_type_expr_with_context_and_substs(
+                        &param.ty,
+                        method_context,
+                        substs,
+                    )
+                })
+                .collect(),
+            output: self.lower_type_expr_with_context_and_substs(&sig.output, method_context, substs),
+        }
+    }
+
+    fn lower_type_expr_with_context_and_substs(
+        &mut self,
+        ty_expr: &hir::TypeExpr,
+        method_context: Option<&MethodContext>,
+        substs: &HashMap<String, Ty>,
+    ) -> Ty {
+        if let Some(ctx) = method_context {
+            if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
+                if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
+                    return ctx.mir_self_ty.clone();
+                }
+            }
+        }
+        if substs.is_empty() {
+            return self.lower_type_expr_with_context(ty_expr, method_context);
+        }
+        self.lower_type_expr_with_substs(ty_expr, substs)
+    }
+
     fn lower_type_expr_with_context(
         &mut self,
         ty_expr: &hir::TypeExpr,
@@ -395,7 +466,16 @@ impl MirLowering {
             .map(|body| body.value.span)
             .unwrap_or(item.span);
 
-        BodyBuilder::new(self, program, function, sig, span, method_context).lower()
+        BodyBuilder::new(
+            self,
+            program,
+            function,
+            sig,
+            span,
+            method_context,
+            HashMap::new(),
+        )
+        .lower()
     }
 
     fn lower_const(&mut self, def_id: hir::DefId, konst: &hir::Const) -> Result<mir::Item> {
@@ -1268,18 +1348,34 @@ impl MirLowering {
                         self.lower_method(program, function, item.span, method_context.as_ref())?;
                     emit_function(self, mir_item, body_id, body);
 
-                    let fn_name = function.sig.name.clone();
+                    let struct_prefix = method_context
+                        .as_ref()
+                        .and_then(|ctx| {
+                            if ctx.path.is_empty() {
+                                None
+                            } else {
+                                Some(
+                                    ctx.path
+                                        .iter()
+                                        .map(|seg| seg.name.as_str())
+                                        .collect::<Vec<_>>()
+                                        .join("::"),
+                                )
+                            }
+                        })
+                        .unwrap_or_else(|| struct_name.clone());
+                    let fn_name = format!("{}::{}", struct_prefix, function.sig.name.as_str());
                     let fn_ty = self.function_pointer_ty(&sig);
                     let struct_def = method_context.as_ref().and_then(|ctx| ctx.def_id);
                     let info = MethodLoweringInfo {
                         sig: sig.clone(),
-                        fn_name: String::from(fn_name.clone()),
+                        fn_name: fn_name.clone(),
                         fn_ty: fn_ty.clone(),
                         struct_def,
                     };
 
                     self.method_lookup
-                        .insert(String::from(fn_name.clone()), info.clone());
+                        .insert(fn_name.clone(), info.clone());
                     self.method_lookup
                         .insert(format!("{}::{}", struct_name, impl_item.name), info.clone());
                     self.struct_methods
@@ -1312,12 +1408,33 @@ impl MirLowering {
             .as_ref()
             .map(|body| body.value.span)
             .unwrap_or(parent_span);
-        let mir_body =
-            BodyBuilder::new(self, program, function, &sig, span, method_context.cloned())
-                .lower()?;
+        let mir_body = BodyBuilder::new(
+            self,
+            program,
+            function,
+            &sig,
+            span,
+            method_context.cloned(),
+            HashMap::new(),
+        )
+        .lower()?;
+
+        let method_name = function.sig.name.as_str();
+        let qualified_name = match method_context {
+            Some(ctx) if !ctx.path.is_empty() => {
+                let path = ctx
+                    .path
+                    .iter()
+                    .map(|seg| seg.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                format!("{}::{}", path, method_name)
+            }
+            _ => method_name.to_string(),
+        };
 
         let mir_function = mir::Function {
-            name: mir::Symbol::from(function.sig.name.clone()),
+            name: mir::Symbol::new(qualified_name),
             path: Vec::new(),
             def_id: None,
             sig: sig.clone(),
@@ -1691,6 +1808,7 @@ struct BodyBuilder<'a> {
     current_block: mir::BasicBlockId,
     span: Span,
     method_context: Option<MethodContext>,
+    type_substs: HashMap<String, Ty>,
     loop_stack: Vec<LoopContext>,
 }
 
@@ -1740,6 +1858,7 @@ impl<'a> BodyBuilder<'a> {
         sig: &'a mir::FunctionSig,
         span: Span,
         method_context: Option<MethodContext>,
+        type_substs: HashMap<String, Ty>,
     ) -> Self {
         let mut locals = Vec::new();
         locals.push(lowering.make_local_decl(&sig.output, span));
@@ -1758,6 +1877,7 @@ impl<'a> BodyBuilder<'a> {
             current_block: 0,
             span,
             method_context,
+            type_substs,
             loop_stack: Vec::new(),
         };
 
@@ -1785,6 +1905,25 @@ impl<'a> BodyBuilder<'a> {
         let local_id = self.locals.len() as mir::LocalId;
         self.locals.push(decl);
         local_id
+    }
+
+    fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
+        if let Some(ctx) = self.method_context.as_ref() {
+            if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
+                if path.segments.first().map(|seg| seg.name.as_str()) == Some("Self") {
+                    return ctx.mir_self_ty.clone();
+                }
+            }
+        }
+        // NOTE(jakku): This is the key hook for generic lowering. When
+        // type_substs is populated, we substitute generic params so MIR
+        // sees concrete types. Otherwise we fall back to the existing
+        // lowering (which treats unknown generics as opaque).
+        if self.type_substs.is_empty() {
+            return self.lowering.lower_type_expr(ty_expr);
+        }
+        self.lowering
+            .lower_type_expr_with_substs(ty_expr, &self.type_substs)
     }
 
     fn bind_pattern(&mut self, pat: &hir::Pat, local: mir::LocalId, ty: Option<&Ty>) {
@@ -2486,7 +2625,7 @@ impl<'a> BodyBuilder<'a> {
         let declared_ty = local
             .ty
             .as_ref()
-            .map(|ty_expr| self.lowering.lower_type_expr(ty_expr));
+            .map(|ty_expr| self.lower_type_expr(ty_expr));
 
         let mut decl = self.lowering.make_local_decl(
             declared_ty.as_ref().unwrap_or(&Ty {
@@ -2941,11 +3080,24 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<Option<PlaceInfo>> {
         if let hir::ExprKind::Path(path) = &callee.kind {
             if let Some(variant) = self.enum_variant_info_from_path(path) {
-                let layout = if let Some((_, ty)) = destination.as_ref() {
-                    self.lowering.enum_layout_for_ty(ty).cloned()
-                } else {
-                    self.lowering.enum_layout_for_def(variant.enum_def, expr.span)
-                };
+                let mut layout = destination
+                    .as_ref()
+                    .and_then(|(_, ty)| self.lowering.enum_layout_for_ty(ty).cloned());
+                if layout.is_none() {
+                    let args = path
+                        .segments
+                        .last()
+                        .and_then(|segment| segment.args.as_ref())
+                        .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
+                        .unwrap_or_default();
+                    if !args.is_empty() {
+                        layout = self
+                            .lowering
+                            .enum_layout_for_instance(variant.enum_def, &args, expr.span);
+                    } else {
+                        layout = self.lowering.enum_layout_for_def(variant.enum_def, expr.span);
+                    }
+                }
 
                 if let Some(layout) = layout {
                     let place = destination
@@ -3398,9 +3550,25 @@ impl<'a> BodyBuilder<'a> {
                     .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                 if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
-                    let layout = expected
-                        .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned())
-                        .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, expr.span));
+                    let mut layout = expected
+                        .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned());
+                    if layout.is_none() {
+                        let args = resolved_path
+                            .segments
+                            .last()
+                            .and_then(|segment| segment.args.as_ref())
+                            .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
+                            .unwrap_or_default();
+                        if !args.is_empty() {
+                            layout = self
+                                .lowering
+                                .enum_layout_for_instance(variant.enum_def, &args, expr.span);
+                        } else {
+                            layout = self
+                                .lowering
+                                .enum_layout_for_def(variant.enum_def, expr.span);
+                        }
+                    }
                     if let Some(layout) = layout {
                         return self.lower_enum_variant_value(
                             &variant,
@@ -3423,7 +3591,7 @@ impl<'a> BodyBuilder<'a> {
 
                     if let Some(const_item) = self.program.def_map.get(def_id) {
                         if let hir::ItemKind::Const(konst) = &const_item.kind {
-                            let ty = self.lowering.lower_type_expr(&konst.ty);
+                            let ty = self.lower_type_expr(&konst.ty);
                             let local_id = self.allocate_temp(ty.clone(), expr.span);
                             let place = mir::Place::from_local(local_id);
                             self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
@@ -3452,7 +3620,7 @@ impl<'a> BodyBuilder<'a> {
                             });
                         }
                     } else if let Some(konst) = self.const_items.get(def_id).cloned() {
-                        let ty = self.lowering.lower_type_expr(&konst.ty);
+                        let ty = self.lower_type_expr(&konst.ty);
                         let local_id = self.allocate_temp(ty.clone(), expr.span);
                         let place = mir::Place::from_local(local_id);
                         self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
@@ -3550,7 +3718,7 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
-                let target_ty = self.lowering.lower_type_expr(ty_expr);
+                let target_ty = self.lower_type_expr(ty_expr);
                 let local_id = self.allocate_temp(target_ty.clone(), expr.span);
                 let place_local = mir::Place::from_local(local_id);
                 let statement = mir::Statement {
@@ -4127,7 +4295,7 @@ impl<'a> BodyBuilder<'a> {
                     Some(hir::Res::Def(def_id)) => {
                         if let Some(const_item) = self.program.def_map.get(def_id) {
                             if let hir::ItemKind::Const(konst) = &const_item.kind {
-                                let ty = self.lowering.lower_type_expr(&konst.ty);
+                                let ty = self.lower_type_expr(&konst.ty);
                                 let local_id = self.allocate_temp(ty.clone(), expr.span);
                                 let place_local = mir::Place::from_local(local_id);
                                 self.lower_expr_into_place(
@@ -4145,7 +4313,7 @@ impl<'a> BodyBuilder<'a> {
                                 }));
                             }
                         } else if let Some(konst) = self.const_items.get(def_id).cloned() {
-                            let ty = self.lowering.lower_type_expr(&konst.ty);
+                            let ty = self.lower_type_expr(&konst.ty);
                             let local_id = self.allocate_temp(ty.clone(), expr.span);
                             let place_local = mir::Place::from_local(local_id);
                             self.lower_expr_into_place(
@@ -4331,7 +4499,7 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
-                let target_ty = self.lowering.lower_type_expr(ty_expr);
+                let target_ty = self.lower_type_expr(ty_expr);
                 let statement = mir::Statement {
                     source_info: expr.span,
                     kind: mir::StatementKind::Assign(
@@ -4707,7 +4875,7 @@ impl<'a> BodyBuilder<'a> {
                                 }
                             }
                             if let Some(konst) = self.const_items.get(def_id) {
-                                let ty = self.lowering.lower_type_expr(&konst.ty);
+                                let ty = self.lower_type_expr(&konst.ty);
                                 if let TyKind::Array(
                                     _,
                                     ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),

@@ -231,14 +231,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 } else {
                     self.fresh_type_var()
                 };
-                let elem_ty = self.resolve_to_ty(elem_var)?;
-                let len_expr = Expr::value(Value::int(array.values.len() as i64));
-                let array_ty = Ty::Array(TypeArray {
-                    elem: Box::new(elem_ty.clone()),
-                    len: Box::new(len_expr),
-                });
+                let len_expr = Expr::value(Value::int(array.values.len() as i64)).into();
                 let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Custom(array_ty.clone()));
+                self.bind(array_var, TypeTerm::Array(elem_var, Some(len_expr)));
+                let array_ty = self.resolve_to_ty(array_var)?;
                 expr.set_ty(array_ty);
                 array_var
             }
@@ -252,14 +248,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 );
                 self.unify(len_var, expected_len)?;
 
-                let elem_ty = self.resolve_to_ty(elem_var)?;
                 let length_expr = array_repeat.len.as_ref().get();
-                let array_ty = Ty::Array(TypeArray {
-                    elem: Box::new(elem_ty.clone()),
-                    len: length_expr.into(),
-                });
                 let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Custom(array_ty.clone()));
+                self.bind(array_var, TypeTerm::Array(elem_var, Some(length_expr.into())));
+                let array_ty = self.resolve_to_ty(array_var)?;
                 expr.set_ty(array_ty);
                 array_var
             }
@@ -414,7 +406,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let slice_var = self.fresh_type_var();
         self.bind(slice_var, TypeTerm::Slice(elem_slice_var));
         if self.unify(object_var, slice_var).is_err() {
-            self.emit_error("indexing is only supported on vector or slice types");
+            let object_ty = self.resolve_to_ty(object_var)?;
+            match object_ty {
+                Ty::Array(array_ty) => {
+                    let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
+                    return Ok(elem_var);
+                }
+                Ty::Reference(reference) => {
+                    if let Ty::Array(array_ty) = *reference.ty {
+                        let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
+                        return Ok(elem_var);
+                    }
+                }
+                _ => {}
+            }
+            self.emit_error("indexing is only supported on vector, slice, or array types");
             return Ok(self.error_type_var());
         }
         Ok(elem_slice_var)
@@ -1028,12 +1034,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.unify(elem_var, next_var)?;
                 }
                 let len = list.values.len() as i64;
-                let elem_ty = self.resolve_to_ty(elem_var)?;
-                let array_ty = Ty::Array(TypeArray {
-                    elem: Box::new(elem_ty),
-                    len: Expr::value(Value::int(len)).into(),
-                });
-                self.bind(var, TypeTerm::Custom(array_ty));
+                let len_expr = Expr::value(Value::int(len)).into();
+                self.bind(var, TypeTerm::Array(elem_var, Some(len_expr)));
             }
             Value::Char(_) => self.bind(var, TypeTerm::Primitive(TypePrimitive::Char)),
             Value::Unit(_) => self.bind(var, TypeTerm::Unit),
