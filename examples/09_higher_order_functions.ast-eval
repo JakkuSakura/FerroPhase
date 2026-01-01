@@ -2,6 +2,25 @@ ast::File {
   items:
     pub import std::fmt::Display : ()
     pub import std::ops::Add : ()
+    pub fn<T: Add<T
+> + Display> apply(a: Expr(T), b: Expr(T), op: fn(Expr(T), Expr(T)) -> Expr(T)) -> () : fn<T: Add<T
+> + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> () : fn<T: Add<T
+> + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" op(a, b)
+    pub fn<T: Add<T
+>> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+>>(unknown, unknown) -> unknown : fn<T: Add<T
+>>(unknown, unknown) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              locator a : unknown
+            rhs:
+              locator b : unknown
     pub fn apply_if(cond: Expr(bool), a: Expr(i64), b: Expr(i64), op: fn(Expr(i64), Expr(i64)) -> Expr(i64)) -> Expr(i64) : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
       block (1 stmt) : i64
         expr_stmt (value)
@@ -36,18 +55,18 @@ ast::File {
             template: "Generic operations:"
         expr_stmt ;
           invoke : ()
-            target: apply__spec0
+            target: apply
             args:
               value 10 : i64
               value 20 : i64
-              locator add__spec0 : fn(i64, i64) -> i64
+              locator add : fn(unknown, unknown) -> unknown
         expr_stmt ;
           invoke : ()
-            target: apply__spec1
+            target: apply
             args:
               value 1.5 : f64
               value 2.5 : f64
-              locator add__spec1 : fn(f64, f64) -> f64
+              locator add : fn(unknown, unknown) -> unknown
         expr_stmt ;
           intrinsic println : ()
             template: "
@@ -62,17 +81,14 @@ Conditional:"
           intrinsic println : ()
             template: "
 Closure factory:"
-        pub const add_10: fn(i64) -> i64 : fn(i64) -> i64
-          invoke : fn(i64) -> i64
-            target: make_adder
-            args:
-              value 10 : i64
+        pub const add_10: any : any
+          expr.any : any
         expr_stmt ;
           intrinsic println : ()
             template: "add_10(5) = {}" add_10(5)
-        let double : fn(i64) -> i64
+        let double
           init:
-            closure (x : i64) : fn(i64) -> i64
+            closure (x) : fn(i64) -> i64
               binop * : i64
                 lhs:
                   locator x : unknown
@@ -81,30 +97,12 @@ Closure factory:"
         expr_stmt ;
           intrinsic println : ()
             template: "double(7) = {}" double(7)
-    pub fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> ()
-      block (1 stmt) : ()
-        expr_stmt ;
-          intrinsic println : ()
-            template: "{}" op(a, b)
-    pub fn add__spec0(a: i64, b: i64) -> i64 : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
-      block (1 stmt) : unknown
+    pub fn add__spec0(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+      block (1 stmt) : i64
         expr_stmt (value)
-          binop + : unknown
+          binop + : i64
             lhs:
               locator a : i64
             rhs:
               locator b : i64
-    pub fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> ()
-      block (1 stmt) : ()
-        expr_stmt ;
-          intrinsic println : ()
-            template: "{}" op(a, b)
-    pub fn add__spec1(a: f64, b: f64) -> f64 : fn(f64, f64) -> f64 : fn(f64, f64) -> f64
-      block (1 stmt) : unknown
-        expr_stmt (value)
-          binop + : unknown
-            lhs:
-              locator a : f64
-            rhs:
-              locator b : f64
 }

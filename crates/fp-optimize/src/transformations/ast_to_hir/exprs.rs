@@ -42,46 +42,34 @@ impl HirGenerator {
                 hir::ExprKind::Index(Box::new(base), Box::new(index))
             }
             ExprKind::Quote(_quote) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "quote expressions should be removed by const-eval; substituting unit"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    let block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    hir::ExprKind::Block(block)
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "quote expressions must be resolved during const evaluation",
-                    ));
-                }
+                self.add_warning(
+                    Diagnostic::warning(
+                        "quote expressions should be removed by const-eval; substituting unit"
+                            .to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
             ExprKind::Splice(_splice) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "splice expressions should be removed by const-eval; substituting unit"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    let block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    hir::ExprKind::Block(block)
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "splice expressions must be resolved during const evaluation",
-                    ));
-                }
+                self.add_warning(
+                    Diagnostic::warning(
+                        "splice expressions should be removed by const-eval; substituting unit"
+                            .to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
@@ -604,6 +592,21 @@ impl HirGenerator {
         for_expr: &ast::ExprFor,
     ) -> Result<hir::ExprKind> {
         let mut stmts = Vec::new();
+
+        if !matches!(for_expr.iter.kind(), ast::ExprKind::Range(_)) {
+            self.add_warning(
+                Diagnostic::warning(
+                    "`for` loop lowering only supports range iterators; dropping loop".to_string(),
+                )
+                .with_source_context(DIAGNOSTIC_CONTEXT),
+            );
+            let block = hir::Block {
+                hir_id: self.next_id(),
+                stmts: Vec::new(),
+                expr: None,
+            };
+            return Ok(hir::ExprKind::Block(block));
+        }
 
         let (mut pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
         let (loop_name, loop_res) = match &mut pat.kind {

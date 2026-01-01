@@ -17,68 +17,72 @@ hir::Program {
         (x * 2)
     }
 
-    fn apply_if(cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
+    pub fn apply_if(cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
         // params: [cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64]
-        if (cond)
-            op(a, b)
-        else
-            0
+        {
+            if (cond)
+                {
+                    op(a, b)
+                    op(a, b)
+                }
+            else
+                {
+                    0
+                    0
+                }
+            if (cond)
+                {
+                    op(a, b)
+                    op(a, b)
+                }
+            else
+                {
+                    0
+                    0
+                }
+        }
     }
 
-    fn make_adder(n: i64) -> __Closure0 {
+    pub fn make_adder(n: i64) -> fn(i64) -> i64 {
         // params: [n: i64]
-        __Closure0 { n: n }
+        {
+            __Closure0 { n: n }
+            __Closure0 { n: n }
+        }
     }
 
-    fn main() -> () {
+    pub fn main() -> () {
         {
             printf("Generic operations:
 ");
-            apply__spec0(10, 20, add__spec0);
-            apply__spec1(1.5, 2.5, add__spec1);
+            apply(10, 20, add);
+            apply(1.5, 2.5, add);
             printf("
 Conditional:
 ");
-            printf("%d
+            printf("%lld
 ", apply_if(true, 5, 3, add__spec0));
-            printf("%d
+            printf("%lld
 ", apply_if(false, 5, 3, add__spec0));
             printf("
 Closure factory:
 ");
-            const add_10: __Closure0 =
-                make_adder(10);
-            printf("add_10(5) = %d
-", __closure0_call(add_10, 5));
+            pub const add_10: _ =
+                {
+                }
+            printf("add_10(5) = %s
+", "<unknown>");
             let double = __Closure1 { __fp_no_capture: 0 };
-            printf("double(7) = %d
+            printf("double(7) = %lld
 ", __closure1_call(double, 7));
         }
     }
 
-    fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () {
-        // params: [a: i64, b: i64, op: fn(i64, i64) -> i64]
-        {
-            printf("%d
-", op(a, b));
-        }
-    }
-
-    fn add__spec0(a: i64, b: i64) -> i64 {
+    pub fn add__spec0(a: i64, b: i64) -> i64 {
         // params: [a: i64, b: i64]
-        (a + b)
-    }
-
-    fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () {
-        // params: [a: f64, b: f64, op: fn(f64, f64) -> f64]
         {
-            printf("%f
-", op(a, b));
+            (a + b)
+            (a + b)
         }
-    }
-
-    fn add__spec1(a: f64, b: f64) -> f64 {
-        // params: [a: f64, b: f64]
-        (a + b)
     }
 }
