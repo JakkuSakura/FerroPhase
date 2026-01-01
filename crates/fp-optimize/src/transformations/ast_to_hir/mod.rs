@@ -915,12 +915,17 @@ impl HirGenerator {
                             .as_ref()
                             .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
                             .transpose()?;
+                        let payload = match &variant.value {
+                            ast::Ty::Unit(_) => None,
+                            other => Some(self.transform_type_to_hir(other)?),
+                        };
 
                         Ok(hir::EnumVariant {
                             hir_id: self.next_id(),
                             def_id: variant_def_id,
                             name: hir::Symbol::new(variant.name.name.clone()),
                             discriminant,
+                            payload,
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -1069,6 +1074,18 @@ impl HirGenerator {
                     .types
                     .iter()
                     .map(|ty| Ok(Box::new(self.transform_type_to_hir(ty)?)))
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Tuple(elements),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
+            ast::Ty::Structural(structural) => {
+                let elements = structural
+                    .fields
+                    .iter()
+                    .map(|field| Ok(Box::new(self.transform_type_to_hir(&field.value)?)))
                     .collect::<Result<Vec<_>>>()?;
                 Ok(hir::TypeExpr::new(
                     self.next_id(),

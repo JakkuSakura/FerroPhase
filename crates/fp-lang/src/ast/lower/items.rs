@@ -242,7 +242,7 @@ fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
         let value_ty = if let Some(tn) = first_child_by_category(v, CstCategory::Type) {
             lower_type_from_cst(tn).map_err(|_| LowerItemsError::UnexpectedNode(v.kind))?
         } else {
-            Ty::any()
+            Ty::unit()
         };
         let discriminant = first_child_by_category(v, CstCategory::Expr)
             .map(|e| lower_expr_from_cst(e).map(Box::new))

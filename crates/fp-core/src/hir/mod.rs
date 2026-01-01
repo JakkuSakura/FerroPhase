@@ -84,6 +84,7 @@ pub struct EnumVariant {
     pub def_id: DefId,
     pub name: Symbol,
     pub discriminant: Option<Expr>,
+    pub payload: Option<TypeExpr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

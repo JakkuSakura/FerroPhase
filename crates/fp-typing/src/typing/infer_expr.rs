@@ -231,8 +231,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 } else {
                     self.fresh_type_var()
                 };
+                let elem_ty = self.resolve_to_ty(elem_var)?;
+                let len_expr = Expr::value(Value::int(array.values.len() as i64));
+                let array_ty = Ty::Array(TypeArray {
+                    elem: Box::new(elem_ty.clone()),
+                    len: Box::new(len_expr),
+                });
                 let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Vec(elem_var));
+                self.bind(array_var, TypeTerm::Custom(array_ty.clone()));
+                expr.set_ty(array_ty);
                 array_var
             }
             ExprKind::ArrayRepeat(array_repeat) => {
