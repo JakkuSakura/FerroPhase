@@ -1,6 +1,7 @@
 use anyhow::Result;
 use fp_core::span::Span;
-use llvm_ir::Module;
+use inkwell::context::Context;
+use inkwell::module::Module;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -22,7 +23,7 @@ pub struct DebugMetadata {
 
 impl DebugInfoBuilder {
     /// Create a new debug info builder
-    pub fn new(_module: &Module, source_file: &Path, producer: &str) -> Result<Self> {
+    pub fn new(_module: &Module<'_>, source_file: &Path, producer: &str) -> Result<Self> {
         let filename = source_file
             .file_name()
             .and_then(|n| n.to_str())
@@ -154,25 +155,15 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    fn empty_module(name: &str) -> Module {
-        Module {
-            name: name.to_string(),
-            source_file_name: String::new(),
-            data_layout: llvm_ir::module::DataLayout::default(),
-            target_triple: Some("x86_64-unknown-linux-gnu".to_string()),
-            functions: Vec::new(),
-            global_vars: Vec::new(),
-            global_aliases: Vec::new(),
-            func_declarations: Vec::new(),
-            global_ifuncs: Vec::new(),
-            types: llvm_ir::types::Types::blank_for_testing(),
-            inline_assembly: String::new(),
-        }
+    fn empty_module<'ctx>(name: &str) -> (Context, Module<'ctx>) {
+        let context = Context::create();
+        let module = context.create_module(name);
+        (context, module)
     }
 
     #[test]
     fn test_debug_info_builder_creation() {
-        let module = empty_module("test");
+        let (_context, module) = empty_module("test");
         let source_file = PathBuf::from("test.fp");
 
         let result = DebugInfoBuilder::new(&module, &source_file, "fp-compiler");
@@ -185,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_function_debug_info_creation() {
-        let module = empty_module("test");
+        let (_context, module) = empty_module("test");
         let source_file = PathBuf::from("test.fp");
 
         let mut debug_builder =
@@ -207,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_span_to_debug_info() {
-        let module = empty_module("test");
+        let (_context, module) = empty_module("test");
         let source_file = PathBuf::from("test.fp");
 
         let mut debug_builder =
