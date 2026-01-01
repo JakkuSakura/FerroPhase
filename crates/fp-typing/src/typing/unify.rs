@@ -401,6 +401,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Err(Error::from(format!("custom type mismatch: {} vs {}", a, b)))
                 }
             }
+            (TypeTerm::Custom(array_ty), TypeTerm::Slice(slice_elem))
+                if matches!(array_ty, Ty::Array(_)) =>
+            {
+                if let Ty::Array(array_ty) = array_ty {
+                    let array_elem = self.type_from_ast_ty(&array_ty.elem)?;
+                    self.unify(array_elem, slice_elem)
+                } else {
+                    Ok(())
+                }
+            }
+            (TypeTerm::Slice(slice_elem), TypeTerm::Custom(array_ty))
+                if matches!(array_ty, Ty::Array(_)) =>
+            {
+                if let Ty::Array(array_ty) = array_ty {
+                    let array_elem = self.type_from_ast_ty(&array_ty.elem)?;
+                    self.unify(array_elem, slice_elem)
+                } else {
+                    Ok(())
+                }
+            }
             (TypeTerm::Tuple(a_elems), TypeTerm::Tuple(b_elems)) => {
                 if a_elems.len() != b_elems.len() {
                     return Err(Error::from("tuple length mismatch"));

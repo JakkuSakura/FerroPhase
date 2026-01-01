@@ -1170,7 +1170,11 @@ impl MirLowering {
         }
 
         if destination_ty.is_none() && Self::is_unit_ty(&existing_sig.output) {
-            output = existing_sig.output.clone();
+            if let Some(fallback) = arg_types.iter().rev().find(|ty| !Self::is_unit_ty(ty)) {
+                output = self.sanitize_placeholder_ty(fallback);
+            } else {
+                output = existing_sig.output.clone();
+            }
         }
 
         let new_sig = mir::FunctionSig { inputs, output };
@@ -2788,24 +2792,57 @@ impl<'a> BodyBuilder<'a> {
                     .collect::<Vec<_>>()
                     .join("::");
 
-                for (def_id, item) in &self.program.def_map {
+                let expected_sig = expected.and_then(|ty| {
+                    if let TyKind::FnPtr(poly_fn_sig) = &ty.kind {
+                        let sig = &poly_fn_sig.binder.value;
+                        Some(mir::FunctionSig {
+                            inputs: sig.inputs.iter().map(|t| (**t).clone()).collect(),
+                            output: (*sig.output).clone(),
+                        })
+                    } else {
+                        None
+                    }
+                });
+                let mut fallback_candidate: Option<(mir::FunctionSig, String)> = None;
+                for (_def_id, item) in &self.program.def_map {
                     if let hir::ItemKind::Function(func) = &item.kind {
-                        if func.sig.name.as_str() == name {
+                        let func_name = func.sig.name.as_str();
+                        if func_name == name || func_name.starts_with(&name) {
                             let sig = self.lowering.lower_function_sig(&func.sig, None);
-                            let fn_ty = self.lowering.function_pointer_ty(&sig);
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::Constant(mir::Constant {
-                                    span: expr.span,
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::Fn(
-                                        mir::Symbol::from(func.sig.name.clone()),
-                                        fn_ty.clone(),
-                                    ),
-                                }),
-                                ty: fn_ty,
-                            });
+                            if let Some(expected_sig) = &expected_sig {
+                                if &sig == expected_sig {
+                                    let fn_ty = self.lowering.function_pointer_ty(&sig);
+                                    return Ok(OperandInfo {
+                                        operand: mir::Operand::Constant(mir::Constant {
+                                            span: expr.span,
+                                            user_ty: None,
+                                            literal: mir::ConstantKind::Fn(
+                                                mir::Symbol::from(func.sig.name.clone()),
+                                                fn_ty.clone(),
+                                            ),
+                                        }),
+                                        ty: fn_ty,
+                                    });
+                                }
+                            } else if fallback_candidate.is_none() {
+                                fallback_candidate = Some((sig, func.sig.name.to_string()));
+                            }
                         }
                     }
+                }
+                if let Some((sig, func_name)) = fallback_candidate {
+                    let fn_ty = self.lowering.function_pointer_ty(&sig);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(mir::Constant {
+                            span: expr.span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Fn(
+                                mir::Symbol::from(func_name),
+                                fn_ty.clone(),
+                            ),
+                        }),
+                        ty: fn_ty,
+                    });
                 }
                 self.lowering.emit_warning(
                     expr.span,
@@ -4261,6 +4298,12 @@ impl<'a> BodyBuilder<'a> {
     fn expect_array_element_ty(&self, ty: &Ty) -> Option<Ty> {
         match &ty.kind {
             TyKind::Array(elem, _) => Some(*elem.clone()),
+            TyKind::Slice(elem) => Some(*elem.clone()),
+            TyKind::Ref(_, elem, _) => match &elem.kind {
+                TyKind::Array(inner, _) => Some(*inner.clone()),
+                TyKind::Slice(inner) => Some(*inner.clone()),
+                _ => None,
+            },
             _ => None,
         }
     }

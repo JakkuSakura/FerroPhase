@@ -107,7 +107,7 @@ impl LirGenerator {
     fn predeclare_function_signatures(&mut self, program: &mir::Program) {
         for item in &program.items {
             if let mir::ItemKind::Function(func) = &item.kind {
-                let name: String = String::from(&func.name);
+                let name = self.mangle_function_name(func);
                 let signature = lir::LirFunctionSignature {
                     params: func
                         .sig
@@ -226,6 +226,10 @@ impl LirGenerator {
         } else {
             "anonymous_fn".to_string()
         };
+
+        if let Some(existing) = self.function_symbol_map.get(&base) {
+            return existing.clone();
+        }
 
         let sanitized = Self::sanitize_symbol(&base);
         let entry = self
@@ -566,6 +570,13 @@ impl LirGenerator {
 
                 if matches!(target_ty, lir::LirType::Void) {
                     result_value = Some(lir::LirValue::Undef(target_ty));
+                    return Ok(instructions);
+                }
+
+                if let Some(const_value) =
+                    self.cast_constant_value(&operand_value, &target_ty)
+                {
+                    result_value = Some(const_value);
                     return Ok(instructions);
                 }
 
@@ -1517,6 +1528,9 @@ impl LirGenerator {
         if from_ty == target_ty {
             return value;
         }
+        if let Some(const_value) = self.cast_constant_value(&value, &target_ty) {
+            return const_value;
+        }
         let id = self.next_id();
         let kind = if matches!(from_ty, lir::LirType::Ptr(_))
             && self.is_integral_type(&target_ty)
@@ -1558,6 +1572,79 @@ impl LirGenerator {
             debug_info: None,
         });
         lir::LirValue::Register(id)
+    }
+
+    fn cast_constant_value(
+        &self,
+        value: &lir::LirValue,
+        target_ty: &lir::LirType,
+    ) -> Option<lir::LirValue> {
+        match value {
+            lir::LirValue::Constant(constant) => {
+                if matches!(target_ty, lir::LirType::Ptr(_)) {
+                    match constant {
+                        lir::LirConstant::Int(val, _)
+                            if *val == 0 =>
+                        {
+                            return Some(lir::LirValue::Null(target_ty.clone()));
+                        }
+                        lir::LirConstant::UInt(val, _)
+                            if *val == 0 =>
+                        {
+                            return Some(lir::LirValue::Null(target_ty.clone()));
+                        }
+                        _ => {}
+                    }
+                }
+                self.cast_constant_literal(constant, target_ty)
+                    .map(lir::LirValue::Constant)
+            }
+            lir::LirValue::Null(_) => match target_ty {
+                lir::LirType::Ptr(_) => Some(lir::LirValue::Null(target_ty.clone())),
+                ty if self.is_integral_type(ty) => Some(lir::LirValue::Constant(
+                    lir::LirConstant::Int(0, ty.clone()),
+                )),
+                ty if self.is_float_type(ty) => Some(lir::LirValue::Constant(
+                    lir::LirConstant::Float(0.0, ty.clone()),
+                )),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn cast_constant_literal(
+        &self,
+        constant: &lir::LirConstant,
+        target_ty: &lir::LirType,
+    ) -> Option<lir::LirConstant> {
+        match (constant, target_ty) {
+            (lir::LirConstant::Int(value, _), ty) if self.is_integral_type(ty) => {
+                Some(lir::LirConstant::Int(*value, ty.clone()))
+            }
+            (lir::LirConstant::UInt(value, _), ty) if self.is_integral_type(ty) => {
+                Some(lir::LirConstant::UInt(*value, ty.clone()))
+            }
+            (lir::LirConstant::Bool(value), ty) if self.is_integral_type(ty) => {
+                Some(lir::LirConstant::Int(if *value { 1 } else { 0 }, ty.clone()))
+            }
+            (lir::LirConstant::Float(value, _), ty) if self.is_integral_type(ty) => {
+                Some(lir::LirConstant::Int(*value as i64, ty.clone()))
+            }
+            (lir::LirConstant::Int(value, _), ty) if self.is_float_type(ty) => {
+                Some(lir::LirConstant::Float(*value as f64, ty.clone()))
+            }
+            (lir::LirConstant::UInt(value, _), ty) if self.is_float_type(ty) => {
+                Some(lir::LirConstant::Float(*value as f64, ty.clone()))
+            }
+            (lir::LirConstant::Bool(value), ty) if self.is_float_type(ty) => {
+                Some(lir::LirConstant::Float(if *value { 1.0 } else { 0.0 }, ty.clone()))
+            }
+            (lir::LirConstant::Float(value, _), ty) if self.is_float_type(ty) => {
+                Some(lir::LirConstant::Float(*value, ty.clone()))
+            }
+            _ => None,
+        }
     }
 
     fn extend_integer_value(
