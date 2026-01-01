@@ -1,5 +1,5 @@
 use anyhow::{anyhow, bail, Context, Result};
-use llvm_ir::Module;
+use inkwell::module::Module;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -258,44 +258,30 @@ impl LlvmLinker {
         self.execute_command(cmd, "creating dynamic library")
     }
 
-    /// Get the appropriate linker command for the platform
-    fn get_linker_command(&self) -> Result<Command> {
-        if cfg!(target_os = "macos") || cfg!(target_os = "linux") {
-            if which::which("ld").is_ok() {
-                Ok(Command::new("ld"))
-            } else {
-                Err(anyhow!("System linker 'ld' not found on PATH"))
-            }
-        } else if cfg!(target_os = "windows") {
-            if which::which("link").is_ok() {
-                Ok(Command::new("link"))
-            } else {
-                Err(anyhow!("MSVC linker 'link' not found on PATH"))
-            }
-        } else {
-            Err(anyhow!(
-                "Unsupported target operating system for module linking"
-            ))
-        }
-    }
-
-    /// Execute a command and handle errors
+    /// Execute a command and check for errors
     fn execute_command(&self, mut cmd: Command, operation: &str) -> Result<()> {
-        let output = cmd
-            .output()
-            .with_context(|| format!("Failed to execute command for {}", operation))?;
+        let output = cmd.output().context("Failed to execute linker")?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!("Failed {}: {}", operation, stderr);
+            return Err(anyhow!("Linker error during {}: {}", operation, stderr));
         }
 
         Ok(())
     }
 
-    /// Get the output path
-    pub fn output_path(&self) -> &Path {
-        &self.config.output_path
+    /// Get the appropriate linker command based on platform
+    fn get_linker_command(&self) -> Result<Command> {
+        let linker = if cfg!(target_os = "windows") {
+            "link"
+        } else if cfg!(target_os = "macos") {
+            "clang"
+        } else {
+            "ld"
+        };
+
+        let cmd = Command::new(linker);
+        Ok(cmd)
     }
 
     /// Check if the linker is available
@@ -347,11 +333,14 @@ impl ModuleLinker {
     /// Link LLVM modules to create the final output
     pub fn link_modules(
         &self,
-        modules: &[&Module],
+        modules: &[&Module<'_>],
         _target_codegen: &crate::target::TargetCodegen,
     ) -> Result<PathBuf> {
-        let module_names: Vec<_> = modules.iter().map(|module| module.name.clone()).collect();
-        Err(anyhow::anyhow!(
+        let module_names: Vec<_> = modules
+            .iter()
+            .map(|module| module.get_name().to_str().unwrap_or("module").to_string())
+            .collect();
+        Err(anyhow!(
             "LLVM module linking is not implemented. Modules: {:?}. Provide a real linker implementation instead of writing a stub.",
             module_names
         ))

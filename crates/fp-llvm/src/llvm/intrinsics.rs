@@ -2,4 +2,4 @@
 //!
 //! The backend shares its C runtime declarations with the clang frontend.
 
-pub use fp_clang::intrinsics::CRuntimeIntrinsics;
+pub use fp_clang::intrinsics::{CRuntimeIntrinsics, IntrinsicSignature};

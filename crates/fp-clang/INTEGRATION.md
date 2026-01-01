@@ -113,7 +113,7 @@ options.flags.push("-Wall".to_string());
 
 ## Integration with fp-llvm
 
-The fp-clang crate produces `llvm_ir::Module` objects that are compatible with fp-llvm:
+The fp-clang crate produces `ClangModule` (inkwell-backed) objects that are compatible with fp-llvm:
 
 ```rust
 // Compile C code
@@ -136,7 +136,7 @@ llvm_codegen.generate_object_file(&c_module, output_file)?;
 
 ## Requirements
 
-- clang (version 16-19)
+- clang (version 16-21)
 - LLVM development libraries
 - Standard C/C++ headers
 
