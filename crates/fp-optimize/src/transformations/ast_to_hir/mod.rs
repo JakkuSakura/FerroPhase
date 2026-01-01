@@ -1077,13 +1077,10 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::Vec(vec_ty) => {
-                let args = self.convert_generic_args(&[*vec_ty.ty.clone()])?;
+                let elem = Box::new(self.transform_type_to_hir(&vec_ty.ty)?);
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Path(hir::Path {
-                        segments: vec![self.make_path_segment("Vec", Some(args))],
-                        res: None,
-                    }),
+                    hir::TypeExprKind::Slice(elem),
                     Span::new(self.current_file, 0, 0),
                 ))
             }
