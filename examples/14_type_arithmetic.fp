@@ -33,6 +33,11 @@ type FooOrBar = t! { Foo | Bar };
 // For structs, this means removing fields that exist in B from A.
 type FooMinusBar = t! { Foo - Bar };
 
+// A & B: A and B at the same time (the value must satisfy both types).
+// For structs, this is the overlap: only fields common to both sides.
+// For traits, it is often the most meaningful: it expresses "implements both traits".
+type FooAndBar = t! { Foo & Bar };
+
 // Another inline struct type alias.
 type InlineRecord = t! {
     struct {
@@ -41,6 +46,9 @@ type InlineRecord = t! {
     }
 };
 
+// Value-in-type example: array lengths are values embedded in types.
+type Int4 = t! { [Int; 4] };
+
 // Use a type-level "A or B" value by accepting FooOrBar and matching it.
 fn describe_union(value: FooOrBar) -> Int {
     match value {
@@ -48,6 +56,9 @@ fn describe_union(value: FooOrBar) -> Int {
         Bar { common, bar } => common + bar,
     }
 }
+
+// Function type that consumes a FooOrBar.
+type FooOrBarFn = fn(FooOrBar) -> Int;
 
 fn main() {
     FooPlusBar {
@@ -66,6 +77,23 @@ fn main() {
 
     let left: FooOrBar = Foo { a: 1, common: 2, foo: 3 };
     let right: FooOrBar = Bar { common: 4, bar: 5 };
-    println!("{}", describe_union(left));
-    println!("{}", describe_union(right));
+    let handler: FooOrBarFn = describe_union;
+    println!("{}", handler(left));
+    println!("{}", handler(right));
+
+    let _ints: Int4 = [1, 2, 3, 4];
+}
+
+// Proposed operators (not yet implemented in the language; kept as code for syntax reference).
+// This block will not compile until the parser and type checker support them.
+fn proposed_syntax_examples(existing_foo: Foo, value: FooOrBar) {
+    type FooMaybe = Foo?;
+
+    let _merged = FooPlusBar { ..existing_foo, bar: 9 };
+
+    fn print_display<T: Display - Clone>(value: T) {
+        println!("{}", value);
+    }
+
+    let _ = value;
 }
