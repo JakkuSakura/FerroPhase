@@ -256,6 +256,22 @@ fn format_ast_type(ty: &ast::Type) -> String {
                 None => format!("{inner_str}[]"),
             }
         }
+        ast::Type::Reference { base, is_rvalue } => {
+            let inner_str = format_ast_type(base);
+            if *is_rvalue {
+                format!("{inner_str}&&")
+            } else {
+                format!("{inner_str}&")
+            }
+        }
+        ast::Type::Qualified { base, is_const, .. } => {
+            let inner_str = format_ast_type(base);
+            if *is_const {
+                format!("const {inner_str}")
+            } else {
+                inner_str
+            }
+        }
         ast::Type::Function {
             return_type,
             params,
@@ -277,6 +293,6 @@ fn format_ast_type(ty: &ast::Type) -> String {
         ast::Type::Union(name) => format!("union {name}"),
         ast::Type::Enum(name) => format!("enum {name}"),
         ast::Type::Typedef(name) => name.to_string(),
-        ast::Type::Unknown => "unknown".to_string(),
+        ast::Type::Custom(name) => name.to_string(),
     }
 }

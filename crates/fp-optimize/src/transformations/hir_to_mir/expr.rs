@@ -4874,7 +4874,7 @@ impl<'a> BodyBuilder<'a> {
                                     return Ok(());
                                 }
                             }
-                            if let Some(konst) = self.const_items.get(def_id) {
+                            if let Some(konst) = self.const_items.get(def_id).cloned() {
                                 let ty = self.lower_type_expr(&konst.ty);
                                 if let TyKind::Array(
                                     _,

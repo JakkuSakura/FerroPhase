@@ -9,25 +9,25 @@ use fp_core::tracing::debug;
 use inkwell::builder::BuilderError;
 use inkwell::llvm_sys::core::LLVMConstArray2;
 use inkwell::llvm_sys::LLVMCallConv;
-use inkwell::types::{AsTypeRef, BasicTypeEnum, FloatType, IntType};
+use inkwell::types::{AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType};
 use inkwell::values::{
-    AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValueEnum, CallableValue,
-    FloatValue, FunctionValue, IntValue, PointerValue,
+    AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum,
+    FloatValue, FunctionValue, IntValue, PointerValue, ValueKind,
 };
-use inkwell::{AddressSpace, FloatPredicate, IntPredicate};
+use inkwell::{AddressSpace, FloatPredicate, GlobalVisibility, IntPredicate};
 use std::collections::{HashMap, HashSet};
 
 const LOG_AREA: &str = "[lir→llvm]";
 
 /// LLVM code generator that transforms LIR to LLVM IR.
-pub struct LirCodegen<'ctx> {
-    llvm_ctx: &'ctx mut LlvmContext,
-    register_map: HashMap<u32, (BasicValueEnum<'ctx>, lir::LirType)>,
-    local_map: HashMap<u32, (BasicValueEnum<'ctx>, lir::LirType)>,
-    stack_slot_map: HashMap<u32, (PointerValue<'ctx>, lir::LirType)>,
-    block_map: HashMap<u32, inkwell::basic_block::BasicBlock<'ctx>>,
-    current_function: Option<FunctionValue<'ctx>>,
-    string_globals: HashMap<String, PointerValue<'ctx>>,
+pub struct LirCodegen<'a> {
+    llvm_ctx: &'a mut LlvmContext,
+    register_map: HashMap<u32, (BasicValueEnum<'static>, lir::LirType)>,
+    local_map: HashMap<u32, (BasicValueEnum<'static>, lir::LirType)>,
+    stack_slot_map: HashMap<u32, (PointerValue<'static>, lir::LirType)>,
+    block_map: HashMap<u32, inkwell::basic_block::BasicBlock<'static>>,
+    current_function: Option<FunctionValue<'static>>,
+    string_globals: HashMap<String, PointerValue<'static>>,
     next_string_id: u32,
     symbol_prefix: String,
     referenced_globals: HashSet<String>,
@@ -37,11 +37,16 @@ pub struct LirCodegen<'ctx> {
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
     symbol_names: HashMap<String, String>,
     defined_functions: HashSet<String>,
-    argument_operands: HashMap<u32, BasicValueEnum<'ctx>>,
+    argument_operands: HashMap<u32, BasicValueEnum<'static>>,
     allow_unresolved_globals: bool,
 }
 
-impl<'ctx> LirCodegen<'ctx> {
+enum Callee {
+    Direct(FunctionValue<'static>),
+    Indirect(PointerValue<'static>, FunctionType<'static>),
+}
+
+impl<'a> LirCodegen<'a> {
     fn attach_context(&self, err: Error, context: impl Into<String>) -> Error {
         match err {
             Error::Diagnostic(diag) => {
@@ -59,7 +64,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
     /// Create a new LIR code generator.
     pub fn new(
-        llvm_ctx: &'ctx mut LlvmContext,
+        llvm_ctx: &'a mut LlvmContext,
         global_const_map: HashMap<String, lir::LirConstant>,
         allow_unresolved_globals: bool,
     ) -> Self {
@@ -86,7 +91,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn record_result(&mut self, instr_id: u32, ty_hint: Option<lir::LirType>, value: BasicValueEnum<'ctx>) {
+    fn record_result(&mut self, instr_id: u32, ty_hint: Option<lir::LirType>, value: BasicValueEnum<'static>) {
         let ty = ty_hint.unwrap_or(lir::LirType::I32);
         self.register_map.insert(instr_id, (value, ty));
     }
@@ -418,10 +423,6 @@ impl<'ctx> LirCodegen<'ctx> {
                     .build_alloca(llvm_element_type, &format!("alloca_{}", instr_id))
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
 
-                if alignment > 0 {
-                    alloca.set_alignment(alignment).map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                }
-
                 if let Some(size_value) = self.try_coerce_to_int_value(size.clone())? {
                     let count = size_value;
                     let array_alloca = self
@@ -429,11 +430,6 @@ impl<'ctx> LirCodegen<'ctx> {
                         .builder
                         .build_array_alloca(llvm_element_type, count, &format!("alloca_count_{}", instr_id))
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                    if alignment > 0 {
-                        array_alloca
-                            .set_alignment(alignment)
-                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                    }
                     self.record_result(instr_id, ty_hint, array_alloca.into());
                 } else {
                     self.record_result(instr_id, ty_hint, alloca.into());
@@ -445,7 +441,7 @@ impl<'ctx> LirCodegen<'ctx> {
                 let result = self
                     .llvm_ctx
                     .builder
-                    .build_bitcast(operand, target, &format!("bitcast_{}", instr_id))
+                    .build_bit_cast(operand, target, &format!("bitcast_{}", instr_id))
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 self.record_result(instr_id, Some(target_ty), result);
             }
@@ -605,7 +601,7 @@ impl<'ctx> LirCodegen<'ctx> {
                     tail_call,
                 )?;
 
-                if let Some(result) = call_site.try_as_basic_value().left() {
+                if let ValueKind::Basic(result) = call_site.try_as_basic_value() {
                     if let Some(hint) = ty_hint {
                         self.record_result(instr_id, Some(hint), result);
                     }
@@ -641,9 +637,12 @@ impl<'ctx> LirCodegen<'ctx> {
                     }
                 }
 
+                let return_ref = return_value
+                    .as_ref()
+                    .map(|value| value as &dyn BasicValue);
                 self.llvm_ctx
                     .builder
-                    .build_return(return_value.as_ref())
+                    .build_return(return_ref)
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             }
             lir::LirTerminator::Br(target) => {
@@ -694,7 +693,7 @@ impl<'ctx> LirCodegen<'ctx> {
         args: Vec<lir::LirValue>,
         calling_convention: lir::CallingConvention,
         tail_call: bool,
-    ) -> Result<inkwell::values::CallSiteValue<'ctx>> {
+    ) -> Result<inkwell::values::CallSiteValue<'static>> {
         let callee = self.resolve_callee(&function)?;
 
         let mut call_args: Vec<BasicMetadataValueEnum> = Vec::with_capacity(args.len());
@@ -703,11 +702,18 @@ impl<'ctx> LirCodegen<'ctx> {
             call_args.push(value.into());
         }
 
-        let call = self
-            .llvm_ctx
-            .builder
-            .build_call(callee, &call_args, &format!("call_{}", instr_id))
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        let call = match callee {
+            Callee::Direct(func) => self
+                .llvm_ctx
+                .builder
+                .build_call(func, &call_args, &format!("call_{}", instr_id))
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+            Callee::Indirect(ptr, fn_ty) => self
+                .llvm_ctx
+                .builder
+                .build_indirect_call(fn_ty, ptr, &call_args, &format!("call_{}", instr_id))
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+        };
 
         call.set_tail_call(tail_call);
         call.set_call_convention(self.convert_calling_convention(&calling_convention));
@@ -721,12 +727,12 @@ impl<'ctx> LirCodegen<'ctx> {
         Ok(call)
     }
 
-    fn resolve_callee(&mut self, function: &lir::LirValue) -> Result<CallableValue<'ctx>> {
+    fn resolve_callee(&mut self, function: &lir::LirValue) -> Result<Callee> {
         match function {
             lir::LirValue::Function(name) | lir::LirValue::Global(name, _) => {
                 let llvm_name = self.llvm_symbol_for(name);
                 if let Some(func) = self.llvm_ctx.module.get_function(&llvm_name) {
-                    return Ok(func.into());
+                    return Ok(Callee::Direct(func));
                 }
 
                 if let Some(signature) = self.function_signatures.get(name).cloned() {
@@ -735,7 +741,7 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .module
                         .add_function(&llvm_name, fn_type, Some(inkwell::module::Linkage::External));
-                    return Ok(func.into());
+                    return Ok(Callee::Direct(func));
                 }
 
                 if let Some(signature) = CRuntimeIntrinsics::get_intrinsic_signature(name) {
@@ -754,7 +760,7 @@ impl<'ctx> LirCodegen<'ctx> {
                         .llvm_ctx
                         .module
                         .add_function(name, fn_type, Some(inkwell::module::Linkage::External));
-                    return Ok(func.into());
+                    return Ok(Callee::Direct(func));
                 }
 
                 Err(report_error_with_context(
@@ -763,11 +769,11 @@ impl<'ctx> LirCodegen<'ctx> {
                 ))
             }
             lir::LirValue::Local(local_id) | lir::LirValue::Register(local_id) => {
-                let value = self
+                let (value, lir_ty) = self
                     .register_map
                     .get(local_id)
-                    .map(|(val, _)| *val)
-                    .or_else(|| self.local_map.get(local_id).map(|(val, _)| *val))
+                    .map(|(val, ty)| (*val, ty.clone()))
+                    .or_else(|| self.local_map.get(local_id).map(|(val, ty)| (*val, ty.clone())))
                     .ok_or_else(|| {
                         report_error_with_context(
                             LOG_AREA,
@@ -776,12 +782,18 @@ impl<'ctx> LirCodegen<'ctx> {
                     })?;
 
                 let ptr = self.coerce_to_pointer(value)?;
-                CallableValue::try_from(ptr).map_err(|_| {
-                    report_error_with_context(
-                        LOG_AREA,
-                        format!("Value {} is not a callable function pointer", local_id),
-                    )
-                })
+                let fn_ty = self
+                    .function_type_from_lir_type(&lir_ty)
+                    .ok_or_else(|| {
+                        report_error_with_context(
+                            LOG_AREA,
+                            format!(
+                                "Value {} is not a callable function pointer (type={:?})",
+                                local_id, lir_ty
+                            ),
+                        )
+                    })?;
+                Ok(Callee::Indirect(ptr, fn_ty))
             }
             other => Err(report_error_with_context(
                 LOG_AREA,
@@ -792,7 +804,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
     fn populate_argument_operands(
         &mut self,
-        function: FunctionValue<'ctx>,
+        function: FunctionValue<'static>,
         locals: &[lir::LirLocal],
     ) -> Result<()> {
         let params = function.get_params();
@@ -827,20 +839,20 @@ impl<'ctx> LirCodegen<'ctx> {
         rhs: lir::LirValue,
         int_op: FI,
         float_op: FF,
-    ) -> Result<BasicValueEnum<'ctx>>
+    ) -> Result<BasicValueEnum<'static>>
     where
         FI: FnOnce(
-            &inkwell::builder::Builder<'ctx>,
-            IntValue<'ctx>,
-            IntValue<'ctx>,
+            &inkwell::builder::Builder<'static>,
+            IntValue<'static>,
+            IntValue<'static>,
             &str,
-        ) -> std::result::Result<IntValue<'ctx>, BuilderError>,
+        ) -> std::result::Result<IntValue<'static>, BuilderError>,
         FF: FnOnce(
-            &inkwell::builder::Builder<'ctx>,
-            FloatValue<'ctx>,
-            FloatValue<'ctx>,
+            &inkwell::builder::Builder<'static>,
+            FloatValue<'static>,
+            FloatValue<'static>,
             &str,
-        ) -> std::result::Result<FloatValue<'ctx>, BuilderError>,
+        ) -> std::result::Result<FloatValue<'static>, BuilderError>,
     {
         let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
         let lhs_value = self.convert_lir_value_to_basic_value(lhs)?;
@@ -869,14 +881,14 @@ impl<'ctx> LirCodegen<'ctx> {
         lhs: lir::LirValue,
         rhs: lir::LirValue,
         op: F,
-    ) -> Result<BasicValueEnum<'ctx>>
+    ) -> Result<BasicValueEnum<'static>>
     where
         F: FnOnce(
-            &inkwell::builder::Builder<'ctx>,
-            IntValue<'ctx>,
-            IntValue<'ctx>,
+            &inkwell::builder::Builder<'static>,
+            IntValue<'static>,
+            IntValue<'static>,
             &str,
-        ) -> std::result::Result<IntValue<'ctx>, BuilderError>,
+        ) -> std::result::Result<IntValue<'static>, BuilderError>,
     {
         let lhs_value = self.convert_lir_value_to_basic_value(lhs)?;
         let rhs_value = self.convert_lir_value_to_basic_value(rhs)?;
@@ -926,8 +938,8 @@ impl<'ctx> LirCodegen<'ctx> {
 
     fn cast_condition_to_bool(
         &mut self,
-        value: BasicValueEnum<'ctx>,
-    ) -> Result<IntValue<'ctx>> {
+        value: BasicValueEnum<'static>,
+    ) -> Result<IntValue<'static>> {
         match value {
             BasicValueEnum::IntValue(int_val) => {
                 if int_val.get_type().get_bit_width() == 1 {
@@ -962,7 +974,7 @@ impl<'ctx> LirCodegen<'ctx> {
     fn convert_lir_value_to_basic_value(
         &mut self,
         lir_value: lir::LirValue,
-    ) -> Result<BasicValueEnum<'ctx>> {
+    ) -> Result<BasicValueEnum<'static>> {
         match lir_value {
             lir::LirValue::Register(reg_id) => {
                 if let Some(constant) = self.constant_results.get(&reg_id) {
@@ -1099,7 +1111,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn convert_lir_constant_to_value(&mut self, lir_const: lir::LirConstant) -> Result<BasicValueEnum<'ctx>> {
+    fn convert_lir_constant_to_value(&mut self, lir_const: lir::LirConstant) -> Result<BasicValueEnum<'static>> {
         match lir_const {
             lir::LirConstant::Int(value, ty) => {
                 let int_ty = self.llvm_int_type(&ty)?;
@@ -1145,7 +1157,7 @@ impl<'ctx> LirCodegen<'ctx> {
                     let value_ref = LLVMConstArray2(
                         elem_ty.as_type_ref(),
                         raw_values.as_mut_ptr(),
-                        raw_values.len() as u32,
+                        raw_values.len() as u64,
                     );
                     inkwell::values::ArrayValue::new(value_ref)
                 };
@@ -1166,7 +1178,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn get_or_create_string_ptr(&mut self, value: &str) -> Result<PointerValue<'ctx>> {
+    fn get_or_create_string_ptr(&mut self, value: &str) -> Result<PointerValue<'static>> {
         if let Some(ptr) = self.string_globals.get(value) {
             return Ok(*ptr);
         }
@@ -1223,7 +1235,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn llvm_basic_type(&self, lir_type: &lir::LirType) -> Result<BasicTypeEnum<'ctx>> {
+    fn llvm_basic_type(&self, lir_type: &lir::LirType) -> Result<BasicTypeEnum<'static>> {
         match lir_type {
             lir::LirType::I1 => Ok(self.llvm_ctx.i1_type().into()),
             lir::LirType::I8 => Ok(self.llvm_ctx.i8_type().into()),
@@ -1258,7 +1270,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn llvm_int_type(&self, lir_type: &lir::LirType) -> Result<IntType<'ctx>> {
+    fn llvm_int_type(&self, lir_type: &lir::LirType) -> Result<IntType<'static>> {
         match lir_type {
             lir::LirType::I1 => Ok(self.llvm_ctx.i1_type()),
             lir::LirType::I8 => Ok(self.llvm_ctx.i8_type()),
@@ -1270,7 +1282,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn llvm_float_type(&self, lir_type: &lir::LirType) -> Result<FloatType<'ctx>> {
+    fn llvm_float_type(&self, lir_type: &lir::LirType) -> Result<FloatType<'static>> {
         match lir_type {
             lir::LirType::F32 => Ok(self.llvm_ctx.f32_type()),
             lir::LirType::F64 => Ok(self.llvm_ctx.f64_type()),
@@ -1281,7 +1293,7 @@ impl<'ctx> LirCodegen<'ctx> {
     fn function_type_from_signature(
         &self,
         signature: lir::LirFunctionSignature,
-    ) -> Result<inkwell::types::FunctionType<'ctx>> {
+    ) -> Result<inkwell::types::FunctionType<'static>> {
         let mut param_types = Vec::with_capacity(signature.params.len());
         for param in signature.params {
             param_types.push(self.llvm_basic_type(&param)?.into());
@@ -1298,15 +1310,33 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn default_int_type(&self) -> IntType<'ctx> {
+    fn function_type_from_lir_type(&self, ty: &lir::LirType) -> Option<FunctionType<'static>> {
+        match ty {
+            lir::LirType::Function {
+                return_type,
+                param_types,
+                is_variadic,
+            } => self
+                .function_type_from_signature(lir::LirFunctionSignature {
+                    params: param_types.clone(),
+                    return_type: (**return_type).clone(),
+                    is_variadic: *is_variadic,
+                })
+                .ok(),
+            lir::LirType::Ptr(inner) => self.function_type_from_lir_type(inner),
+            _ => None,
+        }
+    }
+
+    fn default_int_type(&self) -> IntType<'static> {
         self.llvm_ctx.i64_type()
     }
 
     fn coerce_to_int(
         &self,
-        value: BasicValueEnum<'ctx>,
-        target: IntType<'ctx>,
-    ) -> Result<IntValue<'ctx>> {
+        value: BasicValueEnum<'static>,
+        target: IntType<'static>,
+    ) -> Result<IntValue<'static>> {
         match value {
             BasicValueEnum::IntValue(int_val) => {
                 let src_bits = int_val.get_type().get_bit_width();
@@ -1344,9 +1374,9 @@ impl<'ctx> LirCodegen<'ctx> {
 
     fn coerce_to_int_signed(
         &self,
-        value: BasicValueEnum<'ctx>,
-        target: IntType<'ctx>,
-    ) -> Result<IntValue<'ctx>> {
+        value: BasicValueEnum<'static>,
+        target: IntType<'static>,
+    ) -> Result<IntValue<'static>> {
         match value {
             BasicValueEnum::IntValue(int_val) => {
                 let src_bits = int_val.get_type().get_bit_width();
@@ -1371,9 +1401,9 @@ impl<'ctx> LirCodegen<'ctx> {
 
     fn coerce_to_float(
         &self,
-        value: BasicValueEnum<'ctx>,
-        target: FloatType<'ctx>,
-    ) -> Result<FloatValue<'ctx>> {
+        value: BasicValueEnum<'static>,
+        target: FloatType<'static>,
+    ) -> Result<FloatValue<'static>> {
         match value {
             BasicValueEnum::FloatValue(float_val) => {
                 let src_bits = float_val.get_type().get_bit_width();
@@ -1404,7 +1434,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn coerce_to_pointer(&self, value: BasicValueEnum<'ctx>) -> Result<PointerValue<'ctx>> {
+    fn coerce_to_pointer(&self, value: BasicValueEnum<'static>) -> Result<PointerValue<'static>> {
         match value {
             BasicValueEnum::PointerValue(ptr) => Ok(ptr),
             BasicValueEnum::IntValue(int_val) => self
@@ -1422,7 +1452,7 @@ impl<'ctx> LirCodegen<'ctx> {
     fn try_coerce_to_int_value(
         &mut self,
         value: lir::LirValue,
-    ) -> Result<Option<IntValue<'ctx>>> {
+    ) -> Result<Option<IntValue<'static>>> {
         let value = self.convert_lir_value_to_basic_value(value)?;
         match value {
             BasicValueEnum::IntValue(int_val) => Ok(Some(int_val)),
@@ -1430,7 +1460,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn zero_value_for_type(&self, ty: &lir::LirType) -> Result<BasicValueEnum<'ctx>> {
+    fn zero_value_for_type(&self, ty: &lir::LirType) -> Result<BasicValueEnum<'static>> {
         match ty {
             lir::LirType::Void => Err(report_error_with_context(
                 LOG_AREA,
@@ -1440,7 +1470,7 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn undef_value_for_type(&self, ty: BasicTypeEnum<'ctx>) -> BasicValueEnum<'ctx> {
+    fn undef_value_for_type(&self, ty: BasicTypeEnum<'static>) -> BasicValueEnum<'static> {
         match ty {
             BasicTypeEnum::ArrayType(array_ty) => array_ty.get_undef().into(),
             BasicTypeEnum::FloatType(float_ty) => float_ty.get_undef().into(),
@@ -1461,11 +1491,11 @@ impl<'ctx> LirCodegen<'ctx> {
         }
     }
 
-    fn convert_visibility(&self, lir_visibility: lir::Visibility) -> inkwell::values::GlobalVisibility {
+    fn convert_visibility(&self, lir_visibility: lir::Visibility) -> GlobalVisibility {
         match lir_visibility {
-            lir::Visibility::Default => inkwell::values::GlobalVisibility::Default,
-            lir::Visibility::Hidden => inkwell::values::GlobalVisibility::Hidden,
-            lir::Visibility::Protected => inkwell::values::GlobalVisibility::Protected,
+            lir::Visibility::Default => GlobalVisibility::Default,
+            lir::Visibility::Hidden => GlobalVisibility::Hidden,
+            lir::Visibility::Protected => GlobalVisibility::Protected,
         }
     }
 
