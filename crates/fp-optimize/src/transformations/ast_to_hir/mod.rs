@@ -842,6 +842,8 @@ impl HirGenerator {
             }
             ItemKind::DefStruct(struct_def) => {
                 self.register_type_def(&struct_def.name.name, def_id, &struct_def.visibility);
+                self.push_type_scope();
+                let generics = self.transform_generics(&struct_def.value.generics_params);
                 let name = hir::Symbol::new(self.qualify_name(&struct_def.name.name));
                 let fields = struct_def
                     .value
@@ -856,11 +858,7 @@ impl HirGenerator {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
-
-                let generics = hir::Generics {
-                    params: vec![],
-                    where_clause: None,
-                };
+                self.pop_type_scope();
 
                 (
                     hir::ItemKind::Struct(hir::Struct {
@@ -873,11 +871,9 @@ impl HirGenerator {
             }
             ItemKind::DefEnum(enum_def) => {
                 self.register_type_def(&enum_def.name.name, def_id, &enum_def.visibility);
+                self.push_type_scope();
+                let generics = self.transform_generics(&enum_def.value.generics_params);
                 let qualified_enum_name = hir::Symbol::new(self.qualify_name(&enum_def.name.name));
-                let generics = hir::Generics {
-                    params: Vec::new(),
-                    where_clause: None,
-                };
 
                 let variants = enum_def
                     .value
@@ -929,6 +925,7 @@ impl HirGenerator {
                         })
                     })
                     .collect::<Result<Vec<_>>>()?;
+                self.pop_type_scope();
 
                 (
                     hir::ItemKind::Enum(hir::Enum {
@@ -1133,6 +1130,25 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::Expr(expr) => {
+                if let ast::ExprKind::Value(value) = expr.kind() {
+                    match value.as_ref() {
+                        ast::Value::Type(ty) => {
+                            return self.transform_type_to_hir(ty);
+                        }
+                        ast::Value::Expr(inner) => {
+                            if let Ok(path) =
+                                self.ast_expr_to_hir_path(inner, PathResolutionScope::Type)
+                            {
+                                return Ok(hir::TypeExpr::new(
+                                    self.next_id(),
+                                    hir::TypeExprKind::Path(path),
+                                    Span::new(self.current_file, 0, 0),
+                                ));
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 if let Ok(path) = self.ast_expr_to_hir_path(expr, PathResolutionScope::Type) {
                     let segments = path
                         .segments
