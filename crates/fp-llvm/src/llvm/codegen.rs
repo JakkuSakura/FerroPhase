@@ -20,7 +20,9 @@ const LOG_AREA: &str = "[lir→llvm]";
 /// LLVM code generator that transforms LIR to LLVM IR
 pub struct LirCodegen<'ctx> {
     llvm_ctx: &'ctx mut LlvmContext,
-    value_map: HashMap<u32, (Name, lir::LirType)>, // Maps LIR register IDs to LLVM names and types
+    register_map: HashMap<u32, (Name, lir::LirType)>,
+    local_map: HashMap<u32, (Name, lir::LirType)>,
+    stack_slot_map: HashMap<u32, (Name, lir::LirType)>,
     block_map: HashMap<u32, Name>,                 // Maps LIR block IDs to LLVM basic block names
     current_function: Option<String>,
     string_globals: HashMap<String, (Name, usize)>,
@@ -66,7 +68,9 @@ impl<'ctx> LirCodegen<'ctx> {
         let prefix = Self::sanitize_symbol_component(&llvm_ctx.module.name);
         Self {
             llvm_ctx,
-            value_map: HashMap::new(),
+            register_map: HashMap::new(),
+            local_map: HashMap::new(),
+            stack_slot_map: HashMap::new(),
             block_map: HashMap::new(),
             current_function: None,
             string_globals: HashMap::new(),
@@ -86,7 +90,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
     fn record_result(&mut self, instr_id: u32, ty_hint: Option<lir::LirType>, name: Name) {
         let ty = ty_hint.unwrap_or(lir::LirType::I32);
-        self.value_map.insert(instr_id, (name, ty));
+        self.register_map.insert(instr_id, (name, ty));
     }
     /// Get the set of globals that were referenced but not found during codegen
     pub fn get_referenced_globals(&self) -> &std::collections::HashSet<String> {
@@ -314,7 +318,9 @@ impl<'ctx> LirCodegen<'ctx> {
         }
 
         // Clear value map for new function
-        self.value_map.clear();
+        self.register_map.clear();
+        self.local_map.clear();
+        self.stack_slot_map.clear();
         self.block_map.clear();
         self.constant_results.clear();
         self.argument_operands.clear();
@@ -1429,9 +1435,7 @@ impl<'ctx> LirCodegen<'ctx> {
                 };
                 self.argument_operands.insert(local.id, operand);
 
-                // Also add to value_map so lir_value_type can find it
-                self.value_map
-                    .insert(local.id, (param.name, local.ty.clone()));
+                self.local_map.insert(local.id, (param.name, local.ty.clone()));
             }
         }
 
@@ -1899,9 +1903,11 @@ impl<'ctx> LirCodegen<'ctx> {
                 Some(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
             }
             lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),
-            lir::LirValue::Register(reg_id) => self.value_map.get(reg_id).map(|(_, ty)| ty.clone()),
+            lir::LirValue::Register(reg_id) => {
+                self.register_map.get(reg_id).map(|(_, ty)| ty.clone())
+            }
             lir::LirValue::Local(local_id) => {
-                self.value_map.get(local_id).map(|(_, ty)| ty.clone())
+                self.local_map.get(local_id).map(|(_, ty)| ty.clone())
             }
             lir::LirValue::Global(_, ty) => Some(ty.clone()),
             lir::LirValue::Function(_) => Some(lir::LirType::Ptr(Box::new(lir::LirType::Void))),
@@ -2133,7 +2139,7 @@ impl<'ctx> LirCodegen<'ctx> {
                 let condition_clone = condition.clone();
                 let lir_type = match condition_clone {
                     lir::LirValue::Register(reg_id) => {
-                        self.value_map.get(&reg_id).map(|(_, ty)| ty.clone())
+                        self.register_map.get(&reg_id).map(|(_, ty)| ty.clone())
                     }
                     _ => None,
                 };
@@ -2169,7 +2175,7 @@ impl<'ctx> LirCodegen<'ctx> {
                     let llvm_constant = self.convert_lir_constant_to_llvm_mut(constant.clone())?;
                     return Ok(self.llvm_ctx.operand_from_constant(llvm_constant));
                 }
-                if let Some((name, lir_ty)) = self.value_map.get(&reg_id) {
+                if let Some((name, lir_ty)) = self.register_map.get(&reg_id) {
                     let llvm_ty = self.convert_lir_type_to_llvm(lir_ty.clone())?;
                     Ok(self
                         .llvm_ctx
@@ -2280,7 +2286,7 @@ impl<'ctx> LirCodegen<'ctx> {
             }
             lir::LirValue::StackSlot(slot_id) => {
                 // For now, treat stack slots like registers
-                if let Some((name, lir_ty)) = self.value_map.get(&slot_id) {
+                if let Some((name, lir_ty)) = self.stack_slot_map.get(&slot_id) {
                     let llvm_ty = self.convert_lir_type_to_llvm(lir_ty.clone())?;
                     Ok(self
                         .llvm_ctx
@@ -2561,7 +2567,7 @@ impl<'ctx> LirCodegen<'ctx> {
 
     fn lir_type_from_value(&self, value: &lir::LirValue) -> Option<lir::LirType> {
         match value {
-            lir::LirValue::Register(id) => self.value_map.get(id).map(|(_, ty)| ty.clone()),
+            lir::LirValue::Register(id) => self.register_map.get(id).map(|(_, ty)| ty.clone()),
             lir::LirValue::Constant(c) => Some(Self::lir_type_from_constant(c)),
             lir::LirValue::Global(_, ty) => Some(ty.clone()),
             lir::LirValue::Undef(ty) => Some(ty.clone()),
