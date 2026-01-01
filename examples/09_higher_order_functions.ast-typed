@@ -73,19 +73,16 @@ ast::File {
 Conditional:"
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" apply_if(true, 5, 3, add)
+            template: "{}" apply_if(true, 5, 3, add__spec0)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" apply_if(false, 5, 3, add)
+            template: "{}" apply_if(false, 5, 3, add__spec0)
         expr_stmt ;
           intrinsic println : ()
             template: "
 Closure factory:"
-        pub const add_10: fn(i64) -> i64 : fn(i64) -> i64
-          invoke : fn(i64) -> i64
-            target: make_adder
-            args:
-              value 10 : i64
+        pub const add_10: any : any
+          expr.any : any
         expr_stmt ;
           intrinsic println : ()
             template: "add_10(5) = {}" add_10(5)
@@ -100,4 +97,12 @@ Closure factory:"
         expr_stmt ;
           intrinsic println : ()
             template: "double(7) = {}" double(7)
+    pub fn add__spec0(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          binop + : i64
+            lhs:
+              locator a : i64
+            rhs:
+              locator b : i64
 }

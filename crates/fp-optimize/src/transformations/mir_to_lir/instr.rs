@@ -1507,17 +1507,53 @@ impl LirGenerator {
     fn cast_value_to_type(
         &mut self,
         value: lir::LirValue,
-        _from_ty: lir::LirType,
+        from_ty: lir::LirType,
         target_ty: lir::LirType,
         block: &mut lir::LirBasicBlock,
     ) -> lir::LirValue {
         if matches!(target_ty, lir::LirType::Void) {
             return lir::LirValue::Undef(target_ty);
         }
+        if from_ty == target_ty {
+            return value;
+        }
         let id = self.next_id();
+        let kind = if matches!(from_ty, lir::LirType::Ptr(_))
+            && self.is_integral_type(&target_ty)
+        {
+            lir::LirInstructionKind::PtrToInt(value.clone())
+        } else if self.is_integral_type(&from_ty) && matches!(target_ty, lir::LirType::Ptr(_)) {
+            lir::LirInstructionKind::IntToPtr(value.clone())
+        } else if self.is_integral_type(&from_ty) && self.is_integral_type(&target_ty) {
+            let src_w = self.type_bit_width(&from_ty);
+            let dst_w = self.type_bit_width(&target_ty);
+            if src_w == dst_w {
+                lir::LirInstructionKind::Bitcast(value.clone(), target_ty.clone())
+            } else {
+                lir::LirInstructionKind::SextOrTrunc(value.clone(), target_ty.clone())
+            }
+        } else if self.is_float_type(&from_ty) && self.is_float_type(&target_ty) {
+            let src_w = self.type_bit_width(&from_ty);
+            let dst_w = self.type_bit_width(&target_ty);
+            match (src_w, dst_w) {
+                (Some(s), Some(d)) if d > s => {
+                    lir::LirInstructionKind::FPExt(value.clone(), target_ty.clone())
+                }
+                (Some(s), Some(d)) if d < s => {
+                    lir::LirInstructionKind::FPTrunc(value.clone(), target_ty.clone())
+                }
+                _ => lir::LirInstructionKind::Bitcast(value.clone(), target_ty.clone()),
+            }
+        } else if self.is_float_type(&from_ty) && self.is_integral_type(&target_ty) {
+            lir::LirInstructionKind::FPToSI(value.clone(), target_ty.clone())
+        } else if self.is_integral_type(&from_ty) && self.is_float_type(&target_ty) {
+            lir::LirInstructionKind::SIToFP(value.clone(), target_ty.clone())
+        } else {
+            lir::LirInstructionKind::Bitcast(value.clone(), target_ty.clone())
+        };
         block.instructions.push(lir::LirInstruction {
             id,
-            kind: lir::LirInstructionKind::Bitcast(value.clone(), target_ty.clone()),
+            kind,
             type_hint: Some(target_ty),
             debug_info: None,
         });
@@ -1916,6 +1952,12 @@ impl LirGenerator {
         target_ty: &lir::LirType,
     ) -> lir::LirConstant {
         match constant {
+            lir::LirConstant::Int(0, _) if matches!(target_ty, lir::LirType::Ptr(_)) => {
+                lir::LirConstant::Null(target_ty.clone())
+            }
+            lir::LirConstant::UInt(0, _) if matches!(target_ty, lir::LirType::Ptr(_)) => {
+                lir::LirConstant::Null(target_ty.clone())
+            }
             lir::LirConstant::Int(value, _) if self.is_integral_type(target_ty) => {
                 let bits = self.type_bit_width(target_ty).unwrap_or(64);
                 let adjusted = if bits >= 64 {
@@ -2673,9 +2715,20 @@ impl LirGenerator {
         source_ty: Option<lir::LirType>,
         target_ty: lir::LirType,
     ) -> lir::LirInstructionKind {
+        let source_ty = source_ty.or_else(|| self.infer_lir_type_from_value(&source));
         match cast_kind {
             mir::CastKind::Misc => {
                 if let Some(src_ty) = source_ty {
+                    if matches!(src_ty, lir::LirType::Ptr(_))
+                        && self.is_integral_type(&target_ty)
+                    {
+                        return lir::LirInstructionKind::PtrToInt(source);
+                    }
+                    if self.is_integral_type(&src_ty)
+                        && matches!(target_ty, lir::LirType::Ptr(_))
+                    {
+                        return lir::LirInstructionKind::IntToPtr(source);
+                    }
                     if self.is_integral_type(&src_ty) && self.is_integral_type(&target_ty) {
                         let src_w = self.type_bit_width(&src_ty);
                         let dst_w = self.type_bit_width(&target_ty);
@@ -2713,8 +2766,42 @@ impl LirGenerator {
                 | mir::PointerCast::ClosureFnPointer
                 | mir::PointerCast::MutToConstPointer
                 | mir::PointerCast::ArrayToPointer
-                | mir::PointerCast::Unsize => lir::LirInstructionKind::Bitcast(source, target_ty),
+                | mir::PointerCast::Unsize => {
+                    if let Some(src_ty) = source_ty {
+                        if matches!(src_ty, lir::LirType::Ptr(_))
+                            && self.is_integral_type(&target_ty)
+                        {
+                            lir::LirInstructionKind::PtrToInt(source)
+                        } else if self.is_integral_type(&src_ty)
+                            && matches!(target_ty, lir::LirType::Ptr(_))
+                        {
+                            lir::LirInstructionKind::IntToPtr(source)
+                        } else {
+                            lir::LirInstructionKind::Bitcast(source, target_ty)
+                        }
+                    } else {
+                        lir::LirInstructionKind::Bitcast(source, target_ty)
+                    }
+                }
             },
+        }
+    }
+
+    fn infer_lir_type_from_value(&self, value: &lir::LirValue) -> Option<lir::LirType> {
+        match value {
+            lir::LirValue::Constant(lir::LirConstant::Int(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::UInt(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Float(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Struct(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Array(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::Null(ty))
+            | lir::LirValue::Constant(lir::LirConstant::Undef(ty)) => Some(ty.clone()),
+            lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),
+            lir::LirValue::Constant(lir::LirConstant::String(_)) => {
+                Some(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
+            }
+            lir::LirValue::Null(ty) | lir::LirValue::Undef(ty) => Some(ty.clone()),
+            _ => None,
         }
     }
 
@@ -2745,6 +2832,7 @@ impl LirGenerator {
             lir::LirType::F32 | lir::LirType::F64 => Some(lir::LirValue::Constant(
                 lir::LirConstant::Float(0.0, ty.clone()),
             )),
+            lir::LirType::Ptr(_) => Some(lir::LirValue::Null(ty.clone())),
             _ => None,
         }
     }

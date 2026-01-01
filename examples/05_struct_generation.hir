@@ -1,23 +1,23 @@
 hir::Program {
-    fn main() -> () {
+    pub fn main() -> () {
         {
-            const FLAG_A: bool =
+            pub const FLAG_A: bool =
                 true;
-            const FLAG_B: bool =
+            pub const FLAG_B: bool =
                 false;
-            struct Config {
+            pub struct Config {
                 pub x: i64,
                 pub y: i64,
             }
-            const CONFIG: Config =
+            pub const CONFIG: Config =
                 Config { x: 100, y: 20 };
-            printf("x=%d, y=%d
+            printf("x=%lld, y=%lld
 ", CONFIG.x, CONFIG.y);
-            const SIZE: u64 =
+            pub const SIZE: usize =
                 256;
-            const ITEMS: [i64; 256] =
+            pub const ITEMS: [i64; 256] =
                 [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-            printf("array size: %d
+            printf("array size: %lld
 ", ITEMS.len());
         }
     }

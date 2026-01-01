@@ -21,25 +21,33 @@ ast::File {
         rhs:
           value 2 : i64
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
-    priv import std::fmt::Display : ()
-    priv import std::ops::Add : ()
-    priv fn apply_if(cond: Expr(bool), a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
-      if : i64
-        cond:
-          locator cond : bool
-        then:
-          invoke : i64
-            target: op
-            args:
-              locator a : i64
-              locator b : i64
-        else:
-          value 0 : i64
-    priv fn make_adder(n: i64) -> __Closure0{n: i64} : fn(i64) -> __Closure0{n: i64} : fn(i64) -> fn(i64) -> i64
-      struct __Closure0 : __Closure0{n: i64}
-        n:
-          locator n : i64
-    priv fn main() -> () : fn() -> () : fn() -> ()
+    pub import std::fmt::Display : ()
+    pub import std::ops::Add : ()
+    pub fn apply_if(cond: Expr(bool), a: Expr(i64), b: Expr(i64), op: fn(Expr(i64), Expr(i64)) -> Expr(i64)) -> Expr(i64) : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          if : i64
+            cond:
+              locator cond : bool
+            then:
+              block (1 stmt) : i64
+                expr_stmt (value)
+                  invoke : i64
+                    target: op
+                    args:
+                      locator a : i64
+                      locator b : i64
+            else:
+              block (1 stmt) : i64
+                expr_stmt (value)
+                  value 0 : i64
+    pub fn make_adder(n: Expr(i64)) -> fn(Expr(i64)) -> Expr(i64) : fn(i64) -> fn(i64) -> i64 : fn(i64) -> fn(i64) -> i64
+      block (1 stmt) : fn(i64) -> i64
+        expr_stmt (value)
+          struct __Closure0 : __Closure0{n: i64}
+            n:
+              locator n : i64
+    pub fn main() -> () : fn() -> () : fn() -> ()
       block (11 stmts) : ()
         expr_stmt ;
           invoke : ()
@@ -49,18 +57,18 @@ ast::File {
 " : &string
         expr_stmt ;
           invoke : ()
-            target: apply__spec0
+            target: apply
             args:
               value 10 : i64
               value 20 : i64
-              locator add__spec0 : fn(i64, i64) -> i64
+              locator add : fn(unknown, unknown) -> unknown
         expr_stmt ;
           invoke : ()
-            target: apply__spec1
+            target: apply
             args:
               value 1.5 : f64
               value 2.5 : f64
-              locator add__spec1 : fn(f64, f64) -> f64
+              locator add : fn(unknown, unknown) -> unknown
         expr_stmt ;
           invoke : ()
             target: printf
@@ -72,7 +80,7 @@ Conditional:
           invoke : ()
             target: printf
             args:
-              value "%d
+              value "%lld
 " : &string
               invoke : i64
                 target: apply_if
@@ -85,7 +93,7 @@ Conditional:
           invoke : ()
             target: printf
             args:
-              value "%d
+              value "%lld
 " : &string
               invoke : i64
                 target: apply_if
@@ -101,22 +109,15 @@ Conditional:
               value "
 Closure factory:
 " : &string
-        priv const add_10: __Closure0{n: i64} : fn(i64) -> i64
-          invoke : __Closure0{n: i64}
-            target: make_adder
-            args:
-              value 10 : i64
+        pub const add_10: any : any
+          expr.any : any
         expr_stmt ;
           invoke : ()
             target: printf
             args:
-              value "add_10(5) = %d
+              value "add_10(5) = %s
 " : &string
-              invoke : i64
-                target: __closure0_call
-                args:
-                  locator add_10 : __Closure0{n: i64}
-                  value 5 : i64
+              value "<unknown>" : &string
         let double : __Closure1{__fp_no_capture: i8}
           init:
             struct __Closure1 : __Closure1{__fp_no_capture: i8}
@@ -126,49 +127,19 @@ Closure factory:
           invoke : ()
             target: printf
             args:
-              value "double(7) = %d
+              value "double(7) = %lld
 " : &string
               invoke : i64
                 target: __closure1_call
                 args:
                   locator double : __Closure1{__fp_no_capture: i8}
                   value 7 : i64
-    priv fn apply__spec0(a: i64, b: i64, op: fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> () : fn(i64, i64, fn(i64, i64) -> i64) -> ()
-      block (1 stmt) : ()
-        expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%d
-" : &string
-              invoke : i64
-                target: op
-                args:
-                  locator a : i64
-                  locator b : i64
-    priv fn add__spec0(a: i64, b: i64) -> i64 : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
-      binop + : i64
-        lhs:
-          locator a : i64
-        rhs:
-          locator b : i64
-    priv fn apply__spec1(a: f64, b: f64, op: fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> () : fn(f64, f64, fn(f64, f64) -> f64) -> ()
-      block (1 stmt) : ()
-        expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%f
-" : &string
-              invoke : f64
-                target: op
-                args:
-                  locator a : f64
-                  locator b : f64
-    priv fn add__spec1(a: f64, b: f64) -> f64 : fn(f64, f64) -> f64 : fn(f64, f64) -> f64
-      binop + : f64
-        lhs:
-          locator a : f64
-        rhs:
-          locator b : f64
+    pub fn add__spec0(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          binop + : i64
+            lhs:
+              locator a : i64
+            rhs:
+              locator b : i64
 }
