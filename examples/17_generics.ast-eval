@@ -16,9 +16,9 @@ ast::File {
               second:
                 locator second : any
     }
-    pub enum Option : Option [Some: (Expr(T)) | None: any] {
+    pub enum Option : Option [Some: (Expr(T)) | None: ()] {
       Some: (Expr(T))
-      None: any
+      None: ()
     }
     impl<T> Option<T
 > : () {
@@ -76,14 +76,14 @@ ast::File {
         let some: Expr(Option<i64
 >)
           init:
-            invoke : Option [Some: (Expr(T)) | None: any]
+            invoke : Option [Some: (Expr(T)) | None: ()]
               target: Option::Some
               args:
                 value 100 : i64
         let none: Expr(Option<i64
 >)
           init:
-            locator Option::None : Option [Some: (Expr(T)) | None: any]
+            locator Option::None : Option [Some: (Expr(T)) | None: ()]
         expr_stmt ;
           intrinsic println : ()
             template: "{}" some.unwrap_or(0)

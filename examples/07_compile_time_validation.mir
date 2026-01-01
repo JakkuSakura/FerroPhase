@@ -6,8 +6,8 @@ mir::Program {
             return_local: _0
             locals:
                 _0: ()
-                _1: u64
-                _2: u64
+                _1: usize
+                _2: usize
                 _3: i32
                 _4: bool
                 _5: bool
@@ -21,7 +21,7 @@ mir::Program {
                 bb0:
                     s0: _1 = 24u
                     s1: _2 = 3u
-                    terminator: call global printf("sizeof=%d, fields=%d\n", copy _1, copy _2) -> _3 then bb1
+                    terminator: call global printf("sizeof=%llu, fields=%llu\n", copy _1, copy _2) -> _3 then bb1
                 bb1:
                     s0: _4 = true
                     s1: _5 = false

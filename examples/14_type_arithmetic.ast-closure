@@ -1,0 +1,34 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    pub import fp_rust::t : ()
+    pub import std::fmt::Display : ()
+    pub fn print(i: impl Display) -> () : fn(any) -> () : fn(any) -> ()
+      block (1 stmt) : ()
+        expr_stmt (value)
+          invoke : ()
+            target: printf
+            args:
+              value "%s
+" : &string
+              locator i : any
+    pub type Int = Expr(i64) : i64
+    pub type FooUnnamedStruct = structural{a: Expr(Int), b: Expr(Int)} : FooUnnamedStruct{a: Expr(Int), b: Expr(Int)}
+    pub struct BarNamedStruct : BarNamedStruct{c: Expr(Int), d: Expr(Int)} {
+      c: Expr(Int)
+      d: Expr(Int)
+    }
+    pub type FooPlusBar = TypeBinaryOp : FooPlusBar{a: Expr(Int), b: Expr(Int), c: Expr(Int), d: Expr(Int)}
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          struct FooPlusBar : FooPlusBar{a: Expr(Int), b: Expr(Int), c: Expr(Int), d: Expr(Int)}
+            a:
+              value 1 : i64
+            b:
+              value 2 : i64
+            c:
+              value 3 : i64
+            d:
+              value 4 : i64
+}

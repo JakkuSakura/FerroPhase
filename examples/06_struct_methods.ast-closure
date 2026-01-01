@@ -1,0 +1,260 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    pub struct Point : Point{x: Expr(i64), y: Expr(i64)} {
+      x: Expr(i64)
+      y: Expr(i64)
+    }
+    impl Point : () {
+      pub fn new(x: Expr(i64), y: Expr(i64)) -> Expr(Self) : fn(i64, i64) -> Point{x: Expr(i64), y: Expr(i64)} : fn(i64, i64) -> Point{x: Expr(i64), y: Expr(i64)}
+        block (1 stmt) : Point{x: Expr(i64), y: Expr(i64)}
+          expr_stmt (value)
+            struct Self : Point{x: Expr(i64), y: Expr(i64)}
+              x:
+                locator x : i64
+              y:
+                locator y : i64
+      pub fn translate(&mut self, dx: Expr(i64), dy: Expr(i64)) -> () : fn(i64, i64) -> () : fn(i64, i64) -> ()
+        block (2 stmts) : ()
+          expr_stmt ;
+            assign : i64
+              target:
+                select .x [unknown] : i64
+                  object:
+                    locator self : &Point{x: Expr(i64), y: Expr(i64)}
+              value:
+                binop + : i64
+                  lhs:
+                    select .x [unknown] : i64
+                      object:
+                        locator self : &Point{x: Expr(i64), y: Expr(i64)}
+                  rhs:
+                    locator dx : i64
+          expr_stmt ;
+            assign : i64
+              target:
+                select .y [unknown] : i64
+                  object:
+                    locator self : &Point{x: Expr(i64), y: Expr(i64)}
+              value:
+                binop + : i64
+                  lhs:
+                    select .y [unknown] : i64
+                      object:
+                        locator self : &Point{x: Expr(i64), y: Expr(i64)}
+                  rhs:
+                    locator dy : i64
+      pub fn distance2(&self, other: &Expr(Self)) -> Expr(i64) : fn(&Point{x: Expr(i64), y: Expr(i64)}) -> i64 : fn(&Point{x: Expr(i64), y: Expr(i64)}) -> i64
+        block (3 stmts) : i64
+          let dx
+            init:
+              binop - : i64
+                lhs:
+                  select .x [unknown] : i64
+                    object:
+                      locator self : &Point{x: Expr(i64), y: Expr(i64)}
+                rhs:
+                  select .x [unknown] : i64
+                    object:
+                      locator other : &Point{x: Expr(i64), y: Expr(i64)}
+          let dy
+            init:
+              binop - : i64
+                lhs:
+                  select .y [unknown] : i64
+                    object:
+                      locator self : &Point{x: Expr(i64), y: Expr(i64)}
+                rhs:
+                  select .y [unknown] : i64
+                    object:
+                      locator other : &Point{x: Expr(i64), y: Expr(i64)}
+          expr_stmt (value)
+            binop + : i64
+              lhs:
+                binop * : i64
+                  lhs:
+                    locator dx : i64
+                  rhs:
+                    locator dx : i64
+              rhs:
+                binop * : i64
+                  lhs:
+                    locator dy : i64
+                  rhs:
+                    locator dy : i64
+    }
+    pub struct Rectangle : Rectangle{width: Expr(i64), height: Expr(i64)} {
+      width: Expr(i64)
+      height: Expr(i64)
+    }
+    impl Rectangle : () {
+      pub fn new(width: Expr(i64), height: Expr(i64)) -> Expr(Self) : fn(i64, i64) -> Rectangle{width: Expr(i64), height: Expr(i64)} : fn(i64, i64) -> Rectangle{width: Expr(i64), height: Expr(i64)}
+        block (1 stmt) : Rectangle{width: Expr(i64), height: Expr(i64)}
+          expr_stmt (value)
+            struct Self : Rectangle{width: Expr(i64), height: Expr(i64)}
+              width:
+                locator width : i64
+              height:
+                locator height : i64
+      pub fn area(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
+        block (1 stmt) : i64
+          expr_stmt (value)
+            binop * : i64
+              lhs:
+                select .width [unknown] : i64
+                  object:
+                    locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
+              rhs:
+                select .height [unknown] : i64
+                  object:
+                    locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
+      pub fn perimeter(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
+        block (1 stmt) : i64
+          expr_stmt (value)
+            binop * : i64
+              lhs:
+                value 2 : i64
+              rhs:
+                binop + : i64
+                  lhs:
+                    select .width [unknown] : i64
+                      object:
+                        locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
+                  rhs:
+                    select .height [unknown] : i64
+                      object:
+                        locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
+      pub fn is_square(&self) -> Expr(bool) : fn() -> bool : fn() -> bool
+        block (1 stmt) : bool
+          expr_stmt (value)
+            binop == : bool
+              lhs:
+                select .width [unknown] : i64
+                  object:
+                    locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
+              rhs:
+                select .height [unknown] : i64
+                  object:
+                    locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
+    }
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (13 stmts) : ()
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "=== Struct Operations ===
+" : &string
+        let mut p1
+          init:
+            invoke : Point{x: Expr(i64), y: Expr(i64)}
+              target: Point::new
+              args:
+                value 10 : i64
+                value 20 : i64
+        let p2
+          init:
+            invoke : Point{x: Expr(i64), y: Expr(i64)}
+              target: Point::new
+              args:
+                value 5 : i64
+                value 15 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "p1 = (%lld, %lld)
+" : &string
+              select .x [field] : i64
+                object:
+                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
+              select .y [field] : i64
+                object:
+                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "p2 = (%lld, %lld)
+" : &string
+              select .x [field] : i64
+                object:
+                  locator p2 : Point{x: Expr(i64), y: Expr(i64)}
+              select .y [field] : i64
+                object:
+                  locator p2 : Point{x: Expr(i64), y: Expr(i64)}
+        expr_stmt ;
+          invoke : ()
+            target: p1.translate
+            args:
+              value 3 : i64
+              unop - : i64
+                value:
+                  value 4 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "p1 after translate = (%lld, %lld)
+" : &string
+              select .x [field] : i64
+                object:
+                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
+              select .y [field] : i64
+                object:
+                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Distance²(p1, p2) = %lld
+" : &string
+              invoke : i64
+                target: p1.distance2
+                args:
+                  reference (mutable: const) : &Point{x: Expr(i64), y: Expr(i64)}
+                    locator p2 : Point{x: Expr(i64), y: Expr(i64)}
+        let rect
+          init:
+            invoke : Rectangle{width: Expr(i64), height: Expr(i64)}
+              target: Rectangle::new
+              args:
+                value 10 : i64
+                value 5 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Rectangle: %lld×%lld
+" : &string
+              select .width [field] : i64
+                object:
+                  locator rect : Rectangle{width: Expr(i64), height: Expr(i64)}
+              select .height [field] : i64
+                object:
+                  locator rect : Rectangle{width: Expr(i64), height: Expr(i64)}
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  area = %lld
+" : &string
+              invoke : i64
+                target: rect.area
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  perimeter = %lld
+" : &string
+              invoke : i64
+                target: rect.perimeter
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "  is_square = %d
+" : &string
+              invoke : bool
+                target: rect.is_square
+}

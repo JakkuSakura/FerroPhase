@@ -1,0 +1,60 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (13 stmts) : ()
+        pub const NAME: &string : &string
+          value "FerroPhase" : &string
+        pub const VERSION: &string : &string
+          value "0.1.0" : &string
+        pub const NAME_LEN: u64 : u64
+          value 10 : u64
+        pub const VERSION_LEN: u64 : u64
+          value 5 : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "name='%s' len=%llu
+" : &string
+              locator NAME : &string
+              locator NAME_LEN : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "version='%s' len=%llu
+" : &string
+              locator VERSION : &string
+              locator VERSION_LEN : u64
+        pub const IS_EMPTY: bool : bool
+          value false : bool
+        pub const IS_LONG: bool : bool
+          value true : bool
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "empty=%d, long=%d
+" : &string
+              locator IS_EMPTY : bool
+              locator IS_LONG : bool
+        pub const BANNER: &string : &string
+          value "FerroPhase v0.1.0" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "banner='%s'
+" : &string
+              locator BANNER : &string
+        pub const BUFFER_SIZE: u64 : u64
+          value 256 : u64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "buffer_size=%llu
+" : &string
+              locator BUFFER_SIZE : u64
+}

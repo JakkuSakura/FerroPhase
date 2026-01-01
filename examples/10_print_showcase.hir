@@ -1,0 +1,34 @@
+hir::Program {
+    pub fn main() -> () {
+        {
+            printf("Hello");
+            printf("World with newlines");
+            printf("
+");
+            printf("Number: %lld", 42);
+            printf("Boolean: %d %d", true, false);
+            printf("Mixed: %lld %f %s %d", 1, 2.5, "text", true);
+            printf("
+");
+            printf("Namespace test %s", "still works");
+            printf("
+");
+            let value = 7;
+            printf("value = %lld
+", value);
+            printf("math: %lld + %lld = %lld
+", 2, 3, 5);
+            printf("This %s %s %s %s", "stays", "on", "one", "line");
+            printf("
+");
+            printf("Continuing without newline");
+            printf(" - appended content");
+            printf("
+");
+            printf("Unit: %s", "()");
+            printf("Null: %s", "<none>");
+            printf("
+");
+        }
+    }
+}
