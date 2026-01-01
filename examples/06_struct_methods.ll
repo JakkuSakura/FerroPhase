@@ -41,56 +41,56 @@ bb0:
 
 define internal i64 @Point__distance2(ptr %0, ptr %1) {
 bb0:
-  %alloca_21 = alloca i64, align 8
-  %alloca_count_21 = alloca i64, align 8
+  %alloca_66 = alloca i64, align 8
+  %alloca_count_66 = alloca i64, align 8
+  %alloca_61 = alloca i64, align 8
+  %alloca_count_61 = alloca i64, align 8
+  %alloca_56 = alloca i64, align 8
+  %alloca_count_56 = alloca i64, align 8
+  %alloca_51 = alloca i64, align 8
+  %alloca_count_51 = alloca i64, align 8
+  %alloca_46 = alloca i64, align 8
+  %alloca_count_46 = alloca i64, align 8
+  %alloca_43 = alloca i64, align 8
+  %alloca_count_43 = alloca i64, align 8
+  %alloca_32 = alloca i64, align 8
+  %alloca_count_32 = alloca i64, align 8
+  %alloca_29 = alloca i64, align 8
+  %alloca_count_29 = alloca i64, align 8
   %alloca_22 = alloca i64, align 8
   %alloca_count_22 = alloca i64, align 8
+  %alloca_21 = alloca i64, align 8
+  %alloca_count_21 = alloca i64, align 8
   %load_24 = load i64, ptr %0, align 8
   %load_26 = load i64, ptr %1, align 8
   %iop_27 = sub i64 %load_24, %load_26
   store i64 %iop_27, ptr %alloca_count_22, align 8
-  %alloca_29 = alloca i64, align 8
-  %alloca_count_29 = alloca i64, align 8
   %load_30 = load i64, ptr %alloca_count_22, align 8
   store i64 %load_30, ptr %alloca_count_29, align 8
-  %alloca_32 = alloca i64, align 8
-  %alloca_count_32 = alloca i64, align 8
   %gep_34 = getelementptr inbounds i8, ptr %0, i64 8
   %load_36 = load i64, ptr %gep_34, align 8
   %gep_38 = getelementptr inbounds i8, ptr %1, i64 8
   %load_40 = load i64, ptr %gep_38, align 8
   %iop_41 = sub i64 %load_36, %load_40
   store i64 %iop_41, ptr %alloca_count_32, align 8
-  %alloca_43 = alloca i64, align 8
-  %alloca_count_43 = alloca i64, align 8
   %load_44 = load i64, ptr %alloca_count_32, align 8
   store i64 %load_44, ptr %alloca_count_43, align 8
-  %alloca_46 = alloca i64, align 8
-  %alloca_count_46 = alloca i64, align 8
   %load_47 = load i64, ptr %alloca_count_29, align 8
   %load_48 = load i64, ptr %alloca_count_29, align 8
   %iop_49 = mul i64 %load_47, %load_48
   store i64 %iop_49, ptr %alloca_count_46, align 8
-  %alloca_51 = alloca i64, align 8
-  %alloca_count_51 = alloca i64, align 8
   %load_52 = load i64, ptr %alloca_count_43, align 8
   %load_53 = load i64, ptr %alloca_count_43, align 8
   %iop_54 = mul i64 %load_52, %load_53
   store i64 %iop_54, ptr %alloca_count_51, align 8
-  %alloca_56 = alloca i64, align 8
-  %alloca_count_56 = alloca i64, align 8
   %load_57 = load i64, ptr %alloca_count_46, align 8
   %load_58 = load i64, ptr %alloca_count_51, align 8
   %iop_59 = add i64 %load_57, %load_58
   store i64 %iop_59, ptr %alloca_count_56, align 8
-  %alloca_61 = alloca i64, align 8
-  %alloca_count_61 = alloca i64, align 8
   %load_62 = load i64, ptr %alloca_count_29, align 8
   %load_63 = load i64, ptr %alloca_count_29, align 8
   %iop_64 = mul i64 %load_62, %load_63
   store i64 %iop_64, ptr %alloca_count_61, align 8
-  %alloca_66 = alloca i64, align 8
-  %alloca_count_66 = alloca i64, align 8
   %load_67 = load i64, ptr %alloca_count_43, align 8
   %load_68 = load i64, ptr %alloca_count_43, align 8
   %iop_69 = mul i64 %load_67, %load_68
@@ -118,10 +118,10 @@ bb0:
 
 define internal i64 @Rectangle__area(ptr %0) {
 bb0:
-  %alloca_83 = alloca i64, align 8
-  %alloca_count_83 = alloca i64, align 8
   %alloca_84 = alloca i64, align 8
   %alloca_count_84 = alloca i64, align 8
+  %alloca_83 = alloca i64, align 8
+  %alloca_count_83 = alloca i64, align 8
   %load_86 = load i64, ptr %0, align 8
   %gep_88 = getelementptr inbounds i8, ptr %0, i64 8
   %load_90 = load i64, ptr %gep_88, align 8
@@ -138,22 +138,22 @@ bb0:
 
 define internal i64 @Rectangle__perimeter(ptr %0) {
 bb0:
-  %alloca_102 = alloca i64, align 8
-  %alloca_count_102 = alloca i64, align 8
+  %alloca_116 = alloca i64, align 8
+  %alloca_count_116 = alloca i64, align 8
+  %alloca_112 = alloca i64, align 8
+  %alloca_count_112 = alloca i64, align 8
   %alloca_103 = alloca i64, align 8
   %alloca_count_103 = alloca i64, align 8
+  %alloca_102 = alloca i64, align 8
+  %alloca_count_102 = alloca i64, align 8
   %load_105 = load i64, ptr %0, align 8
   %gep_107 = getelementptr inbounds i8, ptr %0, i64 8
   %load_109 = load i64, ptr %gep_107, align 8
   %iop_110 = add i64 %load_105, %load_109
   store i64 %iop_110, ptr %alloca_count_103, align 8
-  %alloca_112 = alloca i64, align 8
-  %alloca_count_112 = alloca i64, align 8
   %load_113 = load i64, ptr %alloca_count_103, align 8
   %iop_114 = mul i64 2, %load_113
   store i64 %iop_114, ptr %alloca_count_112, align 8
-  %alloca_116 = alloca i64, align 8
-  %alloca_count_116 = alloca i64, align 8
   %load_118 = load i64, ptr %0, align 8
   %gep_120 = getelementptr inbounds i8, ptr %0, i64 8
   %load_122 = load i64, ptr %gep_120, align 8
@@ -168,10 +168,10 @@ bb0:
 
 define internal i1 @Rectangle__is_square(ptr %0) {
 bb0:
-  %alloca_129 = alloca i1, align 1
-  %alloca_count_129 = alloca i1, align 1
   %alloca_130 = alloca i1, align 1
   %alloca_count_130 = alloca i1, align 1
+  %alloca_129 = alloca i1, align 1
+  %alloca_count_129 = alloca i1, align 1
   %load_132 = load i64, ptr %0, align 8
   %gep_134 = getelementptr inbounds i8, ptr %0, i64 8
   %load_136 = load i64, ptr %gep_134, align 8
@@ -186,8 +186,38 @@ bb0:
   ret i1 %load_147
 }
 
-define internal void @main() {
+define i32 @main() {
 bb0:
+  %alloca_217 = alloca ptr, align 8
+  %alloca_count_217 = alloca ptr, align 8
+  %alloca_213 = alloca ptr, align 8
+  %alloca_count_213 = alloca ptr, align 8
+  %alloca_209 = alloca ptr, align 8
+  %alloca_count_209 = alloca ptr, align 8
+  %alloca_202 = alloca { i64, i64 }, align 8
+  %alloca_count_202 = alloca { i64, i64 }, align 8
+  %alloca_198 = alloca { i64, i64 }, align 8
+  %alloca_count_198 = alloca { i64, i64 }, align 8
+  %alloca_193 = alloca ptr, align 8
+  %alloca_count_193 = alloca ptr, align 8
+  %alloca_191 = alloca ptr, align 8
+  %alloca_count_191 = alloca ptr, align 8
+  %alloca_184 = alloca { i64, i64 }, align 8
+  %alloca_count_184 = alloca { i64, i64 }, align 8
+  %alloca_180 = alloca { i64, i64 }, align 8
+  %alloca_count_180 = alloca { i64, i64 }, align 8
+  %alloca_175 = alloca i64, align 8
+  %alloca_count_175 = alloca i64, align 8
+  %alloca_173 = alloca ptr, align 8
+  %alloca_count_173 = alloca ptr, align 8
+  %alloca_166 = alloca { i64, i64 }, align 8
+  %alloca_count_166 = alloca { i64, i64 }, align 8
+  %alloca_162 = alloca { i64, i64 }, align 8
+  %alloca_count_162 = alloca { i64, i64 }, align 8
+  %alloca_155 = alloca { i64, i64 }, align 8
+  %alloca_count_155 = alloca { i64, i64 }, align 8
+  %alloca_151 = alloca { i64, i64 }, align 8
+  %alloca_count_151 = alloca { i64, i64 }, align 8
   %call_148 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.0)
   br label %bb1
 
@@ -200,12 +230,8 @@ bb2:                                              ; preds = %bb1
   br label %bb3
 
 bb3:                                              ; preds = %bb2
-  %alloca_151 = alloca { i64, i64 }, align 8
-  %alloca_count_151 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_149, ptr %alloca_count_151, align 8
   %load_154 = load i64, ptr %alloca_count_151, align 8
-  %alloca_155 = alloca { i64, i64 }, align 8
-  %alloca_count_155 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_149, ptr %alloca_count_155, align 8
   %gep_158 = getelementptr inbounds i8, ptr %alloca_count_155, i64 8
   %load_160 = load i64, ptr %gep_158, align 8
@@ -213,12 +239,8 @@ bb3:                                              ; preds = %bb2
   br label %bb4
 
 bb4:                                              ; preds = %bb3
-  %alloca_162 = alloca { i64, i64 }, align 8
-  %alloca_count_162 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_150, ptr %alloca_count_162, align 8
   %load_165 = load i64, ptr %alloca_count_162, align 8
-  %alloca_166 = alloca { i64, i64 }, align 8
-  %alloca_count_166 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_150, ptr %alloca_count_166, align 8
   %gep_169 = getelementptr inbounds i8, ptr %alloca_count_166, i64 8
   %load_171 = load i64, ptr %gep_169, align 8
@@ -226,23 +248,15 @@ bb4:                                              ; preds = %bb3
   br label %bb5
 
 bb5:                                              ; preds = %bb4
-  %alloca_173 = alloca ptr, align 8
-  %alloca_count_173 = alloca ptr, align 8
   store { i64, i64 } %call_149, ptr %alloca_count_173, align 8
-  %alloca_175 = alloca i64, align 8
-  %alloca_count_175 = alloca i64, align 8
   store i64 -4, ptr %alloca_count_175, align 8
   %load_178 = load i64, ptr %alloca_count_175, align 8
   call void @Point__translate(ptr %alloca_count_173, i64 3, i64 %load_178)
   br label %bb6
 
 bb6:                                              ; preds = %bb5
-  %alloca_180 = alloca { i64, i64 }, align 8
-  %alloca_count_180 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_149, ptr %alloca_count_180, align 8
   %load_183 = load i64, ptr %alloca_count_180, align 8
-  %alloca_184 = alloca { i64, i64 }, align 8
-  %alloca_count_184 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_149, ptr %alloca_count_184, align 8
   %gep_187 = getelementptr inbounds i8, ptr %alloca_count_184, i64 8
   %load_189 = load i64, ptr %gep_187, align 8
@@ -250,11 +264,7 @@ bb6:                                              ; preds = %bb5
   br label %bb7
 
 bb7:                                              ; preds = %bb6
-  %alloca_191 = alloca ptr, align 8
-  %alloca_count_191 = alloca ptr, align 8
   store { i64, i64 } %call_149, ptr %alloca_count_191, align 8
-  %alloca_193 = alloca ptr, align 8
-  %alloca_count_193 = alloca ptr, align 8
   store { i64, i64 } %call_150, ptr %alloca_count_193, align 8
   %call_195 = call i64 @Point__distance2(ptr %alloca_count_191, ptr %alloca_count_193)
   br label %bb8
@@ -268,12 +278,8 @@ bb9:                                              ; preds = %bb8
   br label %bb10
 
 bb10:                                             ; preds = %bb9
-  %alloca_198 = alloca { i64, i64 }, align 8
-  %alloca_count_198 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_197, ptr %alloca_count_198, align 8
   %load_201 = load i64, ptr %alloca_count_198, align 8
-  %alloca_202 = alloca { i64, i64 }, align 8
-  %alloca_count_202 = alloca { i64, i64 }, align 8
   store { i64, i64 } %call_197, ptr %alloca_count_202, align 8
   %gep_205 = getelementptr inbounds i8, ptr %alloca_count_202, i64 8
   %load_207 = load i64, ptr %gep_205, align 8
@@ -281,8 +287,6 @@ bb10:                                             ; preds = %bb9
   br label %bb11
 
 bb11:                                             ; preds = %bb10
-  %alloca_209 = alloca ptr, align 8
-  %alloca_count_209 = alloca ptr, align 8
   store { i64, i64 } %call_197, ptr %alloca_count_209, align 8
   %call_211 = call i64 @Rectangle__area(ptr %alloca_count_209)
   br label %bb12
@@ -292,8 +296,6 @@ bb12:                                             ; preds = %bb11
   br label %bb13
 
 bb13:                                             ; preds = %bb12
-  %alloca_213 = alloca ptr, align 8
-  %alloca_count_213 = alloca ptr, align 8
   store { i64, i64 } %call_197, ptr %alloca_count_213, align 8
   %call_215 = call i64 @Rectangle__perimeter(ptr %alloca_count_213)
   br label %bb14
@@ -303,8 +305,6 @@ bb14:                                             ; preds = %bb13
   br label %bb15
 
 bb15:                                             ; preds = %bb14
-  %alloca_217 = alloca ptr, align 8
-  %alloca_count_217 = alloca ptr, align 8
   store { i64, i64 } %call_197, ptr %alloca_count_217, align 8
   %call_219 = call i1 @Rectangle__is_square(ptr %alloca_count_217)
   br label %bb16
@@ -315,7 +315,7 @@ bb16:                                             ; preds = %bb15
   br label %bb17
 
 bb17:                                             ; preds = %bb16
-  ret void
+  ret i32 0
 }
 
 declare i32 @printf(ptr, ...)

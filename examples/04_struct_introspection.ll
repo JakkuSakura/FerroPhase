@@ -23,8 +23,18 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.04_struct_introspection.17 = private unnamed_addr constant [30 x i8] c"  Red: rgb(%hhu, %hhu, %hhu)\0A\00", align 1
 @.str.04_struct_introspection.18 = private unnamed_addr constant [54 x i8] c"\0A\E2\9C\93 Introspection enables external code generation!\0A\00", align 1
 
-define internal void @main() {
+define i32 @main() {
 bb0:
+  %alloca_26 = alloca i64, align 8
+  %alloca_count_26 = alloca i64, align 8
+  %alloca_22 = alloca i64, align 8
+  %alloca_count_22 = alloca i64, align 8
+  %alloca_18 = alloca i64, align 8
+  %alloca_count_18 = alloca i64, align 8
+  %alloca_15 = alloca { i8, i8, i8 }, align 8
+  %alloca_count_15 = alloca { i8, i8, i8 }, align 8
+  %alloca_13 = alloca { double, double }, align 8
+  %alloca_count_13 = alloca { double, double }, align 8
   %call_0 = call i32 (ptr, ...) @printf(ptr @.str.04_struct_introspection.0)
   br label %bb1
 
@@ -69,34 +79,24 @@ bb10:                                             ; preds = %bb9
   br label %bb11
 
 bb11:                                             ; preds = %bb10
-  %alloca_13 = alloca { double, double }, align 8
-  %alloca_count_13 = alloca { double, double }, align 8
   store { double, double } zeroinitializer, ptr %alloca_count_13, align 8
-  %alloca_15 = alloca { i8, i8, i8 }, align 8
-  %alloca_count_15 = alloca { i8, i8, i8 }, align 8
   store { i8, i8, i8 } { i8 -1, i8 0, i8 0 }, ptr %alloca_count_15, align 1
   %call_17 = call i32 (ptr, ...) @printf(ptr @.str.04_struct_introspection.11)
   br label %bb12
 
 bb12:                                             ; preds = %bb11
-  %alloca_18 = alloca i64, align 8
-  %alloca_count_18 = alloca i64, align 8
   store i64 16, ptr %alloca_count_18, align 8
   %load_20 = load i64, ptr %alloca_count_18, align 8
   %call_21 = call i32 (ptr, ...) @printf(ptr @.str.04_struct_introspection.12, i64 %load_20)
   br label %bb13
 
 bb13:                                             ; preds = %bb12
-  %alloca_22 = alloca i64, align 8
-  %alloca_count_22 = alloca i64, align 8
   store i64 24, ptr %alloca_count_22, align 8
   %load_24 = load i64, ptr %alloca_count_22, align 8
   %call_25 = call i32 (ptr, ...) @printf(ptr @.str.04_struct_introspection.13, i64 %load_24)
   br label %bb14
 
 bb14:                                             ; preds = %bb13
-  %alloca_26 = alloca i64, align 8
-  %alloca_count_26 = alloca i64, align 8
   store i64 40, ptr %alloca_count_26, align 8
   %load_28 = load i64, ptr %alloca_count_26, align 8
   %call_29 = call i32 (ptr, ...) @printf(ptr @.str.04_struct_introspection.14, i64 %load_28)
@@ -130,7 +130,7 @@ bb18:                                             ; preds = %bb17
   br label %bb19
 
 bb19:                                             ; preds = %bb18
-  ret void
+  ret i32 0
 }
 
 declare i32 @printf(ptr, ...)

@@ -14,15 +14,29 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.03_control_flow.8 = private unnamed_addr constant [7 x i8] c"medium\00", align 1
 @.str.03_control_flow.9 = private unnamed_addr constant [4 x i8] c"low\00", align 1
 
-define internal void @main() {
+define i32 @main() {
 bb0:
-  %alloca_0 = alloca ptr, align 8
-  %alloca_count_0 = alloca ptr, align 8
-  %alloca_1 = alloca i64, align 8
-  %alloca_count_1 = alloca i64, align 8
-  store i64 25, ptr %alloca_count_1, align 8
+  %alloca_32 = alloca ptr, align 8
+  %alloca_count_32 = alloca ptr, align 8
+  %alloca_27 = alloca i1, align 1
+  %alloca_count_27 = alloca i1, align 1
+  %alloca_21 = alloca i1, align 1
+  %alloca_count_21 = alloca i1, align 1
+  %alloca_19 = alloca i64, align 8
+  %alloca_count_19 = alloca i64, align 8
+  %alloca_14 = alloca ptr, align 8
+  %alloca_count_14 = alloca ptr, align 8
+  %alloca_12 = alloca i64, align 8
+  %alloca_count_12 = alloca i64, align 8
+  %alloca_8 = alloca ptr, align 8
+  %alloca_count_8 = alloca ptr, align 8
   %alloca_3 = alloca ptr, align 8
   %alloca_count_3 = alloca ptr, align 8
+  %alloca_1 = alloca i64, align 8
+  %alloca_count_1 = alloca i64, align 8
+  %alloca_0 = alloca ptr, align 8
+  %alloca_count_0 = alloca ptr, align 8
+  store i64 25, ptr %alloca_count_1, align 8
   store ptr @.str.03_control_flow.0, ptr %alloca_count_3, align 8
   %load_5 = load i64, ptr %alloca_count_1, align 8
   %load_6 = load ptr, ptr %alloca_count_3, align 8
@@ -30,19 +44,13 @@ bb0:
   br label %bb1
 
 bb1:                                              ; preds = %bb0
-  %alloca_8 = alloca ptr, align 8
-  %alloca_count_8 = alloca ptr, align 8
   store ptr @.str.03_control_flow.2, ptr %alloca_count_8, align 8
   %load_10 = load ptr, ptr %alloca_count_8, align 8
   %call_11 = call i32 (ptr, ...) @printf(ptr @.str.03_control_flow.3, ptr %load_10)
   br label %bb2
 
 bb2:                                              ; preds = %bb1
-  %alloca_12 = alloca i64, align 8
-  %alloca_count_12 = alloca i64, align 8
   store i64 85, ptr %alloca_count_12, align 8
-  %alloca_14 = alloca ptr, align 8
-  %alloca_count_14 = alloca ptr, align 8
   store ptr @.str.03_control_flow.4, ptr %alloca_count_14, align 8
   %load_16 = load i64, ptr %alloca_count_12, align 8
   %load_17 = load ptr, ptr %alloca_count_14, align 8
@@ -50,11 +58,7 @@ bb2:                                              ; preds = %bb1
   br label %bb3
 
 bb3:                                              ; preds = %bb2
-  %alloca_19 = alloca i64, align 8
-  %alloca_count_19 = alloca i64, align 8
   store i64 42, ptr %alloca_count_19, align 8
-  %alloca_21 = alloca i1, align 1
-  %alloca_count_21 = alloca i1, align 1
   %load_22 = load i64, ptr %alloca_count_19, align 8
   %icmp_23 = icmp sgt i64 %load_22, 50
   store i1 %icmp_23, ptr %alloca_count_21, align 1
@@ -66,8 +70,6 @@ bb4:                                              ; preds = %bb3
   br label %bb6
 
 bb5:                                              ; preds = %bb3
-  %alloca_27 = alloca i1, align 1
-  %alloca_count_27 = alloca i1, align 1
   %load_28 = load i64, ptr %alloca_count_19, align 8
   %icmp_29 = icmp sgt i64 %load_28, 25
   store i1 %icmp_29, ptr %alloca_count_27, align 1
@@ -75,8 +77,6 @@ bb5:                                              ; preds = %bb3
   br i1 %load_31, label %bb7, label %bb8
 
 bb6:                                              ; preds = %bb9, %bb4
-  %alloca_32 = alloca ptr, align 8
-  %alloca_count_32 = alloca ptr, align 8
   %load_33 = load ptr, ptr %alloca_count_0, align 8
   store ptr %load_33, ptr %alloca_count_32, align 8
   %load_35 = load i64, ptr %alloca_count_19, align 8
@@ -93,7 +93,7 @@ bb8:                                              ; preds = %bb5
   br label %bb9
 
 bb10:                                             ; preds = %bb6
-  ret void
+  ret i32 0
 
 bb9:                                              ; preds = %bb8, %bb7
   br label %bb6

@@ -26,8 +26,10 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.10_print_showcase.20 = private unnamed_addr constant [9 x i8] c"Null: %s\00", align 1
 @.str.10_print_showcase.21 = private unnamed_addr constant [7 x i8] c"<none>\00", align 1
 
-define internal void @main() {
+define i32 @main() {
 bb0:
+  %alloca_12 = alloca i64, align 8
+  %alloca_count_12 = alloca i64, align 8
   %call_0 = call i32 (ptr, ...) @printf(ptr @.str.10_print_showcase.0)
   br label %bb1
 
@@ -64,8 +66,6 @@ bb8:                                              ; preds = %bb7
   br label %bb9
 
 bb9:                                              ; preds = %bb8
-  %alloca_12 = alloca i64, align 8
-  %alloca_count_12 = alloca i64, align 8
   store i64 7, ptr %alloca_count_12, align 8
   %load_14 = load i64, ptr %alloca_count_12, align 8
   %call_15 = call i32 (ptr, ...) @printf(ptr @.str.10_print_showcase.9, i64 %load_14)
@@ -108,7 +108,7 @@ bb18:                                             ; preds = %bb17
   br label %bb19
 
 bb19:                                             ; preds = %bb18
-  ret void
+  ret i32 0
 }
 
 declare i32 @printf(ptr, ...)

@@ -463,6 +463,8 @@ common_struct! {
     pub struct ExprStruct {
         pub name: BExpr,
         pub fields: Vec<ExprField>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub update: Option<BExpr>,
     }
 }
 impl ExprStruct {
@@ -470,10 +472,15 @@ impl ExprStruct {
         Self {
             name: Expr::ident(name).into(),
             fields,
+            update: None,
         }
     }
     pub fn new(name: BExpr, fields: Vec<ExprField>) -> Self {
-        Self { name, fields }
+        Self {
+            name,
+            fields,
+            update: None,
+        }
     }
 }
 common_struct! {

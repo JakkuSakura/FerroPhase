@@ -11,10 +11,10 @@ lir::Program {
                 %6: i8
                 %7: i32
             bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = call c @type_name() : ptr ptr i8
+                i0: %r0 = call c @Point3D__type_name() : ptr ptr i8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i1: %r1 = call c @field_count() : i64
+                i1: %r1 = call c @Point3D__field_count() : i64
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
                 i2: %r2 = call c @printf(c"%s has %llu fields
@@ -22,7 +22,7 @@ lir::Program {
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i3: %r3 = alloca i32 1 align 8 : ptr i64
-                i4: store struct i64 { i64 1 }, %r3 align 8
+                i4: store i64 1, %r3 align 8
                 i5: %r5 = alloca i32 1 align 8 : ptr i64
                 i6: %r6 = load %r3 align 8 : i64
                 i7: store %r6, %r5 align 8
@@ -39,7 +39,7 @@ lir::Program {
                 terminator: ret void
         }
 
-        fn type_name() -> ptr ptr i8 [cc: c, linkage: internal] {
+        fn Point3D__type_name() -> ptr ptr i8 [cc: c, linkage: internal] {
             locals:
                 %0: ptr ptr i8
             bb0 // label: bb0:
@@ -49,7 +49,7 @@ lir::Program {
                 terminator: ret %r17
         }
 
-        fn field_count() -> i64 [cc: c, linkage: internal] {
+        fn Point3D__field_count() -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
             bb0 // label: bb0:

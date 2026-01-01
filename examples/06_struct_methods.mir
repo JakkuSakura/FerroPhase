@@ -1,18 +1,18 @@
 mir::Program {
     items:
-        fn new(arg0: i64, arg1: i64) -> (i64, i64) [body: body0]
+        fn Point::new(arg0: i64, arg1: i64) -> (i64, i64) [body: body0]
 
-        fn translate(arg0: <??>, arg1: i64, arg2: i64) -> () [body: body1]
+        fn Point::translate(arg0: <??>, arg1: i64, arg2: i64) -> () [body: body1]
 
-        fn distance2(arg0: <??>, arg1: <??>) -> i64 [body: body2]
+        fn Point::distance2(arg0: <??>, arg1: <??>) -> i64 [body: body2]
 
-        fn new(arg0: i64, arg1: i64) -> (i64, i64) [body: body3]
+        fn Rectangle::new(arg0: i64, arg1: i64) -> (i64, i64) [body: body3]
 
-        fn area(arg0: <??>) -> i64 [body: body4]
+        fn Rectangle::area(arg0: <??>) -> i64 [body: body4]
 
-        fn perimeter(arg0: <??>) -> i64 [body: body5]
+        fn Rectangle::perimeter(arg0: <??>) -> i64 [body: body5]
 
-        fn is_square(arg0: <??>) -> bool [body: body6]
+        fn Rectangle::is_square(arg0: <??>) -> bool [body: body6]
 
         fn main() -> () [body: body7]
     bodies:
@@ -149,9 +149,9 @@ mir::Program {
                 bb0:
                     terminator: call global printf("=== Struct Operations ===\n") -> _1 then bb1
                 bb1:
-                    terminator: call fn new(10, 20) -> _2 then bb2
+                    terminator: call fn Point::new(10, 20) -> _2 then bb2
                 bb2:
-                    terminator: call fn new(5, 15) -> _3 then bb3
+                    terminator: call fn Point::new(5, 15) -> _3 then bb3
                 bb3:
                     terminator: call global printf("p1 = (%lld, %lld)\n", copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _4 then bb4
                 bb4:
@@ -159,32 +159,32 @@ mir::Program {
                 bb5:
                     s0: _7 = ref(Shared, _2)
                     s1: _8 = Neg(4)
-                    terminator: call fn translate(copy _7, 3, copy _8) -> _6 then bb6
+                    terminator: call fn Point::translate(copy _7, 3, copy _8) -> _6 then bb6
                 bb6:
                     terminator: call global printf("p1 after translate = (%lld, %lld)\n", copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _9 then bb7
                 bb7:
                     s0: _11 = ref(Shared, _2)
                     s1: _12 = ref(Shared, _3)
-                    terminator: call fn distance2(copy _11, copy _12) -> _10 then bb8
+                    terminator: call fn Point::distance2(copy _11, copy _12) -> _10 then bb8
                 bb8:
                     terminator: call global printf("Distance²(p1, p2) = %lld\n", copy _10) -> _13 then bb9
                 bb9:
-                    terminator: call fn new(10, 5) -> _14 then bb10
+                    terminator: call fn Rectangle::new(10, 5) -> _14 then bb10
                 bb10:
                     terminator: call global printf("Rectangle: %lld×%lld\n", copy _14[Field(0, Ty { kind: Int(I64) })], copy _14[Field(1, Ty { kind: Int(I64) })]) -> _15 then bb11
                 bb11:
                     s0: _17 = ref(Shared, _14)
-                    terminator: call fn area(copy _17) -> _16 then bb12
+                    terminator: call fn Rectangle::area(copy _17) -> _16 then bb12
                 bb12:
                     terminator: call global printf("  area = %lld\n", copy _16) -> _18 then bb13
                 bb13:
                     s0: _20 = ref(Shared, _14)
-                    terminator: call fn perimeter(copy _20) -> _19 then bb14
+                    terminator: call fn Rectangle::perimeter(copy _20) -> _19 then bb14
                 bb14:
                     terminator: call global printf("  perimeter = %lld\n", copy _19) -> _21 then bb15
                 bb15:
                     s0: _23 = ref(Shared, _14)
-                    terminator: call fn is_square(copy _23) -> _22 then bb16
+                    terminator: call fn Rectangle::is_square(copy _23) -> _22 then bb16
                 bb16:
                     terminator: call global printf("  is_square = %d\n", copy _22) -> _24 then bb17
                 bb17:

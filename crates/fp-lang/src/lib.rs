@@ -2,12 +2,13 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
+mod normalization;
 use fp_core::ast::{Expr, ExprKind, Node};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_rust::normalization::RustIntrinsicNormalizer;
+use crate::normalization::FerroIntrinsicNormalizer;
 use fp_rust::printer::RustPrinter;
 
 /// Canonical identifier for the FerroPhase source language.
@@ -56,7 +57,7 @@ impl LanguageFrontend for FerroFrontend {
         let cleaned = self.clean_source(source);
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
-            Arc::new(RustIntrinsicNormalizer::default());
+            Arc::new(FerroIntrinsicNormalizer::default());
 
         if let Some(path) = path {
             self.ferro.clear_diagnostics();

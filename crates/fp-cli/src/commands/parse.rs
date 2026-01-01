@@ -143,11 +143,14 @@ fn scrub_any_expressions(file: &mut File) {
             }
             ExprKind::Await(inner) => scrub_expr(inner.base.as_mut()),
             ExprKind::Select(ExprSelect { obj, .. }) => scrub_expr(obj.as_mut()),
-            ExprKind::Struct(ExprStruct { fields, name: _ }) => {
+            ExprKind::Struct(ExprStruct { fields, update, .. }) => {
                 for ExprField { value, .. } in fields.iter_mut() {
                     if let Some(v) = value.as_mut() {
                         scrub_expr(v);
                     }
+                }
+                if let Some(expr) = update.as_mut() {
+                    scrub_expr(expr);
                 }
             }
             ExprKind::Structural(ExprStructural { fields }) => {

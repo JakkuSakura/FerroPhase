@@ -60,6 +60,12 @@ fn describe_union(value: FooOrBar) -> Int {
 // Function type that consumes a FooOrBar.
 type FooOrBarFn = fn(FooOrBar) -> Int;
 
+type LiteralInt = t! { 42i64 };
+type LiteralBool = t! { true };
+type LiteralStr = t! { "hello" };
+type LiteralUnit = t! { () };
+type LiteralNull = t! { null };
+type LiteralStrEnum = t! { "red" | "green" | "blue" };
 fn main() {
     FooPlusBar {
         a: 1,
@@ -89,7 +95,6 @@ fn main() {
 fn proposed_syntax_examples(existing_foo: Foo, value: FooOrBar) {
     type FooMaybe = Foo?;
 
-    let _merged = FooPlusBar { ..existing_foo, bar: 9 };
 
     fn print_display<T: Display - Clone>(value: T) {
         println!("{}", value);

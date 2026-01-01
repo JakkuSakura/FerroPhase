@@ -204,7 +204,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if matches!(ty, Ty::Function(_)) {
                         self.type_from_ast_ty(ty)?
                     } else {
-                        self.resolve_struct_literal(struct_expr)?
+                        let resolved = match ty {
+                            Ty::Enum(_) => Some(ty.clone()),
+                            _ => self
+                                .type_from_ast_ty(ty)
+                                .ok()
+                                .and_then(|var| self.resolve_to_ty(var).ok()),
+                        };
+                        if let Some(Ty::Enum(enum_ty)) = resolved.as_ref() {
+                            if let Some(var) =
+                                self.resolve_struct_literal_as_enum_variant(struct_expr, enum_ty)?
+                            {
+                                var
+                            } else {
+                                self.resolve_struct_literal(struct_expr)?
+                            }
+                        } else {
+                            self.resolve_struct_literal(struct_expr)?
+                        }
                     }
                 } else {
                     self.resolve_struct_literal(struct_expr)?
@@ -1270,6 +1287,61 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                             }
                         }
+                        // Struct patterns are lowered as `PatternKind::Variant` with a
+                        // single-segment path and structural payload. Bind fields against
+                        // known struct definitions so identifiers enter the environment.
+                        let struct_name = match locator {
+                            Locator::Path(path) if path.segments.len() == 1 => {
+                                Some(path.segments[0].as_str().to_string())
+                            }
+                            Locator::Ident(ident) => Some(ident.as_str().to_string()),
+                            _ => None,
+                        };
+                        if let Some(struct_name) = struct_name {
+                                if let Some(struct_def) =
+                                    self.struct_defs.get(&struct_name).cloned()
+                                {
+                                    let struct_var = self.fresh_type_var();
+                                    self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
+
+                                    if let Some(inner) = variant.pattern.as_mut() {
+                                        if let PatternKind::Structural(pat) = inner.kind_mut() {
+                                            let mut bindings = Vec::new();
+                                            for field in &mut pat.fields {
+                                                if let Some(def_field) = struct_def
+                                                    .fields
+                                                    .iter()
+                                                    .find(|f| f.name == field.name)
+                                                {
+                                                    let expected =
+                                                        self.type_from_ast_ty(&def_field.value)?;
+                                                    if let Some(rename) = field.rename.as_mut() {
+                                                        let child = self.infer_pattern(rename)?;
+                                                        bindings.extend(child.bindings);
+                                                        self.unify(child.var, expected)?;
+                                                    } else {
+                                                        let var = self.fresh_type_var();
+                                                        self.insert_env(
+                                                            field.name.as_str().to_string(),
+                                                            EnvEntry::Mono(var),
+                                                        );
+                                                        self.unify(var, expected)?;
+                                                        bindings.push(PatternBinding {
+                                                            name: field.name.as_str().to_string(),
+                                                            var,
+                                                        });
+                                                    }
+                                                }
+                                            }
+
+                                            return Ok(PatternInfo {
+                                                var: struct_var,
+                                                bindings,
+                                            });
+                                        }
+                                    }
+                                }
+                        }
                         // Otherwise treat as a binding-like identifier.
                         let var = self.fresh_type_var();
                         PatternInfo::new(var)
@@ -1548,5 +1620,61 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.emit_error(format!("unknown struct literal target: {}", struct_name));
             Ok(self.error_type_var())
         }
+    }
+
+    fn resolve_struct_literal_as_enum_variant(
+        &mut self,
+        struct_expr: &mut ExprStruct,
+        enum_ty: &TypeEnum,
+    ) -> Result<Option<TypeVarId>> {
+        let struct_name = match self.struct_name_from_expr(&struct_expr.name) {
+            Some(name) => name,
+            None => return Ok(None),
+        };
+
+        let variant = enum_ty
+            .variants
+            .iter()
+            .find(|variant| variant.name.as_str() == struct_name.as_str());
+        let Some(variant) = variant else {
+            return Ok(None);
+        };
+
+        let structural = match &variant.value {
+            Ty::Structural(structural) => Some(structural.fields.clone()),
+            Ty::Struct(struct_ty) => Some(struct_ty.fields.clone()),
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Locator(locator) => locator
+                    .as_ident()
+                    .and_then(|ident| self.struct_defs.get(ident.as_str()).cloned())
+                    .map(|struct_ty| struct_ty.fields),
+                _ => None,
+            },
+            _ => None,
+        };
+
+        let Some(structural) = structural else {
+            return Ok(None);
+        };
+
+        for field in &mut struct_expr.fields {
+            if let Some(value) = field.value.as_mut() {
+                let value_var = self.infer_expr(value)?;
+                if let Some(def_field) = structural.iter().find(|f| f.name == field.name) {
+                    let expected = self.type_from_ast_ty(&def_field.value)?;
+                    self.unify(value_var, expected)?;
+                } else {
+                    self.emit_error(format!(
+                        "unknown field {} on enum variant {}::{}",
+                        field.name, enum_ty.name, variant.name
+                    ));
+                    return Ok(Some(self.error_type_var()));
+                }
+            }
+        }
+
+        let var = self.fresh_type_var();
+        self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+        Ok(Some(var))
     }
 }

@@ -1,6 +1,10 @@
 ast::File {
   items:
-    pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64
+    pub import std::fmt::Display
+    pub import std::ops::Add
+    pub fn<T: Add<T
+> + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy>(unknown, unknown) -> unknown
       block (1 stmt)
         expr_stmt (value)
           binop +
@@ -8,39 +12,49 @@ ast::File {
               locator a
             rhs:
               locator b
-    pub fn double(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64
+    pub fn<T: Add<T
+> + Copy> double(x: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy>(unknown) -> unknown
       block (1 stmt)
         expr_stmt (value)
-          binop *
+          binop +
             lhs:
               locator x
             rhs:
-              value 2
-    pub fn compose(x: Expr(i64)) -> Expr(i64) : fn(i64) -> i64
-      block (1 stmt)
+              locator x
+    pub fn<T: Add<T
+> + Copy + Display> pipeline(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy + Display>(unknown, unknown) -> unknown
+      block (3 stmts)
+        let result
+          init:
+            invoke
+              target: double
+              args:
+                invoke
+                  target: add
+                  args:
+                    locator a
+                    locator b
+        expr_stmt ;
+          intrinsic println
+            template: "specialized result: {}" result
         expr_stmt (value)
-          invoke
-            target: double
-            args:
-              invoke
-                target: add
-                args:
-                  locator x
-                  value 1
+          locator result
     pub fn main() -> () : fn() -> ()
-      block (5 stmts)
-        expr_stmt ;
-          intrinsic println
-            template: "{}" add(2, 3)
-        expr_stmt ;
-          intrinsic println
-            template: "{}" double(5)
-        expr_stmt ;
-          intrinsic println
-            template: "{}" compose(10)
-        pub const RESULT: i64
-          value 30
-        expr_stmt ;
-          intrinsic println
-            template: "const: {}" RESULT
+      block (2 stmts)
+        let _
+          init:
+            invoke
+              target: pipeline
+              args:
+                value 10
+                value 20
+        let _
+          init:
+            invoke
+              target: pipeline
+              args:
+                value 1.5
+                value 2.5
 }

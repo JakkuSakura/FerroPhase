@@ -163,6 +163,7 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
                 Expr::new(ExprKind::Value(Box::new(Value::bool(true)))),
             ),
         ],
+        update: None,
     }));
 
     // Call as an associated function to avoid method-call lowering pitfalls:
