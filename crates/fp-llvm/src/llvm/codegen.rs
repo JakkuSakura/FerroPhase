@@ -404,10 +404,35 @@ impl<'ctx> LirCodegen<'ctx> {
         let ty_hint = lir_instr.type_hint.clone();
         match lir_instr.kind {
             lir::LirInstructionKind::Add(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("add_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("add_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
 
                 let result_name = if matches!(llvm_result_ty, Type::FPType(_)) {
                     lhs_operand = self.coerce_float_operand(
@@ -462,10 +487,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.lower_int_cmp(IntPredicate::SGE, lhs, rhs, instr_id, ty_hint.clone())?;
             }
             lir::LirInstructionKind::Sub(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("sub_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("sub_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 let result_name = if matches!(llvm_result_ty, Type::FPType(_)) {
                     lhs_operand = self.coerce_float_operand(
                         lhs_operand,
@@ -500,10 +550,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Mul(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("mul_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("mul_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 let result_name = if matches!(llvm_result_ty, Type::FPType(_)) {
                     lhs_operand = self.coerce_float_operand(
                         lhs_operand,
@@ -538,10 +613,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Div(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("div_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("div_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 let result_name = if matches!(llvm_result_ty, Type::FPType(_)) {
                     lhs_operand = self.coerce_float_operand(
                         lhs_operand,
@@ -576,10 +676,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Rem(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("rem_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("rem_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 let result_name = if matches!(llvm_result_ty, Type::FPType(_)) {
                     lhs_operand = self.coerce_float_operand(
                         lhs_operand,
@@ -622,10 +747,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::And(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("and_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("and_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 if matches!(llvm_result_ty, Type::IntegerType { .. }) {
                     lhs_operand = self.coerce_integer_operand(
                         lhs_operand,
@@ -653,10 +803,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Or(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("or_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("or_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 if matches!(llvm_result_ty, Type::IntegerType { .. }) {
                     lhs_operand = self.coerce_integer_operand(
                         lhs_operand,
@@ -684,10 +859,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Xor(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("xor_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("xor_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 if matches!(llvm_result_ty, Type::IntegerType { .. }) {
                     lhs_operand = self.coerce_integer_operand(
                         lhs_operand,
@@ -715,10 +915,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Shl(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("shl_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("shl_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 if matches!(llvm_result_ty, Type::IntegerType { .. }) {
                     lhs_operand = self.coerce_integer_operand(
                         lhs_operand,
@@ -748,10 +973,35 @@ impl<'ctx> LirCodegen<'ctx> {
                 self.record_result(instr_id, Some(result_ty), result_name);
             }
             lir::LirInstructionKind::Shr(lhs, rhs) => {
-                let result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
-                let llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
+                let mut result_ty = self.infer_binary_result_type(ty_hint.clone(), &lhs, &rhs);
+                let mut llvm_result_ty = self.convert_lir_type_to_llvm(result_ty.clone())?;
                 let mut lhs_operand = self.convert_lir_value_to_operand(lhs.clone())?;
                 let mut rhs_operand = self.convert_lir_value_to_operand(rhs.clone())?;
+
+                let pointer_involved = matches!(llvm_result_ty, Type::PointerType { .. })
+                    || matches!(
+                        lhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    )
+                    || matches!(
+                        rhs_operand.get_type(&self.llvm_ctx.module.types).as_ref(),
+                        Type::PointerType { .. }
+                    );
+                if pointer_involved {
+                    let int_ty = self.llvm_ctx.i64_type();
+                    lhs_operand = self.coerce_pointer_operand_to_int(
+                        lhs_operand,
+                        &int_ty,
+                        &format!("lshr_{}_lhs", instr_id),
+                    )?;
+                    rhs_operand = self.coerce_pointer_operand_to_int(
+                        rhs_operand,
+                        &int_ty,
+                        &format!("lshr_{}_rhs", instr_id),
+                    )?;
+                    result_ty = lir::LirType::I64;
+                    llvm_result_ty = int_ty;
+                }
                 if matches!(llvm_result_ty, Type::IntegerType { .. }) {
                     lhs_operand = self.coerce_integer_operand(
                         lhs_operand,
@@ -945,6 +1195,28 @@ impl<'ctx> LirCodegen<'ctx> {
                 let result_name = self
                     .llvm_ctx
                     .build_bitcast(operand, llvm_target_ty, &format!("bitcast_{}", instr_id))
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(target_ty), result_name);
+            }
+            lir::LirInstructionKind::IntToPtr(value) => {
+                let operand = self.convert_lir_value_to_operand(value)?;
+                let target_ty = ty_hint
+                    .clone()
+                    .unwrap_or(lir::LirType::Ptr(Box::new(lir::LirType::I8)));
+                let llvm_target_ty = self.convert_lir_type_to_llvm(target_ty.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_inttoptr(operand, llvm_target_ty, &format!("inttoptr_{}", instr_id))
+                    .map_err(fp_core::error::Error::from)?;
+                self.record_result(instr_id, Some(target_ty), result_name);
+            }
+            lir::LirInstructionKind::PtrToInt(value) => {
+                let operand = self.convert_lir_value_to_operand(value)?;
+                let target_ty = ty_hint.clone().unwrap_or(lir::LirType::I64);
+                let llvm_target_ty = self.convert_lir_type_to_llvm(target_ty.clone())?;
+                let result_name = self
+                    .llvm_ctx
+                    .build_ptrtoint(operand, llvm_target_ty, &format!("ptrtoint_{}", instr_id))
                     .map_err(fp_core::error::Error::from)?;
                 self.record_result(instr_id, Some(target_ty), result_name);
             }
@@ -1369,27 +1641,68 @@ impl<'ctx> LirCodegen<'ctx> {
         let hint = ty_hint.clone();
         let (lhs_aligned, rhs_aligned) = self.align_cmp_operands(lhs, rhs);
 
-        if let (lir::LirValue::Constant(ref lhs_const), lir::LirValue::Constant(ref rhs_const)) =
-            (&lhs_aligned, &rhs_aligned)
-        {
-            if let Some(result) = Self::fold_int_cmp(predicate, lhs_const, rhs_const) {
-                let target_ty = hint.clone().unwrap_or(lir::LirType::I1);
-                let constant = match target_ty {
-                    lir::LirType::I1 => lir::LirConstant::Bool(result),
-                    lir::LirType::I8 => lir::LirConstant::Int(result as i64, lir::LirType::I8),
-                    lir::LirType::I16 => lir::LirConstant::Int(result as i64, lir::LirType::I16),
-                    lir::LirType::I32 => lir::LirConstant::Int(result as i64, lir::LirType::I32),
-                    lir::LirType::I64 => lir::LirConstant::Int(result as i64, lir::LirType::I64),
-                    lir::LirType::I128 => lir::LirConstant::Int(result as i64, lir::LirType::I128),
-                    _ => lir::LirConstant::Bool(result),
-                };
-                self.constant_results.insert(instr_id, constant);
-                return Ok(());
+        let lhs_ty = self.lir_value_type(&lhs_aligned);
+        let rhs_ty = self.lir_value_type(&rhs_aligned);
+        let lhs_is_ptr = matches!(lhs_ty, Some(lir::LirType::Ptr(_)));
+        let rhs_is_ptr = matches!(rhs_ty, Some(lir::LirType::Ptr(_)));
+        let lhs_is_int = lhs_ty
+            .as_ref()
+            .and_then(|ty| Self::int_type_bits(ty))
+            .is_some();
+        let rhs_is_int = rhs_ty
+            .as_ref()
+            .and_then(|ty| Self::int_type_bits(ty))
+            .is_some();
+        let pointer_int_mismatch = (lhs_is_ptr && rhs_is_int) || (rhs_is_ptr && lhs_is_int);
+
+        if !pointer_int_mismatch {
+            if let (
+                lir::LirValue::Constant(ref lhs_const),
+                lir::LirValue::Constant(ref rhs_const),
+            ) = (&lhs_aligned, &rhs_aligned)
+            {
+                if let Some(result) = Self::fold_int_cmp(predicate, lhs_const, rhs_const) {
+                    let target_ty = hint.clone().unwrap_or(lir::LirType::I1);
+                    let constant = match target_ty {
+                        lir::LirType::I1 => lir::LirConstant::Bool(result),
+                        lir::LirType::I8 => {
+                            lir::LirConstant::Int(result as i64, lir::LirType::I8)
+                        }
+                        lir::LirType::I16 => {
+                            lir::LirConstant::Int(result as i64, lir::LirType::I16)
+                        }
+                        lir::LirType::I32 => {
+                            lir::LirConstant::Int(result as i64, lir::LirType::I32)
+                        }
+                        lir::LirType::I64 => {
+                            lir::LirConstant::Int(result as i64, lir::LirType::I64)
+                        }
+                        lir::LirType::I128 => {
+                            lir::LirConstant::Int(result as i64, lir::LirType::I128)
+                        }
+                        _ => lir::LirConstant::Bool(result),
+                    };
+                    self.constant_results.insert(instr_id, constant);
+                    return Ok(());
+                }
             }
         }
 
-        let lhs_operand = self.convert_lir_value_to_operand(lhs_aligned)?;
-        let rhs_operand = self.convert_lir_value_to_operand(rhs_aligned)?;
+        let mut lhs_operand = self.convert_lir_value_to_operand(lhs_aligned)?;
+        let mut rhs_operand = self.convert_lir_value_to_operand(rhs_aligned)?;
+        if pointer_int_mismatch {
+            let int_ty = self.llvm_ctx.i64_type();
+            lhs_operand = self.coerce_pointer_operand_to_int(
+                lhs_operand,
+                &int_ty,
+                &format!("cmp_{}_lhs", instr_id),
+            )?;
+            rhs_operand = self.coerce_pointer_operand_to_int(
+                rhs_operand,
+                &int_ty,
+                &format!("cmp_{}_rhs", instr_id),
+            )?;
+        }
         let cmp_name = self
             .llvm_ctx
             .build_icmp(
@@ -1483,6 +1796,25 @@ impl<'ctx> LirCodegen<'ctx> {
     ) -> (lir::LirValue, lir::LirValue) {
         let lhs_ty = self.lir_value_type(&lhs);
         let rhs_ty = self.lir_value_type(&rhs);
+
+        if let (Some(ref lt), Some(ref rt)) = (&lhs_ty, &rhs_ty) {
+            if matches!(lt, lir::LirType::Ptr(_)) {
+                if let lir::LirValue::Constant(lir::LirConstant::Int(0, _)) = rhs {
+                    return (lhs, lir::LirValue::Null(lt.clone()));
+                }
+                if let lir::LirValue::Constant(lir::LirConstant::UInt(0, _)) = rhs {
+                    return (lhs, lir::LirValue::Null(lt.clone()));
+                }
+            }
+            if matches!(rt, lir::LirType::Ptr(_)) {
+                if let lir::LirValue::Constant(lir::LirConstant::Int(0, _)) = lhs {
+                    return (lir::LirValue::Null(rt.clone()), rhs);
+                }
+                if let lir::LirValue::Constant(lir::LirConstant::UInt(0, _)) = lhs {
+                    return (lir::LirValue::Null(rt.clone()), rhs);
+                }
+            }
+        }
 
         if let (Some(ref lt), Some(ref rt)) = (&lhs_ty, &rhs_ty) {
             if Self::is_integer_type(lt) && Self::is_integer_type(rt) && lt != rt {
@@ -2177,6 +2509,29 @@ impl<'ctx> LirCodegen<'ctx> {
         })
     }
 
+    fn coerce_pointer_operand_to_int(
+        &mut self,
+        operand: Operand,
+        target_type: &Type,
+        tag: &str,
+    ) -> Result<Operand> {
+        let operand_ty_ref = operand.get_type(&self.llvm_ctx.module.types);
+        match operand_ty_ref.as_ref() {
+            Type::PointerType { .. } => {
+                let name = self
+                    .llvm_ctx
+                    .build_ptrtoint(operand, target_type.clone(), tag)
+                    .map_err(fp_core::error::Error::from)?;
+                Ok(Operand::LocalOperand {
+                    name,
+                    ty: self.llvm_ctx.module.types.get_for_type(target_type),
+                })
+            }
+            Type::IntegerType { .. } => self.coerce_integer_operand(operand, target_type, false, tag),
+            _ => Ok(operand),
+        }
+    }
+
     fn coerce_float_operand(
         &mut self,
         operand: Operand,
@@ -2357,10 +2712,13 @@ impl<'ctx> LirCodegen<'ctx> {
             lir::LirType::F32 => Ok(self.llvm_ctx.f32_type()),
             lir::LirType::F64 => Ok(self.llvm_ctx.f64_type()),
             lir::LirType::Ptr(_) => Ok(Type::PointerType { addr_space: 0 }),
-            lir::LirType::Array(element_type, _size) => {
-                // For now, just return the element type to avoid TODO crash
-                // TODO: Properly implement array type conversion
-                self.convert_lir_type_to_llvm(*element_type)
+            lir::LirType::Array(element_type, size) => {
+                let element = self.convert_lir_type_to_llvm(*element_type)?;
+                let element_ref = self.llvm_ctx.module.types.get_for_type(&element);
+                Ok(Type::ArrayType {
+                    element_type: element_ref,
+                    num_elements: size as usize,
+                })
             }
             lir::LirType::Struct { fields, packed, .. } => {
                 let mut element_types = Vec::with_capacity(fields.len());

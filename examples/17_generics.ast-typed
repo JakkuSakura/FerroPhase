@@ -1,0 +1,93 @@
+ast::File {
+  items:
+    pub struct Pair : Pair{first: Expr(T), second: Expr(U)} {
+      first: Expr(T)
+      second: Expr(U)
+    }
+    impl<T, U> Pair<T
+, U
+> : () {
+      pub fn new(first: Expr(T), second: Expr(U)) -> Expr(Self) : fn(any, any) -> Pair{first: Expr(T), second: Expr(U)} : fn(any, any) -> Pair{first: Expr(T), second: Expr(U)}
+        block (1 stmt) : Pair{first: Expr(T), second: Expr(U)}
+          expr_stmt (value)
+            struct Self : Pair{first: Expr(T), second: Expr(U)}
+              first:
+                locator first : any
+              second:
+                locator second : any
+    }
+    pub enum Option : Option [Some: (Expr(T)) | None: any] {
+      Some: (Expr(T))
+      None: any
+    }
+    impl<T> Option<T
+> : () {
+      pub fn unwrap_or(self, default: Expr(T)) -> Expr(T) : fn(any) -> any : fn(any) -> any
+        block (1 stmt) : any
+          expr_stmt (value)
+            match : any
+              case #0
+                cond:
+                  value true : _
+                body:
+                  locator v : any
+              case #1
+                cond:
+                  value true : _
+                body:
+                  locator default : any
+    }
+    pub fn<T: PartialOrd> max(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: PartialOrd>(unknown, unknown) -> unknown : fn<T: PartialOrd>(unknown, unknown) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          if : unknown
+            cond:
+              binop > : bool
+                lhs:
+                  locator a : unknown
+                rhs:
+                  locator b : unknown
+            then:
+              block (1 stmt) : unknown
+                expr_stmt (value)
+                  locator a : unknown
+            else:
+              block (1 stmt) : unknown
+                expr_stmt (value)
+                  locator b : unknown
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (8 stmts) : ()
+        let pair
+          init:
+            invoke : Pair{first: Expr(T), second: Expr(U)}
+              target: Pair::new
+              args:
+                value 42 : i64
+                value "hello" : &string
+        expr_stmt ;
+          intrinsic println : ()
+            template: "({}, {})" pair.first, pair.second
+        expr_stmt ;
+          intrinsic println : ()
+            template: "max(10, 20) = {}" max(10, 20)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "max(3.5, 2.1) = {}" max(3.5, 2.1)
+        let some: Expr(Option<i64
+>)
+          init:
+            invoke : Option [Some: (Expr(T)) | None: any]
+              target: Option::Some
+              args:
+                value 100 : i64
+        let none: Expr(Option<i64
+>)
+          init:
+            locator Option::None : Option [Some: (Expr(T)) | None: any]
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" some.unwrap_or(0)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{}" none.unwrap_or(99)
+}

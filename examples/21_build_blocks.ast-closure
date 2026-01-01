@@ -1,0 +1,69 @@
+ast::File {
+  items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
+    pub const fn build_items(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
+      block (1 stmt) : QuoteToken<item>
+        expr_stmt (value)
+          quote Item : QuoteToken<item>
+            if : _
+              cond:
+                locator flag : _
+              then:
+                block (1 stmt) : _
+                  pub struct Alpha : _ {
+                    id: Expr(i64)
+                  }
+              else:
+                block (1 stmt) : _
+                  pub struct Beta : _ {
+                    id: Expr(i64)
+                  }
+    pub const fn build_items_2(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
+      block (1 stmt) : _
+        expr_stmt (value)
+          if : _
+            cond:
+              locator flag : _
+            then:
+              block (1 stmt) : _
+                pub struct Alpha : _ {
+                  id: Expr(i64)
+                }
+            else:
+              block (1 stmt) : _
+                pub struct Beta : _ {
+                  id: Expr(i64)
+                }
+    expr_item : ()
+      value () : ()
+    expr_item : ()
+      value () : ()
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (4 stmts) : ()
+        let alpha
+          init:
+            struct Alpha : Alpha{id: Expr(i64)}
+              id:
+                value 1 : i64
+        let _
+          init:
+            select .id [unknown] : i64
+              object:
+                locator alpha : Alpha{id: Expr(i64)}
+        let beta
+          init:
+            struct Beta : Beta{id: Expr(i64)}
+              id:
+                value 2 : i64
+        let _
+          init:
+            select .id [unknown] : i64
+              object:
+                locator beta : Beta{id: Expr(i64)}
+    pub struct Alpha : Alpha{id: Expr(i64)} {
+      id: Expr(i64)
+    }
+    pub struct Beta : Beta{id: Expr(i64)} {
+      id: Expr(i64)
+    }
+}

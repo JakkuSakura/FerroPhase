@@ -117,14 +117,17 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::IntrinsicCall(call) => {
                 if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
-                    // Enter const region and analyze the block body for splices/quotes
-                    if let IntrinsicCallPayload::Args { args } = &mut call.payload {
-                        if let Some(body) = args.first_mut() {
-                            self.enter_const_region();
-                            self.evaluate_function_body(body);
-                            self.exit_const_region();
+                    let kind = call.kind;
+                    let value = self.eval_intrinsic(call);
+                    if self.should_replace_intrinsic_with_value(kind, &value) {
+                        let mut replacement = Expr::value(value.clone());
+                        if let Some(ty) = expr_ty_snapshot.clone() {
+                            replacement.ty = Some(ty);
                         }
+                        *expr = replacement;
+                        self.mark_mutated();
                     }
+                    return;
                 }
                 self.evaluate_intrinsic_for_function_analysis(call);
             }

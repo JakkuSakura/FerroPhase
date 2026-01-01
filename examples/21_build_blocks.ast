@@ -1,0 +1,68 @@
+ast::File {
+  items:
+    pub const fn build_items(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
+      block (1 stmt)
+        expr_stmt (value)
+          quote Item
+            if
+              cond:
+                locator flag
+              then:
+                block (1 stmt)
+                  pub struct Alpha {
+                    id: Expr(i64)
+                  }
+              else:
+                block (1 stmt)
+                  pub struct Beta {
+                    id: Expr(i64)
+                  }
+    pub const fn build_items_2(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
+      block (1 stmt)
+        expr_stmt (value)
+          if
+            cond:
+              locator flag
+            then:
+              block (1 stmt)
+                pub struct Alpha {
+                  id: Expr(i64)
+                }
+            else:
+              block (1 stmt)
+                pub struct Beta {
+                  id: Expr(i64)
+                }
+    expr_item
+      value ()
+    expr_item
+      value ()
+    pub fn main() -> () : fn() -> ()
+      block (4 stmts)
+        let alpha
+          init:
+            struct Alpha
+              id:
+                value 1
+        let _
+          init:
+            select .id [unknown]
+              object:
+                locator alpha
+        let beta
+          init:
+            struct Beta
+              id:
+                value 2
+        let _
+          init:
+            select .id [unknown]
+              object:
+                locator beta
+    pub struct Alpha {
+      id: Expr(i64)
+    }
+    pub struct Beta {
+      id: Expr(i64)
+    }
+}

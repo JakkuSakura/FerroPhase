@@ -1,5 +1,6 @@
 ast::File {
   items:
+    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (8 stmts) : ()
         pub const FLAG_A: bool : bool
@@ -13,13 +14,27 @@ ast::File {
         pub const CONFIG: Config{x: Expr(i64), y: Expr(i64)} : Config{x: Expr(i64), y: Expr(i64)}
           value Config { 2 fields } : Config{x: Expr(i64), y: Expr(i64)}
         expr_stmt ;
-          intrinsic println : ()
-            template: "x={}, y={}" CONFIG.x, CONFIG.y
+          invoke : ()
+            target: printf
+            args:
+              value "x=%lld, y=%lld
+" : &string
+              select .x [field] : i64
+                object:
+                  locator CONFIG : Config{x: Expr(i64), y: Expr(i64)}
+              select .y [field] : i64
+                object:
+                  locator CONFIG : Config{x: Expr(i64), y: Expr(i64)}
         pub const SIZE: u64 : u64
           value 256 : u64
         pub const ITEMS: [i64; 256] : [i64; 256]
           value [256 values] : [i64; 256]
         expr_stmt ;
-          intrinsic println : ()
-            template: "array size: {}" ITEMS.len()
+          invoke : ()
+            target: printf
+            args:
+              value "array size: %lld
+" : &string
+              invoke : i64
+                target: ITEMS.len
 }

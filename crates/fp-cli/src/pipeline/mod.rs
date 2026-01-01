@@ -928,22 +928,6 @@ impl Pipeline {
             )?;
         }
 
-        if stage_enabled(options, STAGE_TYPE_ENRICH) {
-            self.run_stage(
-                STAGE_TYPE_ENRICH,
-                &diagnostic_manager,
-                options,
-                |pipeline| {
-                    pipeline.stage_type_check(
-                        &mut ast,
-                        STAGE_TYPE_ENRICH,
-                        &diagnostic_manager,
-                        options,
-                    )
-                },
-            )?;
-        }
-
         let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
             ConstEvalOutcome::default()
         } else {

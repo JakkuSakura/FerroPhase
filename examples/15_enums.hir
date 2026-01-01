@@ -1,0 +1,93 @@
+hir::Program {
+    pub enum Shape {
+        Point,
+        Circle,
+        Rectangle,
+    }
+
+    impl Shape {
+        fn describe(self: &Shape) -> &str {
+            // params: [self: &Shape]
+            {
+                match (self)
+                {
+                    Shape::Point =>
+                        "point"
+                    Shape::Circle(_) =>
+                        "circle"
+                    Shape::Rectangle { .. } =>
+                        "rectangle"
+                }
+                match (self)
+                {
+                    Shape::Point =>
+                        "point"
+                    Shape::Circle(_) =>
+                        "circle"
+                    Shape::Rectangle { .. } =>
+                        "rectangle"
+                }
+            }
+        }
+    }
+
+    pub enum Value {
+        A = 1,
+        B = 2,
+        C = 5,
+    }
+
+    pub enum Option {
+        Some,
+        None,
+    }
+
+    impl Option<T> {
+        fn unwrap_or(self: Option<T>, default: T) -> T {
+            // params: [self: Option<T>, default: T]
+            {
+                match (self)
+                {
+                    Option::Some(v) =>
+                        v
+                    Option::None =>
+                        default
+                }
+                match (self)
+                {
+                    Option::Some(v) =>
+                        v
+                    Option::None =>
+                        default
+                }
+            }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            let point = Shape::Point;
+            let circle = Shape::Circle(10);
+            let rect = Shape::Rectangle { w: 5, h: 3 };
+            printf("%s
+", point.describe());
+            printf("%s
+", circle.describe());
+            printf("%s
+", rect.describe());
+            let val = Value::C;
+            printf("discriminant: %d
+", (val as i32));
+            let some: Option<i64> = Option::Some(42);
+            let none: Option<i64> = Option::None;
+            printf("%s
+", some.unwrap_or(0));
+            printf("%s
+", none.unwrap_or(99));
+            pub const CODE: i32 =
+                2;
+            printf("const: %d
+", CODE);
+        }
+    }
+}

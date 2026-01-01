@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::{ExprQuote, QuoteFragmentKind};
+use fp_core::ast::{ExprQuote, Locator, QuoteFragmentKind};
 
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
@@ -747,12 +747,56 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
             }
 
+            if select.field.name.as_str() == "iter" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                return match value {
+                    Value::List(list) => Value::List(list),
+                    other => {
+                        self.emit_error(format!(
+                            "'iter' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
+            if select.field.name.as_str() == "enumerate" && invoke.args.is_empty() {
+                let value = self.eval_expr(select.obj.as_mut());
+                return match value {
+                    Value::List(list) => {
+                        let values = list
+                            .values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                Value::Tuple(ValueTuple::new(vec![Value::int(idx as i64), value]))
+                            })
+                            .collect();
+                        Value::List(ValueList::new(values))
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "'enumerate' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        Value::undefined()
+                    }
+                };
+            }
+
             let flow = self.eval_invoke_runtime_flow(invoke);
             return self.finish_runtime_flow(flow);
         }
 
         match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => {
+                if invoke.args.is_empty() {
+                    if let Some(value) = self.try_eval_method_chain(locator) {
+                        return value;
+                    }
+                }
+
                 if let Some(value) =
                     self.try_handle_const_collection_invoke(locator, &mut invoke.args)
                 {
@@ -801,6 +845,55 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprInvokeTarget::Method(_) => unreachable!(),
         }
+    }
+
+    fn try_eval_method_chain(&mut self, locator: &Locator) -> Option<Value> {
+        let text = locator.to_string();
+        if !text.contains('.') {
+            return None;
+        }
+
+        let mut segments = text.split('.');
+        let base = segments.next()?;
+        let mut value = self.lookup_value(base)?;
+
+        for method in segments {
+            match method {
+                "iter" => match value {
+                    Value::List(list) => value = Value::List(list),
+                    other => {
+                        self.emit_error(format!(
+                            "'iter' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+                "enumerate" => match value {
+                    Value::List(list) => {
+                        let values = list
+                            .values
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, value)| {
+                                Value::Tuple(ValueTuple::new(vec![Value::int(idx as i64), value]))
+                            })
+                            .collect();
+                        value = Value::List(ValueList::new(values));
+                    }
+                    other => {
+                        self.emit_error(format!(
+                            "'enumerate' is only supported on compile-time arrays and lists, found {:?}",
+                            other
+                        ));
+                        return Some(Value::undefined());
+                    }
+                },
+                _ => return None,
+            }
+        }
+
+        Some(value)
     }
 
     pub(super) fn eval_invoke_runtime(&mut self, invoke: &mut ExprInvoke) -> Value {
