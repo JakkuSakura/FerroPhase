@@ -427,6 +427,7 @@ impl HirGenerator {
         let path =
             self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Type)?;
 
+        let mut explicit_names = std::collections::HashSet::new();
         let fields = struct_expr
             .fields
             .iter()
@@ -434,7 +435,7 @@ impl HirGenerator {
                 let expr = if let Some(value) = field.value.as_ref() {
                     self.transform_expr_to_hir(value)?
                 } else {
-                    // Shorthand - reference local with same name
+                    // Shorthand - reference local with same name.
                     let res = self.resolve_value_symbol(&field.name.name);
                     hir::Expr {
                         hir_id: self.next_id(),
@@ -449,6 +450,7 @@ impl HirGenerator {
                     }
                 };
 
+                explicit_names.insert(field.name.name.clone());
                 Ok(hir::StructExprField {
                     hir_id: self.next_id(),
                     name: field.name.clone().into(),
@@ -457,7 +459,95 @@ impl HirGenerator {
             })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(hir::ExprKind::Struct(path, fields))
+        let Some(update_expr) = struct_expr.update.as_ref() else {
+            return Ok(hir::ExprKind::Struct(path, fields));
+        };
+
+        // Lower `Foo { ..base, field: value }` into a block that binds `base`
+        // once and then fills missing fields from it, so later MIR lowering
+        // only sees a plain struct literal.
+        let def_id = match path.res {
+            Some(hir::Res::Def(def_id)) => def_id,
+            _ => {
+                return Err(crate::error::optimization_error(
+                    "struct update requires a resolved struct definition",
+                ))
+            }
+        };
+        let struct_fields = self
+            .struct_field_defs
+            .get(&def_id)
+            .cloned()
+            .ok_or_else(|| {
+                crate::error::optimization_error(
+                    "struct update requires a known struct field layout",
+                )
+            })?;
+
+        let base_expr = self.transform_expr_to_hir(update_expr.as_ref())?;
+        let base_name = format!("__struct_update_{}", self.next_id());
+        let base_symbol = hir::Symbol::new(base_name.clone());
+        let base_pat_id = self.next_id();
+        let base_pat = hir::Pat {
+            hir_id: base_pat_id,
+            kind: hir::PatKind::Binding {
+                name: base_symbol.clone(),
+                mutable: false,
+            },
+        };
+        let local = hir::Local {
+            hir_id: self.next_id(),
+            pat: base_pat,
+            ty: None,
+            init: Some(base_expr),
+        };
+        let local_stmt = hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Local(local),
+        };
+
+        let base_path = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: base_symbol,
+                    args: None,
+                }],
+                res: Some(hir::Res::Local(base_pat_id)),
+            }),
+            span: self.create_span(1),
+        };
+
+        let mut merged_fields = fields;
+        for field in struct_fields {
+            if explicit_names.contains(field.name.name.as_str()) {
+                continue;
+            }
+            let access = hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::FieldAccess(
+                    Box::new(base_path.clone()),
+                    hir::Symbol::new(field.name.name.clone()),
+                ),
+                span: self.create_span(1),
+            };
+            merged_fields.push(hir::StructExprField {
+                hir_id: self.next_id(),
+                name: hir::Symbol::new(field.name.name.clone()),
+                expr: access,
+            });
+        }
+
+        let struct_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Struct(path, merged_fields),
+            span: self.create_span(1),
+        };
+        Ok(hir::ExprKind::Block(hir::Block {
+            hir_id: self.next_id(),
+            stmts: vec![local_stmt],
+            expr: Some(Box::new(struct_expr)),
+        }))
     }
 
     /// Transform block expression to HIR
@@ -770,24 +860,41 @@ impl HirGenerator {
         if !invoke.args.is_empty() {
             return Ok(None);
         }
-        let locator = match &invoke.target {
-            ast::ExprInvokeTarget::Function(locator) => locator,
+        let segments = match &invoke.target {
+            ast::ExprInvokeTarget::Function(locator) => match locator {
+                ast::Locator::Path(path) => path.segments.clone(),
+                ast::Locator::Ident(ident) => vec![ident.clone()],
+                ast::Locator::ParameterPath(path) => path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.ident.clone())
+                    .collect(),
+            },
+            ast::ExprInvokeTarget::Method(select) => {
+                let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
+                    return Ok(None);
+                };
+                base.push(select.field.clone());
+                base
+            }
+            ast::ExprInvokeTarget::Expr(expr) => {
+                let Some(segments) = self.path_segments_from_expr(expr) else {
+                    return Ok(None);
+                };
+                segments
+            }
             _ => return Ok(None),
         };
-        let path = match locator {
-            ast::Locator::Path(path) => path,
-            ast::Locator::Ident(_) | ast::Locator::ParameterPath(_) => return Ok(None),
-        };
-        if path.segments.len() < 3 {
+        if segments.len() < 3 {
             return Ok(None);
         }
-        let last = path.segments.last().map(|seg| seg.as_str());
-        let penultimate = path.segments.get(path.segments.len() - 2).map(|seg| seg.as_str());
+        let last = segments.last().map(|seg| seg.as_str());
+        let penultimate = segments.get(segments.len() - 2).map(|seg| seg.as_str());
         if last != Some("enumerate") || penultimate != Some("iter") {
             return Ok(None);
         }
 
-        let base_segments = path.segments[..path.segments.len() - 2].to_vec();
+        let base_segments = segments[..segments.len() - 2].to_vec();
         if base_segments.is_empty() {
             return Err(crate::error::optimization_error(
                 "enumerate() base path is empty",
@@ -1017,6 +1124,53 @@ impl HirGenerator {
             stmts,
             expr: None,
         }))
+    }
+
+    fn path_segments_from_expr(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
+        match expr.kind() {
+            ast::ExprKind::Locator(locator) => match locator {
+                ast::Locator::Path(path) => Some(path.segments.clone()),
+                ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
+                ast::Locator::ParameterPath(path) => Some(
+                    path.segments
+                        .iter()
+                        .map(|seg| seg.ident.clone())
+                        .collect(),
+                ),
+            },
+            ast::ExprKind::Invoke(invoke) => {
+                // Permit no-arg method chains like `xs.iter().enumerate()` to be treated as a path.
+                // This is used by enumerate() lowering to recover the base path segments.
+                if !invoke.args.is_empty() {
+                    return None;
+                }
+                match &invoke.target {
+                    ast::ExprInvokeTarget::Function(locator) => match locator {
+                        ast::Locator::Path(path) => Some(path.segments.clone()),
+                        ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
+                        ast::Locator::ParameterPath(path) => Some(
+                            path.segments
+                                .iter()
+                                .map(|seg| seg.ident.clone())
+                                .collect(),
+                        ),
+                    },
+                    ast::ExprInvokeTarget::Method(select) => {
+                        let mut base = self.path_segments_from_expr(&select.obj)?;
+                        base.push(select.field.clone());
+                        Some(base)
+                    }
+                    ast::ExprInvokeTarget::Expr(expr) => self.path_segments_from_expr(expr),
+                    _ => None,
+                }
+            }
+            ast::ExprKind::Select(select) => {
+                let mut base = self.path_segments_from_expr(&select.obj)?;
+                base.push(select.field.clone());
+                Some(base)
+            }
+            _ => None,
+        }
     }
 
     /// Transform assignment to HIR

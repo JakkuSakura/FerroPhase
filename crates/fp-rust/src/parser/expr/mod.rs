@@ -588,6 +588,7 @@ impl<'a> ExprParser<'a> {
                 .into_iter()
                 .map(|field| self.parse_expr_field_value(field))
                 .try_collect()?,
+            update: None,
         })
     }
 

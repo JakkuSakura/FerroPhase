@@ -10,7 +10,8 @@ use fp_core::ast::{
     Path, Pattern, PatternIdent, PatternKind, PatternStructField, PatternStructural, PatternTuple,
     PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, StmtLet,
     StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
-    TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple, Value, ValueString,
+    TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple, Value, ValueNone,
+    ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -134,15 +135,19 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprStruct))?;
             let name_expr = lower_expr_from_cst(name)?;
-            let fields = lower_struct_fields(node)?;
+            let (fields, update) = lower_struct_fields(node)?;
             Ok(ExprKind::Struct(ExprStruct {
                 name: Box::new(name_expr),
                 fields,
+                update: update.map(Box::new),
             })
             .into())
         }
         SyntaxKind::ExprStructural => {
-            let fields = lower_struct_fields(node)?;
+            let (fields, update) = lower_struct_fields(node)?;
+            if update.is_some() {
+                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStructural));
+            }
             Ok(ExprKind::Structural(ExprStructural { fields }).into())
         }
         SyntaxKind::ExprBlock => {
@@ -608,7 +613,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
     }
 }
 
-fn lower_struct_fields(node: &SyntaxNode) -> Result<Vec<ExprField>, LowerError> {
+fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr>), LowerError> {
     let mut out = Vec::new();
     for child in &node.children {
         let crate::syntax::SyntaxElement::Node(field) = child else {
@@ -631,7 +636,38 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<Vec<ExprField>, LowerError> 
             value,
         });
     }
-    Ok(out)
+
+    let mut update: Option<Expr> = None;
+    for (idx, child) in node.children.iter().enumerate() {
+        let crate::syntax::SyntaxElement::Token(tok) = child else {
+            continue;
+        };
+        if tok.is_trivia() || tok.text != ".." {
+            continue;
+        }
+        if update.is_some() {
+            return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
+        }
+        for next in node.children.iter().skip(idx + 1) {
+            match next {
+                crate::syntax::SyntaxElement::Node(n)
+                    if n.kind.category() == CstCategory::Expr =>
+                {
+                    update = Some(lower_expr_from_cst(n.as_ref())?);
+                    break;
+                }
+                crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "}" => {
+                    break;
+                }
+                _ => {}
+            }
+        }
+        if update.is_none() {
+            return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
+        }
+    }
+
+    Ok((out, update))
 }
 
 fn lower_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
@@ -1082,6 +1118,7 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyTuple => lower_ty_tuple(node),
         SyntaxKind::TyStructural => lower_ty_structural(node),
         SyntaxKind::TyBinary => lower_ty_binary(node),
+        SyntaxKind::TyOptional => lower_ty_optional(node),
         SyntaxKind::TyImplTraits => lower_ty_impl_traits(node),
         SyntaxKind::TyMacroCall => lower_ty_macro_call(node),
         other => Err(LowerError::UnexpectedNode(other)),
@@ -1357,6 +1394,42 @@ fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
         let value = lower_type_from_cst(ty_node)?;
         fields.push(StructuralField::new(Ident::new(name), value));
     }
+    let mut update: Option<Ty> = None;
+    for (idx, child) in node.children.iter().enumerate() {
+        let crate::syntax::SyntaxElement::Token(tok) = child else {
+            continue;
+        };
+        if tok.is_trivia() || tok.text != ".." {
+            continue;
+        }
+        if update.is_some() {
+            return Err(LowerError::UnexpectedNode(SyntaxKind::TyStructural));
+        }
+        for next in node.children.iter().skip(idx + 1) {
+            if let crate::syntax::SyntaxElement::Node(n) = next {
+                if n.kind.category() == CstCategory::Type {
+                    update = Some(lower_type_from_cst(n.as_ref())?);
+                    break;
+                }
+            }
+        }
+        if update.is_none() {
+            return Err(LowerError::UnexpectedNode(SyntaxKind::TyStructural));
+        }
+    }
+
+    if let Some(update) = update {
+        let lhs = Ty::Structural(TypeStructural { fields }.into());
+        return Ok(Ty::TypeBinaryOp(
+            TypeBinaryOp {
+                kind: TypeBinaryOpKind::Add,
+                lhs: Box::new(lhs),
+                rhs: Box::new(update),
+            }
+            .into(),
+        ));
+    }
+
     Ok(Ty::Structural(TypeStructural { fields }.into()))
 }
 
@@ -1384,6 +1457,22 @@ fn lower_ty_binary(node: &SyntaxNode) -> Result<Ty, LowerError> {
             kind,
             lhs: Box::new(lhs),
             rhs: Box::new(rhs),
+        }
+        .into(),
+    ))
+}
+
+fn lower_ty_optional(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let inner = node_children_types(node)
+        .next()
+        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
+    let inner = lower_type_from_cst(inner)?;
+    // `T?` lowers to `T | None` so later passes can materialize a tagged union.
+    Ok(Ty::TypeBinaryOp(
+        TypeBinaryOp {
+            kind: TypeBinaryOpKind::Union,
+            lhs: Box::new(inner),
+            rhs: Box::new(Ty::value(Value::None(ValueNone))),
         }
         .into(),
     ))

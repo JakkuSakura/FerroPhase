@@ -1060,6 +1060,16 @@ impl Parser {
             if op == "=>" {
                 break;
             }
+            if op == "?" {
+                let mut children = Vec::new();
+                children.push(SyntaxElement::Node(Box::new(left)));
+                self.bump_trivia_into(&mut children);
+                self.bump_token_into(&mut children);
+                let span =
+                    span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                left = SyntaxNode::new(SyntaxKind::TyOptional, children, span);
+                continue;
+            }
             if is_type_boundary_token(op) {
                 break;
             }
@@ -1353,6 +1363,20 @@ impl Parser {
         while self.peek_non_trivia_raw() != Some("}") {
             if self.peek_non_trivia_raw().is_none() {
                 return Err(self.error("unterminated structural type"));
+            }
+            if self.peek_non_trivia_raw() == Some("..") {
+                // Support type-level structural updates: `struct { ..Other, field: Ty }`.
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                let ty = self.parse_type_bp_until(0, &[",", "}"])?;
+                children.push(SyntaxElement::Node(Box::new(ty)));
+                self.bump_trivia_into(&mut children);
+                if self.peek_non_trivia_raw() == Some(",") {
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                    continue;
+                }
+                continue;
             }
             let field = self.parse_structural_type_field()?;
             children.push(SyntaxElement::Node(Box::new(field)));
@@ -1678,8 +1702,10 @@ impl Parser {
                     self.bump_token_into(out);
                     self.bump_trivia_into(out);
                 }
-                // `..` must be the last field.
-                break;
+                if self.peek_non_trivia_raw() == Some("}") {
+                    break;
+                }
+                continue;
             }
 
             let field = self.parse_struct_field()?;

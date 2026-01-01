@@ -5,7 +5,7 @@ hir::Program {
         Rgb,
     }
 
-    pub enum Option {
+    pub enum Option<T> {
         Some,
         None,
     }

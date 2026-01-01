@@ -108,6 +108,7 @@ pub enum CstKind {
     TyStructural,
     TyField,
     TyBinary,
+    TyOptional,
     TyImplTraits,
     TyMacroCall,
 
@@ -192,6 +193,7 @@ impl CstKind {
             | CstKind::TyStructural
             | CstKind::TyField
             | CstKind::TyBinary
+            | CstKind::TyOptional
             | CstKind::TyImplTraits
             | CstKind::TyMacroCall => CstCategory::Type,
 
