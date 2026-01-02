@@ -1,7 +1,7 @@
 use fp_core::ast::{
-    DecimalType, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, FormatArgRef,
-    FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypePrimitive, TypeUnit,
-    Value,
+    DecimalType, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect,
+    FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypeNothing,
+    TypePrimitive, TypeUnit, Value,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
@@ -123,7 +123,7 @@ fn build_printf_format(
                         (format!("%{}", explicit), None)
                     }
                 } else {
-                    infer_printf_spec_with_replacement(arg.ty())?
+                    infer_printf_spec_with_replacement_from_expr(arg)?
                 };
 
                 if let Some(replacement) = replacement {
@@ -140,6 +140,88 @@ fn build_printf_format(
     }
 
     Ok(result)
+}
+
+fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, Option<Expr>)> {
+    let ty = expr.ty().filter(|ty| !matches!(ty, Ty::Any(_) | Ty::Unknown(_)));
+    if let Some(ty) = ty {
+        return infer_printf_spec_with_replacement(Some(ty));
+    }
+
+    match expr.kind() {
+        ExprKind::Value(value) => infer_printf_spec_for_value(value.as_ref()),
+        ExprKind::Select(select) => infer_printf_spec_for_select(select),
+        ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
+        ExprKind::Reference(reference) => match reference.referee.ty() {
+            Some(ty) => infer_printf_spec_with_replacement(Some(ty)),
+            None => Ok((
+                "%s".to_string(),
+                Some(make_string_literal_expr("<unknown>".to_string())),
+            )),
+        },
+        _ => Ok((
+            "%s".to_string(),
+            Some(make_string_literal_expr("<unknown>".to_string())),
+        )),
+    }
+}
+
+fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<Expr>)> {
+    let Some(obj_ty) = select.obj.ty() else {
+        return Err(fp_core::error::Error::from(
+            "missing type information for printf argument".to_string(),
+        ));
+    };
+    match obj_ty {
+        Ty::Struct(struct_ty) => {
+            let field = struct_ty
+                .fields
+                .iter()
+                .find(|field| field.name == select.field)
+                .ok_or_else(|| {
+                    fp_core::error::Error::from(format!(
+                        "missing field `{}` for printf argument",
+                        select.field
+                    ))
+                })?;
+            infer_printf_spec_with_replacement(Some(&field.value))
+        }
+        Ty::Structural(struct_ty) => {
+            let field = struct_ty
+                .fields
+                .iter()
+                .find(|field| field.name == select.field)
+                .ok_or_else(|| {
+                    fp_core::error::Error::from(format!(
+                        "missing field `{}` for printf argument",
+                        select.field
+                    ))
+                })?;
+            infer_printf_spec_with_replacement(Some(&field.value))
+        }
+        Ty::Reference(reference) => infer_printf_spec_with_replacement(Some(&reference.ty)),
+        _ => Err(fp_core::error::Error::from(
+            "printf argument type could not be inferred from field select".to_string(),
+        )),
+    }
+}
+
+fn infer_printf_spec_for_value(value: &Value) -> Result<(String, Option<Expr>)> {
+    let ty = match value {
+        Value::Int(_) => Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+        Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
+        Value::Decimal(_) => Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
+        Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
+        Value::String(_) => Ty::Primitive(TypePrimitive::String),
+        Value::Unit(_) => Ty::Unit(TypeUnit),
+        Value::Null(_) | Value::None(_) => Ty::Nothing(TypeNothing),
+        _ => {
+            return Err(fp_core::error::Error::from(
+                "printf argument type could not be inferred from literal".to_string(),
+            ))
+        }
+    };
+    infer_printf_spec_with_replacement(Some(&ty))
 }
 
 fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option<Expr>)> {
@@ -177,6 +259,32 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
             return Err(fp_core::error::Error::from(format!(
                 "enum '{}' does not have a printf representation",
                 enum_ty.name
+            )));
+        }
+        Ty::Value(value) => {
+            return infer_printf_spec_for_value(value.value.as_ref());
+        }
+        Ty::Expr(expr) => {
+            if let ExprKind::Locator(locator) = expr.kind() {
+                if let Locator::Ident(ident) = locator {
+                    let spec = match ident.as_str() {
+                        "Int" => "%lld",
+                        "Bool" => "%d",
+                        "String" | "Str" => "%s",
+                        "Char" => "%c",
+                        _ => {
+                            return Err(fp_core::error::Error::from(format!(
+                                "printf argument type could not be inferred: {:?}",
+                                expr
+                            )));
+                        }
+                    };
+                    return Ok((spec.to_string(), None));
+                }
+            }
+            return Err(fp_core::error::Error::from(format!(
+                "printf argument type could not be inferred: {:?}",
+                expr
             )));
         }
         Ty::Tuple(_) | Ty::Vec(_) | Ty::Slice(_) => {

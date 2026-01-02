@@ -1764,22 +1764,21 @@ impl MirLowering {
             return None;
         };
         if !definition.generics.is_empty() {
-            self.emit_error(
-                span,
-                format!(
-                    "enum `{}` requires generic arguments to construct",
-                    definition.name
-                ),
-            );
+            // Generic enum layouts must be resolved through a concrete type instance.
             return None;
         }
         self.enum_layout_for_instance(def_id, &[], span)
     }
 
     fn enum_layout_for_ty(&self, ty: &Ty) -> Option<&EnumLayout> {
-        self.enum_layouts
-            .values()
-            .find(|layout| layout.enum_ty == *ty)
+        match &ty.kind {
+            TyKind::Ref(_, inner, _) => self.enum_layout_for_ty(inner),
+            TyKind::RawPtr(type_and_mut) => self.enum_layout_for_ty(&type_and_mut.ty),
+            _ => self
+                .enum_layouts
+                .values()
+                .find(|layout| layout.enum_ty == *ty),
+        }
     }
 
     pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, bool) {
@@ -2476,6 +2475,9 @@ impl<'a> BodyBuilder<'a> {
             };
             if let Some(layout) = layout {
                 let mut tag_place = scrutinee_place.clone();
+                if matches!(scrutinee_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                    tag_place.projection.push(mir::PlaceElem::Deref);
+                }
                 tag_place
                     .projection
                     .push(mir::PlaceElem::Field(0, layout.tag_ty.clone()));
@@ -2521,6 +2523,10 @@ impl<'a> BodyBuilder<'a> {
             _ => self.lowering.enum_layout_for_ty(scrutinee_ty).cloned(),
         };
         if let Some(layout) = layout {
+            let mut scrutinee_place = scrutinee_place.clone();
+            if matches!(scrutinee_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                scrutinee_place.projection.push(mir::PlaceElem::Deref);
+            }
             match &pat.kind {
                 hir::PatKind::Variant(path) => {
                     if self.enum_variant_info_from_path(path).is_some() {

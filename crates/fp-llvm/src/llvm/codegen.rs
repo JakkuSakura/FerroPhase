@@ -515,6 +515,59 @@ impl<'a> LirCodegen<'a> {
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 self.record_result(instr_id, Some(target_ty), result.into());
             }
+            lir::LirInstructionKind::FPToSI(value, target_ty) => {
+                let operand = self.convert_lir_value_to_basic_value(value)?;
+                let float_val =
+                    self.coerce_to_float(operand, self.llvm_float_type(&lir::LirType::F64)?)?;
+                let int_ty = self.llvm_int_type(&target_ty)?;
+                let result = self
+                    .llvm_ctx
+                    .builder
+                    .build_float_to_signed_int(float_val, int_ty, &format!("fptosi_{}", instr_id))
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                self.record_result(instr_id, Some(target_ty), result.into());
+            }
+            lir::LirInstructionKind::FPToUI(value, target_ty) => {
+                let operand = self.convert_lir_value_to_basic_value(value)?;
+                let float_val =
+                    self.coerce_to_float(operand, self.llvm_float_type(&lir::LirType::F64)?)?;
+                let int_ty = self.llvm_int_type(&target_ty)?;
+                let result = self
+                    .llvm_ctx
+                    .builder
+                    .build_float_to_unsigned_int(float_val, int_ty, &format!("fptoui_{}", instr_id))
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                self.record_result(instr_id, Some(target_ty), result.into());
+            }
+            lir::LirInstructionKind::SIToFP(value, target_ty) => {
+                let operand = self.convert_lir_value_to_basic_value(value)?;
+                let int_val = self.coerce_to_int_signed(operand, self.default_int_type())?;
+                let float_ty = self.llvm_float_type(&target_ty)?;
+                let result = self
+                    .llvm_ctx
+                    .builder
+                    .build_signed_int_to_float(int_val, float_ty, &format!("sitofp_{}", instr_id))
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                self.record_result(instr_id, Some(target_ty), result.into());
+            }
+            lir::LirInstructionKind::UIToFP(value, target_ty) => {
+                let operand = self.convert_lir_value_to_basic_value(value)?;
+                let int_val = self.coerce_to_int(operand, self.default_int_type())?;
+                let float_ty = self.llvm_float_type(&target_ty)?;
+                let result = self
+                    .llvm_ctx
+                    .builder
+                    .build_unsigned_int_to_float(int_val, float_ty, &format!("uitofp_{}", instr_id))
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                self.record_result(instr_id, Some(target_ty), result.into());
+            }
+            lir::LirInstructionKind::FPExt(value, target_ty)
+            | lir::LirInstructionKind::FPTrunc(value, target_ty) => {
+                let operand = self.convert_lir_value_to_basic_value(value)?;
+                let float_ty = self.llvm_float_type(&target_ty)?;
+                let float_val = self.coerce_to_float(operand, float_ty)?;
+                self.record_result(instr_id, Some(target_ty), float_val.into());
+            }
             lir::LirInstructionKind::ZExt(value, target_ty) => {
                 let operand = self.convert_lir_value_to_basic_value(value)?;
                 let int_target = self.llvm_int_type(&target_ty)?;
