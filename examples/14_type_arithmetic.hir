@@ -1,22 +1,136 @@
 hir::Program {
-    pub fn print(i: _) -> () {
-        // params: [i: _]
+    pub struct Foo {
+        pub a: i64,
+        pub common: i64,
+        pub foo: i64,
+    }
+
+    pub struct Bar {
+        pub common: i64,
+        pub bar: i64,
+    }
+
+    pub struct FooPlusBar {
+        pub a: i64,
+        pub common: i64,
+        pub foo: i64,
+        pub bar: i64,
+    }
+
+    pub enum FooOrBar {
+        Foo,
+        Bar,
+    }
+
+    pub struct FooMinusBar {
+        pub a: i64,
+        pub foo: i64,
+    }
+
+    pub struct FooAndBar {
+        pub common: i64,
+    }
+
+    pub struct InlineRecord {
+        pub tag: i64,
+        pub value: i64,
+    }
+
+    pub fn describe_union(value: FooOrBar) -> i64 {
+        // params: [value: FooOrBar]
         {
-            printf("%s
-", i)
-            printf("%s
-", i)
+            match (value)
+            {
+                Foo { a: a, common: common, foo: foo } =>
+                    ((a + common) + foo)
+                Bar { common: common, bar: bar } =>
+                    (common + bar)
+            }
+            match (value)
+            {
+                Foo { a: a, common: common, foo: foo } =>
+                    ((a + common) + foo)
+                Bar { common: common, bar: bar } =>
+                    (common + bar)
+            }
         }
     }
 
-    pub struct BarNamedStruct {
-        pub c: i64,
-        pub d: i64,
+    pub enum FooMaybe {
+        Foo,
+        None,
+    }
+
+    pub fn describe_optional(value: FooMaybe) -> i64 {
+        // params: [value: FooMaybe]
+        {
+            match (value)
+            {
+                Foo { a: a, common: common, foo: foo } =>
+                    ((a + common) + foo)
+                null =>
+                    0
+            }
+            match (value)
+            {
+                Foo { a: a, common: common, foo: foo } =>
+                    ((a + common) + foo)
+                null =>
+                    0
+            }
+        }
     }
 
     pub fn main() -> () {
         {
-            FooPlusBar { a: 1, b: 2, c: 3, d: 4 };
+            let base_foo: Foo = Foo { a: 1, common: 2, foo: 3 };
+            printf("Foo a=%s common=%s foo=%s
+", base_foo.a, base_foo.common, base_foo.foo);
+            let base_bar: Bar = Bar { common: 4, bar: 5 };
+            printf("Bar common=%s bar=%s
+", base_bar.common, base_bar.bar);
+            let merged: FooPlusBar = <control-flow>;
+            printf("FooPlusBar a=%s common=%s foo=%s bar=%s
+", merged.a, merged.common, merged.foo, merged.bar);
+            let reduced: FooMinusBar = FooMinusBar { a: 10, foo: 20 };
+            printf("FooMinusBar a=%s foo=%s
+", reduced.a, reduced.foo);
+            let overlap: FooAndBar = FooAndBar { common: 99 };
+            printf("FooAndBar common=%s
+", overlap.common);
+            let record: InlineRecord = InlineRecord { tag: 7, value: 42 };
+            printf("InlineRecord tag=%s value=%s
+", record.tag, record.value);
+            let left: FooOrBar = Foo { a: 2, common: 3, foo: 4 };
+            let right: FooOrBar = base_bar;
+            let handler: fn(FooOrBar) -> i64 = describe_union;
+            printf("FooOrBar left sum=%s
+", "<unknown>");
+            printf("FooOrBar right sum=%s
+", "<unknown>");
+            let _ints: [i64; 4] = [1, 2, 3, 4];
+            printf("Int4[0]=%s Int4[1]=%s Int4[2]=%s Int4[3]=%s
+", "<unknown>", "<unknown>", "<unknown>", "<unknown>");
+            let lit_int: i64 = 42;
+            let lit_bool: bool = true;
+            let lit_str: &str = "hello";
+            let lit_unit: () = <control-flow>;
+            let lit_null: _ = null;
+            let lit_enum: &str = "green";
+            printf("LiteralInt %s
+", lit_int);
+            printf("LiteralBool %s
+", lit_bool);
+            printf("LiteralStr %s
+", lit_str);
+            printf("LiteralUnit %s", lit_unit);
+            printf("LiteralNull %s", lit_null);
+            printf("LiteralStrEnum %s
+", lit_enum);
+            let maybe: FooMaybe = Foo { a: 5, common: 6, foo: 7 };
+            printf("FooMaybe sum=%s
+", describe_optional(maybe));
+            let _ = print_display;
         }
     }
 }

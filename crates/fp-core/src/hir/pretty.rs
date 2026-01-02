@@ -517,6 +517,7 @@ fn format_lit(lit: &Lit) -> String {
         Lit::Float(value) => value.to_string(),
         Lit::Str(value) => format!("\"{}\"", value),
         Lit::Char(value) => format!("'{}'", value),
+        Lit::Null => "null".to_string(),
     }
 }
 

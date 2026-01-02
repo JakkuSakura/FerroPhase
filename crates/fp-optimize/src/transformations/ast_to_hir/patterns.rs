@@ -284,6 +284,7 @@ impl HirGenerator {
             ast::Value::Decimal(decimal_val) => Some(hir::Lit::Float(decimal_val.value)),
             ast::Value::String(string_val) => Some(hir::Lit::Str(string_val.value.clone())),
             ast::Value::Char(char_val) => Some(hir::Lit::Char(char_val.value)),
+            ast::Value::Null(_) | ast::Value::None(_) => Some(hir::Lit::Null),
             _ => None,
         }
     }

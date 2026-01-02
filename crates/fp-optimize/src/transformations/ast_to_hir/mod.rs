@@ -79,6 +79,13 @@ enum PathResolutionScope {
     Type,
 }
 
+#[derive(Clone, PartialEq)]
+enum LiteralTypeKind {
+    Primitive(ast::TypePrimitive),
+    Unit,
+    Infer,
+}
+
 impl HirGenerator {
     /// Create a new HIR generator
     pub fn new() -> Self {
@@ -534,7 +541,7 @@ impl HirGenerator {
         self.next_hir_id = 0;
         self.current_position = 0;
         self.type_aliases.clear();
-        self.struct_field_defs.clear();
+        // Keep predeclared struct fields available for struct update lowering.
     }
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
@@ -743,6 +750,17 @@ impl HirGenerator {
 
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
+        let mut node = ast::Node::new(ast::NodeKind::File(file.clone()));
+        // HIR lowering needs unions materialized into enums for runtime codegen.
+        crate::passes::materialize_structural_types_with_unions(&mut node).map_err(|err| {
+            crate::error::optimization_error(format!("type materialization failed: {}", err))
+        })?;
+        let ast::NodeKind::File(file) = node.kind else {
+            return Err(crate::error::optimization_error(
+                "type materialization did not return a file node",
+            ));
+        };
+
         self.reset_file_context(&file.path);
         self.predeclare_items(&file.items)?;
         self.prepare_lowering_state();
@@ -1158,6 +1176,50 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::TypeBinaryOp(type_op) => {
+                if let Some(kind) = self.literal_type_kind(ty) {
+                    let expr = match kind {
+                        LiteralTypeKind::Primitive(prim) => self.primitive_type_to_hir(prim),
+                        LiteralTypeKind::Unit => self.create_unit_type(),
+                        LiteralTypeKind::Infer => hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Infer,
+                            Span::new(self.current_file, 0, 0),
+                        ),
+                    };
+                    return Ok(expr);
+                }
+                Err(crate::error::optimization_error(format!(
+                    "unsupported type binary operation in AST→HIR lowering: {:?}",
+                    type_op
+                )))
+            }
+            ast::Ty::Value(type_value) => {
+                let expr = match type_value.value.as_ref() {
+                    ast::Value::Int(_) => {
+                        self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))
+                    }
+                    ast::Value::Bool(_) => self.primitive_type_to_hir(ast::TypePrimitive::Bool),
+                    ast::Value::Decimal(_) => {
+                        self.primitive_type_to_hir(ast::TypePrimitive::Decimal(ast::DecimalType::F64))
+                    }
+                    ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
+                    ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
+                    ast::Value::Unit(_) => self.create_unit_type(),
+                    ast::Value::Null(_) | ast::Value::None(_) => hir::TypeExpr::new(
+                        self.next_id(),
+                        hir::TypeExprKind::Infer,
+                        Span::new(self.current_file, 0, 0),
+                    ),
+                    other => {
+                        return Err(crate::error::optimization_error(format!(
+                            "unsupported literal type in AST→HIR lowering: {:?}",
+                            other
+                        )))
+                    }
+                };
+                Ok(expr)
+            }
             ast::Ty::QuoteToken(_) => {
                 self.add_warning(
                     Diagnostic::warning(
@@ -1292,6 +1354,39 @@ impl HirGenerator {
             hir::TypeExprKind::Tuple(Vec::new()),
             Span::new(self.current_file, 0, 0),
         )
+    }
+
+    fn literal_type_kind(&self, ty: &ast::Ty) -> Option<LiteralTypeKind> {
+        match ty {
+            ast::Ty::Value(type_value) => match type_value.value.as_ref() {
+                ast::Value::Int(_) => {
+                    Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Int(
+                        ast::TypeInt::I64,
+                    )))
+                }
+                ast::Value::Bool(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Bool)),
+                ast::Value::Decimal(_) => Some(LiteralTypeKind::Primitive(
+                    ast::TypePrimitive::Decimal(ast::DecimalType::F64),
+                )),
+                ast::Value::String(_) => {
+                    Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String))
+                }
+                ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
+                ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
+                ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Infer),
+                _ => None,
+            },
+            ast::Ty::TypeBinaryOp(op) if matches!(op.kind, ast::TypeBinaryOpKind::Union) => {
+                let lhs = self.literal_type_kind(&op.lhs)?;
+                let rhs = self.literal_type_kind(&op.rhs)?;
+                if lhs == rhs {
+                    Some(lhs)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
     }
 
     fn register_type_alias(&mut self, name: &str, ty: &ast::Ty) {

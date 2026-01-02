@@ -268,6 +268,7 @@ impl HirGenerator {
             Value::Bool(b) => Ok(hir::ExprKind::Literal(hir::Lit::Bool(b.value))),
             Value::String(s) => Ok(hir::ExprKind::Literal(hir::Lit::Str(s.value.clone()))),
             Value::Decimal(d) => Ok(hir::ExprKind::Literal(hir::Lit::Float(d.value))),
+            Value::Char(ch) => Ok(hir::ExprKind::Literal(hir::Lit::Char(ch.value))),
             Value::Unit(_) => {
                 let block_id = self.next_id();
                 Ok(hir::ExprKind::Block(hir::Block {
@@ -276,6 +277,7 @@ impl HirGenerator {
                     expr: None,
                 }))
             }
+            Value::Null(_) | Value::None(_) => Ok(hir::ExprKind::Literal(hir::Lit::Null)),
             Value::Struct(struct_val) => {
                 let struct_name = struct_val.ty.name.name.as_str();
                 let mut segments = Vec::new();

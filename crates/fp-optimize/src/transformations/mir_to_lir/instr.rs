@@ -331,6 +331,7 @@ impl LirGenerator {
             mir::ConstantKind::UInt(value) => lir::LirConstant::UInt(*value, target_ty.clone()),
             mir::ConstantKind::Float(value) => lir::LirConstant::Float(*value, target_ty.clone()),
             mir::ConstantKind::Str(value) => lir::LirConstant::String(value.clone()),
+            mir::ConstantKind::Null => lir::LirConstant::Null(target_ty.clone()),
             mir::ConstantKind::Val(_, _) => {
                 fp_core::diagnostics::report_warning_with_context(
                     "mir→lir",
@@ -778,6 +779,9 @@ impl LirGenerator {
                 mir::ConstantKind::Bool(b) => {
                     Ok(lir::LirValue::Constant(lir::LirConstant::Bool(*b)))
                 }
+                mir::ConstantKind::Null => Ok(lir::LirValue::Null(lir::LirType::Ptr(Box::new(
+                    lir::LirType::I8,
+                )))),
                 mir::ConstantKind::Val(_cv, _ty) => {
                     return Err(crate::error::optimization_error(
                         "Unsupported complex constant in MIR operand",
@@ -3020,6 +3024,7 @@ impl LirGenerator {
                 mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => {
                     Some(lir::LirType::Ptr(Box::new(lir::LirType::I8)))
                 }
+                mir::ConstantKind::Null => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
                 _ => None,
             },
         }

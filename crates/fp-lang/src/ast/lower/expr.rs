@@ -7,10 +7,11 @@ use fp_core::ast::{
     ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect,
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
     ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
-    Path, Pattern, PatternIdent, PatternKind, PatternStructField, PatternStructural, PatternTuple,
-    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, StmtLet,
-    StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
-    TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple, Value, ValueNone,
+    Path, Pattern, PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternStructural,
+    PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
+    QuoteFragmentKind, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind,
+    TypeBounds, TypeFunction, TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple,
+    Value, ValueNone,
     ValueString,
 };
 use fp_core::cst::CstCategory;
@@ -1004,6 +1005,23 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 })
                 .collect();
 
+            if let ExprKind::Locator(locator) = struct_expr.name.kind() {
+                let ident = match locator {
+                    Locator::Ident(ident) => Some(ident.clone()),
+                    Locator::Path(path) if path.segments.len() == 1 => {
+                        Some(path.segments[0].clone())
+                    }
+                    _ => None,
+                };
+                if let Some(ident) = ident {
+                    return Ok(Pattern::new(PatternKind::Struct(PatternStruct {
+                        name: ident,
+                        fields,
+                        has_rest,
+                    })));
+                }
+            }
+
             Ok(Pattern::new(PatternKind::Variant(PatternVariant {
                 name: *struct_expr.name,
                 pattern: Some(Box::new(Pattern::new(PatternKind::Structural(
@@ -1119,10 +1137,41 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyStructural => lower_ty_structural(node),
         SyntaxKind::TyBinary => lower_ty_binary(node),
         SyntaxKind::TyOptional => lower_ty_optional(node),
+        SyntaxKind::TyValue => lower_ty_value(node),
         SyntaxKind::TyImplTraits => lower_ty_impl_traits(node),
         SyntaxKind::TyMacroCall => lower_ty_macro_call(node),
         other => Err(LowerError::UnexpectedNode(other)),
     }
+}
+
+fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let raw = direct_first_non_trivia_token_text(node)
+        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyValue))?;
+    let value = match raw.as_str() {
+        "true" => Value::bool(true),
+        "false" => Value::bool(false),
+        "null" => Value::null(),
+        _ => {
+            if raw.starts_with('"') || raw.starts_with('\'') {
+                let decoded = decode_string_literal(&raw).unwrap_or(raw);
+                Value::String(ValueString::new_ref(decoded))
+            } else {
+                let stripped = strip_number_suffix(&raw);
+                if stripped.contains('.') {
+                    let d = stripped
+                        .parse::<f64>()
+                        .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
+                    Value::decimal(d)
+                } else {
+                    let i = stripped
+                        .parse::<i64>()
+                        .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
+                    Value::int(i)
+                }
+            }
+        }
+    };
+    Ok(Ty::value(value))
 }
 
 fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {

@@ -233,6 +233,7 @@ pub enum ConstantKind {
     Fn(Symbol, Ty),
     /// Reference to a global constant by name
     Global(Symbol, Ty),
+    Null,
     Int(i64),
     UInt(u64),
     Float(f64),

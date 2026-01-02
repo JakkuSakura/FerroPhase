@@ -18,6 +18,8 @@ pub(crate) enum SchemeType {
     Struct(TypeStruct),
     Structural(TypeStructural),
     Enum(TypeEnum),
+    // Union of two types from `A | B` in type expressions.
+    Union(Box<SchemeType>, Box<SchemeType>),
     Slice(Box<SchemeType>),
     Vec(Box<SchemeType>),
     Array(Box<SchemeType>),
