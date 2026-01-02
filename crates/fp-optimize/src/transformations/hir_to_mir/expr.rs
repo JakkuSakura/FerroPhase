@@ -4378,7 +4378,9 @@ impl<'a> BodyBuilder<'a> {
                 });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
                     if let Some(expected_sig) = expected_sig.as_ref() {
-                        if let Some(function) = self.lowering.generic_function_defs.get(def_id) {
+                        if let Some(function) =
+                            self.lowering.generic_function_defs.get(def_id).cloned()
+                        {
                             let info = self.lowering.ensure_function_specialization(
                                 self.program,
                                 *def_id,
