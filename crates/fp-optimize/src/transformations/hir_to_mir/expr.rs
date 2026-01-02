@@ -825,6 +825,9 @@ impl MirLowering {
 
         match &ty_expr.kind {
             hir::TypeExprKind::Ref(inner) => {
+                if self.is_string_slice_ref(inner) {
+                    return self.raw_string_ptr_ty();
+                }
                 let inner_ty = self.lower_type_expr_with_context(inner, method_context);
                 Ty {
                     kind: TyKind::Ref(
