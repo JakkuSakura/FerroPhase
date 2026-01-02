@@ -6103,6 +6103,12 @@ impl<'a> BodyBuilder<'a> {
                                     ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),
                                 ) = &const_info.ty.kind
                                 {
+                                    let len_ty = Ty {
+                                        kind: TyKind::Uint(UintTy::Usize),
+                                    };
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty = len_ty.clone();
+                                    }
                                     let statement = mir::Statement {
                                         source_info: expr.span,
                                         kind: mir::StatementKind::Assign(
@@ -6111,8 +6117,8 @@ impl<'a> BodyBuilder<'a> {
                                                 mir::Constant {
                                                     span: expr.span,
                                                     user_ty: None,
-                                                    literal: mir::ConstantKind::Int(
-                                                        len.data as i64,
+                                                    literal: mir::ConstantKind::UInt(
+                                                        len.data as u64,
                                                     ),
                                                 },
                                             )),
@@ -6129,6 +6135,12 @@ impl<'a> BodyBuilder<'a> {
                                     ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),
                                 ) = ty.kind
                                 {
+                                    let len_ty = Ty {
+                                        kind: TyKind::Uint(UintTy::Usize),
+                                    };
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty = len_ty.clone();
+                                    }
                                     let statement = mir::Statement {
                                         source_info: expr.span,
                                         kind: mir::StatementKind::Assign(
@@ -6137,8 +6149,8 @@ impl<'a> BodyBuilder<'a> {
                                                 mir::Constant {
                                                     span: expr.span,
                                                     user_ty: None,
-                                                    literal: mir::ConstantKind::Int(
-                                                        len.data as i64,
+                                                    literal: mir::ConstantKind::UInt(
+                                                        len.data as u64,
                                                     ),
                                                 },
                                             )),
