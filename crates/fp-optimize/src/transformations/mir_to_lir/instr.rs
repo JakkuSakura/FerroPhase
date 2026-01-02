@@ -581,6 +581,56 @@ impl LirGenerator {
                     return Ok(instructions);
                 }
 
+                if let Some(src_ty) = source_ty.clone() {
+                    let target_is_ptr = matches!(target_ty, lir::LirType::Ptr(_));
+                    if self.is_float_type(&src_ty) && target_is_ptr {
+                        let int_ty = lir::LirType::I64;
+                        let fp_to_int_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: fp_to_int_id,
+                            kind: lir::LirInstructionKind::FPToSI(
+                                operand_value.clone(),
+                                int_ty.clone(),
+                            ),
+                            type_hint: Some(int_ty.clone()),
+                            debug_info: None,
+                        });
+                        let ptr_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: ptr_id,
+                            kind: lir::LirInstructionKind::IntToPtr(
+                                lir::LirValue::Register(fp_to_int_id),
+                            ),
+                            type_hint: Some(target_ty.clone()),
+                            debug_info: None,
+                        });
+                        result_value = Some(lir::LirValue::Register(ptr_id));
+                        return Ok(instructions);
+                    }
+                    if matches!(src_ty, lir::LirType::Ptr(_)) && self.is_float_type(&target_ty) {
+                        let int_ty = lir::LirType::I64;
+                        let ptr_to_int_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: ptr_to_int_id,
+                            kind: lir::LirInstructionKind::PtrToInt(operand_value.clone()),
+                            type_hint: Some(int_ty.clone()),
+                            debug_info: None,
+                        });
+                        let fp_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: fp_id,
+                            kind: lir::LirInstructionKind::SIToFP(
+                                lir::LirValue::Register(ptr_to_int_id),
+                                target_ty.clone(),
+                            ),
+                            type_hint: Some(target_ty.clone()),
+                            debug_info: None,
+                        });
+                        result_value = Some(lir::LirValue::Register(fp_id));
+                        return Ok(instructions);
+                    }
+                }
+
                 let instr_id = self.next_id();
                 let instr_kind = self.lower_cast(
                     cast_kind.clone(),
@@ -1541,6 +1591,45 @@ impl LirGenerator {
         }
         if let Some(const_value) = self.cast_constant_value(&value, &target_ty) {
             return const_value;
+        }
+        if self.is_float_type(&from_ty) && matches!(target_ty, lir::LirType::Ptr(_)) {
+            let int_ty = lir::LirType::I64;
+            let fp_to_int_id = self.next_id();
+            block.instructions.push(lir::LirInstruction {
+                id: fp_to_int_id,
+                kind: lir::LirInstructionKind::FPToSI(value.clone(), int_ty.clone()),
+                type_hint: Some(int_ty.clone()),
+                debug_info: None,
+            });
+            let ptr_id = self.next_id();
+            block.instructions.push(lir::LirInstruction {
+                id: ptr_id,
+                kind: lir::LirInstructionKind::IntToPtr(lir::LirValue::Register(fp_to_int_id)),
+                type_hint: Some(target_ty.clone()),
+                debug_info: None,
+            });
+            return lir::LirValue::Register(ptr_id);
+        }
+        if matches!(from_ty, lir::LirType::Ptr(_)) && self.is_float_type(&target_ty) {
+            let int_ty = lir::LirType::I64;
+            let ptr_to_int_id = self.next_id();
+            block.instructions.push(lir::LirInstruction {
+                id: ptr_to_int_id,
+                kind: lir::LirInstructionKind::PtrToInt(value.clone()),
+                type_hint: Some(int_ty.clone()),
+                debug_info: None,
+            });
+            let fp_id = self.next_id();
+            block.instructions.push(lir::LirInstruction {
+                id: fp_id,
+                kind: lir::LirInstructionKind::SIToFP(
+                    lir::LirValue::Register(ptr_to_int_id),
+                    target_ty.clone(),
+                ),
+                type_hint: Some(target_ty.clone()),
+                debug_info: None,
+            });
+            return lir::LirValue::Register(fp_id);
         }
         let id = self.next_id();
         let kind = if matches!(from_ty, lir::LirType::Ptr(_))
