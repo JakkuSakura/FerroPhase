@@ -5025,9 +5025,9 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<(mir::Operand, Ty, String)> {
         let (operand, ty) = (arg.operand, arg.ty);
         match &ty.kind {
-            TyKind::Bool => Ok((operand, ty, "%d".to_string())),
-            TyKind::Char => Ok((operand, ty, "%c".to_string())),
-            TyKind::Int(int_ty) => Ok((operand, ty, match int_ty {
+            TyKind::Bool => Ok((operand, ty.clone(), "%d".to_string())),
+            TyKind::Char => Ok((operand, ty.clone(), "%c".to_string())),
+            TyKind::Int(int_ty) => Ok((operand, ty.clone(), match int_ty {
                 IntTy::I8 => "%hhd",
                 IntTy::I16 => "%hd",
                 IntTy::I32 => "%d",
@@ -5035,7 +5035,7 @@ impl<'a> BodyBuilder<'a> {
                 IntTy::I128 => "%lld",
                 IntTy::Isize => "%lld",
             }.to_string())),
-            TyKind::Uint(uint_ty) => Ok((operand, ty, match uint_ty {
+            TyKind::Uint(uint_ty) => Ok((operand, ty.clone(), match uint_ty {
                 UintTy::U8 => "%hhu",
                 UintTy::U16 => "%hu",
                 UintTy::U32 => "%u",
@@ -5043,16 +5043,16 @@ impl<'a> BodyBuilder<'a> {
                 UintTy::U128 => "%llu",
                 UintTy::Usize => "%llu",
             }.to_string())),
-            TyKind::Float(_) => Ok((operand, ty, "%f".to_string())),
+            TyKind::Float(_) => Ok((operand, ty.clone(), "%f".to_string())),
             TyKind::RawPtr(type_and_mut) => {
                 if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
-                    Ok((operand, ty, "%s".to_string()))
+                    Ok((operand, ty.clone(), "%s".to_string()))
                 } else {
                     self.lowering.emit_error(
                         span,
                         "printf only supports raw pointers to byte strings",
                     );
-                    Ok((operand, ty, "%s".to_string()))
+                    Ok((operand, ty.clone(), "%s".to_string()))
                 }
             }
             TyKind::Ref(_, inner, _) => {
@@ -5065,20 +5065,20 @@ impl<'a> BodyBuilder<'a> {
                                     span,
                                     "printf cannot dereference non-place arguments",
                                 );
-                                return Ok((operand, ty, "%s".to_string()));
+                                return Ok((operand, ty.clone(), "%s".to_string()));
                             }
                         };
                         let mut deref_place = place.clone();
                         deref_place.projection.push(mir::PlaceElem::Deref);
                         return Ok((
                             mir::Operand::Copy(deref_place),
-                            (*inner).clone(),
+                            (*inner.as_ref()).clone(),
                             "%s".to_string(),
                         ));
                     }
                 }
                 if self.is_c_string_ptr(inner.as_ref()) {
-                    return Ok((operand, ty, "%s".to_string()));
+                    return Ok((operand, ty.clone(), "%s".to_string()));
                 }
                 let place = match operand {
                     mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
@@ -5087,19 +5087,19 @@ impl<'a> BodyBuilder<'a> {
                             span,
                             "printf cannot dereference non-place arguments",
                         );
-                        return Ok((operand, ty, "%s".to_string()));
+                        return Ok((operand, ty.clone(), "%s".to_string()));
                     }
                 };
                 let mut deref_place = place.clone();
                 deref_place.projection.push(mir::PlaceElem::Deref);
-                let deref_ty = (*inner).clone();
+                let deref_ty = (*inner.as_ref()).clone();
                 let spec = self.printf_spec_for_ty(&deref_ty, span)?;
                 Ok((mir::Operand::Copy(deref_place), deref_ty, spec))
             }
             _ => {
                 self.lowering
                     .emit_error(span, "printf argument type is not supported");
-                Ok((operand, ty, "%s".to_string()))
+                Ok((operand, ty.clone(), "%s".to_string()))
             }
         }
     }
