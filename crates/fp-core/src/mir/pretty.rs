@@ -280,6 +280,7 @@ fn summarize_constant(constant: &Constant) -> String {
         ConstantKind::Global(name, _) => format!("global {}", name),
         ConstantKind::Ty(_) => "<type>".into(),
         ConstantKind::Val(_, ty) => format!("const <{}>", ty),
+        ConstantKind::Null => "null".into(),
     }
 }
 

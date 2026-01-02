@@ -109,8 +109,10 @@ pub enum CstKind {
     TyField,
     TyBinary,
     TyOptional,
+    TyValue,
     TyImplTraits,
     TyMacroCall,
+    TyNot,
 
     PatternIdent,
     PatternWildcard,
@@ -194,8 +196,10 @@ impl CstKind {
             | CstKind::TyField
             | CstKind::TyBinary
             | CstKind::TyOptional
+            | CstKind::TyValue
             | CstKind::TyImplTraits
-            | CstKind::TyMacroCall => CstCategory::Type,
+            | CstKind::TyMacroCall
+            | CstKind::TyNot => CstCategory::Type,
 
             CstKind::PatternIdent
             | CstKind::PatternWildcard

@@ -1537,6 +1537,7 @@ impl MirLowering {
             hir::Lit::Float(value) => mir::ConstantKind::Float(*value),
             hir::Lit::Str(value) => mir::ConstantKind::Str(value.clone()),
             hir::Lit::Char(value) => mir::ConstantKind::Int(*value as i64),
+            hir::Lit::Null => mir::ConstantKind::Null,
         }
     }
 
@@ -2462,7 +2463,18 @@ impl<'a> BodyBuilder<'a> {
                 | hir::PatKind::Struct(_, _, _)
                 | hir::PatKind::TupleStruct(_, _)
         ) {
-            if let Some(layout) = self.lowering.enum_layout_for_ty(scrutinee_ty) {
+            let layout = match &pat.kind {
+                hir::PatKind::Variant(path)
+                | hir::PatKind::Struct(path, _, _)
+                | hir::PatKind::TupleStruct(path, _) => self
+                    .enum_variant_info_from_path(path)
+                    // Prefer the enum definition for this variant to avoid matching on a
+                    // structurally identical enum layout from another type.
+                    .and_then(|variant| self.lowering.enum_layout_for_def(variant.enum_def, span))
+                    .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned()),
+                _ => self.lowering.enum_layout_for_ty(scrutinee_ty).cloned(),
+            };
+            if let Some(layout) = layout {
                 let mut tag_place = scrutinee_place.clone();
                 tag_place
                     .projection
@@ -2499,7 +2511,16 @@ impl<'a> BodyBuilder<'a> {
         scrutinee_ty: &Ty,
         span: Span,
     ) {
-        if let Some(layout) = self.lowering.enum_layout_for_ty(scrutinee_ty) {
+        let layout = match &pat.kind {
+            hir::PatKind::Variant(path)
+            | hir::PatKind::Struct(path, _, _)
+            | hir::PatKind::TupleStruct(path, _) => self
+                .enum_variant_info_from_path(path)
+                .and_then(|variant| self.lowering.enum_layout_for_def(variant.enum_def, span))
+                .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned()),
+            _ => self.lowering.enum_layout_for_ty(scrutinee_ty).cloned(),
+        };
+        if let Some(layout) = layout {
             match &pat.kind {
                 hir::PatKind::Variant(path) => {
                     if self.enum_variant_info_from_path(path).is_some() {
@@ -2665,6 +2686,12 @@ impl<'a> BodyBuilder<'a> {
             hir::ItemKind::Impl(impl_block) => {
                 self.lowering
                     .lower_impl(self.program, item, impl_block, None)?;
+            }
+            hir::ItemKind::Function(function) => {
+                let (mir_item, body_id, body) =
+                    self.lowering.lower_function(self.program, item, function)?;
+                self.lowering.extra_items.push(mir_item);
+                self.lowering.extra_bodies.push((body_id, body));
             }
             _ => {
                 self.lowering.emit_error(
@@ -2895,6 +2922,30 @@ impl<'a> BodyBuilder<'a> {
             _ => None,
         };
 
+        if let (Some(expected_ty), Some(variant)) = (
+            annotated_ty,
+            self.enum_variant_info_from_path(&resolved_path),
+        ) {
+            if let Some(layout) = self
+                .lowering
+                .enum_layout_for_def(variant.enum_def, span)
+            {
+                if layout.enum_ty == *expected_ty {
+                    let payload_args: Vec<hir::Expr> =
+                        fields.iter().map(|field| field.expr.clone()).collect();
+                    self.assign_enum_variant(
+                        mir::Place::from_local(local_id),
+                        &variant,
+                        &layout,
+                        &payload_args,
+                        span,
+                    )?;
+                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    return Ok(());
+                }
+            }
+        }
+
         if let Some(def_id) = def_id {
             if let Some(info) = self.lowering.struct_defs.get(&def_id) {
                 let struct_fields = info.fields.clone();
@@ -2999,6 +3050,73 @@ impl<'a> BodyBuilder<'a> {
         let mut field_map: HashMap<String, &hir::StructExprField> = HashMap::new();
         for field in fields {
             field_map.insert(String::from(field.name.clone()), field);
+        }
+
+        if let (Some(expected_ty), Some(struct_info)) = (
+            annotated_ty,
+            self.lowering.struct_defs.get(&def_id),
+        ) {
+            let enum_layout = self
+                .lowering
+                .enum_layouts
+                .iter()
+                .find_map(|(key, layout)| {
+                    if layout.enum_ty == *expected_ty {
+                        Some((key.def_id, layout.clone()))
+                    } else {
+                        None
+                    }
+                });
+            if let Some((enum_def_id, layout)) = enum_layout {
+                if let Some(enum_def) = self.lowering.enum_defs.get(&enum_def_id) {
+                    if let Some(variant_def) = enum_def
+                        .variants
+                        .iter()
+                        .find(|variant| variant.name == struct_info.name)
+                    {
+                        let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
+                        operands.push(mir::Operand::Constant(mir::Constant {
+                            span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Int(variant_def.discriminant),
+                        }));
+
+                        for (idx, slot_ty) in layout.payload_tys.iter().enumerate() {
+                            if let Some(field_info) = struct_fields.get(idx) {
+                                let expr = match field_map.get(&field_info.name) {
+                                    Some(field) => &field.expr,
+                                    None => {
+                                        operands.push(mir::Operand::Constant(mir::Constant {
+                                            span,
+                                            user_ty: None,
+                                            literal: self.lowering.default_constant_for_ty(slot_ty),
+                                        }));
+                                        continue;
+                                    }
+                                };
+                                let operand = self.lower_operand(expr, Some(slot_ty))?;
+                                operands.push(operand.operand);
+                            } else {
+                                operands.push(mir::Operand::Constant(mir::Constant {
+                                    span,
+                                    user_ty: None,
+                                    literal: self.lowering.default_constant_for_ty(slot_ty),
+                                }));
+                            }
+                        }
+
+                        self.push_statement(mir::Statement {
+                            source_info: span,
+                            kind: mir::StatementKind::Assign(
+                                mir::Place::from_local(local_id),
+                                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+                            ),
+                        });
+                        self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                        return Ok(());
+                    }
+                }
+            }
         }
 
         for field_info in struct_fields.iter() {
@@ -3940,6 +4058,17 @@ impl<'a> BodyBuilder<'a> {
                     kind: TyKind::Int(IntTy::I32),
                 },
             ),
+            hir::Lit::Null => {
+                let ty = expected.cloned().unwrap_or_else(|| Ty {
+                    kind: TyKind::RawPtr(TypeAndMut {
+                        ty: Box::new(Ty {
+                            kind: TyKind::Int(IntTy::I8),
+                        }),
+                        mutbl: Mutability::Not,
+                    }),
+                });
+                (mir::ConstantKind::Null, ty)
+            }
         }
     }
 
