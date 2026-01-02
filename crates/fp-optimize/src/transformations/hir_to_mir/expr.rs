@@ -5066,9 +5066,39 @@ impl<'a> BodyBuilder<'a> {
                     Ok((operand, ty.clone(), "%s".to_string()))
                 }
             }
+            TyKind::Slice(elem) => {
+                if self.is_c_string_ptr(elem.as_ref()) {
+                    Ok((operand, ty.clone(), "%s".to_string()))
+                } else {
+                    self.lowering
+                        .emit_error(span, "printf only supports byte slices");
+                    Ok((operand, ty.clone(), "%s".to_string()))
+                }
+            }
             TyKind::Ref(_, inner, _) => {
                 if let TyKind::RawPtr(type_and_mut) = &inner.kind {
                     if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
+                        let place = match operand {
+                            mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
+                            _ => {
+                                self.lowering.emit_error(
+                                    span,
+                                    "printf cannot dereference non-place arguments",
+                                );
+                                return Ok((operand, ty.clone(), "%s".to_string()));
+                            }
+                        };
+                        let mut deref_place = place.clone();
+                        deref_place.projection.push(mir::PlaceElem::Deref);
+                        return Ok((
+                            mir::Operand::Copy(deref_place),
+                            (*inner.as_ref()).clone(),
+                            "%s".to_string(),
+                        ));
+                    }
+                }
+                if let TyKind::Slice(elem) = &inner.kind {
+                    if self.is_c_string_ptr(elem.as_ref()) {
                         let place = match operand {
                             mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
                             _ => {
