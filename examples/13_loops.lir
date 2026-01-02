@@ -51,28 +51,28 @@ lir::Program {
                 i21: %r21 = alloca i32 1 align 8 : ptr i64
                 i22: %r22 = alloca i32 1 align 8 : ptr i64
                 i23: store i64 0, %r21 align 8
-                i24: store %local1, %r20 align 8
+                i24: store %local1, %r22 align 8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0, bb2] // succs: [bb2, bb3]:
                 i25: %r25 = alloca i32 1 align 1 : ptr i1
-                i26: %r26 = load %r20 align 8 : i64
+                i26: %r26 = load %r22 align 8 : i64
                 i27: %r27 = lt %r26, %local2 : i1
                 i28: store %r27, %r25 align 1
                 i29: %r29 = load %r25 align 1 : i1
                 terminator: cond_br %r29, bb2, bb3
             bb2 // label: bb2 // preds: [bb1] // succs: [bb1]:
                 i30: %r30 = load %r21 align 8 : i64
-                i31: %r31 = load %r20 align 8 : i64
+                i31: %r31 = load %r22 align 8 : i64
                 i32: %r32 = add %r30, %r31 : i64
                 i33: store %r32, %r21 align 8
-                i34: %r34 = load %r20 align 8 : i64
+                i34: %r34 = load %r22 align 8 : i64
                 i35: %r35 = add %r34, i64 1 : i64
-                i36: store %r35, %r20 align 8
+                i36: store %r35, %r22 align 8
                 terminator: br bb1
             bb3 // label: bb3 // preds: [bb1]:
                 i37: %r37 = load %r21 align 8 : i64
-                i38: store %r37, %r22 align 8
-                i39: %r39 = load %r22 align 8 : i64
+                i38: store %r37, %r20 align 8
+                i39: %r39 = load %r20 align 8 : i64
                 terminator: ret %r39
         }
 
@@ -98,14 +98,14 @@ lir::Program {
                 i40: %r40 = alloca i32 1 align 8 : ptr i64
                 i41: %r41 = alloca i32 1 align 8 : ptr i64
                 i42: %r42 = alloca i32 1 align 8 : ptr i64
-                i43: store i64 2, %r40 align 8
+                i43: store i64 2, %r41 align 8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0, bb10] // succs: [bb2]:
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb4, bb5]:
                 i44: %r44 = alloca i32 1 align 8 : ptr i64
-                i45: %r45 = load %r40 align 8 : i64
-                i46: %r46 = load %r40 align 8 : i64
+                i45: %r45 = load %r41 align 8 : i64
+                i46: %r46 = load %r41 align 8 : i64
                 i47: %r47 = mul %r45, %r46 : i64
                 i48: store %r47, %r44 align 8
                 i49: %r49 = alloca i32 1 align 1 : ptr i1
@@ -115,7 +115,7 @@ lir::Program {
                 i53: %r53 = load %r49 align 1 : i1
                 terminator: cond_br %r53, bb4, bb5
             bb4 // label: bb4 // preds: [bb2] // succs: [bb3]:
-                i54: store %local1, %r41 align 8
+                i54: store %local1, %r42 align 8
                 terminator: br bb3
             bb5 // label: bb5 // preds: [bb2] // succs: [bb6]:
                 terminator: br bb6
@@ -123,7 +123,7 @@ lir::Program {
                 terminator: br bb12
             bb6 // label: bb6 // preds: [bb5, bb7] // succs: [bb8, bb9]:
                 i55: %r55 = alloca i32 1 align 8 : ptr i64
-                i56: %r56 = load %r40 align 8 : i64
+                i56: %r56 = load %r41 align 8 : i64
                 i57: %r57 = rem %local1, %r56 : i64
                 i58: store %r57, %r55 align 8
                 i59: %r59 = alloca i32 1 align 1 : ptr i1
@@ -135,15 +135,15 @@ lir::Program {
             bb12 // label: bb12 // preds: [bb3, bb21] // succs: [bb13]:
                 terminator: br bb13
             bb8 // label: bb8 // preds: [bb6] // succs: [bb3]:
-                i64: %r64 = load %r40 align 8 : i64
-                i65: store %r64, %r41 align 8
+                i64: %r64 = load %r41 align 8 : i64
+                i65: store %r64, %r42 align 8
                 terminator: br bb3
             bb9 // label: bb9 // preds: [bb6] // succs: [bb10]:
                 terminator: br bb10
             bb13 // label: bb13 // preds: [bb12] // succs: [bb15, bb16]:
                 i66: %r66 = alloca i32 1 align 8 : ptr i64
-                i67: %r67 = load %r40 align 8 : i64
-                i68: %r68 = load %r40 align 8 : i64
+                i67: %r67 = load %r41 align 8 : i64
+                i68: %r68 = load %r41 align 8 : i64
                 i69: %r69 = mul %r67, %r68 : i64
                 i70: store %r69, %r66 align 8
                 i71: %r71 = alloca i32 1 align 1 : ptr i1
@@ -153,21 +153,21 @@ lir::Program {
                 i75: %r75 = load %r71 align 1 : i1
                 terminator: cond_br %r75, bb15, bb16
             bb10 // label: bb10 // preds: [bb9, bb11] // succs: [bb1]:
-                i76: %r76 = load %r40 align 8 : i64
+                i76: %r76 = load %r41 align 8 : i64
                 i77: %r77 = add %r76, i64 1 : i64
-                i78: store %r77, %r40 align 8
+                i78: store %r77, %r41 align 8
                 terminator: br bb1
             bb15 // label: bb15 // preds: [bb13] // succs: [bb14]:
-                i79: store %local1, %r42 align 8
+                i79: store %local1, %r40 align 8
                 terminator: br bb14
             bb16 // label: bb16 // preds: [bb13] // succs: [bb17]:
                 terminator: br bb17
             bb14 // label: bb14 // preds: [bb15, bb19]:
-                i80: %r80 = load %r42 align 8 : i64
+                i80: %r80 = load %r40 align 8 : i64
                 terminator: ret %r80
             bb17 // label: bb17 // preds: [bb16, bb18] // succs: [bb19, bb20]:
                 i81: %r81 = alloca i32 1 align 8 : ptr i64
-                i82: %r82 = load %r40 align 8 : i64
+                i82: %r82 = load %r41 align 8 : i64
                 i83: %r83 = rem %local1, %r82 : i64
                 i84: store %r83, %r81 align 8
                 i85: %r85 = alloca i32 1 align 1 : ptr i1
@@ -177,15 +177,15 @@ lir::Program {
                 i89: %r89 = load %r85 align 1 : i1
                 terminator: cond_br %r89, bb19, bb20
             bb19 // label: bb19 // preds: [bb17] // succs: [bb14]:
-                i90: %r90 = load %r40 align 8 : i64
-                i91: store %r90, %r42 align 8
+                i90: %r90 = load %r41 align 8 : i64
+                i91: store %r90, %r40 align 8
                 terminator: br bb14
             bb20 // label: bb20 // preds: [bb17] // succs: [bb21]:
                 terminator: br bb21
             bb21 // label: bb21 // preds: [bb20, bb22] // succs: [bb12]:
-                i92: %r92 = load %r40 align 8 : i64
+                i92: %r92 = load %r41 align 8 : i64
                 i93: %r93 = add %r92, i64 1 : i64
-                i94: store %r93, %r40 align 8
+                i94: store %r93, %r41 align 8
                 terminator: br bb12
             bb7 // label: bb7 // succs: [bb6]:
                 terminator: br bb6
@@ -211,7 +211,7 @@ lir::Program {
                 i95: %r95 = alloca i32 1 align 8 : ptr i64
                 i96: %r96 = alloca i32 1 align 8 : ptr i64
                 i97: %r97 = alloca i32 1 align 8 : ptr i64
-                i98: store i64 0, %r95 align 8
+                i98: store i64 0, %r96 align 8
                 i99: store i64 0, %r97 align 8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0, bb4, bb6] // succs: [bb2, bb3]:
@@ -236,19 +236,19 @@ lir::Program {
                 i116: %r116 = load %r112 align 1 : i1
                 terminator: cond_br %r116, bb4, bb5
             bb3 // label: bb3 // preds: [bb1]:
-                i117: %r117 = load %r95 align 8 : i64
-                i118: store %r117, %r96 align 8
-                i119: %r119 = load %r96 align 8 : i64
+                i117: %r117 = load %r96 align 8 : i64
+                i118: store %r117, %r95 align 8
+                i119: %r119 = load %r95 align 8 : i64
                 terminator: ret %r119
             bb4 // label: bb4 // preds: [bb2] // succs: [bb1]:
                 terminator: br bb1
             bb5 // label: bb5 // preds: [bb2] // succs: [bb6]:
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5, bb7] // succs: [bb1]:
-                i120: %r120 = load %r95 align 8 : i64
+                i120: %r120 = load %r96 align 8 : i64
                 i121: %r121 = load %r97 align 8 : i64
                 i122: %r122 = add %r120, %r121 : i64
-                i123: store %r122, %r95 align 8
+                i123: store %r122, %r96 align 8
                 terminator: br bb1
             bb7 // label: bb7 // succs: [bb6]:
                 terminator: br bb6
@@ -387,28 +387,28 @@ lir::Program {
 ") : i32
                 terminator: br bb20
             bb20 // label: bb20 // preds: [bb19] // succs: [bb21]:
-                i148: store i64 0, %r126 align 8
-                i149: store i64 1, %r124 align 8
+                i148: store i64 0, %r124 align 8
+                i149: store i64 1, %r125 align 8
                 terminator: br bb21
             bb21 // label: bb21 // preds: [bb20, bb35] // succs: [bb22, bb23]:
                 i150: %r150 = alloca i32 1 align 1 : ptr i1
-                i151: %r151 = load %r124 align 8 : i64
+                i151: %r151 = load %r125 align 8 : i64
                 i152: %r152 = lt %r151, i64 4 : i1
                 i153: store %r152, %r150 align 1
                 i154: %r154 = load %r150 align 1 : i1
                 terminator: cond_br %r154, bb22, bb23
             bb22 // label: bb22 // preds: [bb21] // succs: [bb24]:
-                i155: store i64 1, %r127 align 8
+                i155: store i64 1, %r126 align 8
                 terminator: br bb24
             bb23 // label: bb23 // preds: [bb21] // succs: [bb42]:
-                i156: %r156 = load %r126 align 8 : i64
+                i156: %r156 = load %r124 align 8 : i64
                 i157: %r157 = call c @printf(c"
   Iterations: %lld
 ", %r156) : i32
                 terminator: br bb42
             bb24 // label: bb24 // preds: [bb22, bb32] // succs: [bb25, bb26]:
                 i158: %r158 = alloca i32 1 align 1 : ptr i1
-                i159: %r159 = load %r127 align 8 : i64
+                i159: %r159 = load %r126 align 8 : i64
                 i160: %r160 = lt %r159, i64 4 : i1
                 i161: store %r160, %r158 align 1
                 i162: %r162 = load %r158 align 1 : i1
@@ -419,18 +419,18 @@ lir::Program {
 ") : i32
                 terminator: br bb43
             bb25 // label: bb25 // preds: [bb24] // succs: [bb27, bb28]:
-                i164: %r164 = load %r126 align 8 : i64
+                i164: %r164 = load %r124 align 8 : i64
                 i165: %r165 = add %r164, i64 1 : i64
-                i166: store %r165, %r126 align 8
+                i166: store %r165, %r124 align 8
                 i167: %r167 = alloca i32 1 align 1 : ptr i1
-                i168: %r168 = load %r124 align 8 : i64
-                i169: %r169 = load %r127 align 8 : i64
+                i168: %r168 = load %r125 align 8 : i64
+                i169: %r169 = load %r126 align 8 : i64
                 i170: %r170 = eq %r168, %r169 : i1
                 i171: store %r170, %r167 align 1
                 i172: %r172 = load %r167 align 1 : i1
                 terminator: cond_br %r172, bb27, bb28
             bb26 // label: bb26 // preds: [bb24] // succs: [bb33]:
-                i173: store i64 1, %r125 align 8
+                i173: store i64 1, %r127 align 8
                 terminator: br bb33
             bb43 // label: bb43 // preds: [bb42] // succs: [bb44]:
                 i174: %r174 = alloca i32 1 align 8 : ptr i64
@@ -445,7 +445,7 @@ lir::Program {
                 terminator: br bb29
             bb33 // label: bb33 // preds: [bb26, bb41] // succs: [bb34, bb35]:
                 i178: %r178 = alloca i32 1 align 1 : ptr i1
-                i179: %r179 = load %r125 align 8 : i64
+                i179: %r179 = load %r127 align 8 : i64
                 i180: %r180 = lt %r179, i64 4 : i1
                 i181: store %r180, %r178 align 1
                 i182: %r182 = load %r178 align 1 : i1
@@ -457,27 +457,27 @@ lir::Program {
                 terminator: br bb45
             bb29 // label: bb29 // preds: [bb27, bb28] // succs: [bb30, bb31]:
                 i184: %r184 = alloca i32 1 align 1 : ptr i1
-                i185: %r185 = load %r124 align 8 : i64
-                i186: %r186 = load %r127 align 8 : i64
+                i185: %r185 = load %r125 align 8 : i64
+                i186: %r186 = load %r126 align 8 : i64
                 i187: %r187 = eq %r185, %r186 : i1
                 i188: store %r187, %r184 align 1
                 i189: %r189 = load %r184 align 1 : i1
                 terminator: cond_br %r189, bb30, bb31
             bb34 // label: bb34 // preds: [bb33] // succs: [bb36, bb37]:
-                i190: %r190 = load %r126 align 8 : i64
+                i190: %r190 = load %r124 align 8 : i64
                 i191: %r191 = add %r190, i64 1 : i64
-                i192: store %r191, %r126 align 8
+                i192: store %r191, %r124 align 8
                 i193: %r193 = alloca i32 1 align 1 : ptr i1
-                i194: %r194 = load %r124 align 8 : i64
-                i195: %r195 = load %r125 align 8 : i64
+                i194: %r194 = load %r125 align 8 : i64
+                i195: %r195 = load %r127 align 8 : i64
                 i196: %r196 = eq %r194, %r195 : i1
                 i197: store %r196, %r193 align 1
                 i198: %r198 = load %r193 align 1 : i1
                 terminator: cond_br %r198, bb36, bb37
             bb35 // label: bb35 // preds: [bb33] // succs: [bb21]:
-                i199: %r199 = load %r124 align 8 : i64
+                i199: %r199 = load %r125 align 8 : i64
                 i200: %r200 = add %r199, i64 1 : i64
-                i201: store %r200, %r124 align 8
+                i201: store %r200, %r125 align 8
                 terminator: br bb21
             bb45 // label: bb45 // preds: [bb44]:
                 terminator: ret void
@@ -490,14 +490,14 @@ lir::Program {
             bb37 // label: bb37 // preds: [bb34] // succs: [bb38]:
                 terminator: br bb38
             bb32 // label: bb32 // preds: [bb30, bb31] // succs: [bb24]:
-                i202: %r202 = load %r127 align 8 : i64
+                i202: %r202 = load %r126 align 8 : i64
                 i203: %r203 = add %r202, i64 1 : i64
-                i204: store %r203, %r127 align 8
+                i204: store %r203, %r126 align 8
                 terminator: br bb24
             bb38 // label: bb38 // preds: [bb36, bb37] // succs: [bb39, bb40]:
                 i205: %r205 = alloca i32 1 align 1 : ptr i1
-                i206: %r206 = load %r124 align 8 : i64
-                i207: %r207 = load %r125 align 8 : i64
+                i206: %r206 = load %r125 align 8 : i64
+                i207: %r207 = load %r127 align 8 : i64
                 i208: %r208 = eq %r206, %r207 : i1
                 i209: store %r208, %r205 align 1
                 i210: %r210 = load %r205 align 1 : i1
@@ -507,9 +507,9 @@ lir::Program {
             bb40 // label: bb40 // preds: [bb38] // succs: [bb41]:
                 terminator: br bb41
             bb41 // label: bb41 // preds: [bb39, bb40] // succs: [bb33]:
-                i211: %r211 = load %r125 align 8 : i64
+                i211: %r211 = load %r127 align 8 : i64
                 i212: %r212 = add %r211, i64 1 : i64
-                i213: store %r212, %r125 align 8
+                i213: store %r212, %r127 align 8
                 terminator: br bb33
         }
 }

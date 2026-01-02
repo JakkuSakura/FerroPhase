@@ -3,6 +3,52 @@ ast::File {
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub import std::fmt::Display : ()
     pub import std::ops::Add : ()
+    pub fn<T: Add<T
+> + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy>(unknown, unknown) -> unknown : fn<T: Add<T
+> + Copy>(unknown, unknown) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              locator a : unknown
+            rhs:
+              locator b : unknown
+    pub fn<T: Add<T
+> + Copy> double(x: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy>(unknown) -> unknown : fn<T: Add<T
+> + Copy>(unknown) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              locator x : unknown
+            rhs:
+              locator x : unknown
+    pub fn<T: Add<T
+> + Copy + Display> pipeline(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+> + Copy + Display>(unknown, unknown) -> unknown : fn<T: Add<T
+> + Copy + Display>(unknown, unknown) -> unknown
+      block (3 stmts) : unknown
+        let result
+          init:
+            invoke : unknown
+              target: double
+              args:
+                invoke : unknown
+                  target: add
+                  args:
+                    locator a : unknown
+                    locator b : unknown
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "specialized result: %s
+" : &string
+              value "<unknown>" : &string
+        expr_stmt (value)
+          locator result : unknown
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (2 stmts) : ()
         let _

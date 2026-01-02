@@ -1,4 +1,31 @@
 hir::Program {
+    pub fn add<T>(a: T, b: T) -> T {
+        // params: [a: T, b: T]
+        {
+            (a + b)
+            (a + b)
+        }
+    }
+
+    pub fn double<T>(x: T) -> T {
+        // params: [x: T]
+        {
+            (x + x)
+            (x + x)
+        }
+    }
+
+    pub fn pipeline<T>(a: T, b: T) -> T {
+        // params: [a: T, b: T]
+        {
+            let result = double(add(a, b));
+            printf("specialized result: %s
+", "<unknown>");
+            result
+            result
+        }
+    }
+
     pub fn main() -> () {
         {
             let _ = pipeline(10, 20);

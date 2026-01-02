@@ -1,29 +1,81 @@
 lir::Program {
     functions:
+        fn add(arg0: ptr i8, arg1: ptr i8) -> ptr i8 [cc: c, linkage: internal] {
+            locals:
+                %0: ptr i8
+                %1: ptr i8 // arg
+                %2: ptr i8 // arg
+                %3: ptr i8
+            bb0 // label: bb0:
+                i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
+                i1: %r1 = alloca i32 1 align 8 : ptr ptr i8
+                i2: %r2 = add %local1, %local2 : ptr i8
+                i3: store %r2, %r1 align 8
+                i4: %r4 = add %local1, %local2 : ptr i8
+                i5: store %r4, %r0 align 8
+                i6: %r6 = load %r0 align 8 : ptr i8
+                terminator: ret %r6
+        }
+
+        fn double(arg0: ptr i8) -> ptr i8 [cc: c, linkage: internal] {
+            locals:
+                %0: ptr i8
+                %1: ptr i8 // arg
+                %2: ptr i8
+            bb0 // label: bb0:
+                i7: %r7 = alloca i32 1 align 8 : ptr ptr i8
+                i8: %r8 = alloca i32 1 align 8 : ptr ptr i8
+                i9: %r9 = add %local1, %local1 : ptr i8
+                i10: store %r9, %r8 align 8
+                i11: %r11 = add %local1, %local1 : ptr i8
+                i12: store %r11, %r7 align 8
+                i13: %r13 = load %r7 align 8 : ptr i8
+                terminator: ret %r13
+        }
+
+        fn pipeline(arg0: ptr i8, arg1: ptr i8) -> ptr i8 [cc: c, linkage: internal] {
+            locals:
+                %0: ptr i8
+                %1: ptr i8 // arg
+                %2: ptr i8 // arg
+                %3: ptr i8
+                %4: ptr i8
+                %5: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i14: %r14 = alloca i32 1 align 8 : ptr ptr i8
+                i15: %r15 = call c @add(%local1, %local2) : ptr i8
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i16: %r16 = call c @double(%r15) : ptr i8
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i17: %r17 = call c @printf(c"specialized result: %s
+", c"<unknown>") : i32
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2]:
+                i18: store %r16, %r14 align 8
+                i19: %r19 = load %r14 align 8 : ptr i8
+                terminator: ret %r19
+        }
+
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
                 %1: ptr i8
                 %2: ptr i8
             bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = call c @pipeline(f64 10, f64 20) : ptr i8
+                i20: %r20 = inttoptr i64 10 : ptr i8
+                i21: %r21 = inttoptr i64 20 : ptr i8
+                i22: %r22 = call c @pipeline(%r20, %r21) : ptr i8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i1: %r1 = call c @pipeline(f64 1.5, f64 2.5) : ptr i8
+                i23: %r23 = fptosi f64 1.5 to i64 : i64
+                i24: %r24 = inttoptr %r23 : ptr i8
+                i25: %r25 = fptosi f64 2.5 to i64 : i64
+                i26: %r26 = inttoptr %r25 : ptr i8
+                i27: %r27 = call c @pipeline(%r24, %r26) : ptr i8
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1]:
                 terminator: ret void
-        }
-
-        fn pipeline(arg0: f64, arg1: f64) -> ptr i8 [cc: c, linkage: internal] {
-            locals:
-                %0: ptr i8
-                %1: f64 // arg
-                %2: f64 // arg
-            bb0 // label: bb0:
-                i2: %r2 = alloca i32 1 align 8 : ptr ptr i8
-                i3: store i64 0, %r2 align 8
-                i4: %r4 = load %r2 align 8 : ptr i8
-                terminator: ret %r4
         }
 }

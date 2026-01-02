@@ -4,270 +4,164 @@ lir::Program {
             locals:
                 %0: ptr ptr i8
                 %1: ptr { i64, i8, i8, i8 } // arg
-                %2: ptr i8
-                %3: ptr { i64, i8, i8, i8 }
+                %2: ptr { i64, i8, i8, i8 }
+                %3: i1
                 %4: i1
                 %5: i1
                 %6: i1
-                %7: i1
-                %8: ptr { i64, i8, i8, i8 }
-                %9: ptr { i64, i8, i8, i8 }
-                %10: ptr { i64, i8, i8, i8 }
-                %11: ptr { i64, i8, i8, i8 }
-                %12: i1
-                %13: i1
-                %14: i1
-                %15: i1
-                %16: ptr { i64, i8, i8, i8 }
-                %17: ptr { i64, i8, i8, i8 }
-                %18: ptr { i64, i8, i8, i8 }
+                %7: i8
+                %8: i8
+                %9: i8
             bb0 // label: bb0 // succs: [bb2, bb3]:
-                i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
-                i1: %r1 = alloca i32 1 align 8 : ptr ptr ptr i8
-                i2: %r2 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i3: store %local1, %r2 align 8
-                i4: %r4 = alloca i32 1 align 1 : ptr i1
-                i5: %r5 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i6: %r6 = eq %r5, i64 0 : i1
-                i7: store %r6, %r4 align 1
-                i8: %r8 = load %r4 align 1 : i1
-                terminator: cond_br %r8, bb2, bb3
+                i0: %r0 = alloca i32 1 align 8 : ptr ptr ptr i8
+                i1: %r1 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
+                i2: store %local1, %r1 align 8
+                i3: %r3 = alloca i32 1 align 1 : ptr i1
+                i4: %r4 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i5: %r5 = bitcast %r4 to ptr i64 : ptr i64
+                i6: %r6 = load %r5 align 8 : i64
+                i7: %r7 = eq %r6, i64 0 : i1
+                i8: store %r7, %r3 align 1
+                i9: %r9 = load %r3 align 1 : i1
+                terminator: cond_br %r9, bb2, bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb1]:
-                i9: store c"red", %r0 align 8
+                i10: store c"red", %r0 align 8
                 terminator: br bb1
             bb3 // label: bb3 // preds: [bb0] // succs: [bb4, bb5]:
-                i10: %r10 = alloca i32 1 align 1 : ptr i1
-                i11: %r11 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i12: %r12 = eq %r11, i64 1 : i1
-                i13: store %r12, %r10 align 1
-                i14: %r14 = load %r10 align 1 : i1
-                terminator: cond_br %r14, bb4, bb5
-            bb1 // label: bb1 // preds: [bb2, bb4, bb6, bb8, bb9] // succs: [bb11, bb12]:
-                i15: %r15 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i16: store %local1, %r15 align 8
-                i17: %r17 = alloca i32 1 align 1 : ptr i1
-                i18: %r18 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i19: %r19 = eq %r18, i64 0 : i1
-                i20: store %r19, %r17 align 1
-                i21: %r21 = load %r17 align 1 : i1
-                terminator: cond_br %r21, bb11, bb12
+                i11: %r11 = alloca i32 1 align 1 : ptr i1
+                i12: %r12 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i13: %r13 = bitcast %r12 to ptr i64 : ptr i64
+                i14: %r14 = load %r13 align 8 : i64
+                i15: %r15 = eq %r14, i64 1 : i1
+                i16: store %r15, %r11 align 1
+                i17: %r17 = load %r11 align 1 : i1
+                terminator: cond_br %r17, bb4, bb5
+            bb1 // label: bb1 // preds: [bb2, bb4, bb6, bb8, bb9]:
+                i18: %r18 = load %r0 align 8 : ptr ptr i8
+                terminator: ret %r18
             bb4 // label: bb4 // preds: [bb3] // succs: [bb1]:
-                i22: store c"green", %r0 align 8
+                i19: store c"green", %r0 align 8
                 terminator: br bb1
             bb5 // label: bb5 // preds: [bb3] // succs: [bb6, bb7]:
-                i23: %r23 = alloca i32 1 align 1 : ptr i1
-                i24: %r24 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i25: %r25 = eq %r24, i64 2 : i1
-                i26: store %r25, %r23 align 1
-                i27: %r27 = load %r23 align 1 : i1
-                terminator: cond_br %r27, bb6, bb7
-            bb11 // label: bb11 // preds: [bb1] // succs: [bb10]:
-                i28: store c"red", %r1 align 8
-                terminator: br bb10
-            bb12 // label: bb12 // preds: [bb1] // succs: [bb13, bb14]:
-                i29: %r29 = alloca i32 1 align 1 : ptr i1
-                i30: %r30 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i31: %r31 = eq %r30, i64 1 : i1
-                i32: store %r31, %r29 align 1
-                i33: %r33 = load %r29 align 1 : i1
-                terminator: cond_br %r33, bb13, bb14
+                i20: %r20 = alloca i32 1 align 1 : ptr i1
+                i21: %r21 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i22: %r22 = bitcast %r21 to ptr i64 : ptr i64
+                i23: %r23 = load %r22 align 8 : i64
+                i24: %r24 = eq %r23, i64 2 : i1
+                i25: store %r24, %r20 align 1
+                i26: %r26 = load %r20 align 1 : i1
+                terminator: cond_br %r26, bb6, bb7
             bb6 // label: bb6 // preds: [bb5] // succs: [bb1]:
-                i34: store c"red rgb", %r0 align 8
+                i27: store c"red rgb", %r0 align 8
                 terminator: br bb1
             bb7 // label: bb7 // preds: [bb5] // succs: [bb8, bb9]:
-                i35: %r35 = alloca i32 1 align 1 : ptr i1
-                i36: %r36 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i37: %r37 = eq %r36, i64 2 : i1
-                i38: store %r37, %r35 align 1
-                i39: %r39 = load %r35 align 1 : i1
-                terminator: cond_br %r39, bb8, bb9
-            bb10 // label: bb10 // preds: [bb11, bb13, bb15, bb17, bb18]:
-                i40: %r40 = load %r1 align 8 : ptr ptr i8
-                terminator: ret %r40
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb10]:
-                i41: store c"green", %r1 align 8
-                terminator: br bb10
-            bb14 // label: bb14 // preds: [bb12] // succs: [bb15, bb16]:
-                i42: %r42 = alloca i32 1 align 1 : ptr i1
-                i43: %r43 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i44: %r44 = eq %r43, i64 2 : i1
-                i45: store %r44, %r42 align 1
-                i46: %r46 = load %r42 align 1 : i1
-                terminator: cond_br %r46, bb15, bb16
+                i28: %r28 = alloca i32 1 align 1 : ptr i1
+                i29: %r29 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i30: %r30 = bitcast %r29 to ptr i64 : ptr i64
+                i31: %r31 = load %r30 align 8 : i64
+                i32: %r32 = eq %r31, i64 2 : i1
+                i33: store %r32, %r28 align 1
+                i34: %r34 = load %r28 align 1 : i1
+                terminator: cond_br %r34, bb8, bb9
             bb8 // label: bb8 // preds: [bb7] // succs: [bb1]:
-                i47: %r47 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i48: %r48 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i49: store %r48, %r47 align 8
-                i50: %r50 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i51: %r51 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i52: store %r51, %r50 align 8
-                i53: %r53 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i54: %r54 = load %r2 align 8 : ptr { i64, i8, i8, i8 }
-                i55: store %r54, %r53 align 8
+                i35: %r35 = alloca i32 1 align 1 : ptr i8
+                i36: %r36 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i37: %r37 = bitcast %r36 to ptr i8 : ptr i8
+                i38: %r38 = gep inbounds %r37 [i64 8] : ptr i8
+                i39: %r39 = bitcast %r38 to ptr i8 : ptr i8
+                i40: %r40 = load %r39 align 1 : i8
+                i41: store %r40, %r35 align 1
+                i42: %r42 = alloca i32 1 align 1 : ptr i8
+                i43: %r43 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i44: %r44 = bitcast %r43 to ptr i8 : ptr i8
+                i45: %r45 = gep inbounds %r44 [i64 9] : ptr i8
+                i46: %r46 = bitcast %r45 to ptr i8 : ptr i8
+                i47: %r47 = load %r46 align 1 : i8
+                i48: store %r47, %r42 align 1
+                i49: %r49 = alloca i32 1 align 1 : ptr i8
+                i50: %r50 = load %r1 align 8 : ptr { i64, i8, i8, i8 }
+                i51: %r51 = bitcast %r50 to ptr i8 : ptr i8
+                i52: %r52 = gep inbounds %r51 [i64 10] : ptr i8
+                i53: %r53 = bitcast %r52 to ptr i8 : ptr i8
+                i54: %r54 = load %r53 align 1 : i8
+                i55: store %r54, %r49 align 1
                 i56: store c"custom rgb", %r0 align 8
                 terminator: br bb1
             bb9 // label: bb9 // preds: [bb7] // succs: [bb1]:
+                i57: store bool false, %r0 align 8
                 terminator: br bb1
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb10]:
-                i57: store c"red rgb", %r1 align 8
-                terminator: br bb10
-            bb16 // label: bb16 // preds: [bb14] // succs: [bb17, bb18]:
-                i58: %r58 = alloca i32 1 align 1 : ptr i1
-                i59: %r59 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i60: %r60 = eq %r59, i64 2 : i1
-                i61: store %r60, %r58 align 1
-                i62: %r62 = load %r58 align 1 : i1
-                terminator: cond_br %r62, bb17, bb18
-            bb17 // label: bb17 // preds: [bb16] // succs: [bb10]:
-                i63: %r63 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i64: %r64 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i65: store %r64, %r63 align 8
-                i66: %r66 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i67: %r67 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i68: store %r67, %r66 align 8
-                i69: %r69 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i70: %r70 = load %r15 align 8 : ptr { i64, i8, i8, i8 }
-                i71: store %r70, %r69 align 8
-                i72: store c"custom rgb", %r1 align 8
-                terminator: br bb10
-            bb18 // label: bb18 // preds: [bb16] // succs: [bb10]:
-                i73: store bool false, %r1 align 8
-                terminator: br bb10
         }
 
         fn classify(arg0: i64) -> ptr ptr i8 [cc: c, linkage: internal] {
             locals:
                 %0: ptr ptr i8
                 %1: i64 // arg
-                %2: ptr i8
-                %3: i64
-                %4: i1
-                %5: i64
-                %6: i1
-                %7: i64
-                %8: i1
-                %9: i64
-                %10: i64
-                %11: i1
-                %12: i64
-                %13: i1
-                %14: i64
-                %15: i1
-                %16: i64
+                %2: i64
+                %3: i1
+                %4: i64
+                %5: i1
+                %6: i64
+                %7: i1
+                %8: i64
             bb0 // label: bb0 // succs: [bb2, bb3]:
-                i74: %r74 = alloca i32 1 align 8 : ptr ptr i8
-                i75: %r75 = alloca i32 1 align 8 : ptr ptr ptr i8
-                i76: %r76 = alloca i32 1 align 8 : ptr i64
-                i77: store %local1, %r76 align 8
-                i78: %r78 = alloca i32 1 align 1 : ptr i1
-                i79: %r79 = load %r76 align 8 : i64
-                i80: %r80 = eq %r79, i64 0 : i1
-                i81: store %r80, %r78 align 1
-                i82: %r82 = load %r78 align 1 : i1
-                terminator: cond_br %r82, bb2, bb3
+                i58: %r58 = alloca i32 1 align 8 : ptr ptr ptr i8
+                i59: %r59 = alloca i32 1 align 8 : ptr i64
+                i60: store %local1, %r59 align 8
+                i61: %r61 = alloca i32 1 align 1 : ptr i1
+                i62: %r62 = load %r59 align 8 : i64
+                i63: %r63 = eq %r62, i64 0 : i1
+                i64: store %r63, %r61 align 1
+                i65: %r65 = load %r61 align 1 : i1
+                terminator: cond_br %r65, bb2, bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb1]:
-                i83: store c"zero", %r74 align 8
+                i66: store c"zero", %r58 align 8
                 terminator: br bb1
             bb3 // label: bb3 // preds: [bb0] // succs: [bb4]:
                 terminator: br bb4
-            bb1 // label: bb1 // preds: [bb2, bb6, bb9, bb10] // succs: [bb13, bb14]:
-                i84: %r84 = alloca i32 1 align 8 : ptr i64
-                i85: store %local1, %r84 align 8
-                i86: %r86 = alloca i32 1 align 1 : ptr i1
-                i87: %r87 = load %r84 align 8 : i64
-                i88: %r88 = eq %r87, i64 0 : i1
-                i89: store %r88, %r86 align 1
-                i90: %r90 = load %r86 align 1 : i1
-                terminator: cond_br %r90, bb13, bb14
+            bb1 // label: bb1 // preds: [bb2, bb6, bb9, bb10]:
+                i67: %r67 = load %r58 align 8 : ptr ptr i8
+                terminator: ret %r67
             bb4 // label: bb4 // preds: [bb3] // succs: [bb6, bb5]:
-                i91: %r91 = alloca i32 1 align 8 : ptr i64
-                i92: %r92 = load %r76 align 8 : i64
-                i93: store %r92, %r91 align 8
-                i94: %r94 = alloca i32 1 align 1 : ptr i1
-                i95: %r95 = load %r91 align 8 : i64
-                i96: %r96 = lt %r95, i64 0 : i1
-                i97: store %r96, %r94 align 1
-                i98: %r98 = load %r94 align 1 : i1
-                terminator: cond_br %r98, bb6, bb5
-            bb13 // label: bb13 // preds: [bb1] // succs: [bb12]:
-                i99: store c"zero", %r75 align 8
-                terminator: br bb12
-            bb14 // label: bb14 // preds: [bb1] // succs: [bb15]:
-                terminator: br bb15
+                i68: %r68 = alloca i32 1 align 8 : ptr i64
+                i69: %r69 = load %r59 align 8 : i64
+                i70: store %r69, %r68 align 8
+                i71: %r71 = alloca i32 1 align 1 : ptr i1
+                i72: %r72 = load %r68 align 8 : i64
+                i73: %r73 = lt %r72, i64 0 : i1
+                i74: store %r73, %r71 align 1
+                i75: %r75 = load %r71 align 1 : i1
+                terminator: cond_br %r75, bb6, bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb7]:
                 terminator: br bb7
             bb6 // label: bb6 // preds: [bb4] // succs: [bb1]:
-                i100: store c"negative", %r74 align 8
+                i76: store c"negative", %r58 align 8
                 terminator: br bb1
-            bb12 // label: bb12 // preds: [bb13, bb17, bb20, bb21]:
-                i101: %r101 = load %r75 align 8 : ptr ptr i8
-                terminator: ret %r101
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb17, bb16]:
-                i102: %r102 = alloca i32 1 align 8 : ptr i64
-                i103: %r103 = load %r84 align 8 : i64
-                i104: store %r103, %r102 align 8
-                i105: %r105 = alloca i32 1 align 1 : ptr i1
-                i106: %r106 = load %r102 align 8 : i64
-                i107: %r107 = lt %r106, i64 0 : i1
-                i108: store %r107, %r105 align 1
-                i109: %r109 = load %r105 align 1 : i1
-                terminator: cond_br %r109, bb17, bb16
             bb7 // label: bb7 // preds: [bb5] // succs: [bb9, bb8]:
-                i110: %r110 = alloca i32 1 align 8 : ptr i64
-                i111: %r111 = load %r76 align 8 : i64
-                i112: store %r111, %r110 align 8
-                i113: %r113 = alloca i32 1 align 8 : ptr i64
-                i114: %r114 = load %r110 align 8 : i64
-                i115: %r115 = rem %r114, i64 2 : i64
-                i116: store %r115, %r113 align 8
-                i117: %r117 = alloca i32 1 align 1 : ptr i1
-                i118: %r118 = load %r113 align 8 : i64
-                i119: %r119 = eq %r118, i64 0 : i1
-                i120: store %r119, %r117 align 1
-                i121: %r121 = load %r117 align 1 : i1
-                terminator: cond_br %r121, bb9, bb8
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb18]:
-                terminator: br bb18
-            bb17 // label: bb17 // preds: [bb15] // succs: [bb12]:
-                i122: store c"negative", %r75 align 8
-                terminator: br bb12
+                i77: %r77 = alloca i32 1 align 8 : ptr i64
+                i78: %r78 = load %r59 align 8 : i64
+                i79: store %r78, %r77 align 8
+                i80: %r80 = alloca i32 1 align 8 : ptr i64
+                i81: %r81 = load %r77 align 8 : i64
+                i82: %r82 = rem %r81, i64 2 : i64
+                i83: store %r82, %r80 align 8
+                i84: %r84 = alloca i32 1 align 1 : ptr i1
+                i85: %r85 = load %r80 align 8 : i64
+                i86: %r86 = eq %r85, i64 0 : i1
+                i87: store %r86, %r84 align 1
+                i88: %r88 = load %r84 align 1 : i1
+                terminator: cond_br %r88, bb9, bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb10]:
                 terminator: br bb10
             bb9 // label: bb9 // preds: [bb7] // succs: [bb1]:
-                i123: store c"even", %r74 align 8
+                i89: store c"even", %r58 align 8
                 terminator: br bb1
-            bb18 // label: bb18 // preds: [bb16] // succs: [bb20, bb19]:
-                i124: %r124 = alloca i32 1 align 8 : ptr i64
-                i125: %r125 = load %r84 align 8 : i64
-                i126: store %r125, %r124 align 8
-                i127: %r127 = alloca i32 1 align 8 : ptr i64
-                i128: %r128 = load %r124 align 8 : i64
-                i129: %r129 = rem %r128, i64 2 : i64
-                i130: store %r129, %r127 align 8
-                i131: %r131 = alloca i32 1 align 1 : ptr i1
-                i132: %r132 = load %r127 align 8 : i64
-                i133: %r133 = eq %r132, i64 0 : i1
-                i134: store %r133, %r131 align 1
-                i135: %r135 = load %r131 align 1 : i1
-                terminator: cond_br %r135, bb20, bb19
             bb10 // label: bb10 // preds: [bb8] // succs: [bb1]:
-                i136: store c"odd", %r74 align 8
+                i90: store c"odd", %r58 align 8
                 terminator: br bb1
-            bb19 // label: bb19 // preds: [bb18] // succs: [bb21]:
-                terminator: br bb21
-            bb20 // label: bb20 // preds: [bb18] // succs: [bb12]:
-                i137: store c"even", %r75 align 8
-                terminator: br bb12
-            bb21 // label: bb21 // preds: [bb19] // succs: [bb12]:
-                i138: store c"odd", %r75 align 8
-                terminator: br bb12
             bb11 // label: bb11:
-                i139: %r139 = load %r75 align 8 : ptr ptr i8
-                terminator: ret %r139
-            bb22 // label: bb22:
-                i140: store bool false, %r75 align 8
-                i141: %r141 = load %r75 align 8 : ptr ptr i8
-                terminator: ret %r141
+                i91: store bool false, %r58 align 8
+                i92: %r92 = load %r58 align 8 : ptr ptr i8
+                terminator: ret %r92
         }
 
         fn unwrap_or(arg0: { i64, i64 }, arg1: i64) -> i64 [cc: c, linkage: internal] {
@@ -275,86 +169,47 @@ lir::Program {
                 %0: i64
                 %1: { i64, i64 } // arg
                 %2: i64 // arg
-                %3: i64
-                %4: { i64, i64 }
-                %5: i1
-                %6: i64
-                %7: i1
-                %8: { i64, i64 }
-                %9: i1
-                %10: i64
-                %11: i1
+                %3: { i64, i64 }
+                %4: i1
+                %5: i64
+                %6: i1
             bb0 // label: bb0 // succs: [bb2, bb3]:
-                i142: %r142 = alloca i32 1 align 8 : ptr i64
-                i143: %r143 = alloca i32 1 align 8 : ptr i64
-                i144: %r144 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i145: store %local1, %r144 align 8
-                i146: %r146 = alloca i32 1 align 1 : ptr i1
-                i147: %r147 = bitcast %r144 to ptr i64 : ptr i64
-                i148: %r148 = load %r147 align 8 : i64
-                i149: %r149 = eq %r148, i64 0 : i1
-                i150: store %r149, %r146 align 1
-                i151: %r151 = load %r146 align 1 : i1
-                terminator: cond_br %r151, bb2, bb3
+                i93: %r93 = alloca i32 1 align 8 : ptr i64
+                i94: %r94 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i95: store %local1, %r94 align 8
+                i96: %r96 = alloca i32 1 align 1 : ptr i1
+                i97: %r97 = bitcast %r94 to ptr i64 : ptr i64
+                i98: %r98 = load %r97 align 8 : i64
+                i99: %r99 = eq %r98, i64 0 : i1
+                i100: store %r99, %r96 align 1
+                i101: %r101 = load %r96 align 1 : i1
+                terminator: cond_br %r101, bb2, bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb1]:
-                i152: %r152 = alloca i32 1 align 8 : ptr i64
-                i153: %r153 = bitcast %r144 to ptr i8 : ptr i8
-                i154: %r154 = gep inbounds %r153 [i64 8] : ptr i8
-                i155: %r155 = bitcast %r154 to ptr i64 : ptr i64
-                i156: %r156 = load %r155 align 8 : i64
-                i157: store %r156, %r152 align 8
-                i158: %r158 = load %r152 align 8 : i64
-                i159: store %r158, %r142 align 8
+                i102: %r102 = alloca i32 1 align 8 : ptr i64
+                i103: %r103 = bitcast %r94 to ptr i8 : ptr i8
+                i104: %r104 = gep inbounds %r103 [i64 8] : ptr i8
+                i105: %r105 = bitcast %r104 to ptr i64 : ptr i64
+                i106: %r106 = load %r105 align 8 : i64
+                i107: store %r106, %r102 align 8
+                i108: %r108 = load %r102 align 8 : i64
+                i109: store %r108, %r93 align 8
                 terminator: br bb1
             bb3 // label: bb3 // preds: [bb0] // succs: [bb4, bb5]:
-                i160: %r160 = alloca i32 1 align 1 : ptr i1
-                i161: %r161 = bitcast %r144 to ptr i64 : ptr i64
-                i162: %r162 = load %r161 align 8 : i64
-                i163: %r163 = eq %r162, i64 1 : i1
-                i164: store %r163, %r160 align 1
-                i165: %r165 = load %r160 align 1 : i1
-                terminator: cond_br %r165, bb4, bb5
-            bb1 // label: bb1 // preds: [bb2, bb4, bb5] // succs: [bb7, bb8]:
-                i166: %r166 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i167: store %local1, %r166 align 8
-                i168: %r168 = alloca i32 1 align 1 : ptr i1
-                i169: %r169 = bitcast %r166 to ptr i64 : ptr i64
-                i170: %r170 = load %r169 align 8 : i64
-                i171: %r171 = eq %r170, i64 0 : i1
-                i172: store %r171, %r168 align 1
-                i173: %r173 = load %r168 align 1 : i1
-                terminator: cond_br %r173, bb7, bb8
+                i110: %r110 = alloca i32 1 align 1 : ptr i1
+                i111: %r111 = bitcast %r94 to ptr i64 : ptr i64
+                i112: %r112 = load %r111 align 8 : i64
+                i113: %r113 = eq %r112, i64 1 : i1
+                i114: store %r113, %r110 align 1
+                i115: %r115 = load %r110 align 1 : i1
+                terminator: cond_br %r115, bb4, bb5
+            bb1 // label: bb1 // preds: [bb2, bb4, bb5]:
+                i116: %r116 = load %r93 align 8 : i64
+                terminator: ret %r116
             bb4 // label: bb4 // preds: [bb3] // succs: [bb1]:
-                i174: store %local2, %r142 align 8
+                i117: store %local2, %r93 align 8
                 terminator: br bb1
             bb5 // label: bb5 // preds: [bb3] // succs: [bb1]:
                 terminator: br bb1
-            bb7 // label: bb7 // preds: [bb1] // succs: [bb6]:
-                i175: %r175 = alloca i32 1 align 8 : ptr i64
-                i176: %r176 = bitcast %r166 to ptr i8 : ptr i8
-                i177: %r177 = gep inbounds %r176 [i64 8] : ptr i8
-                i178: %r178 = bitcast %r177 to ptr i64 : ptr i64
-                i179: %r179 = load %r178 align 8 : i64
-                i180: store %r179, %r175 align 8
-                i181: %r181 = load %r175 align 8 : i64
-                i182: store %r181, %r143 align 8
-                terminator: br bb6
-            bb8 // label: bb8 // preds: [bb1] // succs: [bb9, bb10]:
-                i183: %r183 = alloca i32 1 align 1 : ptr i1
-                i184: %r184 = bitcast %r166 to ptr i64 : ptr i64
-                i185: %r185 = load %r184 align 8 : i64
-                i186: %r186 = eq %r185, i64 1 : i1
-                i187: store %r186, %r183 align 1
-                i188: %r188 = load %r183 align 1 : i1
-                terminator: cond_br %r188, bb9, bb10
-            bb6 // label: bb6 // preds: [bb7, bb9, bb10]:
-                i189: %r189 = load %r143 align 8 : i64
-                terminator: ret %r189
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb6]:
-                i190: store %local2, %r143 align 8
-                terminator: br bb6
-            bb10 // label: bb10 // preds: [bb8] // succs: [bb6]:
-                terminator: br bb6
         }
 
         fn main() -> void [cc: c, linkage: internal] {
@@ -387,88 +242,88 @@ lir::Program {
                 %25: i64
                 %26: i32
             bb0 // label: bb0 // succs: [bb1]:
-                i191: %r191 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
-                i192: store struct { i64, i8, i8, i8 } { i64 0, i8 0, i8 0, i8 0 }, %r191 align 8
-                i193: %r193 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
-                i194: %r194 = load %r191 align 8 : { i64, i8, i8, i8 }
-                i195: store %r194, %r193 align 8
-                i196: %r196 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
-                i197: store struct { i64, i8, i8, i8 } { i64 2, i8 128, i8 64, i8 32 }, %r196 align 8
-                i198: %r198 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i199: store %r193, %r198 align 8
-                i200: %r200 = call c @describe(%r198) : ptr ptr i8
+                i118: %r118 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
+                i119: store struct { i64, i8, i8, i8 } { i64 0, i8 0, i8 0, i8 0 }, %r118 align 8
+                i120: %r120 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
+                i121: %r121 = load %r118 align 8 : { i64, i8, i8, i8 }
+                i122: store %r121, %r120 align 8
+                i123: %r123 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
+                i124: store struct { i64, i8, i8, i8 } { i64 2, i8 128, i8 64, i8 32 }, %r123 align 8
+                i125: %r125 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
+                i126: store %r120, %r125 align 8
+                i127: %r127 = call c @describe(%r125) : ptr ptr i8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i201: %r201 = call c @printf(c"%s
-", %r200) : i32
+                i128: %r128 = call c @printf(c"%s
+", %r127) : i32
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i202: %r202 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
-                i203: store %r196, %r202 align 8
-                i204: %r204 = call c @describe(%r202) : ptr ptr i8
+                i129: %r129 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
+                i130: store %r123, %r129 align 8
+                i131: %r131 = call c @describe(%r129) : ptr ptr i8
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i205: %r205 = call c @printf(c"%s
-", %r204) : i32
+                i132: %r132 = call c @printf(c"%s
+", %r131) : i32
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i206: %r206 = alloca i32 1 align 8 : ptr i64
-                i207: %r207 = sub i64 0, i64 5 : i64
-                i208: store %r207, %r206 align 8
-                i209: %r209 = load %r206 align 8 : i64
-                i210: %r210 = call c @classify(%r209) : ptr ptr i8
+                i133: %r133 = alloca i32 1 align 8 : ptr i64
+                i134: %r134 = sub i64 0, i64 5 : i64
+                i135: store %r134, %r133 align 8
+                i136: %r136 = load %r133 align 8 : i64
+                i137: %r137 = call c @classify(%r136) : ptr ptr i8
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i211: %r211 = call c @printf(c"%s
-", %r210) : i32
+                i138: %r138 = call c @printf(c"%s
+", %r137) : i32
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i212: %r212 = call c @classify(i64 0) : ptr ptr i8
+                i139: %r139 = call c @classify(i64 0) : ptr ptr i8
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i213: %r213 = call c @printf(c"%s
-", %r212) : i32
+                i140: %r140 = call c @printf(c"%s
+", %r139) : i32
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i214: %r214 = call c @classify(i64 4) : ptr ptr i8
+                i141: %r141 = call c @classify(i64 4) : ptr ptr i8
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i215: %r215 = call c @printf(c"%s
-", %r214) : i32
+                i142: %r142 = call c @printf(c"%s
+", %r141) : i32
                 terminator: br bb10
             bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i216: %r216 = call c @classify(i64 7) : ptr ptr i8
+                i143: %r143 = call c @classify(i64 7) : ptr ptr i8
                 terminator: br bb11
             bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i217: %r217 = call c @printf(c"%s
-", %r216) : i32
+                i144: %r144 = call c @printf(c"%s
+", %r143) : i32
                 terminator: br bb12
             bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i218: %r218 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i219: store struct { i64, i64 } { i64 0, i64 42 }, %r218 align 8
-                i220: %r220 = load %r218 align 8 : { i64, i64 }
-                i221: %r221 = call c @unwrap_or(%r220, i64 0) : i64
+                i145: %r145 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i146: store struct { i64, i64 } { i64 0, i64 42 }, %r145 align 8
+                i147: %r147 = load %r145 align 8 : { i64, i64 }
+                i148: %r148 = call c @unwrap_or(%r147, i64 0) : i64
                 terminator: br bb13
             bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i222: %r222 = call c @printf(c"%lld
-", %r221) : i32
+                i149: %r149 = call c @printf(c"%lld
+", %r148) : i32
                 terminator: br bb14
             bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i223: %r223 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i224: store struct { i64, i64 } { i64 1, i64 0 }, %r223 align 8
-                i225: %r225 = load %r223 align 8 : { i64, i64 }
-                i226: %r226 = call c @unwrap_or(%r225, i64 99) : i64
+                i150: %r150 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i151: store struct { i64, i64 } { i64 1, i64 0 }, %r150 align 8
+                i152: %r152 = load %r150 align 8 : { i64, i64 }
+                i153: %r153 = call c @unwrap_or(%r152, i64 99) : i64
                 terminator: br bb15
             bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i227: %r227 = call c @printf(c"%lld
-", %r226) : i32
+                i154: %r154 = call c @printf(c"%lld
+", %r153) : i32
                 terminator: br bb16
             bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i228: %r228 = alloca i32 1 align 8 : ptr i64
-                i229: store i64 0, %r228 align 8
-                i230: %r230 = load %r228 align 8 : i64
-                i231: %r231 = call c @printf(c"0x%06X
-", %r230) : i32
+                i155: %r155 = alloca i32 1 align 8 : ptr i64
+                i156: store i64 0, %r155 align 8
+                i157: %r157 = load %r155 align 8 : i64
+                i158: %r158 = call c @printf(c"0x%06X
+", %r157) : i32
                 terminator: br bb17
             bb17 // label: bb17 // preds: [bb16]:
                 terminator: ret void

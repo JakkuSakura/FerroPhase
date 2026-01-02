@@ -17,6 +17,22 @@ hir::Program {
         (x * 2)
     }
 
+    pub fn apply<T>(a: T, b: T, op: fn(T, T) -> T) -> () {
+        // params: [a: T, b: T, op: fn(T, T) -> T]
+        {
+            printf("%s
+", "<unknown>");
+        }
+    }
+
+    pub fn add<T>(a: T, b: T) -> T {
+        // params: [a: T, b: T]
+        {
+            (a + b)
+            (a + b)
+        }
+    }
+
     pub fn apply_if(cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64) -> i64 {
         // params: [cond: bool, a: i64, b: i64, op: fn(i64, i64) -> i64]
         {

@@ -1,10 +1,56 @@
 mir::Program {
     items:
-        fn main() -> () [body: body0]
+        fn add(arg0: <??>, arg1: <??>) -> <??> [body: body0]
 
-        fn pipeline(arg0: f64, arg1: f64) -> <??> [body: body1]
+        fn double(arg0: <??>) -> <??> [body: body1]
+
+        fn pipeline(arg0: <??>, arg1: <??>) -> <??> [body: body2]
+
+        fn main() -> () [body: body3]
     bodies:
-        body0 { arg_count: 0, locals: 3 }
+        body0 { arg_count: 2, locals: 4 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: <??>
+                _2: <??>
+                _3: <??>
+            blocks:
+                bb0:
+                    s0: _3 = Add(copy _1, copy _2)
+                    s1: _0 = Add(copy _1, copy _2)
+                    terminator: return
+        body1 { arg_count: 1, locals: 3 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: <??>
+                _2: <??>
+            blocks:
+                bb0:
+                    s0: _2 = Add(copy _1, copy _1)
+                    s1: _0 = Add(copy _1, copy _1)
+                    terminator: return
+        body2 { arg_count: 2, locals: 6 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: <??>
+                _2: <??>
+                _3: <??>
+                _4: <??>
+                _5: i32
+            blocks:
+                bb0:
+                    terminator: call fn add(copy _1, copy _2) -> _4 then bb1
+                bb1:
+                    terminator: call fn double(copy _4) -> _3 then bb2
+                bb2:
+                    terminator: call global printf("specialized result: %s\n", "<unknown>") -> _5 then bb3
+                bb3:
+                    s0: _0 = copy _3
+                    terminator: return
+        body3 { arg_count: 0, locals: 3 }
             return_local: _0
             locals:
                 _0: ()
@@ -14,17 +60,7 @@ mir::Program {
                 bb0:
                     terminator: call fn pipeline(10, 20) -> _1 then bb1
                 bb1:
-                    terminator: call global pipeline(1.5, 2.5) -> _2 then bb2
+                    terminator: call fn pipeline(1.5, 2.5) -> _2 then bb2
                 bb2:
-                    terminator: return
-        body1 { arg_count: 2, locals: 3 }
-            return_local: _0
-            locals:
-                _0: <??>
-                _1: f64
-                _2: f64
-            blocks:
-                bb0:
-                    s0: _0 = 0u
                     terminator: return
 }
