@@ -939,8 +939,9 @@ impl Pipeline {
             )?;
         }
 
-        if matches!(target, PipelineTarget::Rust) && stage_enabled(options, STAGE_RUNTIME_MATERIALIZE)
-        {
+        let runtime_materialized = matches!(target, PipelineTarget::Rust)
+            && stage_enabled(options, STAGE_RUNTIME_MATERIALIZE);
+        if runtime_materialized {
             self.run_stage(
                 STAGE_RUNTIME_MATERIALIZE,
                 &diagnostic_manager,
@@ -995,25 +996,8 @@ impl Pipeline {
             self.save_bootstrap_snapshot(&ast, base_path)?;
         }
 
-        if !matches!(target, PipelineTarget::Rust) && stage_enabled(options, STAGE_RUNTIME_MATERIALIZE)
-        {
-            self.run_stage(
-                STAGE_RUNTIME_MATERIALIZE,
-                &diagnostic_manager,
-                options,
-                |pipeline| {
-                    pipeline.stage_materialize_runtime_intrinsics(
-                        &mut ast,
-                        target,
-                        options,
-                        &diagnostic_manager,
-                    )
-                },
-            )?;
-        }
-
         if !options.bootstrap_mode {
-            if stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
+            if runtime_materialized && stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
                 self.run_stage(
                     STAGE_TYPE_POST_MATERIALIZE,
                     &diagnostic_manager,
