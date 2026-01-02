@@ -220,6 +220,10 @@ impl HirGenerator {
             ExprKind::Reference(reference) => {
                 return self.transform_expr_to_hir(reference.referee.as_ref());
             }
+            ExprKind::Dereference(deref) => {
+                let inner = self.transform_expr_to_hir(deref.referee.as_ref())?;
+                hir::ExprKind::Unary(hir::UnOp::Deref, Box::new(inner))
+            }
             _ => {
                 return Err(crate::error::optimization_error(format!(
                     "Unimplemented AST expression type for HIR transformation: {:?}",

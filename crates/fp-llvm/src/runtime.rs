@@ -1,7 +1,7 @@
 use fp_core::ast::{
-    DecimalType, Expr, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprSelect,
-    FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt, TypeNothing,
-    TypePrimitive, TypeUnit, Value,
+    DecimalType, Expr, ExprDereference, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
+    ExprSelect, FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt,
+    TypeNothing, TypePrimitive, TypeUnit, Value,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
@@ -145,6 +145,18 @@ fn build_printf_format(
 fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, Option<Expr>)> {
     let ty = expr.ty().filter(|ty| !matches!(ty, Ty::Any(_) | Ty::Unknown(_)));
     if let Some(ty) = ty {
+        if let Ty::Reference(reference) = ty {
+            let inner = reference.ty.as_ref();
+            if is_string_like_ty(inner) {
+                return Ok(("%s".to_string(), None));
+            }
+            let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
+            let mut deref = Expr::new(ExprKind::Dereference(ExprDereference {
+                referee: Box::new(expr.clone()),
+            }));
+            deref.set_ty((*reference.ty).clone());
+            return Ok((spec, Some(deref)));
+        }
         return infer_printf_spec_with_replacement(Some(ty));
     }
 
@@ -197,7 +209,18 @@ fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<E
                 })?;
             infer_printf_spec_with_replacement(Some(&field.value))
         }
-        Ty::Reference(reference) => infer_printf_spec_with_replacement(Some(&reference.ty)),
+        Ty::Reference(reference) => {
+            let inner = reference.ty.as_ref();
+            if is_string_like_ty(inner) {
+                return Ok(("%s".to_string(), None));
+            }
+            let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
+            let mut deref = Expr::new(ExprKind::Dereference(ExprDereference {
+                referee: Box::new(Expr::new(ExprKind::Select(select.clone()))),
+            }));
+            deref.set_ty((*reference.ty).clone());
+            Ok((spec, Some(deref)))
+        }
         _ => Err(fp_core::error::Error::from(
             "printf argument type could not be inferred from field select".to_string(),
         )),
@@ -240,10 +263,14 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
         Ty::Primitive(TypePrimitive::Bool) => "%d".to_string(),
         Ty::Primitive(TypePrimitive::Char) => "%c".to_string(),
         Ty::Primitive(TypePrimitive::String) => "%s".to_string(),
-        Ty::Reference(_) => {
-            return Err(fp_core::error::Error::from(
-                "printf does not support reference values; dereference first".to_string(),
-            ));
+        Ty::Reference(reference) => {
+            if is_string_like_ty(reference.ty.as_ref()) {
+                "%s".to_string()
+            } else {
+                return Err(fp_core::error::Error::from(
+                    "printf does not support reference values; dereference first".to_string(),
+                ));
+            }
         }
         Ty::Any(_) => "%s".to_string(),
         Ty::Struct(struct_ty) => {
@@ -314,4 +341,8 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
         _ => None,
     };
     Ok((spec, replacement))
+}
+
+fn is_string_like_ty(ty: &Ty) -> bool {
+    matches!(ty, Ty::Primitive(TypePrimitive::String))
 }
