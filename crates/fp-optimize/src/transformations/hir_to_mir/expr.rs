@@ -3192,7 +3192,7 @@ impl<'a> BodyBuilder<'a> {
     fn lower_inner_item(&mut self, item: &hir::Item) -> Result<()> {
         match &item.kind {
             hir::ItemKind::Struct(def) => {
-                self.lowering.register_struct(item.def_id, def);
+                self.lowering.register_struct(item.def_id, def, item.span);
             }
             hir::ItemKind::Enum(enm) => {
                 self.lowering.register_enum(item.def_id, enm, item.span);
@@ -3471,7 +3471,7 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(def_id) = def_id {
-            if let Some(info) = self.lowering.struct_defs.get(&def_id) {
+            if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
                 if let Some(layout) =
                     self.lowering
                         .struct_layout_for_instance(def_id, &generic_args, span)
@@ -3479,7 +3479,7 @@ impl<'a> BodyBuilder<'a> {
                     return self.lower_registered_struct_literal(
                         local_id,
                         annotated_ty,
-                        info,
+                        &info,
                         &layout,
                         fields,
                         span,
@@ -4513,10 +4513,7 @@ impl<'a> BodyBuilder<'a> {
                     call.kind,
                     IntrinsicCallKind::Print | IntrinsicCallKind::Println
                 ) {
-                    self.lowering.emit_warning(
-                        expr.span,
-                        "treating print intrinsic as unit value during MIR operand lowering",
-                    );
+                    self.emit_printf_call(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
                     let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
@@ -4892,6 +4889,269 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    fn emit_printf_call(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
+        let template = match &call.payload {
+            IntrinsicCallPayload::Format { template } => template,
+            IntrinsicCallPayload::Args { .. } => {
+                self.lowering
+                    .emit_error(span, "printf lowering requires format payload");
+                return Ok(());
+            }
+        };
+
+        if !template.kwargs.is_empty() {
+            self.lowering
+                .emit_error(span, "named arguments are not supported in printf lowering");
+            return Ok(());
+        }
+
+        let mut lowered_args = Vec::with_capacity(template.args.len());
+        for arg in &template.args {
+            lowered_args.push(self.lower_operand(arg, None)?);
+        }
+
+        let mut prepared_args = Vec::with_capacity(lowered_args.len());
+        for arg in lowered_args {
+            prepared_args.push(self.prepare_printf_arg(arg, span)?);
+        }
+
+        let mut format = String::new();
+        let mut implicit_index = 0usize;
+
+        for part in &template.parts {
+            match part {
+                hir::FormatTemplatePart::Literal(text) => format.push_str(text),
+                hir::FormatTemplatePart::Placeholder(placeholder) => {
+                    let arg_index = match &placeholder.arg_ref {
+                        hir::FormatArgRef::Implicit => {
+                            let current = implicit_index;
+                            implicit_index += 1;
+                            current
+                        }
+                        hir::FormatArgRef::Positional(index) => *index,
+                        hir::FormatArgRef::Named(name) => {
+                            self.lowering.emit_error(
+                                span,
+                                format!("named argument '{name}' is not supported"),
+                            );
+                            return Ok(());
+                        }
+                    };
+
+                    let Some((_, _, spec)) = prepared_args.get(arg_index) else {
+                        self.lowering.emit_error(
+                            span,
+                            format!(
+                                "format placeholder references missing argument at index {}",
+                                arg_index
+                            ),
+                        );
+                        return Ok(());
+                    };
+
+                    if let Some(explicit) = &placeholder.format_spec {
+                        let trimmed = explicit.trim();
+                        if trimmed.starts_with('%') {
+                            format.push_str(explicit);
+                        } else {
+                            format.push('%');
+                            format.push_str(trimmed);
+                        }
+                    } else {
+                        format.push_str(spec);
+                    }
+                }
+            }
+        }
+
+        if call.kind == IntrinsicCallKind::Println {
+            format.push('\n');
+        }
+
+        let (fmt_const, fmt_ty) = self.lower_literal(&hir::Lit::Str(format), None);
+        let mut operands = Vec::with_capacity(1 + prepared_args.len());
+        let mut arg_types = Vec::with_capacity(1 + prepared_args.len());
+
+        operands.push(mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: fmt_const,
+        }));
+        arg_types.push(fmt_ty);
+
+        for (operand, ty, _) in prepared_args {
+            operands.push(operand);
+            arg_types.push(ty);
+        }
+
+        let existing_sig = self.lowering.placeholder_function_sig("printf");
+        let sig = self.lowering.update_placeholder_signature(
+            "printf",
+            &existing_sig,
+            &arg_types,
+            None,
+        );
+        let fn_ty = self.lowering.c_function_pointer_ty(&sig);
+        let func_operand = mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Global(Symbol::new("printf"), fn_ty),
+        });
+
+        let continue_block = self.new_block();
+        let temp_local = self.allocate_temp(sig.output.clone(), span);
+        let destination = Some((mir::Place::from_local(temp_local), continue_block));
+        let terminator = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Call {
+                func: func_operand,
+                args: operands,
+                destination,
+                cleanup: None,
+                from_hir_call: true,
+                fn_span: span,
+            },
+        };
+
+        self.blocks[self.current_block as usize].terminator = Some(terminator);
+        self.current_block = continue_block;
+        Ok(())
+    }
+
+    fn prepare_printf_arg(
+        &mut self,
+        arg: OperandInfo,
+        span: Span,
+    ) -> Result<(mir::Operand, Ty, String)> {
+        let (operand, ty) = (arg.operand, arg.ty);
+        match &ty.kind {
+            TyKind::Bool => Ok((operand, ty, "%d".to_string())),
+            TyKind::Char => Ok((operand, ty, "%c".to_string())),
+            TyKind::Int(int_ty) => Ok((operand, ty, match int_ty {
+                IntTy::I8 => "%hhd",
+                IntTy::I16 => "%hd",
+                IntTy::I32 => "%d",
+                IntTy::I64 => "%lld",
+                IntTy::I128 => "%lld",
+                IntTy::Isize => "%lld",
+            }.to_string())),
+            TyKind::Uint(uint_ty) => Ok((operand, ty, match uint_ty {
+                UintTy::U8 => "%hhu",
+                UintTy::U16 => "%hu",
+                UintTy::U32 => "%u",
+                UintTy::U64 => "%llu",
+                UintTy::U128 => "%llu",
+                UintTy::Usize => "%llu",
+            }.to_string())),
+            TyKind::Float(_) => Ok((operand, ty, "%f".to_string())),
+            TyKind::RawPtr(type_and_mut) => {
+                if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
+                    Ok((operand, ty, "%s".to_string()))
+                } else {
+                    self.lowering.emit_error(
+                        span,
+                        "printf only supports raw pointers to byte strings",
+                    );
+                    Ok((operand, ty, "%s".to_string()))
+                }
+            }
+            TyKind::Ref(_, inner, _) => {
+                if let TyKind::RawPtr(type_and_mut) = &inner.kind {
+                    if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
+                        let place = match operand {
+                            mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
+                            _ => {
+                                self.lowering.emit_error(
+                                    span,
+                                    "printf cannot dereference non-place arguments",
+                                );
+                                return Ok((operand, ty, "%s".to_string()));
+                            }
+                        };
+                        let mut deref_place = place.clone();
+                        deref_place.projection.push(mir::PlaceElem::Deref);
+                        return Ok((
+                            mir::Operand::Copy(deref_place),
+                            (*inner).clone(),
+                            "%s".to_string(),
+                        ));
+                    }
+                }
+                if self.is_c_string_ptr(inner.as_ref()) {
+                    return Ok((operand, ty, "%s".to_string()));
+                }
+                let place = match operand {
+                    mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
+                    _ => {
+                        self.lowering.emit_error(
+                            span,
+                            "printf cannot dereference non-place arguments",
+                        );
+                        return Ok((operand, ty, "%s".to_string()));
+                    }
+                };
+                let mut deref_place = place.clone();
+                deref_place.projection.push(mir::PlaceElem::Deref);
+                let deref_ty = (*inner).clone();
+                let spec = self.printf_spec_for_ty(&deref_ty, span)?;
+                Ok((mir::Operand::Copy(deref_place), deref_ty, spec))
+            }
+            _ => {
+                self.lowering
+                    .emit_error(span, "printf argument type is not supported");
+                Ok((operand, ty, "%s".to_string()))
+            }
+        }
+    }
+
+    fn printf_spec_for_ty(&mut self, ty: &Ty, span: Span) -> Result<String> {
+        let spec = match &ty.kind {
+            TyKind::Bool => "%d",
+            TyKind::Char => "%c",
+            TyKind::Int(int_ty) => match int_ty {
+                IntTy::I8 => "%hhd",
+                IntTy::I16 => "%hd",
+                IntTy::I32 => "%d",
+                IntTy::I64 => "%lld",
+                IntTy::I128 => "%lld",
+                IntTy::Isize => "%lld",
+            },
+            TyKind::Uint(uint_ty) => match uint_ty {
+                UintTy::U8 => "%hhu",
+                UintTy::U16 => "%hu",
+                UintTy::U32 => "%u",
+                UintTy::U64 => "%llu",
+                UintTy::U128 => "%llu",
+                UintTy::Usize => "%llu",
+            },
+            TyKind::Float(_) => "%f",
+            TyKind::RawPtr(type_and_mut) => {
+                if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
+                    "%s"
+                } else {
+                    self.lowering.emit_error(
+                        span,
+                        "printf only supports raw pointers to byte strings",
+                    );
+                    "%s"
+                }
+            }
+            _ => {
+                self.lowering
+                    .emit_error(span, "printf argument type is not supported");
+                "%s"
+            }
+        };
+        Ok(spec.to_string())
+    }
+
+    fn is_c_string_ptr(&self, ty: &Ty) -> bool {
+        matches!(
+            ty.kind,
+            TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8)
+        )
+    }
+
     fn resolve_struct_ref(&mut self, expr: &hir::Expr) -> Option<StructRef> {
         let hir::ExprKind::Path(path) = &expr.kind else {
             return None;
@@ -5145,6 +5405,42 @@ impl<'a> BodyBuilder<'a> {
                 }
                 Ok(None)
             }
+            hir::ExprKind::Unary(hir::UnOp::Deref, inner) => {
+                let Some(mut place_info) = self.lower_place(inner)? else {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "dereference target is not a place expression",
+                    );
+                    return Ok(None);
+                };
+
+                let mut base_ty = place_info.ty.clone();
+                loop {
+                    match &base_ty.kind {
+                        TyKind::Ref(_, inner_ty, _) => {
+                            place_info.place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = inner_ty.as_ref().clone();
+                            break;
+                        }
+                        TyKind::RawPtr(type_and_mut) => {
+                            place_info.place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = type_and_mut.ty.as_ref().clone();
+                            break;
+                        }
+                        _ => {
+                            self.lowering.emit_error(
+                                expr.span,
+                                "dereference requires a reference or pointer type",
+                            );
+                            return Ok(None);
+                        }
+                    }
+                }
+
+                place_info.ty = base_ty;
+                place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
+                Ok(Some(place_info))
+            }
             hir::ExprKind::FieldAccess(base, field) => {
                 let base_place = match self.lower_place(base)? {
                     Some(info) => info,
@@ -5386,20 +5682,27 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
                 hir::UnOp::Deref => {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "dereference expressions are not yet supported for MIR assignment",
-                    );
+                    let place_info = match self.lower_place(expr)? {
+                        Some(info) => info,
+                        None => {
+                            self.lowering.emit_error(
+                                expr.span,
+                                "dereference expressions must resolve to a place",
+                            );
+                            return Ok(());
+                        }
+                    };
                     let statement = mir::Statement {
                         source_info: expr.span,
                         kind: mir::StatementKind::Assign(
-                            place,
-                            mir::Rvalue::Use(mir::Operand::Constant(
-                                self.lowering.error_constant(expr.span),
-                            )),
+                            place.clone(),
+                            mir::Rvalue::Use(mir::Operand::Copy(place_info.place.clone())),
                         ),
                     };
                     self.push_statement(statement);
+                    if place.projection.is_empty() {
+                        self.locals[place.local as usize].ty = place_info.ty.clone();
+                    }
                 }
             },
             hir::ExprKind::Block(block) => {
@@ -5507,10 +5810,7 @@ impl<'a> BodyBuilder<'a> {
                     self.push_statement(unit_assign);
                 }
                 IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                    self.lowering.emit_warning(
-                        expr.span,
-                        "treating print intrinsic as no-op during MIR lowering",
-                    );
+                    self.emit_printf_call(call, expr.span)?;
                     let statement = mir::Statement {
                         source_info: expr.span,
                         kind: mir::StatementKind::Assign(
