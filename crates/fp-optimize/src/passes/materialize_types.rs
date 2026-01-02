@@ -11,27 +11,52 @@ use std::collections::{HashMap, HashSet};
 /// This pass exists primarily for backends like Rust that cannot represent
 /// anonymous structural types (e.g. `struct { a: i64 }`) or symbolic type-level
 /// arithmetic (e.g. `A + B`) directly.
+pub struct MaterializeTypesOptions {
+    pub include_unions: bool,
+}
+
 pub fn materialize_structural_types(node: &mut Node) -> Result<()> {
+    materialize_structural_types_with(
+        node,
+        &MaterializeTypesOptions {
+            include_unions: false,
+        },
+    )
+}
+
+pub fn materialize_structural_types_with_unions(node: &mut Node) -> Result<()> {
+    materialize_structural_types_with(
+        node,
+        &MaterializeTypesOptions {
+            include_unions: true,
+        },
+    )
+}
+
+fn materialize_structural_types_with(
+    node: &mut Node,
+    options: &MaterializeTypesOptions,
+) -> Result<()> {
     match node.kind_mut() {
-        NodeKind::File(file) => materialize_items(&mut file.items),
-        NodeKind::Item(item) => materialize_item(item),
+        NodeKind::File(file) => materialize_items(&mut file.items, options),
+        NodeKind::Item(item) => materialize_item(item, options),
         NodeKind::Expr(_) | NodeKind::Schema(_) | NodeKind::Query(_) | NodeKind::Workspace(_) => {
             Ok(())
         }
     }
 }
 
-fn materialize_item(item: &mut Item) -> Result<()> {
+fn materialize_item(item: &mut Item, options: &MaterializeTypesOptions) -> Result<()> {
     match item.kind_mut() {
-        ItemKind::Module(module) => materialize_items(&mut module.items),
-        ItemKind::Impl(impl_) => materialize_items(&mut impl_.items),
-        ItemKind::DefTrait(def) => materialize_items(&mut def.items),
+        ItemKind::Module(module) => materialize_items(&mut module.items, options),
+        ItemKind::Impl(impl_) => materialize_items(&mut impl_.items, options),
+        ItemKind::DefTrait(def) => materialize_items(&mut def.items, options),
         ItemKind::DefFunction(func) => {
             // Materialize items inside function bodies (nested items).
             if let fp_core::ast::ExprKind::Block(block) = func.body.kind_mut() {
                 for stmt in &mut block.stmts {
                     if let fp_core::ast::BlockStmt::Item(item) = stmt {
-                        materialize_item(item.as_mut())?;
+                        materialize_item(item.as_mut(), options)?;
                     }
                 }
             }
@@ -41,10 +66,10 @@ fn materialize_item(item: &mut Item) -> Result<()> {
     }
 }
 
-fn materialize_items(items: &mut Vec<Item>) -> Result<()> {
+fn materialize_items(items: &mut Vec<Item>, options: &MaterializeTypesOptions) -> Result<()> {
     // Process nested modules first.
     for item in items.iter_mut() {
-        materialize_item(item)?;
+        materialize_item(item, options)?;
     }
 
     // Build a best-effort environment of known structural shapes.
@@ -81,7 +106,7 @@ fn materialize_items(items: &mut Vec<Item>) -> Result<()> {
             }
 
             if let Ty::TypeBinaryOp(op) = &def.value {
-                if matches!(op.kind, TypeBinaryOpKind::Union) {
+                if options.include_unions && matches!(op.kind, TypeBinaryOpKind::Union) {
                     if let (Some(lhs), Some(rhs)) = (
                         union_variant_from_ty(&op.lhs),
                         union_variant_from_ty(&op.rhs),

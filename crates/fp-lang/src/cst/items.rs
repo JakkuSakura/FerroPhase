@@ -129,9 +129,12 @@ fn parse_item_cst(
 
             if match_symbol(input, ":") {
                 loop {
-                    let bound = parse_type_prefix_from_tokens(input, &["+", "{"])?;
+                    let bound = parse_type_bound_from_tokens(input, &["+", "{"])?;
                     children.push(SyntaxElement::Node(Box::new(bound)));
                     if match_symbol(input, "+") {
+                        continue;
+                    }
+                    if matches_symbol(input.first(), "!") {
                         continue;
                     }
                     break;
@@ -603,9 +606,12 @@ fn parse_generic_params_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         let mut param_children = vec![SyntaxElement::Token(name)];
         if match_symbol(input, ":") {
             loop {
-                let bound = parse_type_prefix_from_tokens(input, &["+", ",", ">"])?;
+                let bound = parse_type_bound_from_tokens(input, &["+", ",", ">"])?;
                 param_children.push(SyntaxElement::Node(Box::new(bound)));
                 if match_symbol(input, "+") {
+                    continue;
+                }
+                if matches_symbol(input.first(), "!") {
                     continue;
                 }
                 break;
@@ -921,6 +927,20 @@ fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalR
         })?;
     *input = &input[consumed..];
     Ok(node)
+}
+
+fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
+    if match_symbol(input, "!") {
+        let bound = parse_type_prefix_from_tokens(input, stops)?;
+        return Ok(node(
+            SyntaxKind::TyNot,
+            vec![
+                SyntaxElement::Token(token_text("!")),
+                SyntaxElement::Node(Box::new(bound)),
+            ],
+        ));
+    }
+    parse_type_prefix_from_tokens(input, stops)
 }
 
 fn lexemes_from_tokens(tokens: &[Token]) -> Vec<Lexeme> {

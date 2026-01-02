@@ -1100,7 +1100,23 @@ impl Parser {
         let start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
-        match self.peek_non_trivia_normalized() {
+        let raw = self.peek_non_trivia_raw();
+        let normalized = self.peek_non_trivia_normalized();
+        if let Some(tok) = raw.as_deref() {
+            if tok.starts_with('"')
+                || (tok.starts_with('\'') && tok.ends_with('\'') && tok.len() >= 2)
+                || tok
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit())
+            {
+                return self.parse_type_value(start);
+            }
+        }
+        if matches!(normalized.as_deref(), Some("true" | "false" | "null")) {
+            return self.parse_type_value(start);
+        }
+        match normalized.as_deref() {
             Some("_") => {
                 let mut children = Vec::new();
                 self.bump_trivia_into(&mut children);
@@ -1123,6 +1139,14 @@ impl Parser {
             Some("{") => self.parse_structural_type(),
             _ => self.parse_path_type(),
         }
+    }
+
+    fn parse_type_value(&mut self, start: Span) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        self.bump_trivia_into(&mut children);
+        self.bump_token_into(&mut children);
+        let span = span_for_children(&children).unwrap_or(start);
+        Ok(SyntaxNode::new(SyntaxKind::TyValue, children, span))
     }
 
     fn parse_paren_type(&mut self, _stops: &[&str]) -> Result<SyntaxNode, ExprCstParseError> {

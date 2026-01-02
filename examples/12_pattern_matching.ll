@@ -62,7 +62,7 @@ bb0:
   br i1 %load_8, label %bb2, label %bb3
 
 bb2:                                              ; preds = %bb0
-  store ptr @.str.12_pattern_matching.0, ptr %alloca_count_1, align 8
+  store ptr @.str.12_pattern_matching.0, ptr %alloca_count_0, align 8
   br label %bb1
 
 bb3:                                              ; preds = %bb0
@@ -83,7 +83,7 @@ bb1:                                              ; preds = %bb9, %bb8, %bb6, %b
   br i1 %load_21, label %bb11, label %bb12
 
 bb4:                                              ; preds = %bb3
-  store ptr @.str.12_pattern_matching.1, ptr %alloca_count_1, align 8
+  store ptr @.str.12_pattern_matching.1, ptr %alloca_count_0, align 8
   br label %bb1
 
 bb5:                                              ; preds = %bb3
@@ -95,7 +95,7 @@ bb5:                                              ; preds = %bb3
   br i1 %load_27, label %bb6, label %bb7
 
 bb11:                                             ; preds = %bb1
-  store ptr @.str.12_pattern_matching.0, ptr %alloca_count_0, align 8
+  store ptr @.str.12_pattern_matching.0, ptr %alloca_count_1, align 8
   br label %bb10
 
 bb12:                                             ; preds = %bb1
@@ -107,7 +107,7 @@ bb12:                                             ; preds = %bb1
   br i1 %load_33, label %bb13, label %bb14
 
 bb6:                                              ; preds = %bb5
-  store ptr @.str.12_pattern_matching.2, ptr %alloca_count_1, align 8
+  store ptr @.str.12_pattern_matching.2, ptr %alloca_count_0, align 8
   br label %bb1
 
 bb7:                                              ; preds = %bb5
@@ -119,11 +119,11 @@ bb7:                                              ; preds = %bb5
   br i1 %load_39, label %bb8, label %bb9
 
 bb10:                                             ; preds = %bb18, %bb17, %bb15, %bb13, %bb11
-  %load_40 = load ptr, ptr %alloca_count_0, align 8
+  %load_40 = load ptr, ptr %alloca_count_1, align 8
   ret ptr %load_40
 
 bb13:                                             ; preds = %bb12
-  store ptr @.str.12_pattern_matching.1, ptr %alloca_count_0, align 8
+  store ptr @.str.12_pattern_matching.1, ptr %alloca_count_1, align 8
   br label %bb10
 
 bb14:                                             ; preds = %bb12
@@ -141,14 +141,14 @@ bb8:                                              ; preds = %bb7
   store ptr %load_51, ptr %alloca_count_50, align 8
   %load_54 = load ptr, ptr %alloca_count_2, align 8
   store ptr %load_54, ptr %alloca_count_53, align 8
-  store ptr @.str.12_pattern_matching.3, ptr %alloca_count_1, align 8
+  store ptr @.str.12_pattern_matching.3, ptr %alloca_count_0, align 8
   br label %bb1
 
 bb9:                                              ; preds = %bb7
   br label %bb1
 
 bb15:                                             ; preds = %bb14
-  store ptr @.str.12_pattern_matching.2, ptr %alloca_count_0, align 8
+  store ptr @.str.12_pattern_matching.2, ptr %alloca_count_1, align 8
   br label %bb10
 
 bb16:                                             ; preds = %bb14
@@ -166,11 +166,11 @@ bb17:                                             ; preds = %bb16
   store ptr %load_67, ptr %alloca_count_66, align 8
   %load_70 = load ptr, ptr %alloca_count_15, align 8
   store ptr %load_70, ptr %alloca_count_69, align 8
-  store ptr @.str.12_pattern_matching.3, ptr %alloca_count_0, align 8
+  store ptr @.str.12_pattern_matching.3, ptr %alloca_count_1, align 8
   br label %bb10
 
 bb18:                                             ; preds = %bb16
-  store i1 false, ptr %alloca_count_0, align 8
+  store i1 false, ptr %alloca_count_1, align 8
   br label %bb10
 }
 
@@ -363,7 +363,7 @@ bb2:                                              ; preds = %bb0
   %load_156 = load i64, ptr %gep_154, align 8
   store i64 %load_156, ptr %alloca_count_152, align 8
   %load_158 = load i64, ptr %alloca_count_152, align 8
-  store i64 %load_158, ptr %alloca_count_143, align 8
+  store i64 %load_158, ptr %alloca_count_142, align 8
   br label %bb1
 
 bb3:                                              ; preds = %bb0
@@ -382,7 +382,7 @@ bb1:                                              ; preds = %bb5, %bb4, %bb2
   br i1 %load_173, label %bb7, label %bb8
 
 bb4:                                              ; preds = %bb3
-  store i64 %1, ptr %alloca_count_143, align 8
+  store i64 %1, ptr %alloca_count_142, align 8
   br label %bb1
 
 bb5:                                              ; preds = %bb3
@@ -393,7 +393,7 @@ bb7:                                              ; preds = %bb1
   %load_179 = load i64, ptr %gep_177, align 8
   store i64 %load_179, ptr %alloca_count_175, align 8
   %load_181 = load i64, ptr %alloca_count_175, align 8
-  store i64 %load_181, ptr %alloca_count_142, align 8
+  store i64 %load_181, ptr %alloca_count_143, align 8
   br label %bb6
 
 bb8:                                              ; preds = %bb1
@@ -404,11 +404,11 @@ bb8:                                              ; preds = %bb1
   br i1 %load_188, label %bb9, label %bb10
 
 bb6:                                              ; preds = %bb10, %bb9, %bb7
-  %load_189 = load i64, ptr %alloca_count_142, align 8
+  %load_189 = load i64, ptr %alloca_count_143, align 8
   ret i64 %load_189
 
 bb9:                                              ; preds = %bb8
-  store i64 %1, ptr %alloca_count_142, align 8
+  store i64 %1, ptr %alloca_count_143, align 8
   br label %bb6
 
 bb10:                                             ; preds = %bb8

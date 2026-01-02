@@ -362,6 +362,7 @@ pub enum Lit {
     Float(f64),
     Str(String),
     Char(char),
+    Null,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -7,8 +7,9 @@ use fp_core::ast::{
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
     ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
     QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuoteToken, TypeStruct,
-    Value, Visibility,
+    Value, Visibility, ExprUnOp,
 };
+use fp_core::ops::UnOpKind;
 use fp_core::cst::CstCategory;
 
 #[derive(Debug, thiserror::Error)]
@@ -418,7 +419,7 @@ fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
             SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => Some(n.as_ref()),
             _ => None,
         })
-        .map(|t| lower_type_from_cst(t).map(|ty| Expr::value(Value::Type(ty))))
+        .map(lower_bound_expr_from_cst)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
     let bounds = TypeBounds { bounds };
@@ -693,7 +694,7 @@ fn lower_generic_params(node: &SyntaxNode) -> Result<Vec<GenericParam>, LowerIte
                 }
                 _ => None,
             })
-            .map(|t| lower_type_from_cst(t).map(|ty| Expr::value(Value::Type(ty))))
+            .map(lower_bound_expr_from_cst)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|_| LowerItemsError::UnexpectedNode(n.kind))?;
         out.push(GenericParam {
@@ -702,6 +703,30 @@ fn lower_generic_params(node: &SyntaxNode) -> Result<Vec<GenericParam>, LowerIte
         });
     }
     Ok(out)
+}
+
+fn lower_bound_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerItemsError> {
+    if node.kind == SyntaxKind::TyNot {
+        let inner = node
+            .children
+            .iter()
+            .find_map(|c| match c {
+                SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => Some(n.as_ref()),
+                _ => None,
+            })
+            .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
+        let ty = lower_type_from_cst(inner).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+        let inner_expr = Expr::value(Value::Type(ty));
+        let expr = ExprKind::UnOp(ExprUnOp {
+            op: UnOpKind::Not,
+            val: Box::new(inner_expr),
+        });
+        return Ok(Expr::new(expr));
+    }
+
+    lower_type_from_cst(node)
+        .map(|ty| Expr::value(Value::Type(ty)))
+        .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))
 }
 
 fn lower_use_tree(node: &SyntaxNode) -> Result<ItemImportTree, LowerItemsError> {

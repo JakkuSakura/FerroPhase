@@ -3,32 +3,331 @@ ast::File {
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub import fp_rust::t : ()
     pub import std::fmt::Display : ()
-    pub fn print(i: impl Display) -> () : fn(any) -> () : fn(any) -> ()
-      block (1 stmt) : ()
+    pub type Int = Expr(i64) : i64
+    pub structural Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+      a: Expr(Int)
+      common: Expr(Int)
+      foo: Expr(Int)
+    pub structural Bar : Bar{common: Expr(Int), bar: Expr(Int)}
+      common: Expr(Int)
+      bar: Expr(Int)
+    pub structural FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+      a: Expr(Int)
+      common: Expr(Int)
+      foo: Expr(Int)
+      bar: Expr(Int)
+    pub type FooOrBar = TypeBinaryOp : TypeBinaryOp
+    pub structural FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+      a: Expr(Int)
+      foo: Expr(Int)
+    pub structural FooAndBar : FooAndBar{common: Expr(Int)}
+      common: Expr(Int)
+    pub structural InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+      tag: Expr(Int)
+      value: Expr(Int)
+    pub type Int4 = [Expr(Int); 4] : [any; 4]
+    pub fn describe_union(value: Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
+      block (1 stmt) : any
         expr_stmt (value)
+          match : any
+            case #0
+              cond:
+                value true : _
+              body:
+                binop + : any
+                  lhs:
+                    binop + : any
+                      lhs:
+                        locator a : any
+                      rhs:
+                        locator common : any
+                  rhs:
+                    locator foo : any
+            case #1
+              cond:
+                value true : _
+              body:
+                binop + : any
+                  lhs:
+                    locator common : any
+                  rhs:
+                    locator bar : any
+    pub type FooOrBarFn = fn(Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any
+    pub type LiteralInt = value 42 : i64
+    pub type LiteralBool = value true : bool
+    pub type LiteralStr = value "hello" : string
+    pub type LiteralUnit = () : ()
+    pub type LiteralNull = value null : !
+    pub type LiteralStrEnum = TypeBinaryOp : TypeBinaryOp
+    pub type FooMaybe = TypeBinaryOp : TypeBinaryOp
+    pub fn describe_optional(value: Expr(FooMaybe)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
+      block (1 stmt) : any
+        expr_stmt (value)
+          match : any
+            case #0
+              cond:
+                value true : _
+              body:
+                binop + : any
+                  lhs:
+                    binop + : any
+                      lhs:
+                        locator a : any
+                      rhs:
+                        locator common : any
+                  rhs:
+                    locator foo : any
+            case #1
+              cond:
+                value true : _
+              body:
+                value 0 : i64
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (34 stmts) : ()
+        let base_foo: Expr(Foo)
+          init:
+            struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              a:
+                value 1 : i64
+              common:
+                value 2 : i64
+              foo:
+                value 3 : i64
+        expr_stmt ;
           invoke : ()
             target: printf
             args:
-              value "%s
+              value "Foo a=%s common=%s foo=%s
 " : &string
-              locator i : any
-    pub type Int = Expr(i64) : i64
-    pub type FooUnnamedStruct = structural{a: Expr(Int), b: Expr(Int)} : FooUnnamedStruct{a: Expr(Int), b: Expr(Int)}
-    pub struct BarNamedStruct : BarNamedStruct{c: Expr(Int), d: Expr(Int)} {
-      c: Expr(Int)
-      d: Expr(Int)
-    }
-    pub type FooPlusBar = TypeBinaryOp : FooPlusBar{a: Expr(Int), b: Expr(Int), c: Expr(Int), d: Expr(Int)}
-    pub fn main() -> () : fn() -> () : fn() -> ()
-      block (1 stmt) : ()
+              select .a [field] : any
+                object:
+                  locator base_foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              select .common [field] : any
+                object:
+                  locator base_foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              select .foo [field] : any
+                object:
+                  locator base_foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+        let base_bar: Expr(Bar)
+          init:
+            struct Bar : Bar{common: Expr(Int), bar: Expr(Int)}
+              common:
+                value 4 : i64
+              bar:
+                value 5 : i64
         expr_stmt ;
-          struct FooPlusBar : FooPlusBar{a: Expr(Int), b: Expr(Int), c: Expr(Int), d: Expr(Int)}
-            a:
+          invoke : ()
+            target: printf
+            args:
+              value "Bar common=%s bar=%s
+" : &string
+              select .common [field] : any
+                object:
+                  locator base_bar : Bar{common: Expr(Int), bar: Expr(Int)}
+              select .bar [field] : any
+                object:
+                  locator base_bar : Bar{common: Expr(Int), bar: Expr(Int)}
+        let merged: Expr(FooPlusBar)
+          init:
+            struct FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+              bar:
+                value 6 : i64
+              ..
+                locator base_foo : _
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "FooPlusBar a=%s common=%s foo=%s bar=%s
+" : &string
+              select .a [field] : any
+                object:
+                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+              select .common [field] : any
+                object:
+                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+              select .foo [field] : any
+                object:
+                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+              select .bar [field] : any
+                object:
+                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+        let reduced: Expr(FooMinusBar)
+          init:
+            struct FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+              a:
+                value 10 : i64
+              foo:
+                value 20 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "FooMinusBar a=%s foo=%s
+" : &string
+              select .a [field] : any
+                object:
+                  locator reduced : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+              select .foo [field] : any
+                object:
+                  locator reduced : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+        let overlap: Expr(FooAndBar)
+          init:
+            struct FooAndBar : FooAndBar{common: Expr(Int)}
+              common:
+                value 99 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "FooAndBar common=%s
+" : &string
+              select .common [field] : any
+                object:
+                  locator overlap : FooAndBar{common: Expr(Int)}
+        let record: Expr(InlineRecord)
+          init:
+            struct InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+              tag:
+                value 7 : i64
+              value:
+                value 42 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "InlineRecord tag=%s value=%s
+" : &string
+              select .tag [field] : any
+                object:
+                  locator record : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+              select .value [field] : any
+                object:
+                  locator record : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+        let left: Expr(FooOrBar)
+          init:
+            struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              a:
+                value 2 : i64
+              common:
+                value 3 : i64
+              foo:
+                value 4 : i64
+        let right: Expr(FooOrBar)
+          init:
+            locator base_bar : Bar{common: Expr(Int), bar: Expr(Int)}
+        let handler: Expr(FooOrBarFn)
+          init:
+            locator describe_union : fn(any) -> any
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "FooOrBar left sum=%s
+" : &string
+              value "<unknown>" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "FooOrBar right sum=%s
+" : &string
+              value "<unknown>" : &string
+        let _ints: Expr(Int4)
+          init:
+            array (4 values) : [i64; 4]
               value 1 : i64
-            b:
               value 2 : i64
-            c:
               value 3 : i64
-            d:
               value 4 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "Int4[0]=%s Int4[1]=%s Int4[2]=%s Int4[3]=%s
+" : &string
+              value "<unknown>" : &string
+              value "<unknown>" : &string
+              value "<unknown>" : &string
+              value "<unknown>" : &string
+        let lit_int: Expr(LiteralInt)
+          init:
+            value 42 : i64
+        let lit_bool: Expr(LiteralBool)
+          init:
+            value true : bool
+        let lit_str: Expr(LiteralStr)
+          init:
+            value "hello" : &string
+        let lit_unit: Expr(LiteralUnit)
+          init:
+            value () : ()
+        let lit_null: Expr(LiteralNull)
+          init:
+            value null : !
+        let lit_enum: Expr(LiteralStrEnum)
+          init:
+            value "green" : &string
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "LiteralInt %s
+" : &string
+              locator lit_int : any
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "LiteralBool %s
+" : &string
+              locator lit_bool : any
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "LiteralStr %s
+" : &string
+              locator lit_str : any
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "LiteralUnit %s" : &string
+              locator lit_unit : any
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "LiteralNull %s" : &string
+              locator lit_null : any
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "LiteralStrEnum %s
+" : &string
+              locator lit_enum : any
+        let maybe: Expr(FooMaybe)
+          init:
+            struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              a:
+                value 5 : i64
+              common:
+                value 6 : i64
+              foo:
+                value 7 : i64
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "FooMaybe sum=%s
+" : &string
+              invoke : any
+                target: describe_optional
+                args:
+                  locator maybe : any
+        let _
+          init:
+            locator print_display : fn(unknown) -> ()
 }

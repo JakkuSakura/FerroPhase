@@ -31,6 +31,8 @@ pub(crate) enum TypeTerm {
     Struct(TypeStruct),
     Structural(TypeStructural),
     Enum(TypeEnum),
+    // Compile-time union of two types from `A | B`.
+    Union(TypeVarId, TypeVarId),
     Slice(TypeVarId),
     Vec(TypeVarId),
     // NOTE(jakku): Array terms now keep the element var plus the length expr
@@ -95,6 +97,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Struct(struct_ty) => SchemeType::Struct(struct_ty),
             TypeTerm::Structural(structural) => SchemeType::Structural(structural),
             TypeTerm::Enum(enum_ty) => SchemeType::Enum(enum_ty),
+            TypeTerm::Union(lhs, rhs) => {
+                let lhs = self.build_scheme_type(lhs, mapping, next)?;
+                let rhs = self.build_scheme_type(rhs, mapping, next)?;
+                SchemeType::Union(Box::new(lhs), Box::new(rhs))
+            }
             TypeTerm::Custom(ty) => SchemeType::Custom(ty),
             TypeTerm::Unknown => SchemeType::Unknown,
             TypeTerm::Tuple(elements) => {
@@ -184,6 +191,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             SchemeType::Enum(enum_ty) => {
                 let var = self.fresh_type_var();
                 self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                var
+            }
+            SchemeType::Union(lhs, rhs) => {
+                let lhs_var = self.instantiate_scheme_type(lhs, mapping);
+                let rhs_var = self.instantiate_scheme_type(rhs, mapping);
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Union(lhs_var, rhs_var));
                 var
             }
             SchemeType::Custom(ty) => {
@@ -349,6 +363,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 func.params.iter().any(|param| self.occurs_in(var, *param))
                     || self.occurs_in(var, func.ret)
             }
+            TypeTerm::Union(lhs, rhs) => self.occurs_in(var, *lhs) || self.occurs_in(var, *rhs),
             TypeTerm::Slice(elem)
             | TypeTerm::Vec(elem)
             | TypeTerm::Array(elem, _)
@@ -405,6 +420,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Err(Error::from("enum type mismatch"))
                 }
             }
+            (TypeTerm::Union(a_lhs, a_rhs), TypeTerm::Union(b_lhs, b_rhs)) => {
+                self.unify_union_pair(a_lhs, a_rhs, b_lhs, b_rhs)
+            }
+            (TypeTerm::Union(lhs, rhs), other) => self.unify_union_with(lhs, rhs, other),
+            (other, TypeTerm::Union(lhs, rhs)) => self.unify_union_with(lhs, rhs, other),
             (TypeTerm::Array(a_elem, _), TypeTerm::Array(b_elem, _)) => {
                 self.unify(a_elem, b_elem)
             }
@@ -509,6 +529,47 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn unify_union_with(
+        &mut self,
+        lhs: TypeVarId,
+        rhs: TypeVarId,
+        other: TypeTerm,
+    ) -> Result<()> {
+        // Union typing: allow either branch to match, without committing if it fails.
+        let snapshot = self.type_vars.clone();
+        let other_var = self.fresh_type_var();
+        self.bind(other_var, other.clone());
+        if self.unify(lhs, other_var).is_ok() {
+            return Ok(());
+        }
+        self.type_vars = snapshot;
+        let other_var = self.fresh_type_var();
+        self.bind(other_var, other);
+        if self.unify(rhs, other_var).is_ok() {
+            return Ok(());
+        }
+        Err(Error::from("union type mismatch"))
+    }
+
+    fn unify_union_pair(
+        &mut self,
+        a_lhs: TypeVarId,
+        a_rhs: TypeVarId,
+        b_lhs: TypeVarId,
+        b_rhs: TypeVarId,
+    ) -> Result<()> {
+        // Accept either ordering: (A|B) == (C|D) if A==C and B==D or A==D and B==C.
+        let snapshot = self.type_vars.clone();
+        if self.unify(a_lhs, b_lhs).is_ok() && self.unify(a_rhs, b_rhs).is_ok() {
+            return Ok(());
+        }
+        self.type_vars = snapshot;
+        if self.unify(a_lhs, b_rhs).is_ok() && self.unify(a_rhs, b_lhs).is_ok() {
+            return Ok(());
+        }
+        Err(Error::from("union type mismatch"))
+    }
+
     pub(crate) fn resolve_to_ty(&mut self, var: TypeVarId) -> Result<Ty> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
@@ -527,6 +588,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Struct(struct_ty) => Ty::Struct(struct_ty),
             TypeTerm::Structural(structural) => Ty::Structural(structural),
             TypeTerm::Enum(enum_ty) => Ty::Enum(enum_ty),
+            TypeTerm::Union(lhs, rhs) => {
+                let lhs_ty = self.resolve_to_ty(lhs)?;
+                let rhs_ty = self.resolve_to_ty(rhs)?;
+                Ty::TypeBinaryOp(
+                    TypeBinaryOp {
+                        kind: TypeBinaryOpKind::Union,
+                        lhs: Box::new(lhs_ty),
+                        rhs: Box::new(rhs_ty),
+                    }
+                    .into(),
+                )
+            }
             TypeTerm::Custom(ty) => ty,
             TypeTerm::Unknown => Ty::Unknown(TypeUnknown),
             TypeTerm::Tuple(elements) => {
@@ -680,8 +753,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind(var, TypeTerm::Structural(TypeStructural { fields: merged }));
                     }
                     TypeBinaryOpKind::Union => {
-                        // Keep union symbolic; later phases may lower to sums.
-                        self.bind(var, TypeTerm::Custom(ty.clone()));
+                        let lhs_var = self.type_from_ast_ty(&op.lhs)?;
+                        let rhs_var = self.type_from_ast_ty(&op.rhs)?;
+                        self.bind(var, TypeTerm::Union(lhs_var, rhs_var));
                     }
                     TypeBinaryOpKind::Subtract => {
                         let lhs_var = self.type_from_ast_ty(&op.lhs)?;
@@ -732,6 +806,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             Ty::Structural(structural) => self.bind(var, TypeTerm::Structural(structural.clone())),
             Ty::Enum(enum_ty) => self.bind(var, TypeTerm::Enum(enum_ty.clone())),
+            Ty::Value(value_ty) => {
+                let term = match value_ty.value.as_ref() {
+                    Value::Int(_) => TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                    Value::Bool(_) => TypeTerm::Primitive(TypePrimitive::Bool),
+                    Value::Decimal(_) => TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
+                    Value::String(_) => TypeTerm::Primitive(TypePrimitive::String),
+                    Value::Char(_) => TypeTerm::Primitive(TypePrimitive::Char),
+                    Value::Unit(_) => TypeTerm::Unit,
+                    Value::Null(_) | Value::None(_) => TypeTerm::Nothing,
+                    _ => TypeTerm::Custom(ty.clone()),
+                };
+                self.bind(var, term);
+            }
             // No Ty::Custom in current AST types; treat all remaining cases via fallback below
             Ty::Unknown(_) => {}
             Ty::Tuple(tuple) => {

@@ -2,28 +2,232 @@ ast::File {
   items:
     pub import fp_rust::t : ()
     pub import std::fmt::Display : ()
-    pub fn print(i: impl Display) -> () : fn(any) -> () : fn(any) -> ()
-      block (1 stmt) : ()
-        expr_stmt (value)
-          intrinsic println : ()
-            template: "{}" i
     pub type Int = Expr(i64) : i64
-    pub type FooUnnamedStruct = structural{a: Expr(Int), b: Expr(Int)} : FooUnnamedStruct{a: Expr(Int), b: Expr(Int)}
-    pub struct BarNamedStruct : BarNamedStruct{c: Expr(Int), d: Expr(Int)} {
-      c: Expr(Int)
-      d: Expr(Int)
-    }
-    pub type FooPlusBar = TypeBinaryOp : FooPlusBar{a: Expr(Int), b: Expr(Int), c: Expr(Int), d: Expr(Int)}
-    pub fn main() -> () : fn() -> () : fn() -> ()
+    pub structural Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+      a: Expr(Int)
+      common: Expr(Int)
+      foo: Expr(Int)
+    pub structural Bar : Bar{common: Expr(Int), bar: Expr(Int)}
+      common: Expr(Int)
+      bar: Expr(Int)
+    pub structural FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+      a: Expr(Int)
+      common: Expr(Int)
+      foo: Expr(Int)
+      bar: Expr(Int)
+    pub type FooOrBar = TypeBinaryOp : TypeBinaryOp
+    pub structural FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+      a: Expr(Int)
+      foo: Expr(Int)
+    pub structural FooAndBar : FooAndBar{common: Expr(Int)}
+      common: Expr(Int)
+    pub structural InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+      tag: Expr(Int)
+      value: Expr(Int)
+    pub type Int4 = [Expr(Int); 4] : [any; 4]
+    pub fn describe_union(value: Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
+      block (1 stmt) : any
+        expr_stmt (value)
+          match : any
+            case #0
+              cond:
+                value true : _
+              body:
+                binop + : any
+                  lhs:
+                    binop + : any
+                      lhs:
+                        locator a : any
+                      rhs:
+                        locator common : any
+                  rhs:
+                    locator foo : any
+            case #1
+              cond:
+                value true : _
+              body:
+                binop + : any
+                  lhs:
+                    locator common : any
+                  rhs:
+                    locator bar : any
+    pub type FooOrBarFn = fn(Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any
+    pub type LiteralInt = value 42 : i64
+    pub type LiteralBool = value true : bool
+    pub type LiteralStr = value "hello" : string
+    pub type LiteralUnit = () : ()
+    pub type LiteralNull = value null : !
+    pub type LiteralStrEnum = TypeBinaryOp : TypeBinaryOp
+    pub type FooMaybe = TypeBinaryOp : TypeBinaryOp
+    pub fn<T: Display + (!Clone)> print_display(value: Expr(T)) -> () : fn<T: Display + (!Clone)>(unknown) -> () : fn<T: Display + (!Clone)>(unknown) -> ()
       block (1 stmt) : ()
         expr_stmt ;
-          struct FooPlusBar : FooPlusBar{a: Expr(Int), b: Expr(Int), c: Expr(Int), d: Expr(Int)}
-            a:
+          intrinsic println : ()
+            template: "{}" value
+    pub fn describe_optional(value: Expr(FooMaybe)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
+      block (1 stmt) : any
+        expr_stmt (value)
+          match : any
+            case #0
+              cond:
+                value true : _
+              body:
+                binop + : any
+                  lhs:
+                    binop + : any
+                      lhs:
+                        locator a : any
+                      rhs:
+                        locator common : any
+                  rhs:
+                    locator foo : any
+            case #1
+              cond:
+                value true : _
+              body:
+                value 0 : i64
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (34 stmts) : ()
+        let base_foo: Expr(Foo)
+          init:
+            struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              a:
+                value 1 : i64
+              common:
+                value 2 : i64
+              foo:
+                value 3 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Foo a={} common={} foo={}" base_foo.a, base_foo.common, base_foo.foo
+        let base_bar: Expr(Bar)
+          init:
+            struct Bar : Bar{common: Expr(Int), bar: Expr(Int)}
+              common:
+                value 4 : i64
+              bar:
+                value 5 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Bar common={} bar={}" base_bar.common, base_bar.bar
+        let merged: Expr(FooPlusBar)
+          init:
+            struct FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+              bar:
+                value 6 : i64
+              ..
+                locator base_foo : _
+        expr_stmt ;
+          intrinsic println : ()
+            template: "FooPlusBar a={} common={} foo={} bar={}" merged.a, merged.common, merged.foo, merged.bar
+        let reduced: Expr(FooMinusBar)
+          init:
+            struct FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+              a:
+                value 10 : i64
+              foo:
+                value 20 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "FooMinusBar a={} foo={}" reduced.a, reduced.foo
+        let overlap: Expr(FooAndBar)
+          init:
+            struct FooAndBar : FooAndBar{common: Expr(Int)}
+              common:
+                value 99 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "FooAndBar common={}" overlap.common
+        let record: Expr(InlineRecord)
+          init:
+            struct InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+              tag:
+                value 7 : i64
+              value:
+                value 42 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "InlineRecord tag={} value={}" record.tag, record.value
+        let left: Expr(FooOrBar)
+          init:
+            struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              a:
+                value 2 : i64
+              common:
+                value 3 : i64
+              foo:
+                value 4 : i64
+        let right: Expr(FooOrBar)
+          init:
+            locator base_bar : Bar{common: Expr(Int), bar: Expr(Int)}
+        let handler: Expr(FooOrBarFn)
+          init:
+            locator describe_union : fn(any) -> any
+        expr_stmt ;
+          intrinsic println : ()
+            template: "FooOrBar left sum={}" handler(left)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "FooOrBar right sum={}" handler(right)
+        let _ints: Expr(Int4)
+          init:
+            array (4 values) : [i64; 4]
               value 1 : i64
-            b:
               value 2 : i64
-            c:
               value 3 : i64
-            d:
               value 4 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "Int4[0]={} Int4[1]={} Int4[2]={} Int4[3]={}" _ints[0], _ints[1], _ints[2], _ints[3]
+        let lit_int: Expr(LiteralInt)
+          init:
+            value 42 : i64
+        let lit_bool: Expr(LiteralBool)
+          init:
+            value true : bool
+        let lit_str: Expr(LiteralStr)
+          init:
+            value "hello" : &string
+        let lit_unit: Expr(LiteralUnit)
+          init:
+            value () : ()
+        let lit_null: Expr(LiteralNull)
+          init:
+            value null : !
+        let lit_enum: Expr(LiteralStrEnum)
+          init:
+            value "green" : &string
+        expr_stmt ;
+          intrinsic println : ()
+            template: "LiteralInt {}" lit_int
+        expr_stmt ;
+          intrinsic println : ()
+            template: "LiteralBool {}" lit_bool
+        expr_stmt ;
+          intrinsic println : ()
+            template: "LiteralStr {}" lit_str
+        expr_stmt ;
+          intrinsic print : ()
+            template: "LiteralUnit {}" lit_unit
+        expr_stmt ;
+          intrinsic print : ()
+            template: "LiteralNull {}" lit_null
+        expr_stmt ;
+          intrinsic println : ()
+            template: "LiteralStrEnum {}" lit_enum
+        let maybe: Expr(FooMaybe)
+          init:
+            struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+              a:
+                value 5 : i64
+              common:
+                value 6 : i64
+              foo:
+                value 7 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "FooMaybe sum={}" describe_optional(maybe)
+        let _
+          init:
+            locator print_display : fn(unknown) -> ()
 }
