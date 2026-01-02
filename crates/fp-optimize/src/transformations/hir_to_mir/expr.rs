@@ -4295,10 +4295,10 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
-        self.lowering.emit_warning(
+        self.lowering.emit_error(
             callee.span,
             format!(
-                "treating call target `{}` as opaque runtime stub during MIR lowering",
+                "unresolved call target `{}` during MIR lowering",
                 name
             ),
         );
@@ -5092,6 +5092,19 @@ impl<'a> BodyBuilder<'a> {
         span: Span,
     ) -> Result<(mir::Operand, Ty, String)> {
         let (operand, ty) = (arg.operand, arg.ty);
+        if let mir::Operand::Constant(constant) = &operand {
+            if matches!(constant.literal, mir::ConstantKind::Null) {
+                return Ok((
+                    mir::Operand::Constant(mir::Constant {
+                        span,
+                        user_ty: None,
+                        literal: mir::ConstantKind::Str("<none>".to_string()),
+                    }),
+                    self.lowering.raw_string_ptr_ty(),
+                    "%s".to_string(),
+                ));
+            }
+        }
         match &ty.kind {
             TyKind::Bool => Ok((operand, ty.clone(), "%d".to_string())),
             TyKind::Char => Ok((operand, ty.clone(), "%c".to_string())),
@@ -5132,6 +5145,15 @@ impl<'a> BodyBuilder<'a> {
                     Ok((operand, ty.clone(), "%s".to_string()))
                 }
             }
+            TyKind::Tuple(elements) if elements.is_empty() => Ok((
+                mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Str("()".to_string()),
+                }),
+                self.lowering.raw_string_ptr_ty(),
+                "%s".to_string(),
+            )),
             TyKind::Ref(_, inner, _) => {
                 if let TyKind::RawPtr(type_and_mut) = &inner.kind {
                     if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
