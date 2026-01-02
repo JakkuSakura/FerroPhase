@@ -4365,8 +4365,42 @@ impl<'a> BodyBuilder<'a> {
                     .first()
                     .filter(|_| resolved_path.segments.len() == 1)
                     .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
+                let expected_sig = expected.and_then(|ty| {
+                    if let TyKind::FnPtr(poly_fn_sig) = &ty.kind {
+                        let sig = &poly_fn_sig.binder.value;
+                        Some(mir::FunctionSig {
+                            inputs: sig.inputs.iter().map(|t| (**t).clone()).collect(),
+                            output: (*sig.output).clone(),
+                        })
+                    } else {
+                        None
+                    }
+                });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
-                if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
+                    if let Some(expected_sig) = expected_sig.as_ref() {
+                        if let Some(function) = self.lowering.generic_function_defs.get(def_id) {
+                            let info = self.lowering.ensure_function_specialization(
+                                self.program,
+                                *def_id,
+                                function,
+                                &[],
+                                &expected_sig.inputs,
+                                expr.span,
+                            )?;
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Fn(
+                                        mir::Symbol::new(info.name.clone()),
+                                        info.fn_ty.clone(),
+                                    ),
+                                }),
+                                ty: info.fn_ty,
+                            });
+                        }
+                    }
+                    if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
                     let mut layout = expected
                         .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned());
                     if layout.is_none() {
@@ -4398,7 +4432,7 @@ impl<'a> BodyBuilder<'a> {
                         expr.span,
                         "unable to resolve enum layout for variant value",
                     );
-                }
+                    }
                     if let Some(const_info) = self.lowering.const_values.get(def_id) {
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(const_info.value.clone()),
@@ -4466,17 +4500,6 @@ impl<'a> BodyBuilder<'a> {
                     .collect::<Vec<_>>()
                     .join("::");
 
-                let expected_sig = expected.and_then(|ty| {
-                    if let TyKind::FnPtr(poly_fn_sig) = &ty.kind {
-                        let sig = &poly_fn_sig.binder.value;
-                        Some(mir::FunctionSig {
-                            inputs: sig.inputs.iter().map(|t| (**t).clone()).collect(),
-                            output: (*sig.output).clone(),
-                        })
-                    } else {
-                        None
-                    }
-                });
                 let mut fallback_candidate: Option<(mir::FunctionSig, String)> = None;
                 for (_def_id, item) in &self.program.def_map {
                     if let hir::ItemKind::Function(func) = &item.kind {
