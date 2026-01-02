@@ -1060,11 +1060,14 @@ impl MirLowering {
                 }
             },
             TypePrimitive::String => {
-                self.emit_warning(
-                    span,
-                    "treating string primitive as opaque type during MIR lowering",
-                );
-                self.opaque_ty("string")
+                Ty {
+                    kind: TyKind::RawPtr(TypeAndMut {
+                        ty: Box::new(Ty {
+                            kind: TyKind::Int(IntTy::I8),
+                        }),
+                        mutbl: Mutability::Not,
+                    }),
+                }
             }
             TypePrimitive::List => {
                 self.emit_warning(
