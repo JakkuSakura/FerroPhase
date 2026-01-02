@@ -782,21 +782,19 @@ impl Pipeline {
             )?;
         }
 
-        if stage_enabled(&pipeline_options, STAGE_RUNTIME_MATERIALIZE) {
-            self.run_stage(
-                STAGE_RUNTIME_MATERIALIZE,
-                &diagnostic_manager,
-                &pipeline_options,
-                |pipeline| {
-                    pipeline.stage_materialize_runtime_intrinsics(
-                        ast,
-                        &PipelineTarget::Rust,
-                        &pipeline_options,
-                        &diagnostic_manager,
-                    )
-                },
-            )?;
-        }
+        self.run_stage(
+            STAGE_RUNTIME_MATERIALIZE,
+            &diagnostic_manager,
+            &pipeline_options,
+            |pipeline| {
+                pipeline.stage_materialize_runtime_intrinsics(
+                    ast,
+                    &PipelineTarget::Rust,
+                    &pipeline_options,
+                    &diagnostic_manager,
+                )
+            },
+        )?;
 
         // For transpilation we prefer to run const-eval before type checking so that
         // quote/splice expansion and other compile-time rewrites are reflected in the
@@ -939,24 +937,6 @@ impl Pipeline {
             )?;
         }
 
-        let runtime_materialized = matches!(target, PipelineTarget::Rust)
-            && stage_enabled(options, STAGE_RUNTIME_MATERIALIZE);
-        if runtime_materialized {
-            self.run_stage(
-                STAGE_RUNTIME_MATERIALIZE,
-                &diagnostic_manager,
-                options,
-                |pipeline| {
-                    pipeline.stage_materialize_runtime_intrinsics(
-                        &mut ast,
-                        target,
-                        options,
-                        &diagnostic_manager,
-                    )
-                },
-            )?;
-        }
-
         let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
             ConstEvalOutcome::default()
         } else {
@@ -996,24 +976,7 @@ impl Pipeline {
             self.save_bootstrap_snapshot(&ast, base_path)?;
         }
 
-        if !options.bootstrap_mode {
-            if runtime_materialized && stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
-                self.run_stage(
-                    STAGE_TYPE_POST_MATERIALIZE,
-                    &diagnostic_manager,
-                    options,
-                    |pipeline| {
-                        pipeline.stage_type_check(
-                            &mut ast,
-                            STAGE_TYPE_POST_MATERIALIZE,
-                            &diagnostic_manager,
-                            options,
-                        )
-                    },
-                )?;
-            }
-
-        }
+        // No post-materialize typing for compilation targets; transpile pipeline handles it.
 
         let output = if matches!(target, PipelineTarget::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
