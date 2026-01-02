@@ -940,6 +940,9 @@ impl MirLowering {
                 }
             }
             hir::TypeExprKind::Ref(inner) => {
+                if self.is_string_slice_ref(inner) {
+                    return self.raw_string_ptr_ty();
+                }
                 let inner_ty = self.lower_type_expr(inner);
                 Ty {
                     kind: TyKind::Ref(
@@ -1604,6 +1607,9 @@ impl MirLowering {
                 }
             }
             hir::TypeExprKind::Ref(inner) => {
+                if self.is_string_slice_ref(inner) {
+                    return self.raw_string_ptr_ty();
+                }
                 let inner_ty = self.lower_type_expr_with_substs(inner, substs);
                 Ty {
                     kind: TyKind::Ref(
@@ -1722,6 +1728,29 @@ impl MirLowering {
             hir::TypeExprKind::Never => Ty { kind: TyKind::Never },
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
+        }
+    }
+
+    fn raw_string_ptr_ty(&self) -> Ty {
+        Ty {
+            kind: TyKind::RawPtr(TypeAndMut {
+                ty: Box::new(Ty {
+                    kind: TyKind::Int(IntTy::I8),
+                }),
+                mutbl: Mutability::Not,
+            }),
+        }
+    }
+
+    fn is_string_slice_ref(&self, inner: &hir::TypeExpr) -> bool {
+        match &inner.kind {
+            hir::TypeExprKind::Primitive(TypePrimitive::String) => true,
+            hir::TypeExprKind::Path(path) => path
+                .segments
+                .last()
+                .map(|seg| seg.name.as_str() == "str")
+                .unwrap_or(false),
+            _ => false,
         }
     }
 
