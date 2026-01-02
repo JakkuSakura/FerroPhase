@@ -4384,7 +4384,7 @@ impl<'a> BodyBuilder<'a> {
                             let info = self.lowering.ensure_function_specialization(
                                 self.program,
                                 *def_id,
-                                function,
+                                &function,
                                 &[],
                                 &expected_sig.inputs,
                                 expr.span,
