@@ -278,6 +278,10 @@ impl MirLowering {
     fn append_runtime_stubs(&mut self, program: &mut mir::Program) {
         let span = Span::new(0, 0, 0);
         for name in self.synthetic_runtime_functions.clone() {
+            // C runtime intrinsics are resolved as externs during LIR/LLVM lowering.
+            if self.is_extern_runtime_function(&name) {
+                continue;
+            }
             let exists = program.items.iter().any(|item| match &item.kind {
                 mir::ItemKind::Function(func) => func.name.as_str() == name,
                 _ => false,
@@ -343,6 +347,10 @@ impl MirLowering {
             });
             self.next_mir_id += 1;
         }
+    }
+
+    fn is_extern_runtime_function(&self, name: &str) -> bool {
+        matches!(name, "printf")
     }
 
     fn default_constant_for_ty(&self, ty: &Ty) -> mir::ConstantKind {
