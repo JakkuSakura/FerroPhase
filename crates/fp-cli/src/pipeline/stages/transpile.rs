@@ -1,23 +1,6 @@
 use super::super::*;
 
 impl Pipeline {
-    pub(crate) fn stage_closure_lowering(
-        &self,
-        ast: &mut Node,
-        manager: &DiagnosticManager,
-    ) -> Result<(), CliError> {
-        match lower_closures(ast) {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                manager.add_diagnostic(
-                    Diagnostic::error(format!("Closure lowering failed: {}", err))
-                        .with_source_context(STAGE_CLOSURE_LOWERING),
-                );
-                Err(Self::stage_failure(STAGE_CLOSURE_LOWERING))
-            }
-        }
-    }
-
     pub(crate) fn stage_materialize_runtime_intrinsics(
         &self,
         ast: &mut Node,

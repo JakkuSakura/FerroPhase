@@ -44,7 +44,22 @@ impl Pipeline {
             }
         }
 
-        let result = match ast.kind() {
+        // Closure lowering mutates the AST; keep the stage API immutable and
+        // operate on a cloned tree that is only used for HIR generation.
+        let mut lowered_ast = ast.clone();
+        if let Err(err) = lower_closures(&mut lowered_ast) {
+            manager.add_diagnostic(
+                Diagnostic::error(format!("Closure lowering failed: {}", err))
+                    .with_source_context(STAGE_AST_TO_HIR),
+            );
+            return Err(Self::stage_failure(STAGE_AST_TO_HIR));
+        }
+
+        if options.save_intermediates {
+            self.save_pretty(&lowered_ast, base_path, "ast-closure", options)?;
+        }
+
+        let result = match lowered_ast.kind() {
             NodeKind::Expr(expr) => generator.transform(expr),
             NodeKind::File(file) => generator.transform(file),
             NodeKind::Item(_) => unreachable!(),

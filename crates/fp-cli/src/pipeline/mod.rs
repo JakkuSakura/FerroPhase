@@ -29,7 +29,6 @@ use fp_llvm::{
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
 use fp_optimize::passes::{
     NoopIntrinsicMaterializer, lower_closures, materialize_intrinsics, normalize_intrinsics,
-    remove_generic_templates,
 };
 use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 #[cfg(feature = "bootstrap")]
@@ -244,8 +243,6 @@ const STAGE_AST_TO_HIR: &str = "ast→hir";
 const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
-const STAGE_TYPE_POST_CLOSURE: &str = "ast→typed(post-closure)";
-const STAGE_CLOSURE_LOWERING: &str = "closure-lowering";
 const STAGE_LINK_BINARY: &str = "link-binary";
 const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
 const STAGE_AST_INTERPRET: &str = "ast-interpret";
@@ -282,7 +279,7 @@ struct IntrinsicsMaterializer {
 impl IntrinsicsMaterializer {
     fn for_target(target: &PipelineTarget) -> Self {
         match target {
-            PipelineTarget::Llvm | PipelineTarget::Binary => Self {
+            PipelineTarget::Llvm | PipelineTarget::Binary | PipelineTarget::Rust => Self {
                 strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
             },
             _ => Self {
@@ -785,6 +782,22 @@ impl Pipeline {
             )?;
         }
 
+        if stage_enabled(&pipeline_options, STAGE_RUNTIME_MATERIALIZE) {
+            self.run_stage(
+                STAGE_RUNTIME_MATERIALIZE,
+                &diagnostic_manager,
+                &pipeline_options,
+                |pipeline| {
+                    pipeline.stage_materialize_runtime_intrinsics(
+                        ast,
+                        &PipelineTarget::Rust,
+                        &pipeline_options,
+                        &diagnostic_manager,
+                    )
+                },
+            )?;
+        }
+
         // For transpilation we prefer to run const-eval before type checking so that
         // quote/splice expansion and other compile-time rewrites are reflected in the
         // typed AST.
@@ -815,8 +828,6 @@ impl Pipeline {
         }
 
         if options.run_const_eval && stage_enabled(&pipeline_options, STAGE_CONST_EVAL) {
-            remove_generic_templates(ast)?;
-
             if options.save_intermediates {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
                     self.save_pretty(ast, base_path, EXT_AST_EVAL, &pipeline_options)?;
@@ -928,6 +939,23 @@ impl Pipeline {
             )?;
         }
 
+        if matches!(target, PipelineTarget::Rust) && stage_enabled(options, STAGE_RUNTIME_MATERIALIZE)
+        {
+            self.run_stage(
+                STAGE_RUNTIME_MATERIALIZE,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_materialize_runtime_intrinsics(
+                        &mut ast,
+                        target,
+                        options,
+                        &diagnostic_manager,
+                    )
+                },
+            )?;
+        }
+
         let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
             ConstEvalOutcome::default()
         } else {
@@ -967,7 +995,8 @@ impl Pipeline {
             self.save_bootstrap_snapshot(&ast, base_path)?;
         }
 
-        if stage_enabled(options, STAGE_RUNTIME_MATERIALIZE) {
+        if !matches!(target, PipelineTarget::Rust) && stage_enabled(options, STAGE_RUNTIME_MATERIALIZE)
+        {
             self.run_stage(
                 STAGE_RUNTIME_MATERIALIZE,
                 &diagnostic_manager,
@@ -1000,43 +1029,6 @@ impl Pipeline {
                 )?;
             }
 
-            // Remove generic template functions after type checking completes.
-            if stage_enabled(options, STAGE_CONST_EVAL) {
-                remove_generic_templates(&mut ast)?;
-            }
-
-            // Closure lowering is required for lower-level backends. For the Rust
-            // backend, preserve closures and other higher-level constructs.
-            if !matches!(target, PipelineTarget::Rust)
-                && stage_enabled(options, STAGE_CLOSURE_LOWERING)
-            {
-                self.run_stage(
-                    STAGE_CLOSURE_LOWERING,
-                    &diagnostic_manager,
-                    options,
-                    |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
-                )?;
-
-                if options.save_intermediates {
-                    self.save_pretty(&ast, base_path, "ast-closure", options)?;
-                }
-
-                if stage_enabled(options, STAGE_TYPE_POST_CLOSURE) {
-                    self.run_stage(
-                        STAGE_TYPE_POST_CLOSURE,
-                        &diagnostic_manager,
-                        options,
-                        |pipeline| {
-                            pipeline.stage_type_check(
-                                &mut ast,
-                                STAGE_TYPE_POST_CLOSURE,
-                                &diagnostic_manager,
-                                options,
-                            )
-                        },
-                    )?;
-                }
-            }
         }
 
         let output = if matches!(target, PipelineTarget::Rust) {
@@ -1411,8 +1403,6 @@ impl Pipeline {
             self.last_const_eval = Some(outcome);
         }
 
-        remove_generic_templates(&mut ast)?;
-
         if options.save_intermediates && !options.bootstrap_mode {
             self.save_pretty(&ast, &base_path, EXT_AST_EVAL, &options)?;
         }
@@ -1451,30 +1441,6 @@ impl Pipeline {
                 },
             )?;
 
-            self.run_stage(
-                STAGE_CLOSURE_LOWERING,
-                &diagnostic_manager,
-                &options,
-                |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
-            )?;
-
-            if options.save_intermediates {
-                self.save_pretty(&ast, &base_path, "ast-closure", &options)?;
-            }
-
-            self.run_stage(
-                STAGE_TYPE_POST_CLOSURE,
-                &diagnostic_manager,
-                &options,
-                |pipeline| {
-                    pipeline.stage_type_check(
-                        &mut ast,
-                        STAGE_TYPE_POST_CLOSURE,
-                        &diagnostic_manager,
-                        &options,
-                    )
-                },
-            )?;
         }
 
         let hir_program = self.run_stage(
@@ -2597,12 +2563,6 @@ mod tests {
             }
         }
 
-        fn closure_lowering(&self, ast: &mut Node) {
-            if let Err(err) = self.pipeline.stage_closure_lowering(ast, &self.diagnostics) {
-                self.fail_with_diagnostics("closure lowering", err);
-            }
-        }
-
         fn materialize_runtime(&self, ast: &mut Node, target: PipelineTarget) {
             if let Err(err) = self.pipeline.stage_materialize_runtime_intrinsics(
                 ast,
@@ -3151,7 +3111,6 @@ fn main() {
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
-        harness.closure_lowering(&mut ast);
         harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
@@ -3231,7 +3190,6 @@ fn main() {
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
-        harness.closure_lowering(&mut ast);
         harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
@@ -3286,7 +3244,6 @@ fn main() {
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
-        harness.closure_lowering(&mut ast);
         harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);

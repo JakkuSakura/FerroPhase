@@ -750,17 +750,6 @@ impl HirGenerator {
 
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
-        let mut node = ast::Node::new(ast::NodeKind::File(file.clone()));
-        // HIR lowering needs unions materialized into enums for runtime codegen.
-        crate::passes::materialize_structural_types_with_unions(&mut node).map_err(|err| {
-            crate::error::optimization_error(format!("type materialization failed: {}", err))
-        })?;
-        let ast::NodeKind::File(file) = node.kind else {
-            return Err(crate::error::optimization_error(
-                "type materialization did not return a file node",
-            ));
-        };
-
         self.reset_file_context(&file.path);
         self.predeclare_items(&file.items)?;
         self.prepare_lowering_state();
