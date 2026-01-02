@@ -62,7 +62,7 @@ lir::Program {
                 i33: %r33 = load %r28 align 8 : i64
                 i34: %r34 = load %r22 align 8 : i64
                 i35: %r35 = add %r33, %r34 : i64
-                i36: store %r35, %r1 align 8
+                i36: store %r35, %r0 align 8
                 terminator: br bb1
             bb3 // label: bb3 // preds: [bb0] // succs: [bb4, bb5]:
                 i37: %r37 = alloca i32 1 align 1 : ptr i1
@@ -98,7 +98,7 @@ lir::Program {
                 i63: %r63 = load %r51 align 8 : i64
                 i64: %r64 = load %r57 align 8 : i64
                 i65: %r65 = add %r63, %r64 : i64
-                i66: store %r65, %r1 align 8
+                i66: store %r65, %r0 align 8
                 terminator: br bb1
             bb5 // label: bb5 // preds: [bb3] // succs: [bb1]:
                 terminator: br bb1
@@ -129,7 +129,7 @@ lir::Program {
                 i90: %r90 = load %r85 align 8 : i64
                 i91: %r91 = load %r79 align 8 : i64
                 i92: %r92 = add %r90, %r91 : i64
-                i93: store %r92, %r0 align 8
+                i93: store %r92, %r1 align 8
                 terminator: br bb6
             bb8 // label: bb8 // preds: [bb1] // succs: [bb9, bb10]:
                 i94: %r94 = alloca i32 1 align 1 : ptr i1
@@ -140,7 +140,7 @@ lir::Program {
                 i99: %r99 = load %r94 align 1 : i1
                 terminator: cond_br %r99, bb9, bb10
             bb6 // label: bb6 // preds: [bb7, bb9, bb10]:
-                i100: %r100 = load %r0 align 8 : i64
+                i100: %r100 = load %r1 align 8 : i64
                 terminator: ret %r100
             bb9 // label: bb9 // preds: [bb8] // succs: [bb6]:
                 i101: %r101 = alloca i32 1 align 8 : ptr i64
@@ -158,10 +158,23 @@ lir::Program {
                 i113: %r113 = load %r101 align 8 : i64
                 i114: %r114 = load %r107 align 8 : i64
                 i115: %r115 = add %r113, %r114 : i64
-                i116: store %r115, %r0 align 8
+                i116: store %r115, %r1 align 8
                 terminator: br bb6
             bb10 // label: bb10 // preds: [bb8] // succs: [bb6]:
                 terminator: br bb6
+        }
+
+        fn print_display(arg0: ptr i8) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i8 // arg
+                %2: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i117: %r117 = call c @printf(c"%s
+", c"<unknown>") : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                terminator: ret void
         }
 
         fn describe_optional(arg0: { i64, i64, i64, i64 }) -> i64 [cc: c, linkage: internal] {
@@ -184,110 +197,110 @@ lir::Program {
                 %15: i64
                 %16: { i64, i64, i64, i64 }
             bb0 // label: bb0 // succs: [bb2, bb3]:
-                i117: %r117 = alloca i32 1 align 8 : ptr i64
                 i118: %r118 = alloca i32 1 align 8 : ptr i64
-                i119: %r119 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i120: store %local1, %r119 align 8
-                i121: %r121 = alloca i32 1 align 1 : ptr i1
-                i122: %r122 = bitcast %r119 to ptr i64 : ptr i64
-                i123: %r123 = load %r122 align 8 : i64
-                i124: %r124 = eq %r123, i64 0 : i1
-                i125: store %r124, %r121 align 1
-                i126: %r126 = load %r121 align 1 : i1
-                terminator: cond_br %r126, bb2, bb3
+                i119: %r119 = alloca i32 1 align 8 : ptr i64
+                i120: %r120 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i121: store %local1, %r120 align 8
+                i122: %r122 = alloca i32 1 align 1 : ptr i1
+                i123: %r123 = bitcast %r120 to ptr i64 : ptr i64
+                i124: %r124 = load %r123 align 8 : i64
+                i125: %r125 = eq %r124, i64 0 : i1
+                i126: store %r125, %r122 align 1
+                i127: %r127 = load %r122 align 1 : i1
+                terminator: cond_br %r127, bb2, bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb1]:
-                i127: %r127 = alloca i32 1 align 8 : ptr i64
-                i128: %r128 = bitcast %r119 to ptr i8 : ptr i8
-                i129: %r129 = gep inbounds %r128 [i64 8] : ptr i8
-                i130: %r130 = bitcast %r129 to ptr i64 : ptr i64
-                i131: %r131 = load %r130 align 8 : i64
-                i132: store %r131, %r127 align 8
-                i133: %r133 = alloca i32 1 align 8 : ptr i64
-                i134: %r134 = bitcast %r119 to ptr i8 : ptr i8
-                i135: %r135 = gep inbounds %r134 [i64 16] : ptr i8
-                i136: %r136 = bitcast %r135 to ptr i64 : ptr i64
-                i137: %r137 = load %r136 align 8 : i64
-                i138: store %r137, %r133 align 8
-                i139: %r139 = alloca i32 1 align 8 : ptr i64
-                i140: %r140 = bitcast %r119 to ptr i8 : ptr i8
-                i141: %r141 = gep inbounds %r140 [i64 24] : ptr i8
-                i142: %r142 = bitcast %r141 to ptr i64 : ptr i64
-                i143: %r143 = load %r142 align 8 : i64
-                i144: store %r143, %r139 align 8
-                i145: %r145 = alloca i32 1 align 8 : ptr i64
-                i146: %r146 = load %r127 align 8 : i64
-                i147: %r147 = load %r133 align 8 : i64
-                i148: %r148 = add %r146, %r147 : i64
-                i149: store %r148, %r145 align 8
-                i150: %r150 = load %r145 align 8 : i64
-                i151: %r151 = load %r139 align 8 : i64
-                i152: %r152 = add %r150, %r151 : i64
-                i153: store %r152, %r117 align 8
+                i128: %r128 = alloca i32 1 align 8 : ptr i64
+                i129: %r129 = bitcast %r120 to ptr i8 : ptr i8
+                i130: %r130 = gep inbounds %r129 [i64 8] : ptr i8
+                i131: %r131 = bitcast %r130 to ptr i64 : ptr i64
+                i132: %r132 = load %r131 align 8 : i64
+                i133: store %r132, %r128 align 8
+                i134: %r134 = alloca i32 1 align 8 : ptr i64
+                i135: %r135 = bitcast %r120 to ptr i8 : ptr i8
+                i136: %r136 = gep inbounds %r135 [i64 16] : ptr i8
+                i137: %r137 = bitcast %r136 to ptr i64 : ptr i64
+                i138: %r138 = load %r137 align 8 : i64
+                i139: store %r138, %r134 align 8
+                i140: %r140 = alloca i32 1 align 8 : ptr i64
+                i141: %r141 = bitcast %r120 to ptr i8 : ptr i8
+                i142: %r142 = gep inbounds %r141 [i64 24] : ptr i8
+                i143: %r143 = bitcast %r142 to ptr i64 : ptr i64
+                i144: %r144 = load %r143 align 8 : i64
+                i145: store %r144, %r140 align 8
+                i146: %r146 = alloca i32 1 align 8 : ptr i64
+                i147: %r147 = load %r128 align 8 : i64
+                i148: %r148 = load %r134 align 8 : i64
+                i149: %r149 = add %r147, %r148 : i64
+                i150: store %r149, %r146 align 8
+                i151: %r151 = load %r146 align 8 : i64
+                i152: %r152 = load %r140 align 8 : i64
+                i153: %r153 = add %r151, %r152 : i64
+                i154: store %r153, %r118 align 8
                 terminator: br bb1
             bb3 // label: bb3 // preds: [bb0] // succs: [bb4]:
                 terminator: br bb4
             bb1 // label: bb1 // preds: [bb2, bb4] // succs: [bb7, bb8]:
-                i154: %r154 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i155: store %local1, %r154 align 8
-                i156: %r156 = alloca i32 1 align 1 : ptr i1
-                i157: %r157 = bitcast %r154 to ptr i64 : ptr i64
-                i158: %r158 = load %r157 align 8 : i64
-                i159: %r159 = eq %r158, i64 0 : i1
-                i160: store %r159, %r156 align 1
-                i161: %r161 = load %r156 align 1 : i1
-                terminator: cond_br %r161, bb7, bb8
+                i155: %r155 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i156: store %local1, %r155 align 8
+                i157: %r157 = alloca i32 1 align 1 : ptr i1
+                i158: %r158 = bitcast %r155 to ptr i64 : ptr i64
+                i159: %r159 = load %r158 align 8 : i64
+                i160: %r160 = eq %r159, i64 0 : i1
+                i161: store %r160, %r157 align 1
+                i162: %r162 = load %r157 align 1 : i1
+                terminator: cond_br %r162, bb7, bb8
             bb4 // label: bb4 // preds: [bb3] // succs: [bb1]:
-                i162: %r162 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i163: %r163 = load %r119 align 8 : { i64, i64, i64, i64 }
-                i164: store %r163, %r162 align 8
-                i165: store i64 0, %r117 align 8
+                i163: %r163 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i164: %r164 = load %r120 align 8 : { i64, i64, i64, i64 }
+                i165: store %r164, %r163 align 8
+                i166: store i64 0, %r118 align 8
                 terminator: br bb1
             bb7 // label: bb7 // preds: [bb1] // succs: [bb6]:
-                i166: %r166 = alloca i32 1 align 8 : ptr i64
-                i167: %r167 = bitcast %r154 to ptr i8 : ptr i8
-                i168: %r168 = gep inbounds %r167 [i64 8] : ptr i8
-                i169: %r169 = bitcast %r168 to ptr i64 : ptr i64
-                i170: %r170 = load %r169 align 8 : i64
-                i171: store %r170, %r166 align 8
-                i172: %r172 = alloca i32 1 align 8 : ptr i64
-                i173: %r173 = bitcast %r154 to ptr i8 : ptr i8
-                i174: %r174 = gep inbounds %r173 [i64 16] : ptr i8
-                i175: %r175 = bitcast %r174 to ptr i64 : ptr i64
-                i176: %r176 = load %r175 align 8 : i64
-                i177: store %r176, %r172 align 8
-                i178: %r178 = alloca i32 1 align 8 : ptr i64
-                i179: %r179 = bitcast %r154 to ptr i8 : ptr i8
-                i180: %r180 = gep inbounds %r179 [i64 24] : ptr i8
-                i181: %r181 = bitcast %r180 to ptr i64 : ptr i64
-                i182: %r182 = load %r181 align 8 : i64
-                i183: store %r182, %r178 align 8
-                i184: %r184 = alloca i32 1 align 8 : ptr i64
-                i185: %r185 = load %r166 align 8 : i64
-                i186: %r186 = load %r172 align 8 : i64
-                i187: %r187 = add %r185, %r186 : i64
-                i188: store %r187, %r184 align 8
-                i189: %r189 = load %r184 align 8 : i64
-                i190: %r190 = load %r178 align 8 : i64
-                i191: %r191 = add %r189, %r190 : i64
-                i192: store %r191, %r118 align 8
+                i167: %r167 = alloca i32 1 align 8 : ptr i64
+                i168: %r168 = bitcast %r155 to ptr i8 : ptr i8
+                i169: %r169 = gep inbounds %r168 [i64 8] : ptr i8
+                i170: %r170 = bitcast %r169 to ptr i64 : ptr i64
+                i171: %r171 = load %r170 align 8 : i64
+                i172: store %r171, %r167 align 8
+                i173: %r173 = alloca i32 1 align 8 : ptr i64
+                i174: %r174 = bitcast %r155 to ptr i8 : ptr i8
+                i175: %r175 = gep inbounds %r174 [i64 16] : ptr i8
+                i176: %r176 = bitcast %r175 to ptr i64 : ptr i64
+                i177: %r177 = load %r176 align 8 : i64
+                i178: store %r177, %r173 align 8
+                i179: %r179 = alloca i32 1 align 8 : ptr i64
+                i180: %r180 = bitcast %r155 to ptr i8 : ptr i8
+                i181: %r181 = gep inbounds %r180 [i64 24] : ptr i8
+                i182: %r182 = bitcast %r181 to ptr i64 : ptr i64
+                i183: %r183 = load %r182 align 8 : i64
+                i184: store %r183, %r179 align 8
+                i185: %r185 = alloca i32 1 align 8 : ptr i64
+                i186: %r186 = load %r167 align 8 : i64
+                i187: %r187 = load %r173 align 8 : i64
+                i188: %r188 = add %r186, %r187 : i64
+                i189: store %r188, %r185 align 8
+                i190: %r190 = load %r185 align 8 : i64
+                i191: %r191 = load %r179 align 8 : i64
+                i192: %r192 = add %r190, %r191 : i64
+                i193: store %r192, %r119 align 8
                 terminator: br bb6
             bb8 // label: bb8 // preds: [bb1] // succs: [bb9]:
                 terminator: br bb9
             bb6 // label: bb6 // preds: [bb7, bb9]:
-                i193: %r193 = load %r118 align 8 : i64
-                terminator: ret %r193
+                i194: %r194 = load %r119 align 8 : i64
+                terminator: ret %r194
             bb9 // label: bb9 // preds: [bb8] // succs: [bb6]:
-                i194: %r194 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i195: %r195 = load %r154 align 8 : { i64, i64, i64, i64 }
-                i196: store %r195, %r194 align 8
-                i197: store i64 0, %r118 align 8
+                i195: %r195 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i196: %r196 = load %r155 align 8 : { i64, i64, i64, i64 }
+                i197: store %r196, %r195 align 8
+                i198: store i64 0, %r119 align 8
                 terminator: br bb6
             bb5 // label: bb5:
-                i198: %r198 = load %r118 align 8 : i64
-                terminator: ret %r198
-            bb10 // label: bb10:
-                i199: %r199 = load %r118 align 8 : i64
+                i199: %r199 = load %r119 align 8 : i64
                 terminator: ret %r199
+            bb10 // label: bb10:
+                i200: %r200 = load %r119 align 8 : i64
+                terminator: ret %r200
         }
 
         fn main() -> void [cc: c, linkage: internal] {
@@ -329,183 +342,171 @@ lir::Program {
                 %34: i32
                 %35: i32
                 %36: { i64, i64, i64, i64 }
-                %37: i64
-                %38: i32
-                %39: ptr i8
+                %37: i32
+                %38: ptr fn(ptr i8) -> void
             bb0 // label: bb0 // succs: [bb1]:
-                i200: %r200 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
-                i201: store struct { i64, i64, i64 } { i64 1, i64 2, i64 3 }, %r200 align 8
-                i202: %r202 = bitcast %r200 to ptr i64 : ptr i64
-                i203: %r203 = load %r202 align 8 : i64
-                i204: %r204 = bitcast %r200 to ptr i8 : ptr i8
-                i205: %r205 = gep inbounds %r204 [i64 8] : ptr i8
-                i206: %r206 = bitcast %r205 to ptr i64 : ptr i64
-                i207: %r207 = load %r206 align 8 : i64
-                i208: %r208 = bitcast %r200 to ptr i8 : ptr i8
-                i209: %r209 = gep inbounds %r208 [i64 16] : ptr i8
-                i210: %r210 = bitcast %r209 to ptr i64 : ptr i64
-                i211: %r211 = load %r210 align 8 : i64
-                i212: %r212 = call c @printf(c"Foo a=%s common=%s foo=%s
-", %r203, %r207, %r211) : i32
+                i201: %r201 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
+                i202: store struct { i64, i64, i64 } { i64 1, i64 2, i64 3 }, %r201 align 8
+                i203: %r203 = bitcast %r201 to ptr i64 : ptr i64
+                i204: %r204 = load %r203 align 8 : i64
+                i205: %r205 = bitcast %r201 to ptr i8 : ptr i8
+                i206: %r206 = gep inbounds %r205 [i64 8] : ptr i8
+                i207: %r207 = bitcast %r206 to ptr i64 : ptr i64
+                i208: %r208 = load %r207 align 8 : i64
+                i209: %r209 = bitcast %r201 to ptr i8 : ptr i8
+                i210: %r210 = gep inbounds %r209 [i64 16] : ptr i8
+                i211: %r211 = bitcast %r210 to ptr i64 : ptr i64
+                i212: %r212 = load %r211 align 8 : i64
+                i213: %r213 = call c @printf(c"Foo a=%lld common=%lld foo=%lld
+", %r204, %r208, %r212) : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i213: %r213 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i214: store struct { i64, i64 } { i64 4, i64 5 }, %r213 align 8
-                i215: %r215 = bitcast %r213 to ptr i64 : ptr i64
-                i216: %r216 = load %r215 align 8 : i64
-                i217: %r217 = bitcast %r213 to ptr i8 : ptr i8
-                i218: %r218 = gep inbounds %r217 [i64 8] : ptr i8
-                i219: %r219 = bitcast %r218 to ptr i64 : ptr i64
-                i220: %r220 = load %r219 align 8 : i64
-                i221: %r221 = call c @printf(c"Bar common=%s bar=%s
-", %r216, %r220) : i32
+                i214: %r214 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i215: store struct { i64, i64 } { i64 4, i64 5 }, %r214 align 8
+                i216: %r216 = bitcast %r214 to ptr i64 : ptr i64
+                i217: %r217 = load %r216 align 8 : i64
+                i218: %r218 = bitcast %r214 to ptr i8 : ptr i8
+                i219: %r219 = gep inbounds %r218 [i64 8] : ptr i8
+                i220: %r220 = bitcast %r219 to ptr i64 : ptr i64
+                i221: %r221 = load %r220 align 8 : i64
+                i222: %r222 = call c @printf(c"Bar common=%lld bar=%lld
+", %r217, %r221) : i32
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i222: %r222 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
-                i223: %r223 = load %r200 align 8 : { i64, i64, i64 }
-                i224: store %r223, %r222 align 8
-                i225: %r225 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i226: %r226 = bitcast %r222 to ptr i64 : ptr i64
-                i227: %r227 = load %r226 align 8 : i64
-                i228: %r228 = bitcast %r222 to ptr i8 : ptr i8
-                i229: %r229 = gep inbounds %r228 [i64 8] : ptr i8
-                i230: %r230 = bitcast %r229 to ptr i64 : ptr i64
-                i231: %r231 = load %r230 align 8 : i64
-                i232: %r232 = bitcast %r222 to ptr i8 : ptr i8
-                i233: %r233 = gep inbounds %r232 [i64 16] : ptr i8
-                i234: %r234 = bitcast %r233 to ptr i64 : ptr i64
-                i235: %r235 = load %r234 align 8 : i64
-                i236: %r236 = insertvalue undef { i64, i64, i64, i64 }, %r227, [0] : { i64, i64, i64, i64 }
-                i237: %r237 = insertvalue %r236, %r231, [1] : { i64, i64, i64, i64 }
-                i238: %r238 = insertvalue %r237, %r235, [2] : { i64, i64, i64, i64 }
-                i239: %r239 = insertvalue %r238, i64 6, [3] : { i64, i64, i64, i64 }
-                i240: store %r239, %r225 align 8
-                i241: %r241 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i242: %r242 = load %r225 align 8 : { i64, i64, i64, i64 }
-                i243: store %r242, %r241 align 8
-                i244: %r244 = bitcast %r241 to ptr i64 : ptr i64
-                i245: %r245 = load %r244 align 8 : i64
-                i246: %r246 = bitcast %r241 to ptr i8 : ptr i8
-                i247: %r247 = gep inbounds %r246 [i64 8] : ptr i8
-                i248: %r248 = bitcast %r247 to ptr i64 : ptr i64
-                i249: %r249 = load %r248 align 8 : i64
-                i250: %r250 = bitcast %r241 to ptr i8 : ptr i8
-                i251: %r251 = gep inbounds %r250 [i64 16] : ptr i8
-                i252: %r252 = bitcast %r251 to ptr i64 : ptr i64
-                i253: %r253 = load %r252 align 8 : i64
-                i254: %r254 = bitcast %r241 to ptr i8 : ptr i8
-                i255: %r255 = gep inbounds %r254 [i64 24] : ptr i8
-                i256: %r256 = bitcast %r255 to ptr i64 : ptr i64
-                i257: %r257 = load %r256 align 8 : i64
-                i258: %r258 = call c @printf(c"FooPlusBar a=%s common=%s foo=%s bar=%s
-", %r245, %r249, %r253, %r257) : i32
+                i223: %r223 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
+                i224: %r224 = load %r201 align 8 : { i64, i64, i64 }
+                i225: store %r224, %r223 align 8
+                i226: %r226 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i227: %r227 = bitcast %r223 to ptr i64 : ptr i64
+                i228: %r228 = load %r227 align 8 : i64
+                i229: %r229 = bitcast %r223 to ptr i8 : ptr i8
+                i230: %r230 = gep inbounds %r229 [i64 8] : ptr i8
+                i231: %r231 = bitcast %r230 to ptr i64 : ptr i64
+                i232: %r232 = load %r231 align 8 : i64
+                i233: %r233 = bitcast %r223 to ptr i8 : ptr i8
+                i234: %r234 = gep inbounds %r233 [i64 16] : ptr i8
+                i235: %r235 = bitcast %r234 to ptr i64 : ptr i64
+                i236: %r236 = load %r235 align 8 : i64
+                i237: %r237 = insertvalue undef { i64, i64, i64, i64 }, %r228, [0] : { i64, i64, i64, i64 }
+                i238: %r238 = insertvalue %r237, %r232, [1] : { i64, i64, i64, i64 }
+                i239: %r239 = insertvalue %r238, %r236, [2] : { i64, i64, i64, i64 }
+                i240: %r240 = insertvalue %r239, i64 6, [3] : { i64, i64, i64, i64 }
+                i241: store %r240, %r226 align 8
+                i242: %r242 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i243: %r243 = load %r226 align 8 : { i64, i64, i64, i64 }
+                i244: store %r243, %r242 align 8
+                i245: %r245 = bitcast %r242 to ptr i64 : ptr i64
+                i246: %r246 = load %r245 align 8 : i64
+                i247: %r247 = bitcast %r242 to ptr i8 : ptr i8
+                i248: %r248 = gep inbounds %r247 [i64 8] : ptr i8
+                i249: %r249 = bitcast %r248 to ptr i64 : ptr i64
+                i250: %r250 = load %r249 align 8 : i64
+                i251: %r251 = bitcast %r242 to ptr i8 : ptr i8
+                i252: %r252 = gep inbounds %r251 [i64 16] : ptr i8
+                i253: %r253 = bitcast %r252 to ptr i64 : ptr i64
+                i254: %r254 = load %r253 align 8 : i64
+                i255: %r255 = bitcast %r242 to ptr i8 : ptr i8
+                i256: %r256 = gep inbounds %r255 [i64 24] : ptr i8
+                i257: %r257 = bitcast %r256 to ptr i64 : ptr i64
+                i258: %r258 = load %r257 align 8 : i64
+                i259: %r259 = call c @printf(c"FooPlusBar a=%lld common=%lld foo=%lld bar=%lld
+", %r246, %r250, %r254, %r258) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i259: %r259 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i260: store struct { i64, i64 } { i64 10, i64 20 }, %r259 align 8
-                i261: %r261 = bitcast %r259 to ptr i64 : ptr i64
-                i262: %r262 = load %r261 align 8 : i64
-                i263: %r263 = bitcast %r259 to ptr i8 : ptr i8
-                i264: %r264 = gep inbounds %r263 [i64 8] : ptr i8
-                i265: %r265 = bitcast %r264 to ptr i64 : ptr i64
-                i266: %r266 = load %r265 align 8 : i64
-                i267: %r267 = call c @printf(c"FooMinusBar a=%s foo=%s
-", %r262, %r266) : i32
+                i260: %r260 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i261: store struct { i64, i64 } { i64 10, i64 20 }, %r260 align 8
+                i262: %r262 = bitcast %r260 to ptr i64 : ptr i64
+                i263: %r263 = load %r262 align 8 : i64
+                i264: %r264 = bitcast %r260 to ptr i8 : ptr i8
+                i265: %r265 = gep inbounds %r264 [i64 8] : ptr i8
+                i266: %r266 = bitcast %r265 to ptr i64 : ptr i64
+                i267: %r267 = load %r266 align 8 : i64
+                i268: %r268 = call c @printf(c"FooMinusBar a=%lld foo=%lld
+", %r263, %r267) : i32
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i268: %r268 = alloca i32 1 align 8 : ptr { i64 }
-                i269: store struct { i64 } { i64 99 }, %r268 align 8
-                i270: %r270 = bitcast %r268 to ptr i64 : ptr i64
-                i271: %r271 = load %r270 align 8 : i64
-                i272: %r272 = call c @printf(c"FooAndBar common=%s
-", %r271) : i32
+                i269: %r269 = alloca i32 1 align 8 : ptr { i64 }
+                i270: store struct { i64 } { i64 99 }, %r269 align 8
+                i271: %r271 = bitcast %r269 to ptr i64 : ptr i64
+                i272: %r272 = load %r271 align 8 : i64
+                i273: %r273 = call c @printf(c"FooAndBar common=%lld
+", %r272) : i32
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i273: %r273 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i274: store struct { i64, i64 } { i64 7, i64 42 }, %r273 align 8
-                i275: %r275 = bitcast %r273 to ptr i64 : ptr i64
-                i276: %r276 = load %r275 align 8 : i64
-                i277: %r277 = bitcast %r273 to ptr i8 : ptr i8
-                i278: %r278 = gep inbounds %r277 [i64 8] : ptr i8
-                i279: %r279 = bitcast %r278 to ptr i64 : ptr i64
-                i280: %r280 = load %r279 align 8 : i64
-                i281: %r281 = call c @printf(c"InlineRecord tag=%s value=%s
-", %r276, %r280) : i32
+                i274: %r274 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i275: store struct { i64, i64 } { i64 7, i64 42 }, %r274 align 8
+                i276: %r276 = bitcast %r274 to ptr i64 : ptr i64
+                i277: %r277 = load %r276 align 8 : i64
+                i278: %r278 = bitcast %r274 to ptr i8 : ptr i8
+                i279: %r279 = gep inbounds %r278 [i64 8] : ptr i8
+                i280: %r280 = bitcast %r279 to ptr i64 : ptr i64
+                i281: %r281 = load %r280 align 8 : i64
+                i282: %r282 = call c @printf(c"InlineRecord tag=%lld value=%lld
+", %r277, %r281) : i32
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i282: %r282 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i283: store struct { i64, i64, i64, i64 } { i64 0, i64 2, i64 3, i64 4 }, %r282 align 8
-                i284: %r284 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i285: %r285 = load %r213 align 8 : { i64, i64 }
-                i286: store %r285, %r284 align 8
-                i287: %r287 = alloca i32 1 align 8 : ptr ptr fn({ i64, i64, i64, i64 }) -> i64
-                i288: %r288 = call c @printf(c"FooOrBar left sum=%s
+                i283: %r283 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i284: store struct { i64, i64, i64, i64 } { i64 0, i64 2, i64 3, i64 4 }, %r283 align 8
+                i285: %r285 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i286: %r286 = load %r214 align 8 : { i64, i64 }
+                i287: store %r286, %r285 align 8
+                i288: %r288 = alloca i32 1 align 8 : ptr ptr fn({ i64, i64, i64, i64 }) -> i64
+                i289: %r289 = call c @printf(c"FooOrBar left sum=%s
 ", c"<unknown>") : i32
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i289: %r289 = call c @printf(c"FooOrBar right sum=%s
+                i290: %r290 = call c @printf(c"FooOrBar right sum=%s
 ", c"<unknown>") : i32
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i290: %r290 = alloca i32 1 align 8 : ptr [4 x i64]
-                i291: store [4 x i64] { i64 1, i64 2, i64 3, i64 4 }, %r290 align 8
-                i292: %r292 = alloca i32 1 align 8 : ptr [4 x i64]
-                i293: %r293 = load %r290 align 8 : [4 x i64]
-                i294: store %r293, %r292 align 8
-                i295: %r295 = call c @printf(c"Int4[0]=%s Int4[1]=%s Int4[2]=%s Int4[3]=%s
+                i291: %r291 = alloca i32 1 align 8 : ptr [4 x i64]
+                i292: store [4 x i64] { i64 1, i64 2, i64 3, i64 4 }, %r291 align 8
+                i293: %r293 = alloca i32 1 align 8 : ptr [4 x i64]
+                i294: %r294 = load %r291 align 8 : [4 x i64]
+                i295: store %r294, %r293 align 8
+                i296: %r296 = call c @printf(c"Int4[0]=%s Int4[1]=%s Int4[2]=%s Int4[3]=%s
 ", c"<unknown>", c"<unknown>", c"<unknown>", c"<unknown>") : i32
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i296: %r296 = alloca i32 1 align 8 : ptr i64
-                i297: store i64 42, %r296 align 8
-                i298: %r298 = alloca i32 1 align 1 : ptr i1
-                i299: store bool true, %r298 align 1
-                i300: %r300 = alloca i32 1 align 8 : ptr ptr i8
-                i301: store c"hello", %r300 align 8
-                i302: %r302 = alloca i32 1 align 8 : ptr ptr i8
-                i303: store null ptr i8, %r302 align 8
-                i304: %r304 = alloca i32 1 align 8 : ptr ptr i8
-                i305: store c"green", %r304 align 8
-                i306: %r306 = load %r296 align 8 : i64
+                i297: %r297 = alloca i32 1 align 8 : ptr i64
+                i298: store i64 42, %r297 align 8
+                i299: %r299 = alloca i32 1 align 1 : ptr i1
+                i300: store bool true, %r299 align 1
+                i301: %r301 = alloca i32 1 align 8 : ptr ptr i8
+                i302: store c"hello", %r301 align 8
+                i303: %r303 = alloca i32 1 align 8 : ptr ptr i8
+                i304: store null ptr i8, %r303 align 8
+                i305: %r305 = alloca i32 1 align 8 : ptr ptr i8
+                i306: store c"green", %r305 align 8
                 i307: %r307 = call c @printf(c"LiteralInt %s
-", %r306) : i32
+", c"<unknown>") : i32
                 terminator: br bb10
             bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i308: %r308 = load %r298 align 1 : i1
-                i309: %r309 = zext %r308 to i32 : i32
-                i310: %r310 = call c @printf(c"LiteralBool %s
-", %r309) : i32
+                i308: %r308 = call c @printf(c"LiteralBool %s
+", c"<unknown>") : i32
                 terminator: br bb11
             bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i311: %r311 = load %r300 align 8 : ptr i8
-                i312: %r312 = call c @printf(c"LiteralStr %s
-", %r311) : i32
+                i309: %r309 = call c @printf(c"LiteralStr %s
+", c"<unknown>") : i32
                 terminator: br bb12
             bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i313: %r313 = call c @printf(c"LiteralUnit %s", struct {  } {  }) : i32
+                i310: %r310 = call c @printf(c"LiteralUnit %s", c"<unknown>") : i32
                 terminator: br bb13
             bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i314: %r314 = load %r302 align 8 : ptr i8
-                i315: %r315 = call c @printf(c"LiteralNull %s", %r314) : i32
+                i311: %r311 = call c @printf(c"LiteralNull %s", c"<unknown>") : i32
                 terminator: br bb14
             bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i316: %r316 = load %r304 align 8 : ptr i8
-                i317: %r317 = call c @printf(c"LiteralStrEnum %s
-", %r316) : i32
+                i312: %r312 = call c @printf(c"LiteralStrEnum %s
+", c"<unknown>") : i32
                 terminator: br bb15
             bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i318: %r318 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
-                i319: store struct { i64, i64, i64, i64 } { i64 0, i64 5, i64 6, i64 7 }, %r318 align 8
-                i320: %r320 = load %r318 align 8 : { i64, i64, i64, i64 }
-                i321: %r321 = call c @describe_optional(%r320) : i64
+                i313: %r313 = alloca i32 1 align 8 : ptr { i64, i64, i64, i64 }
+                i314: store struct { i64, i64, i64, i64 } { i64 0, i64 5, i64 6, i64 7 }, %r313 align 8
+                i315: %r315 = call c @printf(c"FooMaybe sum=%s
+", c"<unknown>") : i32
                 terminator: br bb16
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i322: %r322 = call c @printf(c"FooMaybe sum=%s
-", %r321) : i32
-                terminator: br bb17
-            bb17 // label: bb17 // preds: [bb16]:
-                i323: %r323 = alloca i32 1 align 8 : ptr ptr i8
-                i324: store @print_display, %r323 align 8
+            bb16 // label: bb16 // preds: [bb15]:
+                i316: %r316 = alloca i32 1 align 8 : ptr ptr fn(ptr i8) -> void
                 terminator: ret void
         }
 }

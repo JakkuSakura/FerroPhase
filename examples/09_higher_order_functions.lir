@@ -30,6 +30,38 @@ lir::Program {
                 terminator: ret %r11
         }
 
+        fn apply(arg0: ptr i8, arg1: ptr i8, arg2: ptr fn(ptr i8, ptr i8) -> ptr i8) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i8 // arg
+                %2: ptr i8 // arg
+                %3: ptr fn(ptr i8, ptr i8) -> ptr i8 // arg
+                %4: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i12: %r12 = call c @printf(c"%s
+", c"<unknown>") : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                terminator: ret void
+        }
+
+        fn add(arg0: ptr i8, arg1: ptr i8) -> ptr i8 [cc: c, linkage: internal] {
+            locals:
+                %0: ptr i8
+                %1: ptr i8 // arg
+                %2: ptr i8 // arg
+                %3: ptr i8
+            bb0 // label: bb0:
+                i13: %r13 = alloca i32 1 align 8 : ptr ptr i8
+                i14: %r14 = alloca i32 1 align 8 : ptr ptr i8
+                i15: %r15 = add %local1, %local2 : ptr i8
+                i16: store %r15, %r14 align 8
+                i17: %r17 = add %local1, %local2 : ptr i8
+                i18: store %r17, %r13 align 8
+                i19: %r19 = load %r13 align 8 : ptr i8
+                terminator: ret %r19
+        }
+
         fn apply_if(arg0: i1, arg1: i64, arg2: i64, arg3: ptr fn(i64, i64) -> i64) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
@@ -41,36 +73,36 @@ lir::Program {
                 %6: i64
                 %7: i64
             bb0 // label: bb0 // succs: [bb1, bb2]:
-                i12: %r12 = alloca i32 1 align 8 : ptr i64
+                i20: %r20 = alloca i32 1 align 8 : ptr i64
                 terminator: cond_br %local1, bb1, bb2
             bb1 // label: bb1 // preds: [bb0] // succs: [bb4]:
-                i13: %r13 = call c %local4(%local2, %local3) : i64
+                i21: %r21 = call c %local4(%local2, %local3) : i64
                 terminator: br bb4
             bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i14: %r14 = alloca i32 1 align 8 : ptr i64
-                i15: store i64 0, %r14 align 8
+                i22: %r22 = alloca i32 1 align 8 : ptr i64
+                i23: store i64 0, %r22 align 8
                 terminator: br bb3
             bb4 // label: bb4 // preds: [bb1] // succs: [bb5]:
-                i16: %r16 = call c %local4(%local2, %local3) : i64
-                i17: store %r16, %r14 align 8 : i64
+                i24: %r24 = call c %local4(%local2, %local3) : i64
+                i25: store %r24, %r22 align 8 : i64
                 terminator: br bb5
             bb3 // label: bb3 // preds: [bb2, bb5] // succs: [bb6, bb7]:
                 terminator: cond_br %local1, bb6, bb7
             bb5 // label: bb5 // preds: [bb4] // succs: [bb3]:
                 terminator: br bb3
             bb6 // label: bb6 // preds: [bb3] // succs: [bb9]:
-                i18: %r18 = call c %local4(%local2, %local3) : i64
+                i26: %r26 = call c %local4(%local2, %local3) : i64
                 terminator: br bb9
             bb7 // label: bb7 // preds: [bb3] // succs: [bb8]:
-                i19: store i64 0, %r12 align 8
+                i27: store i64 0, %r20 align 8
                 terminator: br bb8
             bb9 // label: bb9 // preds: [bb6] // succs: [bb10]:
-                i20: %r20 = call c %local4(%local2, %local3) : i64
-                i21: store %r20, %r12 align 8 : i64
+                i28: %r28 = call c %local4(%local2, %local3) : i64
+                i29: store %r28, %r20 align 8 : i64
                 terminator: br bb10
             bb8 // label: bb8 // preds: [bb7, bb10]:
-                i22: %r22 = load %r12 align 8 : i64
-                terminator: ret %r22
+                i30: %r30 = load %r20 align 8 : i64
+                terminator: ret %r30
             bb10 // label: bb10 // preds: [bb9] // succs: [bb8]:
                 terminator: br bb8
         }
@@ -81,10 +113,10 @@ lir::Program {
                 %1: i64 // arg
                 %2: void
             bb0 // label: bb0:
-                i23: %r23 = alloca i32 1 align 8 : ptr ptr fn(i64) -> i64
-                i24: store %local1, %r23 align 8
-                i25: %r25 = load %r23 align 8 : ptr fn(i64) -> i64
-                terminator: ret %r25
+                i31: %r31 = alloca i32 1 align 8 : ptr ptr fn(i64) -> i64
+                i32: store %local1, %r31 align 8
+                i33: %r33 = load %r31 align 8 : ptr fn(i64) -> i64
+                terminator: ret %r33
         }
 
         fn main() -> void [cc: c, linkage: internal] {
@@ -104,52 +136,58 @@ lir::Program {
                 %12: i64
                 %13: i32
             bb0 // label: bb0 // succs: [bb1]:
-                i26: %r26 = call c @printf(c"Generic operations:
+                i34: %r34 = call c @printf(c"Generic operations:
 ") : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i27: %r27 = call c @apply(f64 10, f64 20, @add__spec0)
+                i35: %r35 = inttoptr i64 10 : ptr i8
+                i36: %r36 = inttoptr i64 20 : ptr i8
+                i37: %r37 = call c @apply(%r35, %r36, @add)
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i28: %r28 = call c @apply(f64 1.5, f64 2.5, @add__spec0)
+                i38: %r38 = fptosi f64 1.5 to i64 : i64
+                i39: %r39 = inttoptr %r38 : ptr i8
+                i40: %r40 = fptosi f64 2.5 to i64 : i64
+                i41: %r41 = inttoptr %r40 : ptr i8
+                i42: %r42 = call c @apply(%r39, %r41, @add)
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i29: %r29 = call c @printf(c"
+                i43: %r43 = call c @printf(c"
 Conditional:
 ") : i32
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i30: %r30 = call c @apply_if(bool true, i64 5, i64 3, @add__spec0) : i64
+                i44: %r44 = call c @apply_if(bool true, i64 5, i64 3, @add__spec0) : i64
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i31: %r31 = call c @printf(c"%lld
-", %r30) : i32
+                i45: %r45 = call c @printf(c"%lld
+", %r44) : i32
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i32: %r32 = call c @apply_if(bool false, i64 5, i64 3, @add__spec0) : i64
+                i46: %r46 = call c @apply_if(bool false, i64 5, i64 3, @add__spec0) : i64
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i33: %r33 = call c @printf(c"%lld
-", %r32) : i32
+                i47: %r47 = call c @printf(c"%lld
+", %r46) : i32
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i34: %r34 = call c @printf(c"
+                i48: %r48 = call c @printf(c"
 Closure factory:
 ") : i32
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i35: %r35 = call c @printf(c"add_10(5) = %s
+                i49: %r49 = call c @printf(c"add_10(5) = %s
 ", c"<unknown>") : i32
                 terminator: br bb10
             bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i36: %r36 = alloca i32 1 align 1 : ptr { i8 }
-                i37: store struct { i8 } { i8 0 }, %r36 align 1
-                i38: %r38 = load %r36 align 1 : { i8 }
-                i39: %r39 = call c @__closure1_call(%r38, i64 7) : i64
+                i50: %r50 = alloca i32 1 align 1 : ptr { i8 }
+                i51: store struct { i8 } { i8 0 }, %r50 align 1
+                i52: %r52 = load %r50 align 1 : { i8 }
+                i53: %r53 = call c @__closure1_call(%r52, i64 7) : i64
                 terminator: br bb11
             bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i40: %r40 = call c @printf(c"double(7) = %lld
-", %r39) : i32
+                i54: %r54 = call c @printf(c"double(7) = %lld
+", %r53) : i32
                 terminator: br bb12
             bb12 // label: bb12 // preds: [bb11]:
                 terminator: ret void
@@ -162,23 +200,13 @@ Closure factory:
                 %2: i64 // arg
                 %3: i64
             bb0 // label: bb0:
-                i41: %r41 = alloca i32 1 align 8 : ptr i64
-                i42: %r42 = alloca i32 1 align 8 : ptr i64
-                i43: %r43 = add %local1, %local2 : i64
-                i44: store %r43, %r42 align 8
-                i45: %r45 = add %local1, %local2 : i64
-                i46: store %r45, %r41 align 8
-                i47: %r47 = load %r41 align 8 : i64
-                terminator: ret %r47
-        }
-
-        fn apply(arg0: f64, arg1: f64, arg2: ptr fn(i64, i64) -> i64) -> void [cc: c, linkage: internal] {
-            locals:
-                %0: void
-                %1: f64 // arg
-                %2: f64 // arg
-                %3: ptr fn(i64, i64) -> i64 // arg
-            bb0 // label: bb0:
-                terminator: ret void
+                i55: %r55 = alloca i32 1 align 8 : ptr i64
+                i56: %r56 = alloca i32 1 align 8 : ptr i64
+                i57: %r57 = add %local1, %local2 : i64
+                i58: store %r57, %r56 align 8
+                i59: %r59 = add %local1, %local2 : i64
+                i60: store %r59, %r55 align 8
+                i61: %r61 = load %r55 align 8 : i64
+                terminator: ret %r61
         }
 }

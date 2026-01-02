@@ -154,14 +154,12 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
         ExprKind::Cast(cast) => infer_printf_spec_with_replacement(Some(&cast.ty)),
         ExprKind::Reference(reference) => match reference.referee.ty() {
             Some(ty) => infer_printf_spec_with_replacement(Some(ty)),
-            None => Ok((
-                "%s".to_string(),
-                Some(make_string_literal_expr("<unknown>".to_string())),
+            None => Err(fp_core::error::Error::from(
+                "missing type information for printf argument".to_string(),
             )),
         },
-        _ => Ok((
-            "%s".to_string(),
-            Some(make_string_literal_expr("<unknown>".to_string())),
+        _ => Err(fp_core::error::Error::from(
+            "missing type information for printf argument".to_string(),
         )),
     }
 }
@@ -242,7 +240,11 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
         Ty::Primitive(TypePrimitive::Bool) => "%d".to_string(),
         Ty::Primitive(TypePrimitive::Char) => "%c".to_string(),
         Ty::Primitive(TypePrimitive::String) => "%s".to_string(),
-        Ty::Reference(reference) => infer_printf_spec_with_replacement(Some(&reference.ty))?.0,
+        Ty::Reference(_) => {
+            return Err(fp_core::error::Error::from(
+                "printf does not support reference values; dereference first".to_string(),
+            ));
+        }
         Ty::Any(_) => "%s".to_string(),
         Ty::Struct(struct_ty) => {
             return Err(fp_core::error::Error::from(format!(

@@ -23,6 +23,29 @@ ast::File {
     declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub import std::fmt::Display : ()
     pub import std::ops::Add : ()
+    pub fn<T: Add<T
+> + Display> apply(a: Expr(T), b: Expr(T), op: fn(Expr(T), Expr(T)) -> Expr(T)) -> () : fn<T: Add<T
+> + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> () : fn<T: Add<T
+> + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          invoke : ()
+            target: printf
+            args:
+              value "%s
+" : &string
+              value "<unknown>" : &string
+    pub fn<T: Add<T
+>> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
+>>(unknown, unknown) -> unknown : fn<T: Add<T
+>>(unknown, unknown) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              locator a : unknown
+            rhs:
+              locator b : unknown
     pub fn apply_if(cond: Expr(bool), a: Expr(i64), b: Expr(i64), op: fn(Expr(i64), Expr(i64)) -> Expr(i64)) -> Expr(i64) : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64 : fn(bool, i64, i64, fn(i64, i64) -> i64) -> i64
       block (1 stmt) : i64
         expr_stmt (value)

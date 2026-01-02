@@ -559,18 +559,32 @@ impl HirGenerator {
     ) -> Result<hir::ExprKind> {
         self.push_value_scope();
         let result = (|| {
+            let last_expr_index = block
+                .last_expr()
+                .and_then(|_| block.stmts.len().checked_sub(1));
             let stmts = block
                 .stmts
                 .iter()
-                .map(|stmt| self.transform_block_stmt_to_hir(stmt))
+                .enumerate()
+                .filter_map(|(idx, stmt)| {
+                    if Some(idx) == last_expr_index {
+                        return None;
+                    }
+                    Some(self.transform_block_stmt_to_hir(stmt))
+                })
                 .collect::<Result<Vec<_>>>()?;
 
-            // For the final expression, check if the last statement is an expression without semicolon
-            let expr = if let Some(last_expr) = block.last_expr() {
-                Some(Box::new(self.transform_expr_to_hir(last_expr)?))
-            } else {
-                None
-            };
+            // Preserve the value of the final expression without duplicating it as a statement.
+            let expr = last_expr_index
+                .and_then(|idx| block.stmts.get(idx))
+                .and_then(|stmt| match stmt {
+                    ast::BlockStmt::Expr(expr) if expr.has_value() => {
+                        Some(self.transform_expr_to_hir(expr.expr.as_ref()))
+                    }
+                    _ => None,
+                })
+                .transpose()?
+                .map(Box::new);
 
             Ok(hir::ExprKind::Block(hir::Block {
                 hir_id: self.next_id(),

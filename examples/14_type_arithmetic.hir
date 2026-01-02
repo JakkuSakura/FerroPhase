@@ -61,6 +61,14 @@ hir::Program {
         None,
     }
 
+    pub fn print_display<T>(value: T) -> () {
+        // params: [value: T]
+        {
+            printf("%s
+", "<unknown>");
+        }
+    }
+
     pub fn describe_optional(value: FooMaybe) -> i64 {
         // params: [value: FooMaybe]
         {
@@ -84,22 +92,22 @@ hir::Program {
     pub fn main() -> () {
         {
             let base_foo: Foo = Foo { a: 1, common: 2, foo: 3 };
-            printf("Foo a=%s common=%s foo=%s
+            printf("Foo a=%lld common=%lld foo=%lld
 ", base_foo.a, base_foo.common, base_foo.foo);
             let base_bar: Bar = Bar { common: 4, bar: 5 };
-            printf("Bar common=%s bar=%s
+            printf("Bar common=%lld bar=%lld
 ", base_bar.common, base_bar.bar);
             let merged: FooPlusBar = <control-flow>;
-            printf("FooPlusBar a=%s common=%s foo=%s bar=%s
+            printf("FooPlusBar a=%lld common=%lld foo=%lld bar=%lld
 ", merged.a, merged.common, merged.foo, merged.bar);
             let reduced: FooMinusBar = FooMinusBar { a: 10, foo: 20 };
-            printf("FooMinusBar a=%s foo=%s
+            printf("FooMinusBar a=%lld foo=%lld
 ", reduced.a, reduced.foo);
             let overlap: FooAndBar = FooAndBar { common: 99 };
-            printf("FooAndBar common=%s
+            printf("FooAndBar common=%lld
 ", overlap.common);
             let record: InlineRecord = InlineRecord { tag: 7, value: 42 };
-            printf("InlineRecord tag=%s value=%s
+            printf("InlineRecord tag=%lld value=%lld
 ", record.tag, record.value);
             let left: FooOrBar = Foo { a: 2, common: 3, foo: 4 };
             let right: FooOrBar = base_bar;
@@ -118,18 +126,18 @@ hir::Program {
             let lit_null: _ = null;
             let lit_enum: &str = "green";
             printf("LiteralInt %s
-", lit_int);
+", "<unknown>");
             printf("LiteralBool %s
-", lit_bool);
+", "<unknown>");
             printf("LiteralStr %s
-", lit_str);
-            printf("LiteralUnit %s", lit_unit);
-            printf("LiteralNull %s", lit_null);
+", "<unknown>");
+            printf("LiteralUnit %s", "<unknown>");
+            printf("LiteralNull %s", "<unknown>");
             printf("LiteralStrEnum %s
-", lit_enum);
+", "<unknown>");
             let maybe: FooMaybe = Foo { a: 5, common: 6, foo: 7 };
             printf("FooMaybe sum=%s
-", describe_optional(maybe));
+", "<unknown>");
             let _ = print_display;
         }
     }

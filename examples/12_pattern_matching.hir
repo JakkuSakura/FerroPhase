@@ -24,17 +24,6 @@ hir::Program {
                 Color::Rgb(r, g, b) =>
                     "custom rgb"
             }
-            match (color)
-            {
-                Color::Red =>
-                    "red"
-                Color::Green =>
-                    "green"
-                Color::Rgb(255, 0, 0) =>
-                    "red rgb"
-                Color::Rgb(r, g, b) =>
-                    "custom rgb"
-            }
         }
     }
 
@@ -52,30 +41,12 @@ hir::Program {
                 _ =>
                     "odd"
             }
-            match (n)
-            {
-                0 =>
-                    "zero"
-                n if (n < 0) =>
-                    "negative"
-                n if ((n % 2) == 0) =>
-                    "even"
-                _ =>
-                    "odd"
-            }
         }
     }
 
     pub fn unwrap_or(opt: Option<i64>, default: i64) -> i64 {
         // params: [opt: Option<i64>, default: i64]
         {
-            match (opt)
-            {
-                Option::Some(v) =>
-                    v
-                Option::None =>
-                    default
-            }
             match (opt)
             {
                 Option::Some(v) =>
