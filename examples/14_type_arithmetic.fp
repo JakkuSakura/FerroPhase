@@ -3,6 +3,7 @@
 //! These operators are type-level, not value-level.
 
 use fp_rust::t;
+use std::fmt::Display;
 
 type Int = i64;
 
@@ -66,39 +67,69 @@ type LiteralStr = t! { "hello" };
 type LiteralUnit = t! { () };
 type LiteralNull = t! { null };
 type LiteralStrEnum = t! { "red" | "green" | "blue" };
-fn main() {
-    FooPlusBar {
-        a: 1,
-        common: 2,
-        foo: 3,
-        bar: 4,
-    };
 
-    FooMinusBar {
-        a: 10,
-        foo: 20,
-    };
+// Optionality suffix: T? is sugar for Option<T>.
+type FooMaybe = Foo?;
 
-    InlineRecord { tag: 7, value: 42 };
-
-    let left: FooOrBar = Foo { a: 1, common: 2, foo: 3 };
-    let right: FooOrBar = Bar { common: 4, bar: 5 };
-    let handler: FooOrBarFn = describe_union;
-    println!("{}", handler(left));
-    println!("{}", handler(right));
-
-    let _ints: Int4 = [1, 2, 3, 4];
+// Negative bounds: require Display but explicitly forbid Clone.
+fn print_display<T: Display + !Clone>(value: T) {
+    println!("{}", value);
 }
 
-// Proposed operators (not yet implemented in the language; kept as code for syntax reference).
-// This block will not compile until the parser and type checker support them.
-fn proposed_syntax_examples(existing_foo: Foo, value: FooOrBar) {
-    type FooMaybe = Foo?;
-
-
-    fn print_display<T: Display - Clone>(value: T) {
-        println!("{}", value);
+fn describe_optional(value: FooMaybe) -> Int {
+    match value {
+        Foo { a, common, foo } => a + common + foo,
+        null => 0,
     }
+}
 
-    let _ = value;
+fn main() {
+    let base_foo: Foo = Foo { a: 1, common: 2, foo: 3 };
+    println!("Foo a={} common={} foo={}", base_foo.a, base_foo.common, base_foo.foo);
+
+    let base_bar: Bar = Bar { common: 4, bar: 5 };
+    println!("Bar common={} bar={}", base_bar.common, base_bar.bar);
+
+    // Field spread in struct literals.
+    let merged: FooPlusBar = FooPlusBar { ..base_foo, bar: 6 };
+    println!(
+        "FooPlusBar a={} common={} foo={} bar={}",
+        merged.a, merged.common, merged.foo, merged.bar
+    );
+
+    let reduced: FooMinusBar = FooMinusBar { a: 10, foo: 20 };
+    println!("FooMinusBar a={} foo={}", reduced.a, reduced.foo);
+
+    let overlap: FooAndBar = FooAndBar { common: 99 };
+    println!("FooAndBar common={}", overlap.common);
+
+    let record: InlineRecord = InlineRecord { tag: 7, value: 42 };
+    println!("InlineRecord tag={} value={}", record.tag, record.value);
+
+    let left: FooOrBar = Foo { a: 2, common: 3, foo: 4 };
+    let right: FooOrBar = base_bar;
+    let handler: FooOrBarFn = describe_union;
+    println!("FooOrBar left sum={}", handler(left));
+    println!("FooOrBar right sum={}", handler(right));
+
+    let _ints: Int4 = [1, 2, 3, 4];
+    println!("Int4[0]={} Int4[1]={} Int4[2]={} Int4[3]={}", _ints[0], _ints[1], _ints[2], _ints[3]);
+
+    let lit_int: LiteralInt = 42i64;
+    let lit_bool: LiteralBool = true;
+    let lit_str: LiteralStr = "hello";
+    let lit_unit: LiteralUnit = ();
+    let lit_null: LiteralNull = null;
+    let lit_enum: LiteralStrEnum = "green";
+    println!("LiteralInt {}", lit_int);
+    println!("LiteralBool {}", lit_bool);
+    println!("LiteralStr {}", lit_str);
+    print("LiteralUnit", lit_unit);
+    print("LiteralNull", lit_null);
+    println!("LiteralStrEnum {}", lit_enum);
+
+    let maybe: FooMaybe = Foo { a: 5, common: 6, foo: 7 };
+    println!("FooMaybe sum={}", describe_optional(maybe));
+
+    let _ = print_display;
 }
