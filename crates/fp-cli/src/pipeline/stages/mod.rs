@@ -3,6 +3,7 @@
 
 pub(super) mod const_eval;
 pub(super) mod frontend;
+pub(super) mod materialize;
 pub(super) mod normalize;
 pub(super) mod project;
 pub(super) mod transpile;

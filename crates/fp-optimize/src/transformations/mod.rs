@@ -1,6 +1,5 @@
 pub mod ast_to_hir;
 pub mod hir_to_mir;
-pub mod materialize_intrinsics;
 pub mod mir_to_lir;
 pub mod normalize_intrinsics;
 
@@ -17,6 +16,5 @@ pub trait IrTransform<Src, Dest> {
 
 pub use ast_to_hir::*;
 pub use hir_to_mir::*;
-pub use materialize_intrinsics::*;
 pub use mir_to_lir::*;
 pub use normalize_intrinsics::*;
