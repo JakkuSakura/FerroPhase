@@ -52,7 +52,7 @@ mod diagnostics;
 mod stages;
 mod workspace;
 use self::diagnostics as diag;
-use artifacts::{BackendArtifacts, LlvmArtifacts};
+use artifacts::{BackendArtifacts, LlvmArtifacts, MirArtifacts};
 use workspace::{WorkspaceLirReplay, determine_main_package_name};
 
 #[cfg(feature = "bootstrap")]
@@ -240,7 +240,8 @@ const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
-const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
+const STAGE_HIR_TO_MIR: &str = "hir→mir";
+const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_LINK_BINARY: &str = "link-binary";
@@ -997,13 +998,26 @@ impl Pipeline {
 
             match target {
                 PipelineTarget::Llvm => {
-                    let backend = self.run_stage(
-                        STAGE_BACKEND_LOWERING,
+                    let mir_artifacts = self.run_stage(
+                        STAGE_HIR_TO_MIR,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_backend_lowering(
+                            pipeline.stage_hir_to_mir(
                                 &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
+                    )?;
+                    let backend = self.run_stage(
+                        STAGE_MIR_TO_LIR,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_mir_to_lir_llvm(
+                                &mir_artifacts,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1021,13 +1035,26 @@ impl Pipeline {
                     PipelineOutput::Code(llvm.ir_text)
                 }
                 PipelineTarget::Binary => {
-                    let backend = self.run_stage(
-                        STAGE_BACKEND_LOWERING,
+                    let mir_artifacts = self.run_stage(
+                        STAGE_HIR_TO_MIR,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_backend_lowering(
+                            pipeline.stage_hir_to_mir(
                                 &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
+                    )?;
+                    let backend = self.run_stage(
+                        STAGE_MIR_TO_LIR,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_mir_to_lir_llvm(
+                                &mir_artifacts,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1060,13 +1087,26 @@ impl Pipeline {
                     PipelineOutput::Binary(binary_path)
                 }
                 PipelineTarget::Bytecode => {
-                    let backend = self.run_stage(
-                        STAGE_BACKEND_LOWERING,
+                    let mir_artifacts = self.run_stage(
+                        STAGE_HIR_TO_MIR,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_backend_lowering(
+                            pipeline.stage_hir_to_mir(
                                 &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
+                    )?;
+                    let backend = self.run_stage(
+                        STAGE_MIR_TO_LIR,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_mir_to_lir(
+                                &mir_artifacts,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1405,13 +1445,26 @@ impl Pipeline {
             },
         )?;
 
-        self.run_stage(
-            STAGE_BACKEND_LOWERING,
+        let mir_artifacts = self.run_stage(
+            STAGE_HIR_TO_MIR,
             &diagnostic_manager,
             &options,
             |pipeline| {
-                pipeline.stage_backend_lowering(
+                pipeline.stage_hir_to_mir(
                     &hir_program,
+                    &options,
+                    &base_path,
+                    &diagnostic_manager,
+                )
+            },
+        )?;
+        self.run_stage(
+            STAGE_MIR_TO_LIR,
+            &diagnostic_manager,
+            &options,
+            |pipeline| {
+                pipeline.stage_mir_to_lir(
+                    &mir_artifacts,
                     &options,
                     &base_path,
                     &diagnostic_manager,
@@ -2550,14 +2603,23 @@ mod tests {
         }
 
         fn backend(&self, hir: &hir::Program) -> BackendArtifacts {
-            match self.pipeline.stage_backend_lowering(
+            let mir = match self.pipeline.stage_hir_to_mir(
                 hir,
                 &self.options,
                 Path::new("unit_test"),
                 &self.diagnostics,
             ) {
                 Ok(artifacts) => artifacts,
-                Err(err) => self.fail_with_diagnostics("HIR→MIR→LIR lowering", err),
+                Err(err) => self.fail_with_diagnostics("HIR→MIR lowering", err),
+            };
+            match self.pipeline.stage_mir_to_lir(
+                &mir,
+                &self.options,
+                Path::new("unit_test"),
+                &self.diagnostics,
+            ) {
+                Ok(artifacts) => artifacts,
+                Err(err) => self.fail_with_diagnostics("MIR→LIR lowering", err),
             }
         }
 

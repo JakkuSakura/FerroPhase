@@ -27,13 +27,13 @@ impl Pipeline {
         }
     }
 
-    pub(crate) fn stage_backend_lowering(
+    pub(crate) fn stage_hir_to_mir(
         &self,
         hir_program: &hir::Program,
         options: &PipelineOptions,
         base_path: &Path,
         manager: &DiagnosticManager,
-    ) -> Result<BackendArtifacts, CliError> {
+    ) -> Result<MirArtifacts, CliError> {
         let mut mir_lowering = MirLowering::new();
         let mir_result = mir_lowering.transform(hir_program.clone());
         let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
@@ -43,16 +43,16 @@ impl Pipeline {
             (Ok(_), true) => {
                 manager.add_diagnostic(
                     Diagnostic::error("HIR→MIR lowering reported errors".to_string())
-                        .with_source_context(STAGE_BACKEND_LOWERING),
+                        .with_source_context(STAGE_HIR_TO_MIR),
                 );
-                return Err(Self::stage_failure(STAGE_BACKEND_LOWERING));
+                return Err(Self::stage_failure(STAGE_HIR_TO_MIR));
             }
             (Err(err), _) => {
                 manager.add_diagnostic(
                     Diagnostic::error(format!("HIR→MIR lowering failed: {}", err))
-                        .with_source_context(STAGE_BACKEND_LOWERING),
+                        .with_source_context(STAGE_HIR_TO_MIR),
                 );
-                return Err(Self::stage_failure(STAGE_BACKEND_LOWERING));
+                return Err(Self::stage_failure(STAGE_HIR_TO_MIR));
             }
         };
 
@@ -66,9 +66,24 @@ impl Pipeline {
             }
         }
 
+        Ok(MirArtifacts {
+            mir_program,
+            mir_text,
+        })
+    }
+
+    pub(crate) fn stage_mir_to_lir(
+        &self,
+        mir_artifacts: &MirArtifacts,
+        options: &PipelineOptions,
+        base_path: &Path,
+        _manager: &DiagnosticManager,
+    ) -> Result<BackendArtifacts, CliError> {
+        let mut pretty_opts = PrettyOptions::default();
+        pretty_opts.show_spans = options.debug.verbose;
         let mut lir_generator = LirGenerator::new();
         let lir_program = lir_generator
-            .transform(mir_program.clone())
+            .transform(mir_artifacts.mir_program.clone())
             .map_err(|err| CliError::Compilation(format!("MIR→LIR lowering failed: {}", err)))?;
 
         let lir_text = format!("{}", pretty(&lir_program, pretty_opts));
@@ -81,7 +96,38 @@ impl Pipeline {
 
         Ok(BackendArtifacts {
             lir_program,
-            mir_text,
+            mir_text: mir_artifacts.mir_text.clone(),
+            lir_text,
+        })
+    }
+
+    pub(crate) fn stage_mir_to_lir_llvm(
+        &self,
+        mir_artifacts: &MirArtifacts,
+        options: &PipelineOptions,
+        base_path: &Path,
+        _manager: &DiagnosticManager,
+    ) -> Result<BackendArtifacts, CliError> {
+        let mut pretty_opts = PrettyOptions::default();
+        pretty_opts.show_spans = options.debug.verbose;
+        let mut lir_generator = LirGenerator::new_with_runtime_symbol_map(
+            fp_llvm::runtime_symbols::map_runtime_symbol_glibc,
+        );
+        let lir_program = lir_generator
+            .transform(mir_artifacts.mir_program.clone())
+            .map_err(|err| CliError::Compilation(format!("MIR→LIR lowering failed: {}", err)))?;
+
+        let lir_text = format!("{}", pretty(&lir_program, pretty_opts));
+
+        if options.save_intermediates {
+            if let Err(err) = fs::write(base_path.with_extension("lir"), &lir_text) {
+                debug!(error = %err, "failed to persist LIR intermediate");
+            }
+        }
+
+        Ok(BackendArtifacts {
+            lir_program,
+            mir_text: mir_artifacts.mir_text.clone(),
             lir_text,
         })
     }
