@@ -542,7 +542,41 @@ impl LirGenerator {
                 instructions.extend(self.take_queued_instructions());
                 let pointer = match borrowed_access {
                     PlaceAccess::Address(addr) => addr.ptr,
-                    PlaceAccess::Value { value, .. } => value,
+                    PlaceAccess::Value { value, lir_ty, .. } => {
+                        if matches!(lir_ty, lir::LirType::Ptr(_)) {
+                            value
+                        } else {
+                            let alloca_id = self.next_id();
+                            let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                            let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                                1,
+                                lir::LirType::I32,
+                            ));
+                            let alignment = Self::alignment_for_lir_type(&lir_ty);
+                            instructions.push(lir::LirInstruction {
+                                id: alloca_id,
+                                kind: lir::LirInstructionKind::Alloca {
+                                    size: size_value,
+                                    alignment,
+                                },
+                                type_hint: Some(pointer_type),
+                                debug_info: None,
+                            });
+                            let ptr_value = lir::LirValue::Register(alloca_id);
+                            instructions.push(lir::LirInstruction {
+                                id: self.next_id(),
+                                kind: lir::LirInstructionKind::Store {
+                                    value,
+                                    address: ptr_value.clone(),
+                                    alignment: Some(alignment),
+                                    volatile: false,
+                                },
+                                type_hint: None,
+                                debug_info: None,
+                            });
+                            ptr_value
+                        }
+                    }
                 };
                 result_value = Some(pointer);
             }
@@ -551,7 +585,41 @@ impl LirGenerator {
                 instructions.extend(self.take_queued_instructions());
                 let pointer = match borrowed_access {
                     PlaceAccess::Address(addr) => addr.ptr,
-                    PlaceAccess::Value { value, .. } => value,
+                    PlaceAccess::Value { value, lir_ty, .. } => {
+                        if matches!(lir_ty, lir::LirType::Ptr(_)) {
+                            value
+                        } else {
+                            let alloca_id = self.next_id();
+                            let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
+                            let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                                1,
+                                lir::LirType::I32,
+                            ));
+                            let alignment = Self::alignment_for_lir_type(&lir_ty);
+                            instructions.push(lir::LirInstruction {
+                                id: alloca_id,
+                                kind: lir::LirInstructionKind::Alloca {
+                                    size: size_value,
+                                    alignment,
+                                },
+                                type_hint: Some(pointer_type),
+                                debug_info: None,
+                            });
+                            let ptr_value = lir::LirValue::Register(alloca_id);
+                            instructions.push(lir::LirInstruction {
+                                id: self.next_id(),
+                                kind: lir::LirInstructionKind::Store {
+                                    value,
+                                    address: ptr_value.clone(),
+                                    alignment: Some(alignment),
+                                    volatile: false,
+                                },
+                                type_hint: None,
+                                debug_info: None,
+                            });
+                            ptr_value
+                        }
+                    }
                 };
                 result_value = Some(pointer);
             }
@@ -2296,7 +2364,11 @@ impl LirGenerator {
                 match access {
                     PlaceAccess::Address(addr) => {
                         if expects_pointer {
-                            Ok(addr.ptr)
+                            if matches!(addr.lir_ty, lir::LirType::Ptr(_)) {
+                                Ok(self.emit_load_from_address(addr.clone(), block))
+                            } else {
+                                Ok(addr.ptr)
+                            }
                         } else {
                             let loaded = self.emit_load_from_address(addr.clone(), block);
                             Ok(self.adjust_call_argument(
