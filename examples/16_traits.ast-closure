@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub trait Shape : () {
       declare fn area(&self) -> Expr(f64) : fn() -> Expr(f64) : _
       fn describe(&self) -> () : fn() -> () : _
@@ -48,6 +47,11 @@ ast::File {
                   object:
                     locator self : &Rectangle{width: Expr(f64), height: Expr(f64)}
     }
+    pub fn<T: Shape> print_area(shape: &Expr(T)) -> () : fn<T: Shape>(&unknown) -> () : fn<T: Shape>(&unknown) -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "{:.2}" shape.area()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (6 stmts) : ()
         let circle

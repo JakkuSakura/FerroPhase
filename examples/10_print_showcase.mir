@@ -101,7 +101,7 @@ mir::Program {
                     terminator: call global printf("Unit: %s", "()") -> _35 then bb17
                 bb17:
                     s0: _36 = aggregate(tuple; [])
-                    terminator: call global printf("Null: %s", "<none>") -> _37 then bb18
+                    terminator: call global printf("Null: %s", "null") -> _37 then bb18
                 bb18:
                     s0: _38 = aggregate(tuple; [])
                     terminator: call global printf("\n") -> _39 then bb19

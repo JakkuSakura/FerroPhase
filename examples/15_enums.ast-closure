@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub enum Shape : Shape [Point: () | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}] {
       Point: ()
       Circle: (Expr(i64))
@@ -72,40 +71,20 @@ ast::File {
               h:
                 value 3 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: point.describe
+          intrinsic println : ()
+            template: "{}" point.describe()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: circle.describe
+          intrinsic println : ()
+            template: "{}" circle.describe()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: rect.describe
+          intrinsic println : ()
+            template: "{}" rect.describe()
         let val
           init:
             locator Value::C : Value [A: () | B: () | C: ()]
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "discriminant: %d
-" : &string
-              cast : i32 -> i32
-                locator val : Value [A: () | B: () | C: ()]
+          intrinsic println : ()
+            template: "discriminant: {}" (val) as i32
         let some: Expr(Option<i64
 >)
           init:
@@ -118,32 +97,14 @@ ast::File {
           init:
             locator Option::None : Option [Some: (Expr(T)) | None: ()]
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : any
-                target: some.unwrap_or
-                args:
-                  value 0 : i64
+          intrinsic println : ()
+            template: "{}" some.unwrap_or(0)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : any
-                target: none.unwrap_or
-                args:
-                  value 99 : i64
+          intrinsic println : ()
+            template: "{}" none.unwrap_or(99)
         pub const CODE: i32 : i32
           value 2 : i32
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "const: %d
-" : &string
-              locator CODE : i32
+          intrinsic println : ()
+            template: "const: {}" CODE
 }

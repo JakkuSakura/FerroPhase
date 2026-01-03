@@ -1,30 +1,15 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub import fp_rust::t : ()
     pub import std::fmt::Display : ()
     pub type Int = Expr(i64) : i64
-    pub structural Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
-      a: Expr(Int)
-      common: Expr(Int)
-      foo: Expr(Int)
-    pub structural Bar : Bar{common: Expr(Int), bar: Expr(Int)}
-      common: Expr(Int)
-      bar: Expr(Int)
-    pub structural FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
-      a: Expr(Int)
-      common: Expr(Int)
-      foo: Expr(Int)
-      bar: Expr(Int)
+    pub type Foo = structural{a: Expr(Int), common: Expr(Int), foo: Expr(Int)} : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+    pub type Bar = structural{common: Expr(Int), bar: Expr(Int)} : Bar{common: Expr(Int), bar: Expr(Int)}
+    pub type FooPlusBar = TypeBinaryOp : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
     pub type FooOrBar = TypeBinaryOp : TypeBinaryOp
-    pub structural FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
-      a: Expr(Int)
-      foo: Expr(Int)
-    pub structural FooAndBar : FooAndBar{common: Expr(Int)}
-      common: Expr(Int)
-    pub structural InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
-      tag: Expr(Int)
-      value: Expr(Int)
+    pub type FooMinusBar = TypeBinaryOp : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+    pub type FooAndBar = TypeBinaryOp : FooAndBar{common: Expr(Int)}
+    pub type InlineRecord = structural{tag: Expr(Int), value: Expr(Int)} : InlineRecord{tag: Expr(Int), value: Expr(Int)}
     pub type Int4 = [Expr(Int); 4] : [any; 4]
     pub fn describe_union(value: Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
       block (1 stmt) : any
@@ -63,12 +48,8 @@ ast::File {
     pub fn<T: Display + (!Clone)> print_display(value: Expr(T)) -> () : fn<T: Display + (!Clone)>(unknown) -> () : fn<T: Display + (!Clone)>(unknown) -> ()
       block (1 stmt) : ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "{}" value
     pub fn describe_optional(value: Expr(FooMaybe)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
       block (1 stmt) : any
         expr_stmt (value)
@@ -103,20 +84,8 @@ ast::File {
               foo:
                 value 3 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Foo a=%lld common=%lld foo=%lld
-" : &string
-              select .a [field] : any
-                object:
-                  locator base_foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
-              select .common [field] : any
-                object:
-                  locator base_foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
-              select .foo [field] : any
-                object:
-                  locator base_foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+          intrinsic println : ()
+            template: "Foo a={} common={} foo={}" base_foo.a, base_foo.common, base_foo.foo
         let base_bar: Expr(Bar)
           init:
             struct Bar : Bar{common: Expr(Int), bar: Expr(Int)}
@@ -125,17 +94,8 @@ ast::File {
               bar:
                 value 5 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Bar common=%lld bar=%lld
-" : &string
-              select .common [field] : any
-                object:
-                  locator base_bar : Bar{common: Expr(Int), bar: Expr(Int)}
-              select .bar [field] : any
-                object:
-                  locator base_bar : Bar{common: Expr(Int), bar: Expr(Int)}
+          intrinsic println : ()
+            template: "Bar common={} bar={}" base_bar.common, base_bar.bar
         let merged: Expr(FooPlusBar)
           init:
             struct FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
@@ -144,23 +104,8 @@ ast::File {
               ..
                 locator base_foo : _
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "FooPlusBar a=%lld common=%lld foo=%lld bar=%lld
-" : &string
-              select .a [field] : any
-                object:
-                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
-              select .common [field] : any
-                object:
-                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
-              select .foo [field] : any
-                object:
-                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
-              select .bar [field] : any
-                object:
-                  locator merged : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
+          intrinsic println : ()
+            template: "FooPlusBar a={} common={} foo={} bar={}" merged.a, merged.common, merged.foo, merged.bar
         let reduced: Expr(FooMinusBar)
           init:
             struct FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
@@ -169,31 +114,16 @@ ast::File {
               foo:
                 value 20 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "FooMinusBar a=%lld foo=%lld
-" : &string
-              select .a [field] : any
-                object:
-                  locator reduced : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
-              select .foo [field] : any
-                object:
-                  locator reduced : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+          intrinsic println : ()
+            template: "FooMinusBar a={} foo={}" reduced.a, reduced.foo
         let overlap: Expr(FooAndBar)
           init:
             struct FooAndBar : FooAndBar{common: Expr(Int)}
               common:
                 value 99 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "FooAndBar common=%lld
-" : &string
-              select .common [field] : any
-                object:
-                  locator overlap : FooAndBar{common: Expr(Int)}
+          intrinsic println : ()
+            template: "FooAndBar common={}" overlap.common
         let record: Expr(InlineRecord)
           init:
             struct InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
@@ -202,17 +132,8 @@ ast::File {
               value:
                 value 42 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "InlineRecord tag=%lld value=%lld
-" : &string
-              select .tag [field] : any
-                object:
-                  locator record : InlineRecord{tag: Expr(Int), value: Expr(Int)}
-              select .value [field] : any
-                object:
-                  locator record : InlineRecord{tag: Expr(Int), value: Expr(Int)}
+          intrinsic println : ()
+            template: "InlineRecord tag={} value={}" record.tag, record.value
         let left: Expr(FooOrBar)
           init:
             struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
@@ -229,19 +150,11 @@ ast::File {
           init:
             locator describe_union : fn(any) -> any
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "FooOrBar left sum=%s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "FooOrBar left sum={}" handler(left)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "FooOrBar right sum=%s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "FooOrBar right sum={}" handler(right)
         let _ints: Expr(Int4)
           init:
             array (4 values) : [i64; 4]
@@ -250,15 +163,8 @@ ast::File {
               value 3 : i64
               value 4 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Int4[0]=%s Int4[1]=%s Int4[2]=%s Int4[3]=%s
-" : &string
-              value "<unknown>" : &string
-              value "<unknown>" : &string
-              value "<unknown>" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "Int4[0]={} Int4[1]={} Int4[2]={} Int4[3]={}" _ints[0], _ints[1], _ints[2], _ints[3]
         let lit_int: Expr(LiteralInt)
           init:
             value 42 : i64
@@ -278,45 +184,23 @@ ast::File {
           init:
             value "green" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "LiteralInt %s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "LiteralInt {}" lit_int
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "LiteralBool %s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "LiteralBool {}" lit_bool
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "LiteralStr %s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "LiteralStr {}" lit_str
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "LiteralUnit %s" : &string
-              value "<unknown>" : &string
+          intrinsic print : ()
+            template: "LiteralUnit {}" lit_unit
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "LiteralNull %s" : &string
-              value "<unknown>" : &string
+          intrinsic print : ()
+            template: "LiteralNull {}" lit_null
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "LiteralStrEnum %s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "LiteralStrEnum {}" lit_enum
         let maybe: Expr(FooMaybe)
           init:
             struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
@@ -327,12 +211,8 @@ ast::File {
               foo:
                 value 7 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "FooMaybe sum=%s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "FooMaybe sum={}" describe_optional(maybe)
         let _
           init:
             locator print_display : fn(unknown) -> ()

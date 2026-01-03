@@ -1,0 +1,94 @@
+lir::Program {
+    functions:
+        fn first_gt(arg0: ptr i32, arg1: ptr i32) -> i32 [cc: c, linkage: internal] {
+            locals:
+                %0: i32
+                %1: ptr i32 // arg
+                %2: ptr i32 // arg
+                %3: void
+                %4: i64
+                %5: i1
+                %6: void
+                %7: i64
+                %8: i32
+                %9: i64
+                %10: void
+                %11: i1
+                %12: i64
+                %13: void
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = alloca i32 1 align 8 : ptr i64
+                i1: %r1 = alloca i32 1 align 4 : ptr i32
+                i2: store i64 0, %r0 align 8
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0, bb6] // succs: [bb2, bb3]:
+                i3: %r3 = alloca i32 1 align 1 : ptr i1
+                i4: %r4 = load %r0 align 8 : i64
+                i5: %r5 = lt %r4, i64 0 : i1
+                i6: store %r5, %r3 align 1
+                i7: %r7 = load %r3 align 1 : i1
+                terminator: cond_br %r7, bb2, bb3
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb4, bb5]:
+                i8: %r8 = alloca i32 1 align 8 : ptr i64
+                i9: %r9 = load %r0 align 8 : i64
+                i10: store %r9, %r8 align 8
+                i11: %r11 = alloca i32 1 align 8 : ptr i64
+                i12: %r12 = load %r0 align 8 : i64
+                i13: store %r12, %r11 align 8
+                i14: %r14 = alloca i32 1 align 4 : ptr i32
+                i15: %r15 = load %r11 align 8 : i64
+                i16: %r16 = mul %r15, i64 4 : i64
+                i17: %r17 = bitcast %local1 to ptr i8 : ptr i8
+                i18: %r18 = gep inbounds %r17 [%r16] : ptr i8
+                i19: %r19 = bitcast %r18 to ptr i32 : ptr i32
+                i20: %r20 = load %r19 align 4 : i32
+                i21: store %r20, %r14 align 4
+                i22: %r22 = alloca i32 1 align 8 : ptr i64
+                i23: %r23 = load %r8 align 8 : i64
+                i24: store %r23, %r22 align 8
+                i25: %r25 = alloca i32 1 align 1 : ptr i1
+                i26: %r26 = load %r14 align 4 : i32
+                i27: %r27 = load %r22 align 8 : i64
+                i28: %r28 = mul %r27, i64 4 : i64
+                i29: %r29 = bitcast %local2 to ptr i8 : ptr i8
+                i30: %r30 = gep inbounds %r29 [%r28] : ptr i8
+                i31: %r31 = bitcast %r30 to ptr i32 : ptr i32
+                i32: %r32 = load %r31 align 4 : i32
+                i33: %r33 = gt %r26, %r32 : i1
+                i34: store %r33, %r25 align 1
+                i35: %r35 = load %r25 align 1 : i1
+                terminator: cond_br %r35, bb4, bb5
+            bb3 // label: bb3 // preds: [bb1]:
+                i36: store i64 0, %r1 align 4
+                i37: %r37 = load %r1 align 4 : i32
+                terminator: ret %r37
+            bb4 // label: bb4 // preds: [bb2] // succs: [bb6]:
+                terminator: br bb6
+            bb5 // label: bb5 // preds: [bb2] // succs: [bb6]:
+                terminator: br bb6
+            bb6 // label: bb6 // preds: [bb4, bb5] // succs: [bb1]:
+                i38: %r38 = load %r0 align 8 : i64
+                i39: %r39 = add %r38, i64 1 : i64
+                i40: store %r39, %r0 align 8
+                terminator: br bb1
+        }
+
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i32
+                %2: ptr i32
+                %3: ptr i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i41: %r41 = alloca i32 1 align 8 : ptr ptr i32
+                i42: store [3 x i64] { i64 1, i64 2, i64 5 }, %r41 align 8
+                i43: %r43 = alloca i32 1 align 8 : ptr ptr i32
+                i44: store [3 x i64] { i64 0, i64 1, i64 3 }, %r43 align 8
+                i45: %r45 = load %r41 align 8 : ptr i32
+                i46: %r46 = load %r43 align 8 : ptr i32
+                i47: %r47 = call c @first_gt(%r45, %r46) : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                terminator: ret void
+        }
+}

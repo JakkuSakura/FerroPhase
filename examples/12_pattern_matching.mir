@@ -54,7 +54,6 @@ mir::Program {
                     terminator: goto -> bb1
                 bb9:
                     s0: _0 = aggregate(tuple; [])
-                    s1: _0 = false
                     terminator: goto -> bb1
         body1 { arg_count: 1, locals: 9 }
             return_local: _0
@@ -103,7 +102,6 @@ mir::Program {
                     s0: _0 = "odd"
                     terminator: goto -> bb1
                 bb11:
-                    s0: _0 = false
                     terminator: return
         body2 { arg_count: 2, locals: 7 }
             return_local: _0
@@ -135,7 +133,7 @@ mir::Program {
                 bb5:
                     s0: _0 = aggregate(tuple; [])
                     terminator: goto -> bb1
-        body3 { arg_count: 0, locals: 27 }
+        body3 { arg_count: 0, locals: 36 }
             return_local: _0
             locals:
                 _0: ()
@@ -145,26 +143,35 @@ mir::Program {
                 _4: <??>
                 _5: <??>
                 _6: i32
-                _7: <??>
+                _7: ()
                 _8: <??>
-                _9: i32
-                _10: <??>
-                _11: i64
-                _12: i32
-                _13: <??>
+                _9: <??>
+                _10: i32
+                _11: ()
+                _12: <??>
+                _13: i64
                 _14: i32
-                _15: <??>
-                _16: i32
-                _17: <??>
-                _18: i32
-                _19: i64
-                _20: (isize, i64)
-                _21: i32
-                _22: i64
-                _23: (isize, i64)
-                _24: i32
+                _15: ()
+                _16: <??>
+                _17: i32
+                _18: ()
+                _19: <??>
+                _20: i32
+                _21: ()
+                _22: <??>
+                _23: i32
+                _24: ()
                 _25: i64
-                _26: i32
+                _26: (isize, i64)
+                _27: i32
+                _28: ()
+                _29: i64
+                _30: (isize, i64)
+                _31: i32
+                _32: ()
+                _33: i64
+                _34: i32
+                _35: ()
             blocks:
                 bb0:
                     s0: _2 = aggregate(tuple; [0, 0u, 0u, 0u])
@@ -175,40 +182,49 @@ mir::Program {
                 bb1:
                     terminator: call global printf("%s\n", copy _4) -> _6 then bb2
                 bb2:
-                    s0: _8 = ref(Shared, _3)
-                    terminator: call fn describe(copy _8) -> _7 then bb3
+                    s0: _7 = aggregate(tuple; [])
+                    s1: _9 = ref(Shared, _3)
+                    terminator: call fn describe(copy _9) -> _8 then bb3
                 bb3:
-                    terminator: call global printf("%s\n", copy _7) -> _9 then bb4
+                    terminator: call global printf("%s\n", copy _8) -> _10 then bb4
                 bb4:
-                    s0: _11 = Neg(5)
-                    terminator: call fn classify(copy _11) -> _10 then bb5
+                    s0: _11 = aggregate(tuple; [])
+                    s1: _13 = Neg(5)
+                    terminator: call fn classify(copy _13) -> _12 then bb5
                 bb5:
-                    terminator: call global printf("%s\n", copy _10) -> _12 then bb6
+                    terminator: call global printf("%s\n", copy _12) -> _14 then bb6
                 bb6:
-                    terminator: call fn classify(0) -> _13 then bb7
+                    s0: _15 = aggregate(tuple; [])
+                    terminator: call fn classify(0) -> _16 then bb7
                 bb7:
-                    terminator: call global printf("%s\n", copy _13) -> _14 then bb8
+                    terminator: call global printf("%s\n", copy _16) -> _17 then bb8
                 bb8:
-                    terminator: call fn classify(4) -> _15 then bb9
+                    s0: _18 = aggregate(tuple; [])
+                    terminator: call fn classify(4) -> _19 then bb9
                 bb9:
-                    terminator: call global printf("%s\n", copy _15) -> _16 then bb10
+                    terminator: call global printf("%s\n", copy _19) -> _20 then bb10
                 bb10:
-                    terminator: call fn classify(7) -> _17 then bb11
+                    s0: _21 = aggregate(tuple; [])
+                    terminator: call fn classify(7) -> _22 then bb11
                 bb11:
-                    terminator: call global printf("%s\n", copy _17) -> _18 then bb12
+                    terminator: call global printf("%s\n", copy _22) -> _23 then bb12
                 bb12:
-                    s0: _20 = aggregate(tuple; [0, 42])
-                    terminator: call fn unwrap_or(copy _20, 0) -> _19 then bb13
+                    s0: _24 = aggregate(tuple; [])
+                    s1: _26 = aggregate(tuple; [0, 42])
+                    terminator: call fn unwrap_or(copy _26, 0) -> _25 then bb13
                 bb13:
-                    terminator: call global printf("%lld\n", copy _19) -> _21 then bb14
+                    terminator: call global printf("%lld\n", copy _25) -> _27 then bb14
                 bb14:
-                    s0: _23 = aggregate(tuple; [1, 0])
-                    terminator: call fn unwrap_or(copy _23, 99) -> _22 then bb15
+                    s0: _28 = aggregate(tuple; [])
+                    s1: _30 = aggregate(tuple; [1, 0])
+                    terminator: call fn unwrap_or(copy _30, 99) -> _29 then bb15
                 bb15:
-                    terminator: call global printf("%lld\n", copy _22) -> _24 then bb16
+                    terminator: call global printf("%lld\n", copy _29) -> _31 then bb16
                 bb16:
-                    s0: _25 = 0
-                    terminator: call global printf("0x%06X\n", copy _25) -> _26 then bb17
+                    s0: _32 = aggregate(tuple; [])
+                    s1: _33 = 0
+                    terminator: call global printf("0x%06X\n", copy _33) -> _34 then bb17
                 bb17:
+                    s0: _35 = aggregate(tuple; [])
                     terminator: return
 }

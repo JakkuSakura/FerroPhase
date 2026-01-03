@@ -11,7 +11,6 @@ hir::Program {
             // params: [self: &Circle]
             {
                 ((3.14159 * self.radius) * self.radius)
-                ((3.14159 * self.radius) * self.radius)
             }
         }
     }
@@ -26,8 +25,14 @@ hir::Program {
             // params: [self: &Rectangle]
             {
                 (self.width * self.height)
-                (self.width * self.height)
             }
+        }
+    }
+
+    pub fn print_area<T>(shape: &T) -> () {
+        // params: [shape: &T]
+        {
+            std::Println(1 args);
         }
     }
 

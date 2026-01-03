@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub const fn build_items(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
       block (1 stmt) : QuoteToken<item>
         expr_stmt (value)

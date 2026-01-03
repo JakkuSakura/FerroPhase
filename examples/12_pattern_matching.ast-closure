@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub enum Color : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))] {
       Red: ()
       Green: ()
@@ -87,101 +86,32 @@ ast::File {
                 value 64 : i64
                 value 32 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: describe
-                args:
-                  reference (mutable: const) : &Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
-                    locator red : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+          intrinsic println : ()
+            template: "{}" describe(<expr>)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: describe
-                args:
-                  reference (mutable: const) : &Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
-                    locator rgb : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
+          intrinsic println : ()
+            template: "{}" describe(<expr>)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: classify
-                args:
-                  unop - : i64
-                    value:
-                      value 5 : i64
+          intrinsic println : ()
+            template: "{}" classify((-5))
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: classify
-                args:
-                  value 0 : i64
+          intrinsic println : ()
+            template: "{}" classify(0)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: classify
-                args:
-                  value 4 : i64
+          intrinsic println : ()
+            template: "{}" classify(4)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : &string
-                target: classify
-                args:
-                  value 7 : i64
+          intrinsic println : ()
+            template: "{}" classify(7)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: unwrap_or
-                args:
-                  invoke : Option [Some: (Expr(T)) | None: ()]
-                    target: Option::Some
-                    args:
-                      value 42 : i64
-                  value 0 : i64
+          intrinsic println : ()
+            template: "{}" unwrap_or(Option::Some(42), 0)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: unwrap_or
-                args:
-                  locator Option::None : Option [Some: (Expr(T)) | None: ()]
-                  value 99 : i64
+          intrinsic println : ()
+            template: "{}" unwrap_or(Option::None, 99)
         pub const CODE: i64 : i64
           value 0 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "0x%06X
-" : &string
-              locator CODE : i64
+          intrinsic println : ()
+            template: "0x{:06X}" CODE
 }

@@ -24,7 +24,7 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.10_print_showcase.18 = private unnamed_addr constant [9 x i8] c"Unit: %s\00", align 1
 @.str.10_print_showcase.19 = private unnamed_addr constant [3 x i8] c"()\00", align 1
 @.str.10_print_showcase.20 = private unnamed_addr constant [9 x i8] c"Null: %s\00", align 1
-@.str.10_print_showcase.21 = private unnamed_addr constant [7 x i8] c"<none>\00", align 1
+@.str.10_print_showcase.21 = private unnamed_addr constant [5 x i8] c"null\00", align 1
 
 define i32 @main() {
 bb0:

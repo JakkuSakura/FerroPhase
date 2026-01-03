@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn factorial(n: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
       block (4 stmts) : i64
         let mut result
@@ -182,118 +181,49 @@ ast::File {
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (20 stmts) : ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "=== Loop Constructs ===
-
-" : &string
+          intrinsic println : ()
+            template: "=== Loop Constructs ===
+"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "1. While loop - factorial:
-" : &string
+          intrinsic println : ()
+            template: "1. While loop - factorial:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  5! = %lld
-" : &string
-              invoke : i64
-                target: factorial
-                args:
-                  value 5 : i64
+          intrinsic println : ()
+            template: "  5! = {}" factorial(5)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  7! = %lld
-" : &string
-              invoke : i64
-                target: factorial
-                args:
-                  value 7 : i64
+          intrinsic println : ()
+            template: "  7! = {}" factorial(7)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-2. For loop - sum range:
-" : &string
+          intrinsic println : ()
+            template: "
+2. For loop - sum range:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  sum(1..10) = %lld
-" : &string
-              invoke : i64
-                target: sum_range
-                args:
-                  value 1 : i64
-                  value 10 : i64
+          intrinsic println : ()
+            template: "  sum(1..10) = {}" sum_range(1, 10)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  sum(5..15) = %lld
-" : &string
-              invoke : i64
-                target: sum_range
-                args:
-                  value 5 : i64
-                  value 15 : i64
+          intrinsic println : ()
+            template: "  sum(5..15) = {}" sum_range(5, 15)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-3. Loop with break expression:
-" : &string
+          intrinsic println : ()
+            template: "
+3. Loop with break expression:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  First divisor of 24: %lld
-" : &string
-              invoke : i64
-                target: find_first_divisor
-                args:
-                  value 24 : i64
+          intrinsic println : ()
+            template: "  First divisor of 24: {}" find_first_divisor(24)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  First divisor of 17: %lld
-" : &string
-              invoke : i64
-                target: find_first_divisor
-                args:
-                  value 17 : i64
+          intrinsic println : ()
+            template: "  First divisor of 17: {}" find_first_divisor(17)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-4. Loop with continue:
-" : &string
+          intrinsic println : ()
+            template: "
+4. Loop with continue:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  Sum of even numbers < 10: %lld
-" : &string
-              invoke : i64
-                target: sum_even_numbers
-                args:
-                  value 10 : i64
+          intrinsic println : ()
+            template: "  Sum of even numbers < 10: {}" sum_even_numbers(10)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-5. Nested loops:
-" : &string
+          intrinsic println : ()
+            template: "
+5. Nested loops:"
         let mut count
           init:
             value 0 : i64
@@ -341,34 +271,20 @@ ast::File {
                                   intrinsic print : ()
                                     template: "[{}] " i
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-  Iterations: %lld
-" : &string
-              locator count : i64
+          intrinsic println : ()
+            template: "
+  Iterations: {}" count
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-6. Compile-time iteration (simulated):
-" : &string
+          intrinsic println : ()
+            template: "
+6. Compile-time iteration (simulated):"
         pub const FACTORIAL_CONST: i64 : i64
           value 120 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  const 5! = %lld
-" : &string
-              locator FACTORIAL_CONST : i64
+          intrinsic println : ()
+            template: "  const 5! = {}" FACTORIAL_CONST
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-✓ Loop constructs demonstrated!
-" : &string
+          intrinsic println : ()
+            template: "
+✓ Loop constructs demonstrated!"
 }

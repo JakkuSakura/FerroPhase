@@ -1,0 +1,24 @@
+hir::Program {
+    pub fn first_gt(xs: [i32], ys: [i32]) -> i32 {
+        // params: [xs: [i32], ys: [i32]]
+        {
+            {
+                let mut __fp_idx13 = 0;
+                while ((__fp_idx13 < std::Len(1 args)))
+                    {
+                        let i = __fp_idx13;
+                        let x = xs[__fp_idx13];
+                        <control-flow>;
+                        __fp_idx13 = (__fp_idx13 + 1);
+                    }
+            }
+            0
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            let _ = first_gt([1, 2, 5], [0, 1, 3]);
+        }
+    }
+}

@@ -10,7 +10,6 @@ hir::Program {
                     i = (i + 1);
                 }
             result
-            result
         }
     }
 
@@ -27,7 +26,6 @@ hir::Program {
                     }
             }
             sum
-            sum
         }
     }
 
@@ -35,18 +33,6 @@ hir::Program {
         // params: [n: i64]
         {
             let mut i = 2;
-            loop
-                {
-                    if (((i * i) > n))
-                        {
-                            break n;
-                        }
-                    if (((n % i) == 0))
-                        {
-                            break i;
-                        }
-                    i = (i + 1);
-                }
             loop
                 {
                     if (((i * i) > n))
@@ -77,78 +63,39 @@ hir::Program {
                     sum = (sum + i);
                 }
             sum
-            sum
         }
     }
 
     pub fn main() -> () {
         {
-            printf("=== Loop Constructs ===
-
-");
-            printf("1. While loop - factorial:
-");
-            printf("  5! = %lld
-", factorial(5));
-            printf("  7! = %lld
-", factorial(7));
-            printf("
-2. For loop - sum range:
-");
-            printf("  sum(1..10) = %lld
-", sum_range(1, 10));
-            printf("  sum(5..15) = %lld
-", sum_range(5, 15));
-            printf("
-3. Loop with break expression:
-");
-            printf("  First divisor of 24: %lld
-", find_first_divisor(24));
-            printf("  First divisor of 17: %lld
-", find_first_divisor(17));
-            printf("
-4. Loop with continue:
-");
-            printf("  Sum of even numbers < 10: %lld
-", sum_even_numbers(10));
-            printf("
-5. Nested loops:
-");
+            std::Println(0 args);
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(0 args);
             let mut count = 0;
             {
                 let mut i = 1;
                 while ((i < 4))
                     {
-                        {
-                            let mut j = 1;
-                            while ((j < 4))
-                                {
-                                    count = (count + 1);
-                                    if ((i == j))
-                                        {
-                                            std::Print(1 args);
-                                        }
-                                    <control-flow>;
-                                    j = (j + 1);
-                                }
-                        }
                         <control-flow>;
                         i = (i + 1);
                     }
             }
-            printf("
-  Iterations: %lld
-", count);
-            printf("
-6. Compile-time iteration (simulated):
-");
+            std::Println(1 args);
+            std::Println(0 args);
             pub const FACTORIAL_CONST: i64 =
                 120;
-            printf("  const 5! = %lld
-", FACTORIAL_CONST);
-            printf("
-✓ Loop constructs demonstrated!
-");
+            std::Println(1 args);
+            std::Println(0 args);
         }
     }
 }

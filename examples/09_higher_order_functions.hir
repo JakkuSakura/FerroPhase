@@ -45,7 +45,7 @@ hir::Program {
         }
     }
 
-    pub fn make_adder(n: i64) -> fn(i64) -> i64 {
+    pub fn make_adder(n: i64) -> __Closure0 {
         // params: [n: i64]
         {
             __Closure0 { n: n }
@@ -61,9 +61,8 @@ hir::Program {
             std::Println(1 args);
             std::Println(1 args);
             std::Println(0 args);
-            pub const add_10: _ =
-                {
-                }
+            pub const add_10: __Closure0 =
+                make_adder(10);
             std::Println(1 args);
             let double = __Closure1 { __fp_no_capture: 0 };
             std::Println(1 args);

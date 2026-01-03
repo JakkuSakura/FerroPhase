@@ -10,19 +10,12 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("=== Compile-time Collections ===
-");
-            printf("Vec literals:
-");
-            printf("  primes: %lld elements
-", PRIME_COUNT);
-            printf("  zero buffer: %lld elements
-", ZERO_BUFFER_CAPACITY);
-            printf("
-HashMap literal via HashMap::from:
-");
-            printf("  tracked HTTP statuses: %lld entries
-", HTTP_STATUS_COUNT);
+            std::Println(0 args);
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
+            std::Println(1 args);
         }
     }
 }

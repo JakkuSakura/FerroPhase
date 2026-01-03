@@ -81,8 +81,11 @@ Conditional:"
           intrinsic println : ()
             template: "
 Closure factory:"
-        pub const add_10: any : any
-          expr.any : any
+        pub const add_10: fn(i64) -> i64 : fn(i64) -> i64
+          invoke : fn(i64) -> i64
+            target: make_adder
+            args:
+              value 10 : i64
         expr_stmt ;
           intrinsic println : ()
             template: "add_10(5) = {}" add_10(5)
