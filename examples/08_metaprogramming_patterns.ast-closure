@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (10 stmts) : ()
         pub const FIELD_COUNT: u64 : u64
@@ -23,15 +22,8 @@ ast::File {
                 locator FIELD_COUNT : u64
         }
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s has %llu fields
-" : &string
-              invoke : &string
-                target: Point3D::type_name
-              invoke : u64
-                target: Point3D::field_count
+          intrinsic println : ()
+            template: "{} has {} fields" Point3D::type_name(), Point3D::field_count()
         pub const VARIANT_A: u8 : u8
           value 1 : u8
         pub const VARIANT_B: u8 : u8
@@ -44,11 +36,6 @@ ast::File {
           init:
             locator Tag::A : Tag [A: () | B: ()]
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "tag discriminant: %hhu
-" : &string
-              cast : u8 -> u8
-                locator tag : Tag [A: () | B: ()]
+          intrinsic println : ()
+            template: "tag discriminant: {}" (tag) as u8
 }

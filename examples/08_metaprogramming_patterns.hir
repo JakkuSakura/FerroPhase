@@ -14,19 +14,16 @@ hir::Program {
                 fn type_name() -> &str {
                     {
                         TYPE_NAME
-                        TYPE_NAME
                     }
                 }
 
                 fn field_count() -> usize {
                     {
                         FIELD_COUNT
-                        FIELD_COUNT
                     }
                 }
             }
-            printf("%s has %llu fields
-", Point3D::type_name(), Point3D::field_count());
+            std::Println(2 args);
             pub const VARIANT_A: u8 =
                 1;
             pub const VARIANT_B: u8 =
@@ -36,8 +33,7 @@ hir::Program {
                 B = (VARIANT_B as isize),
             }
             let tag = Tag::A;
-            printf("tag discriminant: %hhu
-", (tag as u8));
+            std::Println(1 args);
         }
     }
 }

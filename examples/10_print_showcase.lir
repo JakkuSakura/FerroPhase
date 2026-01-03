@@ -4,25 +4,45 @@ lir::Program {
             locals:
                 %0: void
                 %1: i32
-                %2: i32
+                %2: void
                 %3: i32
-                %4: i32
+                %4: void
                 %5: i32
-                %6: i32
+                %6: void
                 %7: i32
-                %8: i32
+                %8: void
                 %9: i32
-                %10: i64
+                %10: void
                 %11: i32
-                %12: i32
+                %12: void
                 %13: i32
-                %14: i32
+                %14: void
                 %15: i32
-                %16: i32
+                %16: void
                 %17: i32
-                %18: i32
-                %19: i32
+                %18: void
+                %19: i64
                 %20: i32
+                %21: void
+                %22: i32
+                %23: void
+                %24: i32
+                %25: void
+                %26: i32
+                %27: void
+                %28: i32
+                %29: void
+                %30: i32
+                %31: void
+                %32: i32
+                %33: void
+                %34: void
+                %35: i32
+                %36: void
+                %37: i32
+                %38: void
+                %39: i32
+                %40: void
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = call c @printf(c"Hello") : i32
                 terminator: br bb1

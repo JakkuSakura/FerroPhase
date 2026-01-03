@@ -1,130 +1,65 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub const fn main() -> () : fn() -> () : fn() -> ()
       block (20 stmts) : ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Hello" : &string
+          intrinsic print : ()
+            template: "Hello"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "World with newlines" : &string
+          intrinsic print : ()
+            template: "World with newlines"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-" : &string
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Number: %lld" : &string
-              value 42 : i64
+          intrinsic print : ()
+            template: "Number: {}" 42
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Boolean: %d %d" : &string
-              value true : bool
-              value false : bool
+          intrinsic print : ()
+            template: "Boolean: {} {}" true, false
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Mixed: %lld %f %s %d" : &string
-              value 1 : i64
-              value 2.5 : f64
-              value "text" : &string
-              value true : bool
+          intrinsic print : ()
+            template: "Mixed: {} {} {} {}" 1, 2.5, "text", true
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-" : &string
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Namespace test %s" : &string
-              value "still works" : &string
+          intrinsic print : ()
+            template: "Namespace test {}" "still works"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-" : &string
+          intrinsic println : ()
+            template: ""
         let value
           init:
             value 7 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "value = %lld
-" : &string
-              locator value : i64
+          intrinsic println : ()
+            template: "value = {}" value
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "math: %lld + %lld = %lld
-" : &string
-              value 2 : i64
-              value 3 : i64
-              value 5 : i64
+          intrinsic println : ()
+            template: "math: {} + {} = {}" 2, 3, 5
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "This %s %s %s %s" : &string
-              value "stays" : &string
-              value "on" : &string
-              value "one" : &string
-              value "line" : &string
+          intrinsic print : ()
+            template: "This {} {} {} {}" "stays", "on", "one", "line"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-" : &string
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Continuing without newline" : &string
+          intrinsic print : ()
+            template: "Continuing without newline"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value " - appended content" : &string
+          intrinsic print : ()
+            template: " - appended content"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-" : &string
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Unit: %s" : &string
-              value "()" : &string
+          intrinsic print : ()
+            template: "Unit: {}" ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Null: %s" : &string
-              value "<none>" : &string
+          intrinsic print : ()
+            template: "Null: {}" null
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-" : &string
+          intrinsic println : ()
+            template: ""
 }

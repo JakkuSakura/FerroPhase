@@ -3,15 +3,17 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: ptr ptr i8
+                %1: ptr i8
                 %2: i64
                 %3: i32
-                %4: i64
+                %4: void
                 %5: i64
-                %6: i8
-                %7: i32
+                %6: i64
+                %7: i8
+                %8: i32
+                %9: void
             bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = call c @Point3D__type_name() : ptr ptr i8
+                i0: %r0 = call c @Point3D__type_name() : ptr i8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
                 i1: %r1 = call c @Point3D__field_count() : i64
@@ -39,13 +41,13 @@ lir::Program {
                 terminator: ret void
         }
 
-        fn Point3D__type_name() -> ptr ptr i8 [cc: c, linkage: internal] {
+        fn Point3D__type_name() -> ptr i8 [cc: c, linkage: internal] {
             locals:
-                %0: ptr ptr i8
+                %0: ptr i8
             bb0 // label: bb0:
-                i15: %r15 = alloca i32 1 align 8 : ptr ptr ptr i8
+                i15: %r15 = alloca i32 1 align 8 : ptr ptr i8
                 i16: store c"Point3D", %r15 align 8
-                i17: %r17 = load %r15 align 8 : ptr ptr i8
+                i17: %r17 = load %r15 align 8 : ptr i8
                 terminator: ret %r17
         }
 

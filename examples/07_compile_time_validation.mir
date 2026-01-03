@@ -2,37 +2,45 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 12 }
+        body0 { arg_count: 0, locals: 16 }
             return_local: _0
             locals:
                 _0: ()
                 _1: usize
                 _2: usize
                 _3: i32
-                _4: bool
+                _4: ()
                 _5: bool
-                _6: i32
-                _7: bool
-                _8: bool
-                _9: i32
-                _10: <??>
+                _6: bool
+                _7: i32
+                _8: ()
+                _9: bool
+                _10: bool
                 _11: i32
+                _12: ()
+                _13: <??>
+                _14: i32
+                _15: ()
             blocks:
                 bb0:
                     s0: _1 = 24u
                     s1: _2 = 3u
                     terminator: call global printf("sizeof=%llu, fields=%llu\n", copy _1, copy _2) -> _3 then bb1
                 bb1:
-                    s0: _4 = true
-                    s1: _5 = false
-                    terminator: call global printf("has_a=%d, has_x=%d\n", copy _4, copy _5) -> _6 then bb2
+                    s0: _4 = aggregate(tuple; [])
+                    s1: _5 = true
+                    s2: _6 = false
+                    terminator: call global printf("has_a=%d, has_x=%d\n", copy _5, copy _6) -> _7 then bb2
                 bb2:
-                    s0: _7 = true
-                    s1: _8 = true
-                    terminator: call global printf("size_ok=%d, aligned=%d\n", copy _7, copy _8) -> _9 then bb3
+                    s0: _8 = aggregate(tuple; [])
+                    s1: _9 = true
+                    s2: _10 = true
+                    terminator: call global printf("size_ok=%d, aligned=%d\n", copy _9, copy _10) -> _11 then bb3
                 bb3:
-                    s0: _10 = "optimized"
-                    terminator: call global printf("mode: %s\n", copy _10) -> _11 then bb4
+                    s0: _12 = aggregate(tuple; [])
+                    s1: _13 = "optimized"
+                    terminator: call global printf("mode: %s\n", copy _13) -> _14 then bb4
                 bb4:
+                    s0: _15 = aggregate(tuple; [])
                     terminator: return
 }

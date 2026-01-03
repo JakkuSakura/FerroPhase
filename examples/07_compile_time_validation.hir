@@ -14,22 +14,18 @@ hir::Program {
                 true;
             pub const HAS_X: bool =
                 false;
-            printf("sizeof=%llu, fields=%llu
-", SIZE, FIELDS);
-            printf("has_a=%d, has_x=%d
-", HAS_A, HAS_X);
+            std::Println(2 args);
+            std::Println(2 args);
             pub const MAX_SIZE: usize =
                 64;
             pub const SIZE_OK: bool =
                 true;
             pub const IS_ALIGNED: bool =
                 true;
-            printf("size_ok=%d, aligned=%d
-", SIZE_OK, IS_ALIGNED);
+            std::Println(2 args);
             pub const MODE: &str =
                 "optimized";
-            printf("mode: %s
-", MODE);
+            std::Println(1 args);
         }
     }
 }

@@ -1,34 +1,26 @@
 hir::Program {
     pub fn main() -> () {
         {
-            printf("Hello");
-            printf("World with newlines");
-            printf("
-");
-            printf("Number: %lld", 42);
-            printf("Boolean: %d %d", true, false);
-            printf("Mixed: %lld %f %s %d", 1, 2.5, "text", true);
-            printf("
-");
-            printf("Namespace test %s", "still works");
-            printf("
-");
+            std::Print(0 args);
+            std::Print(0 args);
+            std::Println(0 args);
+            std::Print(1 args);
+            std::Print(2 args);
+            std::Print(4 args);
+            std::Println(0 args);
+            std::Print(1 args);
+            std::Println(0 args);
             let value = 7;
-            printf("value = %lld
-", value);
-            printf("math: %lld + %lld = %lld
-", 2, 3, 5);
-            printf("This %s %s %s %s", "stays", "on", "one", "line");
-            printf("
-");
-            printf("Continuing without newline");
-            printf(" - appended content");
-            printf("
-");
-            printf("Unit: %s", "()");
-            printf("Null: %s", "<none>");
-            printf("
-");
+            std::Println(1 args);
+            std::Println(3 args);
+            std::Print(4 args);
+            std::Println(0 args);
+            std::Print(0 args);
+            std::Print(0 args);
+            std::Println(0 args);
+            std::Print(1 args);
+            std::Print(1 args);
+            std::Println(0 args);
         }
     }
 }

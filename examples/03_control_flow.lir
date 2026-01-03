@@ -6,17 +6,21 @@ lir::Program {
                 %1: i64
                 %2: ptr i8
                 %3: i32
-                %4: ptr i8
-                %5: i32
-                %6: i64
-                %7: ptr i8
-                %8: i32
-                %9: i64
-                %10: ptr i8
-                %11: ptr i8
-                %12: i1
-                %13: i1
-                %14: i32
+                %4: void
+                %5: ptr i8
+                %6: i32
+                %7: void
+                %8: i64
+                %9: ptr i8
+                %10: i32
+                %11: void
+                %12: i64
+                %13: ptr i8
+                %14: ptr i8
+                %15: i1
+                %16: i1
+                %17: i32
+                %18: void
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
                 i1: %r1 = alloca i32 1 align 8 : ptr i64

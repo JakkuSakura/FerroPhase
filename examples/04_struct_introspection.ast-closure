@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (34 stmts) : ()
         pub struct Point : Point{x: Expr(f64), y: Expr(f64)} {
@@ -29,99 +28,40 @@ ast::File {
         pub const COLOR_METHODS: u64 : u64
           value 0 : u64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "=== Struct Introspection ===
-" : &string
+          intrinsic println : ()
+            template: "=== Struct Introspection ==="
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Point size: %llu bytes
-" : &string
-              intrinsic size_of : u64
-                args:
-                  locator Point : Point{x: Expr(f64), y: Expr(f64)}
+          intrinsic println : ()
+            template: "Point size: {} bytes" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Color size: %llu bytes
-" : &string
-              intrinsic size_of : u64
-                args:
-                  locator Color : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
+          intrinsic println : ()
+            template: "Color size: {} bytes" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Point fields: %llu
-" : &string
-              intrinsic field_count : u64
-                args:
-                  locator Point : Point{x: Expr(f64), y: Expr(f64)}
+          intrinsic println : ()
+            template: "Point fields: {}" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Color fields: %llu
-" : &string
-              intrinsic field_count : u64
-                args:
-                  locator Color : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
+          intrinsic println : ()
+            template: "Color fields: {}" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Point has x: %d
-" : &string
-              intrinsic has_field : bool
-                args:
-                  locator Point : Point{x: Expr(f64), y: Expr(f64)}
-                  value "x" : &string
+          intrinsic println : ()
+            template: "Point has x: {}" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Point has z: %d
-" : &string
-              intrinsic has_field : bool
-                args:
-                  locator Point : Point{x: Expr(f64), y: Expr(f64)}
-                  value "z" : &string
+          intrinsic println : ()
+            template: "Point has z: {}" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Point methods: %llu
-" : &string
-              intrinsic method_count : u64
-                args:
-                  locator Point : Point{x: Expr(f64), y: Expr(f64)}
+          intrinsic println : ()
+            template: "Point methods: {}" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Color methods: %llu
-" : &string
-              intrinsic method_count : u64
-                args:
-                  locator Color : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
+          intrinsic println : ()
+            template: "Color methods: {}" <expr>
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-✓ Introspection completed!
-" : &string
+          intrinsic println : ()
+            template: "
+✓ Introspection completed!"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-=== Transpilation Demo ===
-" : &string
+          intrinsic println : ()
+            template: "
+=== Transpilation Demo ==="
         pub const POINT_SIZE_CONST: u64 : u64
           value 16 : u64
         pub const COLOR_SIZE_CONST: u64 : u64
@@ -145,70 +85,28 @@ ast::File {
               b:
                 value 0 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Transpilation target sizes:
-" : &string
+          intrinsic println : ()
+            template: "Transpilation target sizes:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  Point: %llu bytes (const)
-" : &string
-              locator POINT_SIZE_CONST : u64
+          intrinsic println : ()
+            template: "  Point: {} bytes (const)" POINT_SIZE_CONST
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  Color: %llu bytes (const)
-" : &string
-              locator COLOR_SIZE_CONST : u64
+          intrinsic println : ()
+            template: "  Color: {} bytes (const)" COLOR_SIZE_CONST
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  Combined: %llu bytes
-" : &string
-              locator TOTAL_SIZE : u64
+          intrinsic println : ()
+            template: "  Combined: {} bytes" TOTAL_SIZE
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Runtime instances:
-" : &string
+          intrinsic println : ()
+            template: "Runtime instances:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  Origin: (%f, %f)
-" : &string
-              select .x [field] : f64
-                object:
-                  locator origin : Point{x: Expr(f64), y: Expr(f64)}
-              select .y [field] : f64
-                object:
-                  locator origin : Point{x: Expr(f64), y: Expr(f64)}
+          intrinsic println : ()
+            template: "  Origin: ({}, {})" origin.x, origin.y
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  Red: rgb(%hhu, %hhu, %hhu)
-" : &string
-              select .r [field] : u8
-                object:
-                  locator red : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
-              select .g [field] : u8
-                object:
-                  locator red : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
-              select .b [field] : u8
-                object:
-                  locator red : Color{r: Expr(u8), g: Expr(u8), b: Expr(u8)}
+          intrinsic println : ()
+            template: "  Red: rgb({}, {}, {})" red.r, red.g, red.b
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-✓ Introspection enables external code generation!
-" : &string
+          intrinsic println : ()
+            template: "
+✓ Introspection enables external code generation!"
 }

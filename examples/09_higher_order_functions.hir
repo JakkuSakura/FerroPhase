@@ -20,15 +20,13 @@ hir::Program {
     pub fn apply<T>(a: T, b: T, op: fn(T, T) -> T) -> () {
         // params: [a: T, b: T, op: fn(T, T) -> T]
         {
-            printf("%s
-", "<unknown>");
+            std::Println(1 args);
         }
     }
 
     pub fn add<T>(a: T, b: T) -> T {
         // params: [a: T, b: T]
         {
-            (a + b)
             (a + b)
         }
     }
@@ -39,21 +37,9 @@ hir::Program {
             if (cond)
                 {
                     op(a, b)
-                    op(a, b)
                 }
             else
                 {
-                    0
-                    0
-                }
-            if (cond)
-                {
-                    op(a, b)
-                    op(a, b)
-                }
-            else
-                {
-                    0
                     0
                 }
         }
@@ -63,41 +49,30 @@ hir::Program {
         // params: [n: i64]
         {
             __Closure0 { n: n }
-            __Closure0 { n: n }
         }
     }
 
     pub fn main() -> () {
         {
-            printf("Generic operations:
-");
+            std::Println(0 args);
             apply(10, 20, add);
             apply(1.5, 2.5, add);
-            printf("
-Conditional:
-");
-            printf("%lld
-", apply_if(true, 5, 3, add__spec0));
-            printf("%lld
-", apply_if(false, 5, 3, add__spec0));
-            printf("
-Closure factory:
-");
+            std::Println(0 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(0 args);
             pub const add_10: _ =
                 {
                 }
-            printf("add_10(5) = %s
-", "<unknown>");
+            std::Println(1 args);
             let double = __Closure1 { __fp_no_capture: 0 };
-            printf("double(7) = %lld
-", __closure1_call(double, 7));
+            std::Println(1 args);
         }
     }
 
     pub fn add__spec0(a: i64, b: i64) -> i64 {
         // params: [a: i64, b: i64]
         {
-            (a + b)
             (a + b)
         }
     }

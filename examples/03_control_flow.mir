@@ -2,57 +2,65 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 15 }
+        body0 { arg_count: 0, locals: 19 }
             return_local: _0
             locals:
                 _0: ()
                 _1: i64
                 _2: <??>
                 _3: i32
-                _4: <??>
-                _5: i32
-                _6: i64
-                _7: <??>
-                _8: i32
-                _9: i64
-                _10: <??>
-                _11: <??>
-                _12: bool
-                _13: bool
-                _14: i32
+                _4: ()
+                _5: <??>
+                _6: i32
+                _7: ()
+                _8: i64
+                _9: <??>
+                _10: i32
+                _11: ()
+                _12: i64
+                _13: <??>
+                _14: <??>
+                _15: bool
+                _16: bool
+                _17: i32
+                _18: ()
             blocks:
                 bb0:
                     s0: _1 = 25
                     s1: _2 = "warm"
                     terminator: call global printf("%lld°C is %s\n", copy _1, copy _2) -> _3 then bb1
                 bb1:
-                    s0: _4 = "outdoor"
-                    terminator: call global printf("Suggested: %s\n", copy _4) -> _5 then bb2
+                    s0: _4 = aggregate(tuple; [])
+                    s1: _5 = "outdoor"
+                    terminator: call global printf("Suggested: %s\n", copy _5) -> _6 then bb2
                 bb2:
-                    s0: _6 = 85
-                    s1: _7 = "B"
-                    terminator: call global printf("Score %lld = grade %s\n", copy _6, copy _7) -> _8 then bb3
+                    s0: _7 = aggregate(tuple; [])
+                    s1: _8 = 85
+                    s2: _9 = "B"
+                    terminator: call global printf("Score %lld = grade %s\n", copy _8, copy _9) -> _10 then bb3
                 bb3:
-                    s0: _9 = 42
-                    s1: _12 = Gt(copy _9, 50)
-                    terminator: switch copy _12 [1 -> bb4] otherwise -> bb5
+                    s0: _11 = aggregate(tuple; [])
+                    s1: _12 = 42
+                    s2: _15 = Gt(copy _12, 50)
+                    terminator: switch copy _15 [1 -> bb4] otherwise -> bb5
                 bb4:
-                    s0: _11 = "high"
+                    s0: _14 = "high"
                     terminator: goto -> bb6
                 bb5:
-                    s0: _13 = Gt(copy _9, 25)
-                    terminator: switch copy _13 [1 -> bb7] otherwise -> bb8
+                    s0: _16 = Gt(copy _12, 25)
+                    terminator: switch copy _16 [1 -> bb7] otherwise -> bb8
                 bb6:
-                    s0: _10 = copy _11
-                    terminator: call global printf("Value %lld is %s\n", copy _9, copy _10) -> _14 then bb10
+                    s0: _13 = copy _14
+                    terminator: call global printf("Value %lld is %s\n", copy _12, copy _13) -> _17 then bb10
                 bb7:
-                    s0: _11 = "medium"
+                    s0: _14 = "medium"
                     terminator: goto -> bb9
                 bb8:
-                    s0: _11 = "low"
+                    s0: _14 = "low"
                     terminator: goto -> bb9
                 bb9:
                     terminator: goto -> bb6
                 bb10:
+                    s0: _18 = aggregate(tuple; [])
                     terminator: return
 }
