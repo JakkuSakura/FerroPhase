@@ -31,47 +31,32 @@ bb1:                                              ; preds = %bb0
   %gep_8 = getelementptr inbounds i8, ptr %alloca_count_5, i64 8
   %load_10 = load ptr, ptr %gep_8, align 8
   %call_11 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.1, i64 %load_4, ptr %load_10)
+  %call_12 = call i64 @max__mono_a7af9f593fdc4675_6(i64 10, i64 20)
   br label %bb2
 
 bb2:                                              ; preds = %bb1
-  %call_12 = call i64 @max__mono_a7af9f593fdc4675_6(i64 10, i64 20)
+  %call_13 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.2, i64 %call_12)
+  %call_14 = call double @max__mono_d7ad91e83a08a980_6(double 3.500000e+00, double 2.100000e+00)
   br label %bb3
 
 bb3:                                              ; preds = %bb2
-  %call_13 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.2, i64 %call_12)
-  br label %bb4
-
-bb4:                                              ; preds = %bb3
-  %call_14 = call double @max__mono_d7ad91e83a08a980_6(double 3.500000e+00, double 2.100000e+00)
-  br label %bb5
-
-bb5:                                              ; preds = %bb4
   %call_15 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.3, double %call_14)
-  br label %bb6
-
-bb6:                                              ; preds = %bb5
   store { i64, i64 } { i64 0, i64 100 }, ptr %alloca_count_16, align 8
   store { i64, i64 } { i64 1, i64 0 }, ptr %alloca_count_18, align 8
   %load_21 = load { i64, i64 }, ptr %alloca_count_18, align 8
   store { i64, i64 } %load_21, ptr %alloca_count_20, align 8
   %load_23 = load { i64, i64 }, ptr %alloca_count_16, align 8
   %call_24 = call i64 @Option__unwrap_or__mono_a7af9f593fdc4675({ i64, i64 } %load_23, i64 0)
-  br label %bb7
+  br label %bb4
 
-bb7:                                              ; preds = %bb6
+bb4:                                              ; preds = %bb3
   %call_25 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.4, i64 %call_24)
-  br label %bb8
-
-bb8:                                              ; preds = %bb7
   %load_26 = load { i64, i64 }, ptr %alloca_count_20, align 8
   %call_27 = call i64 @Option__unwrap_or__mono_a7af9f593fdc4675({ i64, i64 } %load_26, i64 99)
-  br label %bb9
+  br label %bb5
 
-bb9:                                              ; preds = %bb8
+bb5:                                              ; preds = %bb4
   %call_28 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.4, i64 %call_27)
-  br label %bb10
-
-bb10:                                             ; preds = %bb9
   ret i32 0
 }
 

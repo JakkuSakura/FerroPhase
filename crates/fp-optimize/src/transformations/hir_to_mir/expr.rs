@@ -3287,10 +3287,48 @@ impl<'a> BodyBuilder<'a> {
             .map(|expr| expr.span)
             .unwrap_or(self.span);
 
-        let declared_ty = local
+        let mut declared_ty = local
             .ty
             .as_ref()
             .map(|ty_expr| self.lower_type_expr(ty_expr));
+        let annotated_enum_def = local.ty.as_ref().and_then(|ty_expr| {
+            let hir::TypeExprKind::Path(path) = &ty_expr.kind else {
+                return None;
+            };
+            if let Some(hir::Res::Def(def_id)) = &path.res {
+                if self.lowering.enum_defs.contains_key(def_id) {
+                    return Some(*def_id);
+                }
+            }
+            let name = path.segments.last()?.name.as_str();
+            self.lowering
+                .enum_defs
+                .values()
+                .find(|enm| enm.name == name)
+                .map(|enm| enm.def_id)
+        });
+        if let Some(ty_expr) = local.ty.as_ref() {
+            if let hir::TypeExprKind::Path(path) = &ty_expr.kind {
+                if let Some(hir::Res::Def(def_id)) = &path.res {
+                    if self.lowering.enum_defs.contains_key(def_id) {
+                        let args = path
+                            .segments
+                            .last()
+                            .and_then(|segment| segment.args.as_ref())
+                            .map(|args| self.lowering.lower_generic_args(Some(args), init_span))
+                            .unwrap_or_default();
+                        let layout = if args.is_empty() {
+                            self.lowering.enum_layout_for_def(*def_id, init_span)
+                        } else {
+                            self.lowering.enum_layout_for_instance(*def_id, &args, init_span)
+                        };
+                        if let Some(layout) = layout {
+                            declared_ty = Some(layout.enum_ty);
+                        }
+                    }
+                }
+            }
+        }
 
         let mut decl = self.lowering.make_local_decl(
             declared_ty.as_ref().unwrap_or(&Ty {
@@ -3314,7 +3352,12 @@ impl<'a> BodyBuilder<'a> {
                 declared_ty.as_ref(),
                 init_expr,
             );
-            self.lower_assignment(local_id, declared_ty.as_ref(), init_expr)?;
+            self.lower_assignment(
+                local_id,
+                declared_ty.as_ref(),
+                annotated_enum_def,
+                init_expr,
+            )?;
         }
 
         Ok(())
@@ -3407,24 +3450,46 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         local_id: mir::LocalId,
         annotated_ty: Option<&Ty>,
+        annotated_enum_def: Option<hir::DefId>,
         expr: &hir::Expr,
     ) -> Result<()> {
         // Coerce enum payloads into their tagged layout when assigning from a place.
-        if let (Some(expected_ty), Some(place_info)) =
-            (annotated_ty, self.lower_place(expr)?)
-        {
-            if let Some((variant, layout)) =
-                self.enum_variant_for_payload(expected_ty, &place_info.ty)
-            {
-                self.assign_enum_variant_from_place(
-                    mir::Place::from_local(local_id),
-                    &variant,
-                    &layout,
-                    place_info.place,
-                    expr.span,
-                )?;
-                self.locals[local_id as usize].ty = layout.enum_ty.clone();
-                return Ok(());
+        if let Some(place_info) = self.lower_place(expr)? {
+            if let Some(enum_def) = annotated_enum_def {
+                if let Some(layout) = self.lowering.enum_layout_for_def(enum_def, expr.span) {
+                    if let Some((variant, layout)) = self.enum_variant_for_payload(
+                        &layout.enum_ty,
+                        &place_info.ty,
+                        place_info.struct_def,
+                    ) {
+                        self.assign_enum_variant_from_place(
+                            mir::Place::from_local(local_id),
+                            &variant,
+                            &layout,
+                            place_info.place,
+                            expr.span,
+                        )?;
+                        self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                        return Ok(());
+                    }
+                }
+            }
+            if let Some(expected_ty) = annotated_ty {
+                if let Some((variant, layout)) = self.enum_variant_for_payload(
+                    expected_ty,
+                    &place_info.ty,
+                    place_info.struct_def,
+                ) {
+                    self.assign_enum_variant_from_place(
+                        mir::Place::from_local(local_id),
+                        &variant,
+                        &layout,
+                        place_info.place,
+                        expr.span,
+                    )?;
+                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    return Ok(());
+                }
             }
         }
         if let hir::ExprKind::Struct(path, fields) = &expr.kind {
@@ -3505,6 +3570,7 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         expected_ty: &Ty,
         payload_ty: &Ty,
+        payload_def: Option<hir::DefId>,
     ) -> Option<(EnumVariantInfo, EnumLayout)> {
         let layout = self.lowering.enum_layout_for_ty(expected_ty)?.clone();
         let enum_def = self.enum_def_from_ty(expected_ty);
@@ -3540,7 +3606,7 @@ impl<'a> BodyBuilder<'a> {
         let first = len_matches.next().cloned();
         if first.is_some() && len_matches.next().is_some() {
             self.lowering.emit_error(
-                Span::new(0, 0, 0),
+                self.span,
                 "ambiguous enum payload coercion: multiple variants share the same payload shape",
             );
             return None;
@@ -3548,9 +3614,8 @@ impl<'a> BodyBuilder<'a> {
         if let Some(info) = first {
             return Some((info, layout));
         }
-        if let (Some(enum_def), Some(payload_struct_def)) =
-            (enum_def, self.struct_def_from_ty(payload_ty))
-        {
+        let payload_struct_def = payload_def.or_else(|| self.struct_def_from_ty(payload_ty));
+        if let (Some(enum_def), Some(payload_struct_def)) = (enum_def, payload_struct_def) {
             if let Some(info) = self
                 .lowering
                 .enum_variants
@@ -4598,8 +4663,11 @@ impl<'a> BodyBuilder<'a> {
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
         if let Some(place) = self.lower_place(expr)? {
             if let Some(expected_ty) = expected {
-                if let Some((variant, layout)) =
-                    self.enum_variant_for_payload(expected_ty, &place.ty)
+                if let Some((variant, layout)) = self.enum_variant_for_payload(
+                    expected_ty,
+                    &place.ty,
+                    place.struct_def,
+                )
                 {
                     let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
                     let enum_place = mir::Place::from_local(local_id);

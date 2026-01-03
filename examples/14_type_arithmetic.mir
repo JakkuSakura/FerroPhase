@@ -98,7 +98,7 @@ mir::Program {
                 _13: (i64, i64)
                 _14: ()
                 _15: (isize, i64, i64, i64)
-                _16: (i64, i64)
+                _16: (isize, i64, i64, i64)
                 _17: <??>
                 _18: i64
                 _19: ()
@@ -157,7 +157,7 @@ mir::Program {
 " [copy _13[Field(0, Ty { kind: Int(I64) })], copy _13[Field(1, Ty { kind: Int(I64) })]]
                     s19: _14 = aggregate(tuple; [])
                     s20: _15 = aggregate(tuple; [0, 2, 3, 4])
-                    s21: _16 = copy _3
+                    s21: _16 = aggregate(tuple; [1, copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })], 0])
                     s22: _17 = fn describe_union
                     terminator: call copy _17(copy _15) -> _18 then bb1
                 bb1:

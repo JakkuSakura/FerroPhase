@@ -10,58 +10,53 @@ mir::Program {
 
         fn Option::unwrap_or__mono_a7af9f593fdc4675(arg0: (isize, i64), arg1: i64) -> i64 [body: body4]
     bodies:
-        body0 { arg_count: 0, locals: 19 }
+        body0 { arg_count: 0, locals: 14 }
             return_local: _0
             locals:
                 _0: ()
                 _1: (i64, <??>)
-                _2: i32
-                _3: ()
-                _4: i64
-                _5: i32
+                _2: ()
+                _3: i64
+                _4: ()
+                _5: f64
                 _6: ()
-                _7: f64
-                _8: i32
-                _9: ()
-                _10: (isize, i64)
-                _11: (isize, i64)
-                _12: (isize, i64)
-                _13: i64
-                _14: i32
-                _15: ()
-                _16: i64
-                _17: i32
-                _18: ()
+                _7: (isize, i64)
+                _8: (isize, i64)
+                _9: (isize, i64)
+                _10: i64
+                _11: ()
+                _12: i64
+                _13: ()
             blocks:
                 bb0:
                     terminator: call fn Pair::new__mono_a3cae9220656bc7e(42, "hello") -> _1 then bb1
                 bb1:
-                    terminator: call global printf("(%lld, %s)\n", copy _1[Field(0, Ty { kind: Int(I64) })], copy _1[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]) -> _2 then bb2
+                    s0: intrinsic Println "(%lld, %s)
+" [copy _1[Field(0, Ty { kind: Int(I64) })], copy _1[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s1: _2 = aggregate(tuple; [])
+                    terminator: call fn max__mono_a7af9f593fdc4675_6(10, 20) -> _3 then bb2
                 bb2:
-                    s0: _3 = aggregate(tuple; [])
-                    terminator: call fn max__mono_a7af9f593fdc4675_6(10, 20) -> _4 then bb3
+                    s0: intrinsic Println "max(10, 20) = %lld
+" [copy _3]
+                    s1: _4 = aggregate(tuple; [])
+                    terminator: call fn max__mono_d7ad91e83a08a980_6(3.5, 2.1) -> _5 then bb3
                 bb3:
-                    terminator: call global printf("max(10, 20) = %lld\n", copy _4) -> _5 then bb4
+                    s0: intrinsic Println "max(3.5, 2.1) = %f
+" [copy _5]
+                    s1: _6 = aggregate(tuple; [])
+                    s2: _7 = aggregate(tuple; [0, 100])
+                    s3: _9 = aggregate(tuple; [1, 0])
+                    s4: _8 = copy _9
+                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _7, 0) -> _10 then bb4
                 bb4:
-                    s0: _6 = aggregate(tuple; [])
-                    terminator: call fn max__mono_d7ad91e83a08a980_6(3.5, 2.1) -> _7 then bb5
+                    s0: intrinsic Println "%lld
+" [copy _10]
+                    s1: _11 = aggregate(tuple; [])
+                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _8, 99) -> _12 then bb5
                 bb5:
-                    terminator: call global printf("max(3.5, 2.1) = %f\n", copy _7) -> _8 then bb6
-                bb6:
-                    s0: _9 = aggregate(tuple; [])
-                    s1: _10 = aggregate(tuple; [0, 100])
-                    s2: _12 = aggregate(tuple; [1, 0])
-                    s3: _11 = copy _12
-                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _10, 0) -> _13 then bb7
-                bb7:
-                    terminator: call global printf("%lld\n", copy _13) -> _14 then bb8
-                bb8:
-                    s0: _15 = aggregate(tuple; [])
-                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _11, 99) -> _16 then bb9
-                bb9:
-                    terminator: call global printf("%lld\n", copy _16) -> _17 then bb10
-                bb10:
-                    s0: _18 = aggregate(tuple; [])
+                    s0: intrinsic Println "%lld
+" [copy _12]
+                    s1: _13 = aggregate(tuple; [])
                     terminator: return
         body1 { arg_count: 2, locals: 3 }
             return_local: _0

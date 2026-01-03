@@ -141,21 +141,21 @@ bb0:
   br i1 %load_75, label %bb1, label %bb2
 
 bb1:                                              ; preds = %bb0
-  store i64 %0, ptr %alloca_count_70, align 8
+  store i64 %0, ptr %alloca_count_71, align 8
   br label %bb3
 
 bb2:                                              ; preds = %bb0
-  store i64 %1, ptr %alloca_count_70, align 8
+  store i64 %1, ptr %alloca_count_71, align 8
   br label %bb3
 
 bb3:                                              ; preds = %bb2, %bb1
-  %load_79 = load i64, ptr %alloca_count_70, align 8
+  %load_79 = load i64, ptr %alloca_count_71, align 8
   store i64 %load_79, ptr %alloca_count_78, align 8
   %load_81 = load i64, ptr %alloca_count_78, align 8
   %call_82 = call i32 (ptr, ...) @printf(ptr @.str.11_specialization_basics.4, i64 %0, i64 %1, i64 %load_81)
   %load_83 = load i64, ptr %alloca_count_78, align 8
-  store i64 %load_83, ptr %alloca_count_71, align 8
-  %load_85 = load i64, ptr %alloca_count_71, align 8
+  store i64 %load_83, ptr %alloca_count_70, align 8
+  %load_85 = load i64, ptr %alloca_count_70, align 8
   ret i64 %load_85
 }
 
