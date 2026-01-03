@@ -1,4 +1,4 @@
-use crate::ast::TypePrimitive;
+use crate::ast::{TypeBinaryOpKind, TypePrimitive};
 use crate::intrinsics::{IntrinsicCall, IntrinsicCallPayload as GenericIntrinsicCallPayload};
 use std::collections::HashMap;
 
@@ -275,9 +275,29 @@ pub struct TypeExpr {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct TypeStructuralField {
+    pub name: Symbol,
+    pub ty: Box<TypeExpr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeStructural {
+    pub fields: Vec<TypeStructuralField>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TypeBinaryOp {
+    pub kind: TypeBinaryOpKind,
+    pub lhs: Box<TypeExpr>,
+    pub rhs: Box<TypeExpr>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum TypeExprKind {
     Primitive(TypePrimitive),
     Path(Path),
+    Structural(TypeStructural),
+    TypeBinaryOp(TypeBinaryOp),
     Tuple(Vec<Box<TypeExpr>>),
     Array(Box<TypeExpr>, Option<Box<Expr>>),
     Slice(Box<TypeExpr>),

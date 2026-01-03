@@ -647,6 +647,23 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
     match &ty.kind {
         TypeExprKind::Primitive(prim) => fmt_type_primitive(prim),
         TypeExprKind::Path(path) => fmt_path(path, ctx),
+        TypeExprKind::Structural(structural) => {
+            let fields = structural
+                .fields
+                .iter()
+                .map(|field| {
+                    format!("{}: {}", field.name, fmt_type_expr(&field.ty, ctx))
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("struct {{ {} }}", fields)
+        }
+        TypeExprKind::TypeBinaryOp(op) => format!(
+            "{} {} {}",
+            fmt_type_expr(&op.lhs, ctx),
+            fmt_type_binary_op_kind(op.kind),
+            fmt_type_expr(&op.rhs, ctx)
+        ),
         TypeExprKind::Tuple(elems) => {
             let elems = elems
                 .iter()
@@ -678,6 +695,15 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
         TypeExprKind::Never => "!".into(),
         TypeExprKind::Infer => "_".into(),
         TypeExprKind::Error => "<error>".into(),
+    }
+}
+
+fn fmt_type_binary_op_kind(kind: crate::ast::TypeBinaryOpKind) -> &'static str {
+    match kind {
+        crate::ast::TypeBinaryOpKind::Add => "+",
+        crate::ast::TypeBinaryOpKind::Intersect => "&",
+        crate::ast::TypeBinaryOpKind::Subtract => "-",
+        crate::ast::TypeBinaryOpKind::Union => "|",
     }
 }
 
