@@ -5,7 +5,7 @@ use fp_core::ast::{
     register_threadlocal_serializer, AstSerializer, File, ItemKind, Node, NodeKind,
 };
 use fp_core::Result;
-use fp_optimize::passes::remove_generics::remove_generic_templates;
+use fp_optimize::transformations::remove_generic_templates;
 use fp_rust::{printer::RustPrinter, shll_parse_items};
 
 fn build_file(items: Vec<fp_core::ast::Item>) -> Node {

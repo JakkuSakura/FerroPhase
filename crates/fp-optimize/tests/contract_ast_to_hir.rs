@@ -199,7 +199,7 @@ fn transform_source(source: &str) -> OptimizeResult<hir::Program> {
 
     // Lower builtin macros and normalize intrinsic forms before HIR generation.
     let mut node = fp_core::ast::Node::from(fp_core::ast::NodeKind::File(ast_file));
-    fp_optimize::passes::normalize_intrinsics_with(
+    fp_optimize::transformations::normalize_intrinsics_with(
         &mut node,
         &fp_rust::normalization::RustIntrinsicNormalizer,
     )

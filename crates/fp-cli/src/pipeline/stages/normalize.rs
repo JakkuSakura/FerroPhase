@@ -10,9 +10,18 @@ impl Pipeline {
             // Always run the shared intrinsic normalization pass, delegating
             // language-specific hooks (e.g., macro lowering) to the provided
             // frontend normalizer.
-            if let Err(err) = fp_optimize::passes::normalize_intrinsics_with(ast, &**normalizer) {
+            if let Err(err) =
+                fp_optimize::transformations::normalize_intrinsics_with(ast, &**normalizer)
+            {
                 manager.add_diagnostic(
                     Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                        .with_source_context(STAGE_INTRINSIC_NORMALIZE),
+                );
+                return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
+            }
+            if let Err(err) = fp_optimize::transformations::materialize_structural_types(ast) {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!("Type materialization failed: {}", err))
                         .with_source_context(STAGE_INTRINSIC_NORMALIZE),
                 );
                 return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
@@ -20,8 +29,17 @@ impl Pipeline {
             return Ok(());
         }
 
-        match normalize_intrinsics(ast) {
-            Ok(()) => Ok(()),
+        match fp_optimize::transformations::normalize_intrinsics(ast) {
+            Ok(()) => {
+                if let Err(err) = fp_optimize::transformations::materialize_structural_types(ast) {
+                    manager.add_diagnostic(
+                        Diagnostic::error(format!("Type materialization failed: {}", err))
+                            .with_source_context(STAGE_INTRINSIC_NORMALIZE),
+                    );
+                    return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
+                }
+                Ok(())
+            }
             Err(err) => {
                 manager.add_diagnostic(
                     Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
