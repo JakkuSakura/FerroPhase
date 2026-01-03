@@ -7,7 +7,7 @@ use fp_core::ast::Pattern;
 use fp_core::ast::TypeQuoteToken;
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
+    ExprInvokeTarget, ExprKind, ExprRange, ExprRangeLimit, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
     ItemDefFunction, ItemKind, Node, NodeKind, StmtLet, StructuralField, Ty, TypeAny,
     Path, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeReference,
     TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit, TypeVec, Value, ValueField,
@@ -430,6 +430,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ItemKind::DefType(def) => {
+                self.evaluate_ty(&mut def.value);
                 self.insert_type(def.name.as_str(), def.value.clone());
             }
             ItemKind::DefConst(def) => {
@@ -2082,6 +2083,74 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn evaluate_range_index(&mut self, target: Value, range: &mut ExprRange) -> Value {
+        let start = match range.start.as_mut() {
+            Some(expr) => match self.eval_expr(expr.as_mut()) {
+                Value::Int(int) if int.value >= 0 => Some(int.value as usize),
+                other => {
+                    self.emit_error(format!(
+                        "range start must be a non-negative integer, found {}",
+                        other
+                    ));
+                    return Value::undefined();
+                }
+            },
+            None => None,
+        };
+        let end = match range.end.as_mut() {
+            Some(expr) => match self.eval_expr(expr.as_mut()) {
+                Value::Int(int) if int.value >= 0 => Some(int.value as usize),
+                other => {
+                    self.emit_error(format!(
+                        "range end must be a non-negative integer, found {}",
+                        other
+                    ));
+                    return Value::undefined();
+                }
+            },
+            None => None,
+        };
+
+        match target {
+            Value::String(text) => {
+                let chars: Vec<char> = text.value.chars().collect();
+                let len = chars.len();
+                let start_idx = start.unwrap_or(0);
+                let mut end_idx = end.unwrap_or(len);
+                if matches!(range.limit, ExprRangeLimit::Inclusive) {
+                    end_idx = end_idx.saturating_add(1);
+                }
+                if start_idx > end_idx || end_idx > len {
+                    self.emit_error("range slice is out of bounds");
+                    return Value::undefined();
+                }
+                let slice: String = chars[start_idx..end_idx].iter().collect();
+                Value::string(slice)
+            }
+            Value::List(list) => {
+                let len = list.values.len();
+                let start_idx = start.unwrap_or(0);
+                let mut end_idx = end.unwrap_or(len);
+                if matches!(range.limit, ExprRangeLimit::Inclusive) {
+                    end_idx = end_idx.saturating_add(1);
+                }
+                if start_idx > end_idx || end_idx > len {
+                    self.emit_error("range slice is out of bounds");
+                    return Value::undefined();
+                }
+                let values = list.values[start_idx..end_idx].to_vec();
+                Value::List(ValueList::new(values))
+            }
+            other => {
+                self.emit_error(format!(
+                    "cannot apply range index to value {}",
+                    other
+                ));
+                Value::undefined()
+            }
+        }
+    }
+
     // Assign into a struct/structural value.
     fn assign_field_value(&mut self, target: &mut Value, field: &Ident, value: Value) -> bool {
         match target {
@@ -2410,6 +2479,24 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            Ty::Expr(expr) => {
+                if let ExprKind::IntrinsicCall(call) = expr.kind() {
+                    if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
+                        let value = self.eval_expr(expr.as_mut());
+                        match value {
+                            Value::Type(resolved_ty) => {
+                                *ty = resolved_ty;
+                            }
+                            other => {
+                                self.emit_error(format!(
+                                    "type expression must evaluate to a type, found {}",
+                                    other
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
             _ => {}
         }
     }
@@ -2461,6 +2548,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn resolve_qualified(&mut self, symbol: String) -> Value {
+        if let Some(primitive) = Self::primitive_type_from_name(&symbol) {
+            return Value::Type(Ty::Primitive(primitive));
+        }
         if let Some(value) = self.evaluated_constants.get(&symbol) {
             return value.clone();
         }
@@ -2490,6 +2580,25 @@ impl<'ctx> AstInterpreter<'ctx> {
             symbol
         ));
         Value::undefined()
+    }
+
+    fn primitive_type_from_name(name: &str) -> Option<TypePrimitive> {
+        match name {
+            "i64" => Some(TypePrimitive::Int(TypeInt::I64)),
+            "u64" => Some(TypePrimitive::Int(TypeInt::U64)),
+            "i32" => Some(TypePrimitive::Int(TypeInt::I32)),
+            "u32" => Some(TypePrimitive::Int(TypeInt::U32)),
+            "i16" => Some(TypePrimitive::Int(TypeInt::I16)),
+            "u16" => Some(TypePrimitive::Int(TypeInt::U16)),
+            "i8" => Some(TypePrimitive::Int(TypeInt::I8)),
+            "u8" => Some(TypePrimitive::Int(TypeInt::U8)),
+            "isize" => Some(TypePrimitive::Int(TypeInt::I64)),
+            "usize" => Some(TypePrimitive::Int(TypeInt::U64)),
+            "bool" => Some(TypePrimitive::Bool),
+            "char" => Some(TypePrimitive::Char),
+            "str" | "String" => Some(TypePrimitive::String),
+            _ => None,
+        }
     }
 
     fn qualified_name(&self, name: &str) -> String {

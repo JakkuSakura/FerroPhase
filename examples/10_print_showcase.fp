@@ -21,6 +21,10 @@ const fn main() {
     let value = 7;
     println!("value = {}", value);
     println!("math: {} + {} = {}", 2, 3, 5);
+    println!("float: {}", 3.14159);
+    println!("chars: {} {}", 'a', 'Z');
+    println!("tuple: ({}, {})", 1, 2);
+    println!("bools: {} {}", true, false);
 
     // Regression checks for runtime printf bridge
     print("This", "stays", "on", "one", "line");
@@ -33,4 +37,7 @@ const fn main() {
     print("Unit:", ());
     print("Null:", null);
     println!();
+
+    // Strings with escapes
+    println!("escaped: {} {}", "line1\nline2", "tab\tend");
 }

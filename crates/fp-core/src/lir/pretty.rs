@@ -457,6 +457,13 @@ fn summarize_instruction(inst: &LirInstruction) -> String {
             text.push_str(&format!("({})", args));
             text
         }
+        IntrinsicCall { kind, format, args } => {
+            let args = args.iter().map(format_value).collect::<Vec<_>>().join(", ");
+            format!(
+                "%r{} = intrinsic {:?} \"{}\" ({})",
+                inst.id, kind, format, args
+            )
+        }
         SextOrTrunc(value, ty) => {
             format!(
                 "%r{} = sext_or_trunc {} to {}",

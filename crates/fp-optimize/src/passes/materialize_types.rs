@@ -106,10 +106,10 @@ fn materialize_items(items: &mut Vec<Item>, options: &MaterializeTypesOptions) -
             }
 
             if let Ty::TypeBinaryOp(op) = &def.value {
-                if options.include_unions && matches!(op.kind, TypeBinaryOpKind::Union) {
+                    if options.include_unions && matches!(op.kind, TypeBinaryOpKind::Union) {
                     if let (Some(lhs), Some(rhs)) = (
-                        union_variant_from_ty(&op.lhs),
-                        union_variant_from_ty(&op.rhs),
+                        union_variant_from_ty(&op.lhs, &shapes),
+                        union_variant_from_ty(&op.rhs, &shapes),
                     ) {
                         let enum_def = ItemDefEnum {
                             visibility: def.visibility.clone(),
@@ -152,19 +152,37 @@ fn materialize_items(items: &mut Vec<Item>, options: &MaterializeTypesOptions) -
     Ok(())
 }
 
-fn union_variant_from_ty(ty: &Ty) -> Option<fp_core::ast::EnumTypeVariant> {
+fn union_variant_from_ty(
+    ty: &Ty,
+    _shapes: &HashMap<String, Vec<StructuralField>>,
+) -> Option<fp_core::ast::EnumTypeVariant> {
     let (ident, payload) = match ty {
-        Ty::Struct(struct_ty) => (Some(struct_ty.name.clone()), Some(Ty::expr(Expr::ident(struct_ty.name.clone())))),
+        Ty::Struct(struct_ty) => (
+            Some(struct_ty.name.clone()),
+            Some(Ty::Struct(struct_ty.clone())),
+        ),
+        Ty::Structural(_) => (None, None),
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Locator(locator) => match locator {
                 Locator::Path(path) => {
                     let ident = path.segments.last().cloned();
-                    (ident.clone(), ident.map(|name| Ty::expr(Expr::ident(name))))
+                    (
+                        ident,
+                        Some(Ty::expr(Expr::path(path.clone()))),
+                    )
                 }
-                Locator::Ident(ident) => (Some(ident.clone()), Some(Ty::expr(Expr::ident(ident.clone())))),
+                Locator::Ident(ident) => (
+                    Some(ident.clone()),
+                    Some(Ty::expr(Expr::ident(ident.clone()))),
+                ),
                 Locator::ParameterPath(path) => {
                     let ident = path.segments.last().map(|seg| seg.ident.clone());
-                    (ident.clone(), ident.map(|name| Ty::expr(Expr::ident(name))))
+                    (
+                        ident,
+                        Some(Ty::expr(Expr::locator(Locator::ParameterPath(
+                            path.clone(),
+                        )))),
+                    )
                 }
             },
             _ => (None, None),

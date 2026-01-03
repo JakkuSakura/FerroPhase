@@ -1,7 +1,7 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (13 stmts) : ()
+      block (26 stmts) : ()
         pub const NAME: &string : &string
           value "FerroPhase" : &string
         pub const VERSION: &string : &string
@@ -10,21 +10,62 @@ ast::File {
           value 10 : u64
         pub const VERSION_LEN: u64 : u64
           value 5 : u64
+        pub const PREFIX_OK: bool : bool
+          value true : bool
+        pub const SUFFIX_OK: bool : bool
+          value true : bool
+        pub const HAS_PHASE: bool : bool
+          value true : bool
+        pub const SHORT: &string : &string
+          value "Ferro" : &string
+        pub const TAIL: &string : &string
+          value "Phase" : &string
         expr_stmt ;
           intrinsic println : ()
             template: "name='{}' len={}" NAME, NAME_LEN
         expr_stmt ;
           intrinsic println : ()
             template: "version='{}' len={}" VERSION, VERSION_LEN
+        expr_stmt ;
+          intrinsic println : ()
+            template: "prefix_ok={}, suffix_ok={}, contains_phase={}" PREFIX_OK, SUFFIX_OK, HAS_PHASE
+        expr_stmt ;
+          intrinsic println : ()
+            template: "slices: short='{}' tail='{}'" SHORT, TAIL
+        pub const WORDS: [&string; 4] : [&string; 4]
+          value [4 values] : [&string; 4]
+        pub const WORD_LENGTHS: [u64; 4] : [u64; 4]
+          value [4 values] : [u64; 4]
+        pub const TOTAL_WORD_LEN: u64 : u64
+          value 19 : u64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "words:"
+        expr_stmt (value)
+          for : ()
+            iter:
+              range [exclusive] : Vec<i64>
+                start:
+                  value 0 : i64
+                end:
+                  value 4 : i64
+            body:
+              block (1 stmt) : ()
+                expr_stmt ;
+                  intrinsic println : ()
+                    template: "  {} -> len={}" WORDS[i], WORD_LENGTHS[i]
+        expr_stmt ;
+          intrinsic println : ()
+            template: "total word length={}" TOTAL_WORD_LEN
         pub const IS_EMPTY: bool : bool
           value false : bool
         pub const IS_LONG: bool : bool
           value true : bool
+        pub const BANNER: &string : &string
+          value "FerroPhase v0.1.0" : &string
         expr_stmt ;
           intrinsic println : ()
             template: "empty={}, long={}" IS_EMPTY, IS_LONG
-        pub const BANNER: &string : &string
-          value "FerroPhase v0.1.0" : &string
         expr_stmt ;
           intrinsic println : ()
             template: "banner='{}'" BANNER

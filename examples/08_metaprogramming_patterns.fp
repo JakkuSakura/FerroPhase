@@ -1,40 +1,54 @@
 #!/usr/bin/env fp run
 //! Metaprogramming: using const metadata to drive code generation
 
+struct Point3D {
+    x: i64,
+    y: i64,
+    z: i64,
+}
+
+// Build a derived type by cloning and adding fields.
+type LabeledPoint = const {
+    let mut t = clone_struct!(Point3D);
+    addfield!(t, "label", &'static str);
+    t
+};
+
+// Emit a compile-time method stub for illustrative codegen.
+const _GENERATED: () = const {
+    generate_method!("describe", quote<item> {
+        fn describe(&self) -> &'static str {
+            "generated"
+        }
+    });
+};
+
 fn main() {
     // Const metadata
-    const FIELD_COUNT: usize = 3;
-    const TYPE_NAME: &str = "Point3D";
+    const FIELD_COUNT: i64 = field_count!(Point3D);
+    const POINT_NAME: &str = type_name!(Point3D);
+    const SIZE: i64 = struct_size!(Point3D);
+    const FIELDS = reflect_fields!(Point3D);
+    const X_TYPE: &str = type_name!(field_type!(Point3D, "x"));
 
-    struct Point3D {
-        x: i64,
-        y: i64,
-        z: i64,
+    println!("{} has {} fields (size={})", POINT_NAME, FIELD_COUNT, SIZE);
+    println!("x type: {}", X_TYPE);
+    println!("fields:");
+    for field in FIELDS.iter() {
+        println!("  {}: {}", field.name, field.type_name);
     }
 
-    impl Point3D {
-        fn type_name() -> &'static str {
-            TYPE_NAME
-        }
+    let p = Point3D { x: 1, y: 2, z: 3 };
+    println!("point=({}, {}, {})", p.x, p.y, p.z);
 
-        fn field_count() -> usize {
-            FIELD_COUNT
-        }
-    }
-
-    println!("{} has {} fields",
-             Point3D::type_name(),
-             Point3D::field_count());
-
-    // Enum discriminants with const
-    const VARIANT_A: u8 = 1;
-    const VARIANT_B: u8 = 2;
-
-    enum Tag {
-        A = VARIANT_A as isize,
-        B = VARIANT_B as isize,
-    }
-
-    let tag = Tag::A;
-    println!("tag discriminant: {}", tag as u8);
+    let lp = LabeledPoint {
+        x: 4,
+        y: 5,
+        z: 6,
+        label: "origin",
+    };
+    println!(
+        "labeled=({}, {}, {}, {})",
+        lp.x, lp.y, lp.z, lp.label
+    );
 }

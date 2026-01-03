@@ -41,62 +41,50 @@ bb0:
   %load_5 = load i64, ptr %alloca_count_1, align 8
   %load_6 = load ptr, ptr %alloca_count_3, align 8
   %call_7 = call i32 (ptr, ...) @printf(ptr @.str.03_control_flow.1, i64 %load_5, ptr %load_6)
-  br label %bb1
-
-bb1:                                              ; preds = %bb0
   store ptr @.str.03_control_flow.2, ptr %alloca_count_8, align 8
   %load_10 = load ptr, ptr %alloca_count_8, align 8
   %call_11 = call i32 (ptr, ...) @printf(ptr @.str.03_control_flow.3, ptr %load_10)
-  br label %bb2
-
-bb2:                                              ; preds = %bb1
   store i64 85, ptr %alloca_count_12, align 8
   store ptr @.str.03_control_flow.4, ptr %alloca_count_14, align 8
   %load_16 = load i64, ptr %alloca_count_12, align 8
   %load_17 = load ptr, ptr %alloca_count_14, align 8
   %call_18 = call i32 (ptr, ...) @printf(ptr @.str.03_control_flow.5, i64 %load_16, ptr %load_17)
-  br label %bb3
-
-bb3:                                              ; preds = %bb2
   store i64 42, ptr %alloca_count_19, align 8
   %load_22 = load i64, ptr %alloca_count_19, align 8
   %icmp_23 = icmp sgt i64 %load_22, 50
   store i1 %icmp_23, ptr %alloca_count_21, align 1
   %load_25 = load i1, ptr %alloca_count_21, align 1
-  br i1 %load_25, label %bb4, label %bb5
+  br i1 %load_25, label %bb1, label %bb2
 
-bb4:                                              ; preds = %bb3
+bb1:                                              ; preds = %bb0
   store ptr @.str.03_control_flow.6, ptr %alloca_count_0, align 8
-  br label %bb6
+  br label %bb3
 
-bb5:                                              ; preds = %bb3
+bb2:                                              ; preds = %bb0
   %load_28 = load i64, ptr %alloca_count_19, align 8
   %icmp_29 = icmp sgt i64 %load_28, 25
   store i1 %icmp_29, ptr %alloca_count_27, align 1
   %load_31 = load i1, ptr %alloca_count_27, align 1
-  br i1 %load_31, label %bb7, label %bb8
+  br i1 %load_31, label %bb4, label %bb5
 
-bb6:                                              ; preds = %bb9, %bb4
+bb3:                                              ; preds = %bb6, %bb1
   %load_33 = load ptr, ptr %alloca_count_0, align 8
   store ptr %load_33, ptr %alloca_count_32, align 8
   %load_35 = load i64, ptr %alloca_count_19, align 8
   %load_36 = load ptr, ptr %alloca_count_32, align 8
   %call_37 = call i32 (ptr, ...) @printf(ptr @.str.03_control_flow.7, i64 %load_35, ptr %load_36)
-  br label %bb10
-
-bb7:                                              ; preds = %bb5
-  store ptr @.str.03_control_flow.8, ptr %alloca_count_0, align 8
-  br label %bb9
-
-bb8:                                              ; preds = %bb5
-  store ptr @.str.03_control_flow.9, ptr %alloca_count_0, align 8
-  br label %bb9
-
-bb10:                                             ; preds = %bb6
   ret i32 0
 
-bb9:                                              ; preds = %bb8, %bb7
+bb4:                                              ; preds = %bb2
+  store ptr @.str.03_control_flow.8, ptr %alloca_count_0, align 8
   br label %bb6
+
+bb5:                                              ; preds = %bb2
+  store ptr @.str.03_control_flow.9, ptr %alloca_count_0, align 8
+  br label %bb6
+
+bb6:                                              ; preds = %bb5, %bb4
+  br label %bb3
 }
 
 declare i32 @printf(ptr, ...)

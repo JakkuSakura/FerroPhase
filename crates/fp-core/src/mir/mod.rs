@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use crate::intrinsics::IntrinsicCallKind;
+
 pub mod ident;
 pub mod pretty;
 pub mod ty;
@@ -80,6 +82,11 @@ pub struct Statement {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StatementKind {
     Assign(Place, Rvalue),
+    IntrinsicCall {
+        kind: IntrinsicCallKind,
+        format: String,
+        args: Vec<Operand>,
+    },
     SetDiscriminant {
         place: Place,
         variant_index: VariantIdx,

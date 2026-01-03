@@ -5,6 +5,7 @@
 // BEGIN ORIGINAL CONTENT
 use crate::transformations::IrTransform;
 use fp_core::error::Result;
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
@@ -31,6 +32,7 @@ pub struct LirGenerator {
     struct_layouts: HashMap<String, Vec<Option<lir::LirType>>>,
     function_symbol_map: HashMap<String, String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
+    runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
 }
 
 #[derive(Clone)]
@@ -61,6 +63,13 @@ enum PlaceAccess {
 impl LirGenerator {
     /// Create a new LIR generator
     pub fn new() -> Self {
+        Self::new_with_runtime_symbol_map(|_| None)
+    }
+
+    /// Create a new LIR generator with a backend-specific runtime symbol mapper.
+    pub fn new_with_runtime_symbol_map(
+        runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
+    ) -> Self {
         Self {
             next_lir_id: 0,
             next_label: 0,
@@ -78,6 +87,7 @@ impl LirGenerator {
             struct_layouts: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_signatures: HashMap::new(),
+            runtime_symbol_map,
         }
     }
 
@@ -409,6 +419,35 @@ impl LirGenerator {
     fn transform_statement(&mut self, stmt: &mir::Statement) -> Result<Vec<lir::LirInstruction>> {
         match &stmt.kind {
             mir::StatementKind::Assign(place, rvalue) => self.transform_assign(place, rvalue),
+            mir::StatementKind::IntrinsicCall { kind, format, args } => {
+                let lir_kind = match kind {
+                    IntrinsicCallKind::Print => lir::LirIntrinsicKind::Print,
+                    IntrinsicCallKind::Println => lir::LirIntrinsicKind::Println,
+                    _ => {
+                        return Err(fp_core::error::Error::from(format!(
+                            "unsupported MIR intrinsic in LIR lowering: {:?}",
+                            kind
+                        )))
+                    }
+                };
+                let mut instructions = Vec::new();
+                let mut lir_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    lir_args.push(self.transform_operand(arg)?);
+                    instructions.extend(self.take_queued_instructions());
+                }
+                instructions.push(lir::LirInstruction {
+                    id: self.next_id(),
+                    kind: lir::LirInstructionKind::IntrinsicCall {
+                        kind: lir_kind,
+                        format: format.clone(),
+                        args: lir_args,
+                    },
+                    type_hint: None,
+                    debug_info: None,
+                });
+                Ok(instructions)
+            }
             mir::StatementKind::StorageLive(_) => Ok(Vec::new()),
             mir::StatementKind::StorageDead(_) => Ok(Vec::new()),
             _ => Ok(vec![lir::LirInstruction {
@@ -872,10 +911,10 @@ impl LirGenerator {
                     if self.function_signatures.contains_key(&mapped_name) {
                         return Ok(lir::LirValue::Function(mapped_name));
                     }
-                    let runtime_target = self.map_std_function_to_runtime(&mapped_name);
-                    // Check if it's a known runtime function (either mapped or direct)
-                    if self.is_known_runtime_function(&runtime_target) {
-                        return Ok(lir::LirValue::Function(runtime_target));
+                    if let Some(runtime_target) = (self.runtime_symbol_map)(&mapped_name) {
+                        return Ok(lir::LirValue::Function(
+                            runtime_target.as_str().to_string(),
+                        ));
                     }
                     Ok(lir::LirValue::Global(
                         mapped_name,
@@ -2603,9 +2642,8 @@ impl LirGenerator {
             return logical;
         }
 
-        let runtime = self.map_std_function_to_runtime(&logical);
-        if runtime != logical {
-            return runtime;
+        if let Some(mapped) = (self.runtime_symbol_map)(&logical) {
+            return mapped.as_str().to_string();
         }
 
         logical
@@ -2615,68 +2653,6 @@ impl LirGenerator {
         match operand {
             mir::Operand::Move(place) | mir::Operand::Copy(place) => Some(place),
             _ => None,
-        }
-    }
-
-    fn is_known_runtime_function(&self, fn_name: &str) -> bool {
-        matches!(
-            fn_name,
-            "printf"
-                | "fprintf"
-                | "malloc"
-                | "free"
-                | "realloc"
-                | "sin"
-                | "sinf"
-                | "cos"
-                | "cosf"
-                | "tan"
-                | "tanf"
-                | "sqrt"
-                | "sqrtf"
-                | "pow"
-                | "powf"
-                | "strlen"
-                | "strcmp"
-                | "exit"
-                | "abort"
-        )
-    }
-
-    fn map_std_function_to_runtime(&self, fn_name: &str) -> String {
-        match fn_name {
-            // I/O helpers map to C stdio calls
-            "printf" => "printf".to_string(), // Direct C runtime function
-            "println" | "println!" | "std::io::println" => "printf".to_string(),
-            "print" | "print!" | "std::io::print" => "printf".to_string(),
-            "eprint" | "eprint!" | "std::io::eprint" => "fprintf".to_string(),
-            "eprintln" | "eprintln!" | "std::io::eprintln" => "fprintf".to_string(),
-
-            // Memory management wrappers
-            "std::alloc::alloc" => "malloc".to_string(),
-            "std::alloc::dealloc" => "free".to_string(),
-            "std::alloc::realloc" => "realloc".to_string(),
-
-            // Basic math (libm)
-            "std::f64::sin" => "sin".to_string(),
-            "std::f64::cos" => "cos".to_string(),
-            "std::f64::tan" => "tan".to_string(),
-            "std::f64::sqrt" => "sqrt".to_string(),
-            "std::f64::pow" => "pow".to_string(),
-            "std::f32::sin" => "sinf".to_string(),
-            "std::f32::cos" => "cosf".to_string(),
-            "std::f32::tan" => "tanf".to_string(),
-            "std::f32::sqrt" => "sqrtf".to_string(),
-            "std::f32::pow" => "powf".to_string(),
-
-            // String utilities
-            "std::str::len" => "strlen".to_string(),
-            "std::str::cmp" => "strcmp".to_string(),
-
-            // System helpers
-            "std::process::exit" => "exit".to_string(),
-
-            _ => fn_name.to_string(),
         }
     }
 

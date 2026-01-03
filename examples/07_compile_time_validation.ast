@@ -1,38 +1,70 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> ()
-      block (13 stmts)
+      block (25 stmts)
         pub struct Data {
           a: Expr(i64)
           b: Expr(i64)
           c: [Expr(u8); 16]
         }
-        pub const SIZE: u64
+        pub struct Header {
+          magic: Expr(i64)
+          version: Expr(u8)
+          flags: Expr(u8)
+          pad: [Expr(u8); 6]
+        }
+        pub const DATA_SIZE: u64
           value 24
-        pub const FIELDS: u64
+        pub const DATA_FIELDS: u64
           value 3
-        pub const HAS_A: bool
+        pub const DATA_HAS_A: bool
           value true
-        pub const HAS_X: bool
+        pub const DATA_HAS_X: bool
           value false
+        pub const HEADER_SIZE: u64
+          value 32
+        pub const HEADER_FIELDS: u64
+          value 4
+        pub const HEADER_HAS_VERSION: bool
+          value true
         expr_stmt ;
           intrinsic println
-            template: "sizeof={}, fields={}" SIZE, FIELDS
+            template: "data: sizeof={}, fields={}" DATA_SIZE, DATA_FIELDS
         expr_stmt ;
           intrinsic println
-            template: "has_a={}, has_x={}" HAS_A, HAS_X
+            template: "data: has_a={}, has_x={}" DATA_HAS_A, DATA_HAS_X
+        expr_stmt ;
+          intrinsic println
+            template: "header: sizeof={}, fields={}, has_version={}" HEADER_SIZE, HEADER_FIELDS, HEADER_HAS_VERSION
+        pub const DATA_TYPE_NAME: &string
+          value "struct Data"
+        pub const DATA_FIELD_A_TYPE: &string
+          value "i64
+"
+        pub const HEADER_FIELD_VERSION_TYPE: &string
+          value "u8
+"
+        pub const HAS_TO_STRING: bool
+          value true
+        expr_stmt ;
+          intrinsic println
+            template: "types: data='{}' a='{}' version='{}'" DATA_TYPE_NAME, DATA_FIELD_A_TYPE, HEADER_FIELD_VERSION_TYPE
+        expr_stmt ;
+          intrinsic println
+            template: "data has to_string: {}" HAS_TO_STRING
         pub const MAX_SIZE: u64
           value 64
-        pub const SIZE_OK: bool
+        pub const DATA_OK: bool
           value true
-        pub const IS_ALIGNED: bool
+        pub const HEADER_OK: bool
+          value true
+        pub const TOTAL_SIZE: u64
+          value 56
+        pub const TOTAL_OK: bool
           value true
         expr_stmt ;
           intrinsic println
-            template: "size_ok={}, aligned={}" SIZE_OK, IS_ALIGNED
-        pub const MODE: &string
-          value "optimized"
-        expr_stmt ;
-          intrinsic println
-            template: "mode: {}" MODE
+            template: "layout: data_ok={}, header_ok={}, total_ok={}, total_size={}" DATA_OK, HEADER_OK, TOTAL_OK, TOTAL_SIZE
+        pub const _WARN: ()
+          value ()
 }

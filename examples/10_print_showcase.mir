@@ -2,110 +2,104 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 41 }
+        body0 { arg_count: 0, locals: 29 }
             return_local: _0
             locals:
                 _0: ()
-                _1: i32
+                _1: ()
                 _2: ()
-                _3: i32
+                _3: ()
                 _4: ()
-                _5: i32
+                _5: ()
                 _6: ()
-                _7: i32
+                _7: ()
                 _8: ()
-                _9: i32
-                _10: ()
-                _11: i32
+                _9: ()
+                _10: i64
+                _11: ()
                 _12: ()
-                _13: i32
+                _13: ()
                 _14: ()
-                _15: i32
+                _15: ()
                 _16: ()
-                _17: i32
+                _17: ()
                 _18: ()
-                _19: i64
-                _20: i32
+                _19: ()
+                _20: ()
                 _21: ()
-                _22: i32
+                _22: ()
                 _23: ()
-                _24: i32
+                _24: ()
                 _25: ()
-                _26: i32
+                _26: ()
                 _27: ()
-                _28: i32
-                _29: ()
-                _30: i32
-                _31: ()
-                _32: i32
-                _33: ()
-                _34: ()
-                _35: i32
-                _36: ()
-                _37: i32
-                _38: ()
-                _39: i32
-                _40: ()
+                _28: ()
             blocks:
                 bb0:
-                    terminator: call global printf("Hello") -> _1 then bb1
-                bb1:
-                    s0: _2 = aggregate(tuple; [])
-                    terminator: call global printf("World with newlines") -> _3 then bb2
-                bb2:
-                    s0: _4 = aggregate(tuple; [])
-                    terminator: call global printf("\n") -> _5 then bb3
-                bb3:
-                    s0: _6 = aggregate(tuple; [])
-                    terminator: call global printf("Number: %lld", 42) -> _7 then bb4
-                bb4:
-                    s0: _8 = aggregate(tuple; [])
-                    terminator: call global printf("Boolean: %d %d", true, false) -> _9 then bb5
-                bb5:
-                    s0: _10 = aggregate(tuple; [])
-                    terminator: call global printf("Mixed: %lld %f %s %d", 1, 2.5, "text", true) -> _11 then bb6
-                bb6:
-                    s0: _12 = aggregate(tuple; [])
-                    terminator: call global printf("\n") -> _13 then bb7
-                bb7:
-                    s0: _14 = aggregate(tuple; [])
-                    terminator: call global printf("Namespace test %s", "still works") -> _15 then bb8
-                bb8:
-                    s0: _16 = aggregate(tuple; [])
-                    terminator: call global printf("\n") -> _17 then bb9
-                bb9:
-                    s0: _18 = aggregate(tuple; [])
-                    s1: _19 = 7
-                    terminator: call global printf("value = %lld\n", copy _19) -> _20 then bb10
-                bb10:
-                    s0: _21 = aggregate(tuple; [])
-                    terminator: call global printf("math: %lld + %lld = %lld\n", 2, 3, 5) -> _22 then bb11
-                bb11:
-                    s0: _23 = aggregate(tuple; [])
-                    terminator: call global printf("This %s %s %s %s", "stays", "on", "one", "line") -> _24 then bb12
-                bb12:
-                    s0: _25 = aggregate(tuple; [])
-                    terminator: call global printf("\n") -> _26 then bb13
-                bb13:
-                    s0: _27 = aggregate(tuple; [])
-                    terminator: call global printf("Continuing without newline") -> _28 then bb14
-                bb14:
-                    s0: _29 = aggregate(tuple; [])
-                    terminator: call global printf(" - appended content") -> _30 then bb15
-                bb15:
-                    s0: _31 = aggregate(tuple; [])
-                    terminator: call global printf("\n") -> _32 then bb16
-                bb16:
-                    s0: _33 = aggregate(tuple; [])
-                    s1: _34 = aggregate(tuple; [])
-                    terminator: call global printf("Unit: %s", "()") -> _35 then bb17
-                bb17:
-                    s0: _36 = aggregate(tuple; [])
-                    terminator: call global printf("Null: %s", "null") -> _37 then bb18
-                bb18:
-                    s0: _38 = aggregate(tuple; [])
-                    terminator: call global printf("\n") -> _39 then bb19
-                bb19:
-                    s0: _40 = aggregate(tuple; [])
+                    s0: intrinsic Print "Hello" []
+                    s1: _1 = aggregate(tuple; [])
+                    s2: intrinsic Print "World with newlines" []
+                    s3: _2 = aggregate(tuple; [])
+                    s4: intrinsic Println "
+" []
+                    s5: _3 = aggregate(tuple; [])
+                    s6: intrinsic Print "Number: %lld" [42]
+                    s7: _4 = aggregate(tuple; [])
+                    s8: intrinsic Print "Boolean: %d %d" [true, false]
+                    s9: _5 = aggregate(tuple; [])
+                    s10: intrinsic Print "Mixed: %lld %f %s %d" [1, 2.5, "text", true]
+                    s11: _6 = aggregate(tuple; [])
+                    s12: intrinsic Println "
+" []
+                    s13: _7 = aggregate(tuple; [])
+                    s14: intrinsic Print "Namespace test %s" ["still works"]
+                    s15: _8 = aggregate(tuple; [])
+                    s16: intrinsic Println "
+" []
+                    s17: _9 = aggregate(tuple; [])
+                    s18: _10 = 7
+                    s19: intrinsic Println "value = %lld
+" [copy _10]
+                    s20: _11 = aggregate(tuple; [])
+                    s21: intrinsic Println "math: %lld + %lld = %lld
+" [2, 3, 5]
+                    s22: _12 = aggregate(tuple; [])
+                    s23: intrinsic Println "float: %f
+" [3.14159]
+                    s24: _13 = aggregate(tuple; [])
+                    s25: _14 = aggregate(tuple; [])
+                    s26: _15 = aggregate(tuple; [])
+                    s27: intrinsic Println "chars: %s %s
+" ["()", "()"]
+                    s28: _16 = aggregate(tuple; [])
+                    s29: intrinsic Println "tuple: (%lld, %lld)
+" [1, 2]
+                    s30: _17 = aggregate(tuple; [])
+                    s31: intrinsic Println "bools: %d %d
+" [true, false]
+                    s32: _18 = aggregate(tuple; [])
+                    s33: intrinsic Print "This %s %s %s %s" ["stays", "on", "one", "line"]
+                    s34: _19 = aggregate(tuple; [])
+                    s35: intrinsic Println "
+" []
+                    s36: _20 = aggregate(tuple; [])
+                    s37: intrinsic Print "Continuing without newline" []
+                    s38: _21 = aggregate(tuple; [])
+                    s39: intrinsic Print " - appended content" []
+                    s40: _22 = aggregate(tuple; [])
+                    s41: intrinsic Println "
+" []
+                    s42: _23 = aggregate(tuple; [])
+                    s43: _24 = aggregate(tuple; [])
+                    s44: intrinsic Print "Unit: %s" ["()"]
+                    s45: _25 = aggregate(tuple; [])
+                    s46: intrinsic Print "Null: %s" ["null"]
+                    s47: _26 = aggregate(tuple; [])
+                    s48: intrinsic Println "
+" []
+                    s49: _27 = aggregate(tuple; [])
+                    s50: intrinsic Println "escaped: %s %s
+" ["line1\nline2", "tab\tend"]
+                    s51: _28 = aggregate(tuple; [])
                     terminator: return
 }

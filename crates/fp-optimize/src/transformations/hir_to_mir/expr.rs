@@ -109,6 +109,7 @@ struct EnumVariantInfo {
     def_id: hir::DefId,
     enum_def: hir::DefId,
     discriminant: i64,
+    payload_def: Option<hir::DefId>,
 }
 
 #[derive(Clone, Debug)]
@@ -250,6 +251,12 @@ impl MirLowering {
                     self.register_enum(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Const(const_item) => {
+                    let ty = self.lower_type_expr(&const_item.ty);
+                    if Self::is_unit_ty(&ty) {
+                        // Unit consts don't need a static allocation; keep them as inline constants.
+                        self.register_const_value(item.def_id, const_item);
+                        continue;
+                    }
                     let mir_item = self.lower_const(item.def_id, const_item)?;
                     mir_program.items.push(mir_item);
                 }
@@ -760,6 +767,25 @@ impl MirLowering {
                         }
                     } else {
                         substs.insert(name.to_string(), actual_ty.clone());
+                    }
+                    return Ok(());
+                }
+
+                if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
+                    if let Some(struct_def) = self.struct_defs.get(def_id).cloned() {
+                        if let TyKind::Tuple(elements) = &actual_ty.kind {
+                            for (field, actual_field_ty) in
+                                struct_def.fields.iter().zip(elements.iter())
+                            {
+                                self.infer_generic_from_type_expr(
+                                    &field.ty,
+                                    actual_field_ty.as_ref(),
+                                    generics,
+                                    substs,
+                                    span,
+                                )?;
+                            }
+                        }
                     }
                 }
             }
@@ -1292,6 +1318,14 @@ impl MirLowering {
         let mut variants = Vec::new();
         let mut next_value: i64 = 0;
         for variant in &enm.variants {
+            let payload_def = variant.payload.as_ref().and_then(|payload| {
+                if let hir::TypeExprKind::Path(path) = &payload.kind {
+                    if let Some(hir::Res::Def(def_id)) = &path.res {
+                        return Some(*def_id);
+                    }
+                }
+                None
+            });
             let value = if let Some(expr) = &variant.discriminant {
                 match self.eval_int_expr(expr) {
                     Some(val) => {
@@ -1330,6 +1364,7 @@ impl MirLowering {
                     def_id: variant.def_id,
                     enum_def: def_id,
                     discriminant: value,
+                    payload_def,
                 },
             );
 
@@ -2076,6 +2111,19 @@ impl MirLowering {
                 user_ty: None,
                 literal: self.lower_literal(lit),
             }),
+            hir::ExprKind::Block(block) if block.stmts.is_empty() => {
+                if let Some(inner) = &block.expr {
+                    return self.lower_literal_expr(inner);
+                }
+                let ty = Ty {
+                    kind: TyKind::Tuple(Vec::new()),
+                };
+                Some(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Val((), ty),
+                })
+            }
             _ => None,
         }
     }
@@ -3361,6 +3409,24 @@ impl<'a> BodyBuilder<'a> {
         annotated_ty: Option<&Ty>,
         expr: &hir::Expr,
     ) -> Result<()> {
+        // Coerce enum payloads into their tagged layout when assigning from a place.
+        if let (Some(expected_ty), Some(place_info)) =
+            (annotated_ty, self.lower_place(expr)?)
+        {
+            if let Some((variant, layout)) =
+                self.enum_variant_for_payload(expected_ty, &place_info.ty)
+            {
+                self.assign_enum_variant_from_place(
+                    mir::Place::from_local(local_id),
+                    &variant,
+                    &layout,
+                    place_info.place,
+                    expr.span,
+                )?;
+                self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                return Ok(());
+            }
+        }
         if let hir::ExprKind::Struct(path, fields) = &expr.kind {
             self.lower_struct_literal(local_id, annotated_ty, path, fields, expr.span)
         } else if let hir::ExprKind::Call(callee, args) = &expr.kind {
@@ -3436,11 +3502,12 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn enum_variant_for_payload(
-        &self,
+        &mut self,
         expected_ty: &Ty,
         payload_ty: &Ty,
     ) -> Option<(EnumVariantInfo, EnumLayout)> {
         let layout = self.lowering.enum_layout_for_ty(expected_ty)?.clone();
+        let enum_def = self.enum_def_from_ty(expected_ty);
         for (def_id, payloads) in &layout.variant_payloads {
             let matches = if payloads.is_empty() {
                 MirLowering::is_unit_ty(payload_ty)
@@ -3457,6 +3524,42 @@ impl<'a> BodyBuilder<'a> {
                 if let Some(info) = self.lowering.enum_variants.get(def_id) {
                     return Some((info.clone(), layout));
                 }
+            }
+        }
+        let payload_len = match &payload_ty.kind {
+            TyKind::Tuple(fields) => fields.len(),
+            _ if MirLowering::is_unit_ty(payload_ty) => 0,
+            _ => 1,
+        };
+        let mut len_matches = layout
+            .variant_payloads
+            .iter()
+            .filter(|(_, payloads)| payloads.len() == payload_len)
+            .filter_map(|(def_id, _)| self.lowering.enum_variants.get(def_id))
+            .filter(|info| enum_def.map(|def_id| info.enum_def == def_id).unwrap_or(true));
+        let first = len_matches.next().cloned();
+        if first.is_some() && len_matches.next().is_some() {
+            self.lowering.emit_error(
+                Span::new(0, 0, 0),
+                "ambiguous enum payload coercion: multiple variants share the same payload shape",
+            );
+            return None;
+        }
+        if let Some(info) = first {
+            return Some((info, layout));
+        }
+        if let (Some(enum_def), Some(payload_struct_def)) =
+            (enum_def, self.struct_def_from_ty(payload_ty))
+        {
+            if let Some(info) = self
+                .lowering
+                .enum_variants
+                .values()
+                .find(|info| {
+                    info.enum_def == enum_def && info.payload_def == Some(payload_struct_def)
+                })
+            {
+                return Some((info.clone(), layout));
             }
         }
         None
@@ -3603,7 +3706,7 @@ impl<'a> BodyBuilder<'a> {
     ) -> Result<()> {
         let mut resolved_path = path.clone();
         self.resolve_self_path(&mut resolved_path);
-        let generic_args = resolved_path
+        let mut generic_args = resolved_path
             .segments
             .iter()
             .find_map(|segment| segment.args.as_ref())
@@ -3640,6 +3743,13 @@ impl<'a> BodyBuilder<'a> {
 
         if let Some(def_id) = def_id {
             if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
+                if generic_args.is_empty() && !info.generics.is_empty() {
+                    if let Some(inferred) =
+                        self.infer_struct_generics_from_literals(&info, fields, span)?
+                    {
+                        generic_args = inferred;
+                    }
+                }
                 if let Some(layout) =
                     self.lowering
                         .struct_layout_for_instance(def_id, &generic_args, span)
@@ -3864,6 +3974,54 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(())
+    }
+
+    fn infer_struct_generics_from_literals(
+        &mut self,
+        struct_def: &StructDefinition,
+        fields: &[hir::StructExprField],
+        span: Span,
+    ) -> Result<Option<Vec<Ty>>> {
+        let mut substs: HashMap<String, Ty> = HashMap::new();
+        let mut field_map: HashMap<String, &hir::Expr> = HashMap::new();
+        for field in fields {
+            field_map.insert(String::from(field.name.clone()), &field.expr);
+        }
+
+        for field in &struct_def.fields {
+            let Some(expr) = field_map.get(&field.name) else {
+                continue;
+            };
+            let hir::ExprKind::Literal(lit) = &expr.kind else {
+                continue;
+            };
+            let (_literal, actual_ty) = self.lower_literal(lit, None);
+            self.lowering.infer_generic_from_type_expr(
+                &field.ty,
+                &actual_ty,
+                &struct_def.generics,
+                &mut substs,
+                span,
+            )?;
+        }
+
+        if struct_def.generics.is_empty() {
+            return Ok(Some(Vec::new()));
+        }
+
+        for name in &struct_def.generics {
+            if !substs.contains_key(name) {
+                return Ok(None);
+            }
+        }
+
+        Ok(Some(
+            struct_def
+                .generics
+                .iter()
+                .filter_map(|name| substs.get(name).cloned())
+                .collect(),
+        ))
     }
 
     fn lower_unknown_struct_literal(
@@ -5180,53 +5338,19 @@ impl<'a> BodyBuilder<'a> {
             format.push('\n');
         }
 
-        let (fmt_const, fmt_ty) = self.lower_literal(&hir::Lit::Str(format), None);
-        let mut operands = Vec::with_capacity(1 + prepared_args.len());
-        let mut arg_types = Vec::with_capacity(1 + prepared_args.len());
-
-        operands.push(mir::Operand::Constant(mir::Constant {
-            span,
-            user_ty: None,
-            literal: fmt_const,
-        }));
-        arg_types.push(fmt_ty);
-
-        for (operand, ty, _) in prepared_args {
+        let mut operands = Vec::with_capacity(prepared_args.len());
+        for (operand, _ty, _spec) in prepared_args {
             operands.push(operand);
-            arg_types.push(ty);
         }
 
-        let existing_sig = self.lowering.placeholder_function_sig("printf");
-        let sig = self.lowering.update_placeholder_signature(
-            "printf",
-            &existing_sig,
-            &arg_types,
-            None,
-        );
-        let fn_ty = self.lowering.c_function_pointer_ty(&sig);
-        let func_operand = mir::Operand::Constant(mir::Constant {
-            span,
-            user_ty: None,
-            literal: mir::ConstantKind::Global(Symbol::new("printf"), fn_ty),
-        });
-
-        let continue_block = self.new_block();
-        let temp_local = self.allocate_temp(sig.output.clone(), span);
-        let destination = Some((mir::Place::from_local(temp_local), continue_block));
-        let terminator = mir::Terminator {
+        self.push_statement(mir::Statement {
             source_info: span,
-            kind: mir::TerminatorKind::Call {
-                func: func_operand,
+            kind: mir::StatementKind::IntrinsicCall {
+                kind: call.kind,
+                format,
                 args: operands,
-                destination,
-                cleanup: None,
-                from_hir_call: true,
-                fn_span: span,
             },
-        };
-
-        self.blocks[self.current_block as usize].terminator = Some(terminator);
-        self.current_block = continue_block;
+        });
         Ok(())
     }
 

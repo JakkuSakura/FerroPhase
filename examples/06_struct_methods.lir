@@ -169,50 +169,39 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: i32
-                %2: void
+                %1: void
+                %2: { i64, i64 }
                 %3: { i64, i64 }
-                %4: { i64, i64 }
-                %5: i32
+                %4: void
+                %5: void
                 %6: void
-                %7: i32
-                %8: void
+                %7: ptr { i64, i64 }
+                %8: i64
                 %9: void
-                %10: ptr { i64, i64 }
-                %11: i64
-                %12: i32
+                %10: i64
+                %11: ptr { i64, i64 }
+                %12: ptr { i64, i64 }
                 %13: void
-                %14: i64
-                %15: ptr { i64, i64 }
-                %16: ptr { i64, i64 }
-                %17: i32
+                %14: { i64, i64 }
+                %15: void
+                %16: i64
+                %17: ptr { i64, i64 }
                 %18: void
-                %19: { i64, i64 }
-                %20: i32
+                %19: i64
+                %20: ptr { i64, i64 }
                 %21: void
-                %22: i64
+                %22: i1
                 %23: ptr { i64, i64 }
-                %24: i32
-                %25: void
-                %26: i64
-                %27: ptr { i64, i64 }
-                %28: i32
-                %29: void
-                %30: i1
-                %31: ptr { i64, i64 }
-                %32: i32
-                %33: void
+                %24: void
             bb0 // label: bb0 // succs: [bb1]:
-                i98: %r98 = call c @printf(c"=== Struct Operations ===
-") : i32
+                i98: %r98 = intrinsic Println "=== Struct Operations ===
+" ()
+                i99: %r99 = call c @Point__new(i64 10, i64 20) : { i64, i64 }
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i99: %r99 = call c @Point__new(i64 10, i64 20) : { i64, i64 }
+                i100: %r100 = call c @Point__new(i64 5, i64 15) : { i64, i64 }
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i100: %r100 = call c @Point__new(i64 5, i64 15) : { i64, i64 }
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i101: %r101 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i102: store %r99, %r101 align 8
                 i103: %r103 = bitcast %r101 to ptr i64 : ptr i64
@@ -223,10 +212,8 @@ lir::Program {
                 i108: %r108 = gep inbounds %r107 [i64 8] : ptr i8
                 i109: %r109 = bitcast %r108 to ptr i64 : ptr i64
                 i110: %r110 = load %r109 align 8 : i64
-                i111: %r111 = call c @printf(c"p1 = (%lld, %lld)
-", %r104, %r110) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i111: %r111 = intrinsic Println "p1 = (%lld, %lld)
+" (%r104, %r110)
                 i112: %r112 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i113: store %r100, %r112 align 8
                 i114: %r114 = bitcast %r112 to ptr i64 : ptr i64
@@ -237,10 +224,8 @@ lir::Program {
                 i119: %r119 = gep inbounds %r118 [i64 8] : ptr i8
                 i120: %r120 = bitcast %r119 to ptr i64 : ptr i64
                 i121: %r121 = load %r120 align 8 : i64
-                i122: %r122 = call c @printf(c"p2 = (%lld, %lld)
-", %r115, %r121) : i32
-                terminator: br bb5
-            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
+                i122: %r122 = intrinsic Println "p2 = (%lld, %lld)
+" (%r115, %r121)
                 i123: %r123 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i124: %r124 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i125: store %r99, %r124 align 8
@@ -251,8 +236,8 @@ lir::Program {
                 i130: %r130 = load %r123 align 8 : ptr { i64, i64 }
                 i131: %r131 = load %r127 align 8 : i64
                 i132: %r132 = call c @Point__translate(%r130, i64 3, %r131)
-                terminator: br bb6
-            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
                 i133: %r133 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i134: store %r99, %r133 align 8
                 i135: %r135 = bitcast %r133 to ptr i64 : ptr i64
@@ -263,10 +248,8 @@ lir::Program {
                 i140: %r140 = gep inbounds %r139 [i64 8] : ptr i8
                 i141: %r141 = bitcast %r140 to ptr i64 : ptr i64
                 i142: %r142 = load %r141 align 8 : i64
-                i143: %r143 = call c @printf(c"p1 after translate = (%lld, %lld)
-", %r136, %r142) : i32
-                terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
+                i143: %r143 = intrinsic Println "p1 after translate = (%lld, %lld)
+" (%r136, %r142)
                 i144: %r144 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i145: %r145 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i146: store %r99, %r145 align 8
@@ -278,15 +261,13 @@ lir::Program {
                 i152: %r152 = load %r144 align 8 : ptr { i64, i64 }
                 i153: %r153 = load %r148 align 8 : ptr { i64, i64 }
                 i154: %r154 = call c @Point__distance2(%r152, %r153) : i64
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i155: %r155 = call c @printf(c"Distance²(p1, p2) = %lld
-", %r154) : i32
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i155: %r155 = intrinsic Println "Distance²(p1, p2) = %lld
+" (%r154)
                 i156: %r156 = call c @Rectangle__new(i64 10, i64 5) : { i64, i64 }
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
+                terminator: br bb5
+            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
                 i157: %r157 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i158: store %r156, %r157 align 8
                 i159: %r159 = bitcast %r157 to ptr i64 : ptr i64
@@ -297,47 +278,38 @@ lir::Program {
                 i164: %r164 = gep inbounds %r163 [i64 8] : ptr i8
                 i165: %r165 = bitcast %r164 to ptr i64 : ptr i64
                 i166: %r166 = load %r165 align 8 : i64
-                i167: %r167 = call c @printf(c"Rectangle: %lld×%lld
-", %r160, %r166) : i32
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
+                i167: %r167 = intrinsic Println "Rectangle: %lld×%lld
+" (%r160, %r166)
                 i168: %r168 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i169: %r169 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i170: store %r156, %r169 align 8
                 i171: store %r169, %r168 align 8
                 i172: %r172 = load %r168 align 8 : ptr { i64, i64 }
                 i173: %r173 = call c @Rectangle__area(%r172) : i64
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i174: %r174 = call c @printf(c"  area = %lld
-", %r173) : i32
-                terminator: br bb13
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
+                terminator: br bb6
+            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
+                i174: %r174 = intrinsic Println "  area = %lld
+" (%r173)
                 i175: %r175 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i176: %r176 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i177: store %r156, %r176 align 8
                 i178: store %r176, %r175 align 8
                 i179: %r179 = load %r175 align 8 : ptr { i64, i64 }
                 i180: %r180 = call c @Rectangle__perimeter(%r179) : i64
-                terminator: br bb14
-            bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i181: %r181 = call c @printf(c"  perimeter = %lld
-", %r180) : i32
-                terminator: br bb15
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
+                i181: %r181 = intrinsic Println "  perimeter = %lld
+" (%r180)
                 i182: %r182 = alloca i32 1 align 8 : ptr ptr { i64, i64 }
                 i183: %r183 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i184: store %r156, %r183 align 8
                 i185: store %r183, %r182 align 8
                 i186: %r186 = load %r182 align 8 : ptr { i64, i64 }
                 i187: %r187 = call c @Rectangle__is_square(%r186) : i1
-                terminator: br bb16
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i188: %r188 = zext %r187 to i32 : i32
-                i189: %r189 = call c @printf(c"  is_square = %d
-", %r188) : i32
-                terminator: br bb17
-            bb17 // label: bb17 // preds: [bb16]:
+                terminator: br bb8
+            bb8 // label: bb8 // preds: [bb7]:
+                i188: %r188 = intrinsic Println "  is_square = %d
+" (%r187)
                 terminator: ret void
         }
 }

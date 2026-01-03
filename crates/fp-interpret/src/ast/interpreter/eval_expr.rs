@@ -612,12 +612,35 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Index(index_expr) => {
                 let target = self.eval_expr(index_expr.obj.as_mut());
+                if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                    return self.evaluate_range_index(target, range);
+                }
                 let index_value = self.eval_expr(index_expr.index.as_mut());
                 self.evaluate_index(target, index_value)
             }
             ExprKind::IntrinsicCall(call) => {
                 let kind = call.kind;
+                let mut assign_target: Option<String> = None;
+                if matches!(kind, IntrinsicCallKind::AddField) {
+                    if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &call.payload
+                    {
+                        if let Some(first) = args.first() {
+                            if let ExprKind::Locator(locator) = first.kind() {
+                                if let Some(ident) = locator.as_ident() {
+                                    assign_target = Some(ident.as_str().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
                 let value = self.eval_intrinsic(call);
+                if let Some(name) = assign_target {
+                    if let Some(stored) = self.lookup_stored_value_mut(&name) {
+                        if stored.assign(value.clone()) {
+                            self.mark_mutated();
+                        }
+                    }
+                }
                 if self.should_replace_intrinsic_with_value(kind, &value) {
                     let mut replacement = Expr::value(value.clone());
                     replacement.ty = expr.ty.clone();
@@ -718,6 +741,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return match value {
                     Value::List(list) => Value::int(list.values.len() as i64),
                     Value::Map(map) => Value::int(map.len() as i64),
+                    Value::String(text) => Value::int(text.value.chars().count() as i64),
                     other => {
                         self.emit_error(format!(
                             "'len' is only supported on compile-time arrays, lists, and maps, found {:?}",
@@ -726,6 +750,44 @@ impl<'ctx> AstInterpreter<'ctx> {
                         Value::undefined()
                     }
                 };
+            }
+
+            if matches!(
+                select.field.name.as_str(),
+                "starts_with" | "ends_with" | "contains"
+            ) && invoke.args.len() == 1
+            {
+                let value = self.eval_expr(select.obj.as_mut());
+                let arg = self.eval_expr(&mut invoke.args[0]);
+                let hay = match value {
+                    Value::String(text) => text.value,
+                    other => {
+                        self.emit_error(format!(
+                            "string method '{}' expects a string receiver, found {:?}",
+                            select.field.name, other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                let needle = match arg {
+                    Value::String(text) => text.value,
+                    Value::Char(ch) => ch.value.to_string(),
+                    other => {
+                        self.emit_error(format!(
+                            "string method '{}' expects a string argument, found {:?}",
+                            select.field.name, other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::Bool));
+                let result = match select.field.name.as_str() {
+                    "starts_with" => hay.starts_with(&needle),
+                    "ends_with" => hay.ends_with(&needle),
+                    "contains" => hay.contains(&needle),
+                    _ => false,
+                };
+                return Value::bool(result);
             }
 
             if select.field.name.as_str() == "to_string" && invoke.args.is_empty() {

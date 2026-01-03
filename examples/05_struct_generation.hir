@@ -5,17 +5,30 @@ hir::Program {
                 true;
             pub const FLAG_B: bool =
                 false;
-            pub struct Config {
-                pub x: i64,
-                pub y: i64,
+            pub struct Base {
+                pub id: i64,
+                pub name: &str,
             }
-            pub const CONFIG: Config =
-                Config { x: 100, y: 20 };
+            pub struct Config {
+                pub id: i64,
+                pub name: &str,
+                pub mode: &str,
+            }
+            pub struct ConfigClone {
+                pub id: i64,
+                pub name: &str,
+                pub mode: &str,
+            }
+            let base = Base { id: 1, name: "core" };
             std::Println(2 args);
-            pub const SIZE: usize =
-                256;
-            pub const ITEMS: [i64; 256] =
-                [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+            let config = Config { id: 2, name: "primary", mode: "strict" };
+            std::Println(3 args);
+            let clone = ConfigClone { id: 3, name: "shadow", mode: "relaxed" };
+            std::Println(3 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
             std::Println(1 args);
         }
     }

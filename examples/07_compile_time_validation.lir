@@ -5,61 +5,85 @@ lir::Program {
                 %0: void
                 %1: i64
                 %2: i64
-                %3: i32
-                %4: void
+                %3: void
+                %4: i1
                 %5: i1
-                %6: i1
-                %7: i32
-                %8: void
+                %6: void
+                %7: i64
+                %8: i64
                 %9: i1
-                %10: i1
-                %11: i32
-                %12: void
+                %10: void
+                %11: ptr i8
+                %12: ptr i8
                 %13: ptr i8
-                %14: i32
-                %15: void
-            bb0 // label: bb0 // succs: [bb1]:
+                %14: void
+                %15: i1
+                %16: void
+                %17: i1
+                %18: i1
+                %19: i1
+                %20: i64
+                %21: void
+            bb0 // label: bb0:
                 i0: %r0 = alloca i32 1 align 8 : ptr i64
                 i1: store i64 24, %r0 align 8
                 i2: %r2 = alloca i32 1 align 8 : ptr i64
                 i3: store i64 3, %r2 align 8
                 i4: %r4 = load %r0 align 8 : i64
                 i5: %r5 = load %r2 align 8 : i64
-                i6: %r6 = call c @printf(c"sizeof=%llu, fields=%llu
-", %r4, %r5) : i32
-                terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i6: %r6 = intrinsic Println "data: sizeof=%llu, fields=%llu
+" (%r4, %r5)
                 i7: %r7 = alloca i32 1 align 1 : ptr i1
                 i8: store bool true, %r7 align 1
                 i9: %r9 = alloca i32 1 align 1 : ptr i1
                 i10: store bool false, %r9 align 1
                 i11: %r11 = load %r7 align 1 : i1
-                i12: %r12 = zext %r11 to i32 : i32
-                i13: %r13 = load %r9 align 1 : i1
-                i14: %r14 = zext %r13 to i32 : i32
-                i15: %r15 = call c @printf(c"has_a=%d, has_x=%d
-", %r12, %r14) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i16: %r16 = alloca i32 1 align 1 : ptr i1
-                i17: store bool true, %r16 align 1
+                i12: %r12 = load %r9 align 1 : i1
+                i13: %r13 = intrinsic Println "data: has_a=%d, has_x=%d
+" (%r11, %r12)
+                i14: %r14 = alloca i32 1 align 8 : ptr i64
+                i15: store i64 32, %r14 align 8
+                i16: %r16 = alloca i32 1 align 8 : ptr i64
+                i17: store i64 4, %r16 align 8
                 i18: %r18 = alloca i32 1 align 1 : ptr i1
                 i19: store bool true, %r18 align 1
-                i20: %r20 = load %r16 align 1 : i1
-                i21: %r21 = zext %r20 to i32 : i32
+                i20: %r20 = load %r14 align 8 : i64
+                i21: %r21 = load %r16 align 8 : i64
                 i22: %r22 = load %r18 align 1 : i1
-                i23: %r23 = zext %r22 to i32 : i32
-                i24: %r24 = call c @printf(c"size_ok=%d, aligned=%d
-", %r21, %r23) : i32
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i25: %r25 = alloca i32 1 align 8 : ptr ptr i8
-                i26: store c"optimized", %r25 align 8
-                i27: %r27 = load %r25 align 8 : ptr i8
-                i28: %r28 = call c @printf(c"mode: %s
-", %r27) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3]:
+                i23: %r23 = intrinsic Println "header: sizeof=%llu, fields=%llu, has_version=%d
+" (%r20, %r21, %r22)
+                i24: %r24 = alloca i32 1 align 8 : ptr ptr i8
+                i25: store c"struct Data", %r24 align 8
+                i26: %r26 = alloca i32 1 align 8 : ptr ptr i8
+                i27: store c"i64
+", %r26 align 8
+                i28: %r28 = alloca i32 1 align 8 : ptr ptr i8
+                i29: store c"u8
+", %r28 align 8
+                i30: %r30 = load %r24 align 8 : ptr i8
+                i31: %r31 = load %r26 align 8 : ptr i8
+                i32: %r32 = load %r28 align 8 : ptr i8
+                i33: %r33 = intrinsic Println "types: data='%s' a='%s' version='%s'
+" (%r30, %r31, %r32)
+                i34: %r34 = alloca i32 1 align 1 : ptr i1
+                i35: store bool true, %r34 align 1
+                i36: %r36 = load %r34 align 1 : i1
+                i37: %r37 = intrinsic Println "data has to_string: %d
+" (%r36)
+                i38: %r38 = alloca i32 1 align 1 : ptr i1
+                i39: store bool true, %r38 align 1
+                i40: %r40 = alloca i32 1 align 1 : ptr i1
+                i41: store bool true, %r40 align 1
+                i42: %r42 = alloca i32 1 align 1 : ptr i1
+                i43: store bool true, %r42 align 1
+                i44: %r44 = alloca i32 1 align 8 : ptr i64
+                i45: store i64 56, %r44 align 8
+                i46: %r46 = load %r38 align 1 : i1
+                i47: %r47 = load %r40 align 1 : i1
+                i48: %r48 = load %r42 align 1 : i1
+                i49: %r49 = load %r44 align 8 : i64
+                i50: %r50 = intrinsic Println "layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu
+" (%r46, %r47, %r48, %r49)
                 terminator: ret void
         }
 }

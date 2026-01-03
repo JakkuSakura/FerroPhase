@@ -6,26 +6,55 @@ hir::Program {
                 pub b: i64,
                 pub c: [u8; 16],
             }
-            pub const SIZE: usize =
+            pub struct Header {
+                pub magic: i64,
+                pub version: u8,
+                pub flags: u8,
+                pub pad: [u8; 6],
+            }
+            pub const DATA_SIZE: usize =
                 24;
-            pub const FIELDS: usize =
+            pub const DATA_FIELDS: usize =
                 3;
-            pub const HAS_A: bool =
+            pub const DATA_HAS_A: bool =
                 true;
-            pub const HAS_X: bool =
+            pub const DATA_HAS_X: bool =
                 false;
+            pub const HEADER_SIZE: usize =
+                32;
+            pub const HEADER_FIELDS: usize =
+                4;
+            pub const HEADER_HAS_VERSION: bool =
+                true;
             std::Println(2 args);
             std::Println(2 args);
+            std::Println(3 args);
+            pub const DATA_TYPE_NAME: &str =
+                "struct Data";
+            pub const DATA_FIELD_A_TYPE: &str =
+                "i64
+";
+            pub const HEADER_FIELD_VERSION_TYPE: &str =
+                "u8
+";
+            pub const HAS_TO_STRING: bool =
+                true;
+            std::Println(3 args);
+            std::Println(1 args);
             pub const MAX_SIZE: usize =
                 64;
-            pub const SIZE_OK: bool =
+            pub const DATA_OK: bool =
                 true;
-            pub const IS_ALIGNED: bool =
+            pub const HEADER_OK: bool =
                 true;
-            std::Println(2 args);
-            pub const MODE: &str =
-                "optimized";
-            std::Println(1 args);
+            pub const TOTAL_SIZE: usize =
+                56;
+            pub const TOTAL_OK: bool =
+                true;
+            std::Println(4 args);
+            pub const _WARN: () =
+                {
+                }
         }
     }
 }

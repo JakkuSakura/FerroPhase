@@ -179,7 +179,7 @@ impl Parser {
         min_bp: u8,
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
-        let mut left = self.parse_prefix()?;
+        let mut left = self.parse_prefix(allow_struct_literal)?;
         left = self.parse_postfix(left, allow_struct_literal)?;
 
         loop {
@@ -202,6 +202,10 @@ impl Parser {
             if kind == SyntaxKind::ExprCast {
                 let ty = self.parse_type_node()?;
                 children.push(SyntaxElement::Node(Box::new(ty)));
+            } else if kind == SyntaxKind::ExprRange && self.range_end_is_missing() {
+                let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                left = SyntaxNode::new(kind, children, span);
+                continue;
             } else {
                 let right = self.parse_expr_bp_inner(r_bp, allow_struct_literal)?;
                 children.push(SyntaxElement::Node(Box::new(right)));
@@ -214,7 +218,14 @@ impl Parser {
         Ok(left)
     }
 
-    fn parse_prefix(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+    fn range_end_is_missing(&self) -> bool {
+        matches!(
+            self.peek_non_trivia_raw(),
+            None | Some("]") | Some(")") | Some("}") | Some(",") | Some(";")
+        )
+    }
+
+    fn parse_prefix(&mut self, allow_struct_literal: bool) -> Result<SyntaxNode, ExprCstParseError> {
         if self.peek_non_trivia_normalized() == Some("await") {
             let mut children = Vec::new();
             let start_span = self
@@ -278,7 +289,7 @@ impl Parser {
                     self.bump_token_into(&mut children);
                     self.bump_trivia_into(&mut children);
                 }
-                let expr = self.parse_expr_bp(255)?;
+                let expr = self.parse_expr_bp_inner(255, allow_struct_literal)?;
                 children.push(SyntaxElement::Node(Box::new(expr)));
                 let span = span_for_children(&children).unwrap_or(start_span);
                 Ok(SyntaxNode::new(SyntaxKind::ExprUnary, children, span))
@@ -1003,7 +1014,19 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // '['
         self.bump_trivia_into(&mut children);
-        let index = self.parse_expr_bp(0)?;
+        let index = if matches!(
+            self.peek_non_trivia_raw(),
+            Some("..") | Some("..=")
+        ) {
+            self.parse_range_in_index(None)?
+        } else {
+            let start = self.parse_expr_bp(0)?;
+            if matches!(self.peek_non_trivia_raw(), Some("..") | Some("..=")) {
+                self.parse_range_in_index(Some(start))?
+            } else {
+                start
+            }
+        };
         children.push(SyntaxElement::Node(Box::new(index)));
         self.bump_trivia_into(&mut children);
         if self.peek_non_trivia_raw() != Some("]") {
@@ -1012,6 +1035,33 @@ impl Parser {
         self.bump_token_into(&mut children);
         let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
         Ok(SyntaxNode::new(SyntaxKind::ExprIndex, children, span))
+    }
+
+    fn parse_range_in_index(
+        &mut self,
+        start: Option<SyntaxNode>,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        let span_start = self
+            .peek_any_span()
+            .unwrap_or_else(|| Span::new(self.file, 0, 0));
+
+        if let Some(start) = start {
+            children.push(SyntaxElement::Node(Box::new(start)));
+            self.bump_trivia_into(&mut children);
+        }
+
+        self.bump_token_into(&mut children); // ".." or "..="
+        self.bump_trivia_into(&mut children);
+
+        if self.peek_non_trivia_raw() != Some("]") {
+            let end = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(end)));
+            self.bump_trivia_into(&mut children);
+        }
+
+        let span = span_for_children(&children).unwrap_or(span_start);
+        Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
     }
 
     fn parse_macro_call(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {
@@ -1115,6 +1165,17 @@ impl Parser {
         }
         if matches!(normalized.as_deref(), Some("true" | "false" | "null")) {
             return self.parse_type_value(start);
+        }
+        if matches!(normalized.as_deref(), Some("const"))
+            && self.peek_second_non_trivia_raw() == Some("{")
+        {
+            let expr = self.parse_const_block_expr()?;
+            let span = expr.span;
+            return Ok(SyntaxNode::new(
+                SyntaxKind::TyExpr,
+                vec![SyntaxElement::Node(Box::new(expr))],
+                span,
+            ));
         }
         match normalized.as_deref() {
             Some("_") => {

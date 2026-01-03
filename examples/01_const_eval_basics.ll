@@ -10,28 +10,28 @@ target triple = "arm64-apple-darwin25.0.0"
 
 define i32 @main() {
 bb0:
-  %alloca_49 = alloca i64, align 8
-  %alloca_count_49 = alloca i64, align 8
-  %alloca_45 = alloca i64, align 8
-  %alloca_count_45 = alloca i64, align 8
-  %alloca_40 = alloca i64, align 8
-  %alloca_count_40 = alloca i64, align 8
-  %alloca_38 = alloca i64, align 8
-  %alloca_count_38 = alloca i64, align 8
-  %alloca_36 = alloca i64, align 8
-  %alloca_count_36 = alloca i64, align 8
-  %alloca_34 = alloca ptr, align 8
-  %alloca_count_34 = alloca ptr, align 8
-  %alloca_32 = alloca i64, align 8
-  %alloca_count_32 = alloca i64, align 8
-  %alloca_30 = alloca i64, align 8
-  %alloca_count_30 = alloca i64, align 8
-  %alloca_22 = alloca { i64, i64 }, align 8
-  %alloca_count_22 = alloca { i64, i64 }, align 8
-  %alloca_17 = alloca i64, align 8
-  %alloca_count_17 = alloca i64, align 8
-  %alloca_15 = alloca { i64, i64 }, align 8
-  %alloca_count_15 = alloca { i64, i64 }, align 8
+  %alloca_48 = alloca i64, align 8
+  %alloca_count_48 = alloca i64, align 8
+  %alloca_44 = alloca i64, align 8
+  %alloca_count_44 = alloca i64, align 8
+  %alloca_39 = alloca i64, align 8
+  %alloca_count_39 = alloca i64, align 8
+  %alloca_37 = alloca i64, align 8
+  %alloca_count_37 = alloca i64, align 8
+  %alloca_35 = alloca i64, align 8
+  %alloca_count_35 = alloca i64, align 8
+  %alloca_33 = alloca ptr, align 8
+  %alloca_count_33 = alloca ptr, align 8
+  %alloca_31 = alloca i64, align 8
+  %alloca_count_31 = alloca i64, align 8
+  %alloca_29 = alloca i64, align 8
+  %alloca_count_29 = alloca i64, align 8
+  %alloca_21 = alloca { i64, i64 }, align 8
+  %alloca_count_21 = alloca { i64, i64 }, align 8
+  %alloca_16 = alloca i64, align 8
+  %alloca_count_16 = alloca i64, align 8
+  %alloca_14 = alloca { i64, i64 }, align 8
+  %alloca_count_14 = alloca { i64, i64 }, align 8
   %alloca_8 = alloca i1, align 1
   %alloca_count_8 = alloca i1, align 1
   %alloca_6 = alloca i64, align 8
@@ -49,44 +49,34 @@ bb0:
   %load_10 = load i64, ptr %alloca_count_2, align 8
   %load_11 = load i64, ptr %alloca_count_6, align 8
   %load_12 = load i1, ptr %alloca_count_8, align 1
-  %zext = zext i1 %load_12 to i32
-  %call_14 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.0, i64 %load_10, i64 %load_11, i32 %zext)
-  br label %bb1
-
-bb1:                                              ; preds = %bb0
-  store { i64, i64 } { i64 4096, i64 150 }, ptr %alloca_count_15, align 8
-  %load_19 = load i64, ptr %alloca_count_15, align 8
-  %iop_20 = udiv i64 %load_19, 1024
-  store i64 %iop_20, ptr %alloca_count_17, align 8
-  store { i64, i64 } { i64 4096, i64 150 }, ptr %alloca_count_22, align 8
-  %load_24 = load i64, ptr %alloca_count_17, align 8
-  %gep_26 = getelementptr inbounds i8, ptr %alloca_count_22, i64 8
-  %load_28 = load i64, ptr %gep_26, align 8
-  %call_29 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.1, i64 %load_24, i64 %load_28)
-  br label %bb2
-
-bb2:                                              ; preds = %bb1
-  store i64 3, ptr %alloca_count_30, align 8
-  store i64 8192, ptr %alloca_count_32, align 8
-  store ptr @.str.01_const_eval_basics.2, ptr %alloca_count_34, align 8
-  store i64 4096, ptr %alloca_count_36, align 8
-  store i64 150, ptr %alloca_count_38, align 8
-  %load_41 = load i64, ptr %alloca_count_36, align 8
-  %load_42 = load i64, ptr %alloca_count_38, align 8
-  %iop_43 = mul i64 %load_41, %load_42
-  store i64 %iop_43, ptr %alloca_count_40, align 8
-  %load_46 = load i64, ptr %alloca_count_30, align 8
-  %iop_47 = mul i64 %load_46, 0
-  store i64 %iop_47, ptr %alloca_count_45, align 8
-  %load_50 = load i64, ptr %alloca_count_45, align 8
-  store i64 %load_50, ptr %alloca_count_49, align 8
-  %load_52 = load i64, ptr %alloca_count_32, align 8
-  %load_53 = load ptr, ptr %alloca_count_34, align 8
-  %load_54 = load i64, ptr %alloca_count_49, align 8
-  %call_55 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.3, i64 %load_52, ptr %load_53, i64 %load_54)
-  br label %bb3
-
-bb3:                                              ; preds = %bb2
+  %call_13 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.0, i64 %load_10, i64 %load_11, i1 %load_12)
+  store { i64, i64 } { i64 4096, i64 150 }, ptr %alloca_count_14, align 8
+  %load_18 = load i64, ptr %alloca_count_14, align 8
+  %iop_19 = udiv i64 %load_18, 1024
+  store i64 %iop_19, ptr %alloca_count_16, align 8
+  store { i64, i64 } { i64 4096, i64 150 }, ptr %alloca_count_21, align 8
+  %load_23 = load i64, ptr %alloca_count_16, align 8
+  %gep_25 = getelementptr inbounds i8, ptr %alloca_count_21, i64 8
+  %load_27 = load i64, ptr %gep_25, align 8
+  %call_28 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.1, i64 %load_23, i64 %load_27)
+  store i64 3, ptr %alloca_count_29, align 8
+  store i64 8192, ptr %alloca_count_31, align 8
+  store ptr @.str.01_const_eval_basics.2, ptr %alloca_count_33, align 8
+  store i64 4096, ptr %alloca_count_35, align 8
+  store i64 150, ptr %alloca_count_37, align 8
+  %load_40 = load i64, ptr %alloca_count_35, align 8
+  %load_41 = load i64, ptr %alloca_count_37, align 8
+  %iop_42 = mul i64 %load_40, %load_41
+  store i64 %iop_42, ptr %alloca_count_39, align 8
+  %load_45 = load i64, ptr %alloca_count_29, align 8
+  %iop_46 = mul i64 %load_45, 0
+  store i64 %iop_46, ptr %alloca_count_44, align 8
+  %load_49 = load i64, ptr %alloca_count_44, align 8
+  store i64 %load_49, ptr %alloca_count_48, align 8
+  %load_51 = load i64, ptr %alloca_count_31, align 8
+  %load_52 = load ptr, ptr %alloca_count_33, align 8
+  %load_53 = load i64, ptr %alloca_count_48, align 8
+  %call_54 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.3, i64 %load_51, ptr %load_52, i64 %load_53)
   ret i32 0
 }
 

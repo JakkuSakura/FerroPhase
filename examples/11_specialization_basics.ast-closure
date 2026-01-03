@@ -2,6 +2,10 @@ ast::File {
   items:
     pub import std::fmt::Display : ()
     pub import std::ops::Add : ()
+    pub struct Pair : Pair{left: Expr(T), right: Expr(T)} {
+      left: Expr(T)
+      right: Expr(T)
+    }
     pub fn<T: Add<T
 > + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
 > + Copy>(unknown, unknown) -> unknown : fn<T: Add<T
@@ -44,8 +48,48 @@ ast::File {
             template: "specialized result: {}" result
         expr_stmt (value)
           locator result : unknown
+    pub fn<T: Add<T
+> + Copy> sum_pair(pair: Expr(Pair<T
+>)) -> Expr(T) : fn<T: Add<T
+> + Copy>(Pair{left: Expr(T), right: Expr(T)}) -> unknown : fn<T: Add<T
+> + Copy>(Pair{left: Expr(T), right: Expr(T)}) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          binop + : unknown
+            lhs:
+              select .left [unknown] : unknown
+                object:
+                  locator pair : Pair{left: Expr(T), right: Expr(T)}
+            rhs:
+              select .right [unknown] : unknown
+                object:
+                  locator pair : Pair{left: Expr(T), right: Expr(T)}
+    pub fn<T: PartialOrd + Copy + Display> max(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: PartialOrd + Copy + Display>(unknown, unknown) -> unknown : fn<T: PartialOrd + Copy + Display>(unknown, unknown) -> unknown
+      block (3 stmts) : unknown
+        let result
+          init:
+            if : unknown
+              cond:
+                binop > : bool
+                  lhs:
+                    locator a : unknown
+                  rhs:
+                    locator b : unknown
+              then:
+                block (1 stmt) : unknown
+                  expr_stmt (value)
+                    locator a : unknown
+              else:
+                block (1 stmt) : unknown
+                  expr_stmt (value)
+                    locator b : unknown
+        expr_stmt ;
+          intrinsic println : ()
+            template: "max({}, {}) = {}" a, b, result
+        expr_stmt (value)
+          locator result : unknown
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (2 stmts) : ()
+      block (8 stmts) : ()
         let _
           init:
             invoke : i64
@@ -60,4 +104,38 @@ ast::File {
               args:
                 value 1.5 : f64
                 value 2.5 : f64
+        let pair_i
+          init:
+            struct Pair : Pair{left: Expr(T), right: Expr(T)}
+              left:
+                value 3 : i64
+              right:
+                value 7 : i64
+        let pair_f
+          init:
+            struct Pair : Pair{left: Expr(T), right: Expr(T)}
+              left:
+                value 1.25 : f64
+              right:
+                value 2.75 : f64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "sum_pair i64 = {}" sum_pair(pair_i)
+        expr_stmt ;
+          intrinsic println : ()
+            template: "sum_pair f64 = {}" sum_pair(pair_f)
+        let _
+          init:
+            invoke : i64
+              target: max
+              args:
+                value 10 : i64
+                value 3 : i64
+        let _
+          init:
+            invoke : f64
+              target: max
+              args:
+                value 2.5 : f64
+                value 9 : f64
 }

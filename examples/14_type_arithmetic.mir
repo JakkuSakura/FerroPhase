@@ -79,154 +79,136 @@ mir::Program {
                     terminator: goto -> bb1
                 bb5:
                     terminator: return
-        body2 { arg_count: 0, locals: 63 }
+        body2 { arg_count: 0, locals: 46 }
             return_local: _0
             locals:
                 _0: ()
                 _1: (i64, i64, i64)
-                _2: i32
-                _3: ()
-                _4: (i64, i64)
-                _5: i32
-                _6: ()
-                _7: (i64, i64, i64, i64)
-                _8: (i64, i64, i64, i64)
-                _9: (i64, i64, i64)
-                _10: i32
-                _11: ()
-                _12: (i64, i64)
-                _13: i32
+                _2: ()
+                _3: (i64, i64)
+                _4: ()
+                _5: (i64, i64, i64, i64)
+                _6: (i64, i64, i64, i64)
+                _7: (i64, i64, i64)
+                _8: ()
+                _9: (i64, i64)
+                _10: ()
+                _11: (i64)
+                _12: ()
+                _13: (i64, i64)
                 _14: ()
-                _15: (i64)
-                _16: i32
-                _17: ()
-                _18: (i64, i64)
-                _19: i32
-                _20: ()
-                _21: (isize, i64, i64, i64)
-                _22: (isize, i64, i64, i64)
-                _23: (isize, i64, i64, i64)
-                _24: <??>
-                _25: i64
-                _26: i32
-                _27: ()
-                _28: i64
-                _29: i32
-                _30: ()
+                _15: (isize, i64, i64, i64)
+                _16: (i64, i64)
+                _17: <??>
+                _18: i64
+                _19: ()
+                _20: i64
+                _21: ()
+                _22: <??>
+                _23: <??>
+                _24: usize
+                _25: usize
+                _26: usize
+                _27: usize
+                _28: ()
+                _29: i64
+                _30: bool
                 _31: <??>
-                _32: <??>
-                _33: usize
-                _34: usize
-                _35: usize
-                _36: usize
-                _37: i32
+                _32: ()
+                _33: ()
+                _34: <??>
+                _35: <??>
+                _36: ()
+                _37: ()
                 _38: ()
-                _39: i64
-                _40: bool
-                _41: <??>
-                _42: ()
-                _43: ()
-                _44: <??>
+                _39: ()
+                _40: ()
+                _41: ()
+                _42: (isize, i64, i64, i64)
+                _43: i64
+                _44: ()
                 _45: <??>
-                _46: i32
-                _47: ()
-                _48: i32
-                _49: ()
-                _50: i32
-                _51: ()
-                _52: i32
-                _53: ()
-                _54: i32
-                _55: ()
-                _56: i32
-                _57: ()
-                _58: (isize, i64, i64, i64)
-                _59: i64
-                _60: i32
-                _61: ()
-                _62: <??>
             blocks:
                 bb0:
                     s0: _1 = aggregate(tuple; [1, 2, 3])
-                    terminator: call global printf("Foo a=%lld common=%lld foo=%lld\n", copy _1[Field(0, Ty { kind: Int(I64) })], copy _1[Field(1, Ty { kind: Int(I64) })], copy _1[Field(2, Ty { kind: Int(I64) })]) -> _2 then bb1
+                    s1: intrinsic Println "Foo a=%lld common=%lld foo=%lld
+" [copy _1[Field(0, Ty { kind: Int(I64) })], copy _1[Field(1, Ty { kind: Int(I64) })], copy _1[Field(2, Ty { kind: Int(I64) })]]
+                    s2: _2 = aggregate(tuple; [])
+                    s3: _3 = aggregate(tuple; [4, 5])
+                    s4: intrinsic Println "Bar common=%lld bar=%lld
+" [copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })]]
+                    s5: _4 = aggregate(tuple; [])
+                    s6: _7 = copy _1
+                    s7: _6 = aggregate(tuple; [copy _7[Field(0, Ty { kind: Int(I64) })], copy _7[Field(1, Ty { kind: Int(I64) })], copy _7[Field(2, Ty { kind: Int(I64) })], 6])
+                    s8: _5 = copy _6
+                    s9: intrinsic Println "FooPlusBar a=%lld common=%lld foo=%lld bar=%lld
+" [copy _5[Field(0, Ty { kind: Int(I64) })], copy _5[Field(1, Ty { kind: Int(I64) })], copy _5[Field(2, Ty { kind: Int(I64) })], copy _5[Field(3, Ty { kind: Int(I64) })]]
+                    s10: _8 = aggregate(tuple; [])
+                    s11: _9 = aggregate(tuple; [10, 20])
+                    s12: intrinsic Println "FooMinusBar a=%lld foo=%lld
+" [copy _9[Field(0, Ty { kind: Int(I64) })], copy _9[Field(1, Ty { kind: Int(I64) })]]
+                    s13: _10 = aggregate(tuple; [])
+                    s14: _11 = aggregate(tuple; [99])
+                    s15: intrinsic Println "FooAndBar common=%lld
+" [copy _11[Field(0, Ty { kind: Int(I64) })]]
+                    s16: _12 = aggregate(tuple; [])
+                    s17: _13 = aggregate(tuple; [7, 42])
+                    s18: intrinsic Println "InlineRecord tag=%lld value=%lld
+" [copy _13[Field(0, Ty { kind: Int(I64) })], copy _13[Field(1, Ty { kind: Int(I64) })]]
+                    s19: _14 = aggregate(tuple; [])
+                    s20: _15 = aggregate(tuple; [0, 2, 3, 4])
+                    s21: _16 = copy _3
+                    s22: _17 = fn describe_union
+                    terminator: call copy _17(copy _15) -> _18 then bb1
                 bb1:
-                    s0: _3 = aggregate(tuple; [])
-                    s1: _4 = aggregate(tuple; [4, 5])
-                    terminator: call global printf("Bar common=%lld bar=%lld\n", copy _4[Field(0, Ty { kind: Int(I64) })], copy _4[Field(1, Ty { kind: Int(I64) })]) -> _5 then bb2
+                    s0: intrinsic Println "FooOrBar left sum=%lld
+" [copy _18]
+                    s1: _19 = aggregate(tuple; [])
+                    terminator: call copy _17(copy _16) -> _20 then bb2
                 bb2:
-                    s0: _6 = aggregate(tuple; [])
-                    s1: _9 = copy _1
-                    s2: _8 = aggregate(tuple; [copy _9[Field(0, Ty { kind: Int(I64) })], copy _9[Field(1, Ty { kind: Int(I64) })], copy _9[Field(2, Ty { kind: Int(I64) })], 6])
-                    s3: _7 = copy _8
-                    terminator: call global printf("FooPlusBar a=%lld common=%lld foo=%lld bar=%lld\n", copy _7[Field(0, Ty { kind: Int(I64) })], copy _7[Field(1, Ty { kind: Int(I64) })], copy _7[Field(2, Ty { kind: Int(I64) })], copy _7[Field(3, Ty { kind: Int(I64) })]) -> _10 then bb3
-                bb3:
-                    s0: _11 = aggregate(tuple; [])
-                    s1: _12 = aggregate(tuple; [10, 20])
-                    terminator: call global printf("FooMinusBar a=%lld foo=%lld\n", copy _12[Field(0, Ty { kind: Int(I64) })], copy _12[Field(1, Ty { kind: Int(I64) })]) -> _13 then bb4
-                bb4:
-                    s0: _14 = aggregate(tuple; [])
-                    s1: _15 = aggregate(tuple; [99])
-                    terminator: call global printf("FooAndBar common=%lld\n", copy _15[Field(0, Ty { kind: Int(I64) })]) -> _16 then bb5
-                bb5:
-                    s0: _17 = aggregate(tuple; [])
-                    s1: _18 = aggregate(tuple; [7, 42])
-                    terminator: call global printf("InlineRecord tag=%lld value=%lld\n", copy _18[Field(0, Ty { kind: Int(I64) })], copy _18[Field(1, Ty { kind: Int(I64) })]) -> _19 then bb6
-                bb6:
-                    s0: _20 = aggregate(tuple; [])
-                    s1: _21 = aggregate(tuple; [0, 2, 3, 4])
-                    s2: _23 = aggregate(tuple; [1, copy _4[Field(0, Ty { kind: Int(I64) })], copy _4[Field(1, Ty { kind: Int(I64) })], 0])
+                    s0: intrinsic Println "FooOrBar right sum=%lld
+" [copy _20]
+                    s1: _21 = aggregate(tuple; [])
+                    s2: _23 = aggregate(array [i64]; [1, 2, 3, 4])
                     s3: _22 = copy _23
-                    s4: _24 = fn describe_union
-                    terminator: call copy _24(copy _21) -> _25 then bb7
-                bb7:
-                    terminator: call global printf("FooOrBar left sum=%lld\n", copy _25) -> _26 then bb8
-                bb8:
-                    s0: _27 = aggregate(tuple; [])
-                    terminator: call copy _24(copy _22) -> _28 then bb9
-                bb9:
-                    terminator: call global printf("FooOrBar right sum=%lld\n", copy _28) -> _29 then bb10
-                bb10:
-                    s0: _30 = aggregate(tuple; [])
-                    s1: _32 = aggregate(array [i64]; [1, 2, 3, 4])
-                    s2: _31 = copy _32
-                    s3: _33 = 0u
-                    s4: _34 = 1u
-                    s5: _35 = 2u
-                    s6: _36 = 3u
-                    terminator: call global printf("Int4[0]=%lld Int4[1]=%lld Int4[2]=%lld Int4[3]=%lld\n", copy _31[Index(33)], copy _31[Index(34)], copy _31[Index(35)], copy _31[Index(36)]) -> _37 then bb11
-                bb11:
-                    s0: _38 = aggregate(tuple; [])
-                    s1: _39 = 42
-                    s2: _40 = true
-                    s3: _41 = "hello"
-                    s4: _43 = aggregate(tuple; [])
-                    s5: _42 = copy _43
-                    s6: _44 = null
-                    s7: _45 = "green"
-                    terminator: call global printf("LiteralInt %lld\n", copy _39) -> _46 then bb12
-                bb12:
-                    s0: _47 = aggregate(tuple; [])
-                    terminator: call global printf("LiteralBool %d\n", copy _40) -> _48 then bb13
-                bb13:
-                    s0: _49 = aggregate(tuple; [])
-                    terminator: call global printf("LiteralStr %s\n", copy _41) -> _50 then bb14
-                bb14:
-                    s0: _51 = aggregate(tuple; [])
-                    terminator: call global printf("LiteralUnit %s", "()") -> _52 then bb15
-                bb15:
-                    s0: _53 = aggregate(tuple; [])
-                    terminator: call global printf("LiteralNull %s", "null") -> _54 then bb16
-                bb16:
-                    s0: _55 = aggregate(tuple; [])
-                    terminator: call global printf("LiteralStrEnum %s\n", copy _45) -> _56 then bb17
-                bb17:
-                    s0: _57 = aggregate(tuple; [])
-                    s1: _58 = aggregate(tuple; [0, 5, 6, 7])
-                    terminator: call fn describe_optional(copy _58) -> _59 then bb18
-                bb18:
-                    terminator: call global printf("FooMaybe sum=%lld\n", copy _59) -> _60 then bb19
-                bb19:
-                    s0: _61 = aggregate(tuple; [])
-                    s1: _62 = fn print_display
+                    s4: _24 = 0u
+                    s5: _25 = 1u
+                    s6: _26 = 2u
+                    s7: _27 = 3u
+                    s8: intrinsic Println "Int4[0]=%lld Int4[1]=%lld Int4[2]=%lld Int4[3]=%lld
+" [copy _22[Index(24)], copy _22[Index(25)], copy _22[Index(26)], copy _22[Index(27)]]
+                    s9: _28 = aggregate(tuple; [])
+                    s10: _29 = 42
+                    s11: _30 = true
+                    s12: _31 = "hello"
+                    s13: _33 = aggregate(tuple; [])
+                    s14: _32 = copy _33
+                    s15: _34 = null
+                    s16: _35 = "green"
+                    s17: intrinsic Println "LiteralInt %lld
+" [copy _29]
+                    s18: _36 = aggregate(tuple; [])
+                    s19: intrinsic Println "LiteralBool %d
+" [copy _30]
+                    s20: _37 = aggregate(tuple; [])
+                    s21: intrinsic Println "LiteralStr %s
+" [copy _31]
+                    s22: _38 = aggregate(tuple; [])
+                    s23: intrinsic Println "LiteralUnit %s
+" ["()"]
+                    s24: _39 = aggregate(tuple; [])
+                    s25: intrinsic Println "LiteralNull %s
+" ["null"]
+                    s26: _40 = aggregate(tuple; [])
+                    s27: intrinsic Println "LiteralStrEnum %s
+" [copy _35]
+                    s28: _41 = aggregate(tuple; [])
+                    s29: _42 = aggregate(tuple; [0, 5, 6, 7])
+                    terminator: call fn describe_optional(copy _42) -> _43 then bb3
+                bb3:
+                    s0: intrinsic Println "FooMaybe sum=%lld
+" [copy _43]
+                    s1: _44 = aggregate(tuple; [])
+                    s2: _45 = fn print_display
                     terminator: return
 }

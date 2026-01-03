@@ -1,7 +1,7 @@
 ast::File {
   items:
     pub const fn main() -> () : fn() -> ()
-      block (20 stmts)
+      block (25 stmts)
         expr_stmt ;
           intrinsic print
             template: "Hello"
@@ -39,6 +39,18 @@ ast::File {
           intrinsic println
             template: "math: {} + {} = {}" 2, 3, 5
         expr_stmt ;
+          intrinsic println
+            template: "float: {}" 3.14159
+        expr_stmt ;
+          intrinsic println
+            template: "chars: {} {}" (), ()
+        expr_stmt ;
+          intrinsic println
+            template: "tuple: ({}, {})" 1, 2
+        expr_stmt ;
+          intrinsic println
+            template: "bools: {} {}" true, false
+        expr_stmt ;
           intrinsic print
             template: "This {} {} {} {}" "stays", "on", "one", "line"
         expr_stmt ;
@@ -62,4 +74,8 @@ ast::File {
         expr_stmt ;
           intrinsic println
             template: ""
+        expr_stmt ;
+          intrinsic println
+            template: "escaped: {} {}" "line1
+line2", "tab	end"
 }

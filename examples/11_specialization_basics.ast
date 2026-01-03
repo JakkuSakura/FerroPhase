@@ -2,6 +2,10 @@ ast::File {
   items:
     pub import std::fmt::Display
     pub import std::ops::Add
+    pub struct Pair {
+      left: Expr(T)
+      right: Expr(T)
+    }
     pub fn<T: Add<T
 > + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
 > + Copy>(unknown, unknown) -> unknown
@@ -41,8 +45,47 @@ ast::File {
             template: "specialized result: {}" result
         expr_stmt (value)
           locator result
+    pub fn<T: Add<T
+> + Copy> sum_pair(pair: Expr(Pair<T
+>)) -> Expr(T) : fn<T: Add<T
+> + Copy>(Pair{left: Expr(T), right: Expr(T)}) -> unknown
+      block (1 stmt)
+        expr_stmt (value)
+          binop +
+            lhs:
+              select .left [unknown]
+                object:
+                  locator pair
+            rhs:
+              select .right [unknown]
+                object:
+                  locator pair
+    pub fn<T: PartialOrd + Copy + Display> max(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: PartialOrd + Copy + Display>(unknown, unknown) -> unknown
+      block (3 stmts)
+        let result
+          init:
+            if
+              cond:
+                binop >
+                  lhs:
+                    locator a
+                  rhs:
+                    locator b
+              then:
+                block (1 stmt)
+                  expr_stmt (value)
+                    locator a
+              else:
+                block (1 stmt)
+                  expr_stmt (value)
+                    locator b
+        expr_stmt ;
+          intrinsic println
+            template: "max({}, {}) = {}" a, b, result
+        expr_stmt (value)
+          locator result
     pub fn main() -> () : fn() -> ()
-      block (2 stmts)
+      block (8 stmts)
         let _
           init:
             invoke
@@ -57,4 +100,38 @@ ast::File {
               args:
                 value 1.5
                 value 2.5
+        let pair_i
+          init:
+            struct Pair
+              left:
+                value 3
+              right:
+                value 7
+        let pair_f
+          init:
+            struct Pair
+              left:
+                value 1.25
+              right:
+                value 2.75
+        expr_stmt ;
+          intrinsic println
+            template: "sum_pair i64 = {}" sum_pair(pair_i)
+        expr_stmt ;
+          intrinsic println
+            template: "sum_pair f64 = {}" sum_pair(pair_f)
+        let _
+          init:
+            invoke
+              target: max
+              args:
+                value 10
+                value 3
+        let _
+          init:
+            invoke
+              target: max
+              args:
+                value 2.5
+                value 9
 }

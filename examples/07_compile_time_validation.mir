@@ -2,45 +2,65 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 16 }
+        body0 { arg_count: 0, locals: 22 }
             return_local: _0
             locals:
                 _0: ()
                 _1: usize
                 _2: usize
-                _3: i32
-                _4: ()
+                _3: ()
+                _4: bool
                 _5: bool
-                _6: bool
-                _7: i32
-                _8: ()
+                _6: ()
+                _7: usize
+                _8: usize
                 _9: bool
-                _10: bool
-                _11: i32
-                _12: ()
+                _10: ()
+                _11: <??>
+                _12: <??>
                 _13: <??>
-                _14: i32
-                _15: ()
+                _14: ()
+                _15: bool
+                _16: ()
+                _17: bool
+                _18: bool
+                _19: bool
+                _20: usize
+                _21: ()
             blocks:
                 bb0:
                     s0: _1 = 24u
                     s1: _2 = 3u
-                    terminator: call global printf("sizeof=%llu, fields=%llu\n", copy _1, copy _2) -> _3 then bb1
-                bb1:
-                    s0: _4 = aggregate(tuple; [])
-                    s1: _5 = true
-                    s2: _6 = false
-                    terminator: call global printf("has_a=%d, has_x=%d\n", copy _5, copy _6) -> _7 then bb2
-                bb2:
-                    s0: _8 = aggregate(tuple; [])
-                    s1: _9 = true
-                    s2: _10 = true
-                    terminator: call global printf("size_ok=%d, aligned=%d\n", copy _9, copy _10) -> _11 then bb3
-                bb3:
-                    s0: _12 = aggregate(tuple; [])
-                    s1: _13 = "optimized"
-                    terminator: call global printf("mode: %s\n", copy _13) -> _14 then bb4
-                bb4:
-                    s0: _15 = aggregate(tuple; [])
+                    s2: intrinsic Println "data: sizeof=%llu, fields=%llu
+" [copy _1, copy _2]
+                    s3: _3 = aggregate(tuple; [])
+                    s4: _4 = true
+                    s5: _5 = false
+                    s6: intrinsic Println "data: has_a=%d, has_x=%d
+" [copy _4, copy _5]
+                    s7: _6 = aggregate(tuple; [])
+                    s8: _7 = 32u
+                    s9: _8 = 4u
+                    s10: _9 = true
+                    s11: intrinsic Println "header: sizeof=%llu, fields=%llu, has_version=%d
+" [copy _7, copy _8, copy _9]
+                    s12: _10 = aggregate(tuple; [])
+                    s13: _11 = "struct Data"
+                    s14: _12 = "i64\n"
+                    s15: _13 = "u8\n"
+                    s16: intrinsic Println "types: data='%s' a='%s' version='%s'
+" [copy _11, copy _12, copy _13]
+                    s17: _14 = aggregate(tuple; [])
+                    s18: _15 = true
+                    s19: intrinsic Println "data has to_string: %d
+" [copy _15]
+                    s20: _16 = aggregate(tuple; [])
+                    s21: _17 = true
+                    s22: _18 = true
+                    s23: _19 = true
+                    s24: _20 = 56u
+                    s25: intrinsic Println "layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu
+" [copy _17, copy _18, copy _19, copy _20]
+                    s26: _21 = aggregate(tuple; [])
                     terminator: return
 }

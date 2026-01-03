@@ -69,83 +69,62 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: i32
+                %1: void
                 %2: void
                 %3: void
                 %4: void
-                %5: i32
+                %5: i64
                 %6: void
                 %7: i64
-                %8: i32
+                %8: void
                 %9: void
                 %10: i64
-                %11: i32
+                %11: { i64 }
                 %12: void
-                %13: i32
-                %14: void
-                %15: i64
-                %16: { i64 }
-                %17: i32
-                %18: void
-                %19: { i8 }
-                %20: i64
-                %21: i32
-                %22: void
+                %13: { i8 }
+                %14: i64
+                %15: void
             bb0 // label: bb0 // succs: [bb1]:
-                i21: %r21 = call c @printf(c"Generic operations:
-") : i32
+                i21: %r21 = intrinsic Println "Generic operations:
+" ()
+                i22: %r22 = call c @apply__mono_a7af9f593fdc4675_4(i64 10, i64 20, @add__mono_692e805f044e08ba_5)
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i22: %r22 = call c @apply__mono_a7af9f593fdc4675_4(i64 10, i64 20, @add__mono_692e805f044e08ba_5)
+                i23: %r23 = call c @apply__mono_d7ad91e83a08a980_4(f64 1.5, f64 2.5, @add__mono_692e805f044e08ba_5)
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i23: %r23 = call c @apply__mono_d7ad91e83a08a980_4(f64 1.5, f64 2.5, @add__mono_692e805f044e08ba_5)
+                i24: %r24 = intrinsic Println "
+Conditional:
+" ()
+                i25: %r25 = call c @apply_if(bool true, i64 5, i64 3, @add__spec0) : i64
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i24: %r24 = call c @printf(c"
-Conditional:
-") : i32
+                i26: %r26 = intrinsic Println "%lld
+" (%r25)
+                i27: %r27 = call c @apply_if(bool false, i64 5, i64 3, @add__spec0) : i64
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i25: %r25 = call c @apply_if(bool true, i64 5, i64 3, @add__spec0) : i64
+                i28: %r28 = intrinsic Println "%lld
+" (%r27)
+                i29: %r29 = intrinsic Println "
+Closure factory:
+" ()
+                i30: %r30 = call c @make_adder(i64 10) : { i64 }
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i26: %r26 = call c @printf(c"%lld
-", %r25) : i32
+                i31: %r31 = call c @__closure0_call(%r30, i64 5) : i64
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i27: %r27 = call c @apply_if(bool false, i64 5, i64 3, @add__spec0) : i64
-                terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i28: %r28 = call c @printf(c"%lld
-", %r27) : i32
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i29: %r29 = call c @printf(c"
-Closure factory:
-") : i32
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i30: %r30 = call c @make_adder(i64 10) : { i64 }
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i31: %r31 = call c @__closure0_call(%r30, i64 5) : i64
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i32: %r32 = call c @printf(c"add_10(5) = %lld
-", %r31) : i32
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
+                i32: %r32 = intrinsic Println "add_10(5) = %lld
+" (%r31)
                 i33: %r33 = alloca i32 1 align 1 : ptr { i8 }
                 i34: store struct { i8 } { i8 0 }, %r33 align 1
                 i35: %r35 = load %r33 align 1 : { i8 }
                 i36: %r36 = call c @__closure1_call(%r35, i64 7) : i64
-                terminator: br bb13
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i37: %r37 = call c @printf(c"double(7) = %lld
-", %r36) : i32
-                terminator: br bb14
-            bb14 // label: bb14 // preds: [bb13]:
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb6]:
+                i37: %r37 = intrinsic Println "double(7) = %lld
+" (%r36)
                 terminator: ret void
         }
 
@@ -182,16 +161,13 @@ Closure factory:
                 %2: i64 // arg
                 %3: ptr fn(i64, i64) -> i64 // arg
                 %4: i64
-                %5: i32
-                %6: void
+                %5: void
             bb0 // label: bb0 // succs: [bb1]:
                 i46: %r46 = call c %local3(%local1, %local2) : i64
                 terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i47: %r47 = call c @printf(c"%lld
-", %r46) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1]:
+            bb1 // label: bb1 // preds: [bb0]:
+                i47: %r47 = intrinsic Println "%lld
+" (%r46)
                 terminator: ret void
         }
 
@@ -202,16 +178,13 @@ Closure factory:
                 %2: f64 // arg
                 %3: ptr fn(f64, f64) -> f64 // arg
                 %4: f64
-                %5: i32
-                %6: void
+                %5: void
             bb0 // label: bb0 // succs: [bb1]:
                 i48: %r48 = call c %local3(%local1, %local2) : f64
                 terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i49: %r49 = call c @printf(c"%f
-", %r48) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1]:
+            bb1 // label: bb1 // preds: [bb0]:
+                i49: %r49 = intrinsic Println "%f
+" (%r48)
                 terminator: ret void
         }
 }

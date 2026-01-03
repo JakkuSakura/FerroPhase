@@ -257,16 +257,16 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
 fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
     match locator {
         Locator::Ident(ident) => match ident.name.as_str() {
-            "println" => Some(IntrinsicCallKind::Println),
             "print" => Some(IntrinsicCallKind::Print),
+            "println" => Some(IntrinsicCallKind::Println),
             "len" => Some(IntrinsicCallKind::Len),
             _ => None,
         },
         Locator::Path(path) => {
             let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
             match names.as_slice() {
-                ["std", "io", "println"] | ["println"] => Some(IntrinsicCallKind::Println),
-                ["std", "io", "print"] | ["print"] => Some(IntrinsicCallKind::Print),
+                ["std", "print"] | ["std", "io", "print"] => Some(IntrinsicCallKind::Print),
+                ["std", "println"] | ["std", "io", "println"] => Some(IntrinsicCallKind::Println),
                 ["std", "len"] | ["std", "builtins", "len"] | ["len"] => {
                     Some(IntrinsicCallKind::Len)
                 }

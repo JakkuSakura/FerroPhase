@@ -67,70 +67,65 @@ mir::Program {
                 bb0:
                     s0: _0 = aggregate(tuple; [copy _1])
                     terminator: return
-        body4 { arg_count: 0, locals: 23 }
+        body4 { arg_count: 0, locals: 16 }
             return_local: _0
             locals:
                 _0: ()
-                _1: i32
+                _1: ()
                 _2: ()
                 _3: ()
                 _4: ()
-                _5: i32
+                _5: i64
                 _6: ()
                 _7: i64
-                _8: i32
+                _8: ()
                 _9: ()
                 _10: i64
-                _11: i32
+                _11: (i64)
                 _12: ()
-                _13: i32
-                _14: ()
-                _15: i64
-                _16: (i64)
-                _17: i32
-                _18: ()
-                _19: (i8)
-                _20: i64
-                _21: i32
-                _22: ()
+                _13: (i8)
+                _14: i64
+                _15: ()
             blocks:
                 bb0:
-                    terminator: call global printf("Generic operations:\n") -> _1 then bb1
+                    s0: intrinsic Println "Generic operations:
+" []
+                    s1: _1 = aggregate(tuple; [])
+                    terminator: call fn apply__mono_a7af9f593fdc4675_4(10, 20, fn add__mono_692e805f044e08ba_5) -> _2 then bb1
                 bb1:
-                    s0: _2 = aggregate(tuple; [])
-                    terminator: call fn apply__mono_a7af9f593fdc4675_4(10, 20, fn add__mono_692e805f044e08ba_5) -> _3 then bb2
+                    terminator: call fn apply__mono_d7ad91e83a08a980_4(1.5, 2.5, fn add__mono_692e805f044e08ba_5) -> _3 then bb2
                 bb2:
-                    terminator: call fn apply__mono_d7ad91e83a08a980_4(1.5, 2.5, fn add__mono_692e805f044e08ba_5) -> _4 then bb3
+                    s0: intrinsic Println "
+Conditional:
+" []
+                    s1: _4 = aggregate(tuple; [])
+                    terminator: call fn apply_if(true, 5, 3, fn add__spec0) -> _5 then bb3
                 bb3:
-                    terminator: call global printf("\nConditional:\n") -> _5 then bb4
+                    s0: intrinsic Println "%lld
+" [copy _5]
+                    s1: _6 = aggregate(tuple; [])
+                    terminator: call fn apply_if(false, 5, 3, fn add__spec0) -> _7 then bb4
                 bb4:
-                    s0: _6 = aggregate(tuple; [])
-                    terminator: call fn apply_if(true, 5, 3, fn add__spec0) -> _7 then bb5
+                    s0: intrinsic Println "%lld
+" [copy _7]
+                    s1: _8 = aggregate(tuple; [])
+                    s2: intrinsic Println "
+Closure factory:
+" []
+                    s3: _9 = aggregate(tuple; [])
+                    terminator: call fn make_adder(10) -> _11 then bb5
                 bb5:
-                    terminator: call global printf("%lld\n", copy _7) -> _8 then bb6
+                    terminator: call fn __closure0_call(copy _11, 5) -> _10 then bb6
                 bb6:
-                    s0: _9 = aggregate(tuple; [])
-                    terminator: call fn apply_if(false, 5, 3, fn add__spec0) -> _10 then bb7
+                    s0: intrinsic Println "add_10(5) = %lld
+" [copy _10]
+                    s1: _12 = aggregate(tuple; [])
+                    s2: _13 = aggregate(tuple; [0])
+                    terminator: call fn __closure1_call(copy _13, 7) -> _14 then bb7
                 bb7:
-                    terminator: call global printf("%lld\n", copy _10) -> _11 then bb8
-                bb8:
-                    s0: _12 = aggregate(tuple; [])
-                    terminator: call global printf("\nClosure factory:\n") -> _13 then bb9
-                bb9:
-                    s0: _14 = aggregate(tuple; [])
-                    terminator: call fn make_adder(10) -> _16 then bb10
-                bb10:
-                    terminator: call fn __closure0_call(copy _16, 5) -> _15 then bb11
-                bb11:
-                    terminator: call global printf("add_10(5) = %lld\n", copy _15) -> _17 then bb12
-                bb12:
-                    s0: _18 = aggregate(tuple; [])
-                    s1: _19 = aggregate(tuple; [0])
-                    terminator: call fn __closure1_call(copy _19, 7) -> _20 then bb13
-                bb13:
-                    terminator: call global printf("double(7) = %lld\n", copy _20) -> _21 then bb14
-                bb14:
-                    s0: _22 = aggregate(tuple; [])
+                    s0: intrinsic Println "double(7) = %lld
+" [copy _14]
+                    s1: _15 = aggregate(tuple; [])
                     terminator: return
         body5 { arg_count: 2, locals: 3 }
             return_local: _0
@@ -142,7 +137,7 @@ mir::Program {
                 bb0:
                     s0: _0 = Add(copy _1, copy _2)
                     terminator: return
-        body6 { arg_count: 3, locals: 7 }
+        body6 { arg_count: 3, locals: 6 }
             return_local: _0
             locals:
                 _0: ()
@@ -150,17 +145,16 @@ mir::Program {
                 _2: i64
                 _3: <??>
                 _4: i64
-                _5: i32
-                _6: ()
+                _5: ()
             blocks:
                 bb0:
                     terminator: call copy _3(copy _1, copy _2) -> _4 then bb1
                 bb1:
-                    terminator: call global printf("%lld\n", copy _4) -> _5 then bb2
-                bb2:
-                    s0: _6 = aggregate(tuple; [])
+                    s0: intrinsic Println "%lld
+" [copy _4]
+                    s1: _5 = aggregate(tuple; [])
                     terminator: return
-        body7 { arg_count: 3, locals: 7 }
+        body7 { arg_count: 3, locals: 6 }
             return_local: _0
             locals:
                 _0: ()
@@ -168,15 +162,14 @@ mir::Program {
                 _2: f64
                 _3: <??>
                 _4: f64
-                _5: i32
-                _6: ()
+                _5: ()
             blocks:
                 bb0:
                     terminator: call copy _3(copy _1, copy _2) -> _4 then bb1
                 bb1:
-                    terminator: call global printf("%f\n", copy _4) -> _5 then bb2
-                bb2:
-                    s0: _6 = aggregate(tuple; [])
+                    s0: intrinsic Println "%f
+" [copy _4]
+                    s1: _5 = aggregate(tuple; [])
                     terminator: return
         body8 { arg_count: 2, locals: 3 }
             return_local: _0

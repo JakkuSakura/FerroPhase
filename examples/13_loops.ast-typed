@@ -64,7 +64,7 @@ ast::File {
                         lhs:
                           locator sum : i64
                         rhs:
-                          locator i : unknown
+                          locator i : i64
         expr_stmt (value)
           locator sum : i64
     pub fn find_first_divisor(n: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
@@ -262,9 +262,9 @@ ast::File {
                             cond:
                               binop == : bool
                                 lhs:
-                                  locator i : unknown
+                                  locator i : i64
                                 rhs:
-                                  locator j : unknown
+                                  locator j : i64
                             then:
                               block (1 stmt) : ()
                                 expr_stmt ;

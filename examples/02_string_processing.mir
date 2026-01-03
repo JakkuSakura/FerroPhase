@@ -2,52 +2,100 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 19 }
+        body0 { arg_count: 0, locals: 32 }
             return_local: _0
             locals:
                 _0: ()
                 _1: <??>
                 _2: usize
-                _3: i32
-                _4: ()
-                _5: <??>
-                _6: usize
-                _7: i32
-                _8: ()
+                _3: ()
+                _4: <??>
+                _5: usize
+                _6: ()
+                _7: bool
+                _8: bool
                 _9: bool
-                _10: bool
-                _11: i32
-                _12: ()
-                _13: <??>
-                _14: i32
+                _10: ()
+                _11: <??>
+                _12: <??>
+                _13: ()
+                _14: ()
                 _15: ()
-                _16: usize
-                _17: i32
-                _18: ()
+                _16: i64
+                _17: bool
+                _18: <??>
+                _19: i64
+                _20: <??>
+                _21: i64
+                _22: ()
+                _23: usize
+                _24: ()
+                _25: bool
+                _26: bool
+                _27: ()
+                _28: <??>
+                _29: ()
+                _30: usize
+                _31: ()
             blocks:
                 bb0:
                     s0: _1 = "FerroPhase"
                     s1: _2 = 10u
-                    terminator: call global printf("name='%s' len=%llu\n", copy _1, copy _2) -> _3 then bb1
+                    s2: intrinsic Println "name='%s' len=%llu
+" [copy _1, copy _2]
+                    s3: _3 = aggregate(tuple; [])
+                    s4: _4 = "0.1.0"
+                    s5: _5 = 5u
+                    s6: intrinsic Println "version='%s' len=%llu
+" [copy _4, copy _5]
+                    s7: _6 = aggregate(tuple; [])
+                    s8: _7 = true
+                    s9: _8 = true
+                    s10: _9 = true
+                    s11: intrinsic Println "prefix_ok=%d, suffix_ok=%d, contains_phase=%d
+" [copy _7, copy _8, copy _9]
+                    s12: _10 = aggregate(tuple; [])
+                    s13: _11 = "Ferro"
+                    s14: _12 = "Phase"
+                    s15: intrinsic Println "slices: short='%s' tail='%s'
+" [copy _11, copy _12]
+                    s16: _13 = aggregate(tuple; [])
+                    s17: intrinsic Println "words:
+" []
+                    s18: _14 = aggregate(tuple; [])
+                    s19: _16 = 0
+                    terminator: goto -> bb1
                 bb1:
-                    s0: _4 = aggregate(tuple; [])
-                    s1: _5 = "0.1.0"
-                    s2: _6 = 5u
-                    terminator: call global printf("version='%s' len=%llu\n", copy _5, copy _6) -> _7 then bb2
+                    s0: _17 = Lt(copy _16, 4)
+                    terminator: switch copy _17 [1 -> bb2] otherwise -> bb3
                 bb2:
-                    s0: _8 = aggregate(tuple; [])
-                    s1: _9 = false
-                    s2: _10 = true
-                    terminator: call global printf("empty=%d, long=%d\n", copy _9, copy _10) -> _11 then bb3
+                    s0: _18 = aggregate(array [<??>]; ["alpha", "beta", "gamma", "delta"])
+                    s1: _19 = copy _16
+                    s2: _20 = aggregate(array [usize]; [5u, 4u, 5u, 5u])
+                    s3: _21 = copy _16
+                    s4: intrinsic Println "  %s -> len=%llu
+" [copy _18[Index(19)], copy _20[Index(21)]]
+                    s5: _22 = aggregate(tuple; [])
+                    s6: _16 = Add(copy _16, 1)
+                    terminator: goto -> bb1
                 bb3:
-                    s0: _12 = aggregate(tuple; [])
-                    s1: _13 = "FerroPhase v0.1.0"
-                    terminator: call global printf("banner='%s'\n", copy _13) -> _14 then bb4
-                bb4:
                     s0: _15 = aggregate(tuple; [])
-                    s1: _16 = 256u
-                    terminator: call global printf("buffer_size=%llu\n", copy _16) -> _17 then bb5
-                bb5:
-                    s0: _18 = aggregate(tuple; [])
+                    s1: _23 = 19u
+                    s2: intrinsic Println "total word length=%llu
+" [copy _23]
+                    s3: _24 = aggregate(tuple; [])
+                    s4: _25 = false
+                    s5: _26 = true
+                    s6: intrinsic Println "empty=%d, long=%d
+" [copy _25, copy _26]
+                    s7: _27 = aggregate(tuple; [])
+                    s8: _28 = "FerroPhase v0.1.0"
+                    s9: intrinsic Println "banner='%s'
+" [copy _28]
+                    s10: _29 = aggregate(tuple; [])
+                    s11: _30 = 256u
+                    s12: intrinsic Println "buffer_size=%llu
+" [copy _30]
+                    s13: _31 = aggregate(tuple; [])
                     terminator: return
 }

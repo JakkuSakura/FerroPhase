@@ -32,28 +32,28 @@ ast::File {
             template: "=== Struct Introspection ==="
         expr_stmt ;
           intrinsic println : ()
-            template: "Point size: {} bytes" <expr>
+            template: "Point size: {} bytes" 16
         expr_stmt ;
           intrinsic println : ()
-            template: "Color size: {} bytes" <expr>
+            template: "Color size: {} bytes" 24
         expr_stmt ;
           intrinsic println : ()
-            template: "Point fields: {}" <expr>
+            template: "Point fields: {}" 2
         expr_stmt ;
           intrinsic println : ()
-            template: "Color fields: {}" <expr>
+            template: "Color fields: {}" 3
         expr_stmt ;
           intrinsic println : ()
-            template: "Point has x: {}" <expr>
+            template: "Point has x: {}" true
         expr_stmt ;
           intrinsic println : ()
-            template: "Point has z: {}" <expr>
+            template: "Point has z: {}" false
         expr_stmt ;
           intrinsic println : ()
-            template: "Point methods: {}" <expr>
+            template: "Point methods: {}" 0
         expr_stmt ;
           intrinsic println : ()
-            template: "Color methods: {}" <expr>
+            template: "Color methods: {}" 0
         expr_stmt ;
           intrinsic println : ()
             template: "

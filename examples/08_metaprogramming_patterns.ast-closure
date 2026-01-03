@@ -1,41 +1,69 @@
 ast::File {
   items:
+    pub struct Point3D : Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64)} {
+      x: Expr(i64)
+      y: Expr(i64)
+      z: Expr(i64)
+    }
+    pub type LabeledPoint = Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)} : Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)}
+    pub const _GENERATED: () : ()
+      value () : ()
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (10 stmts) : ()
-        pub const FIELD_COUNT: u64 : u64
-          value 3 : u64
-        pub const TYPE_NAME: &string : &string
-          value "Point3D" : &string
-        pub struct Point3D : Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64)} {
-          x: Expr(i64)
-          y: Expr(i64)
-          z: Expr(i64)
-        }
-        impl Point3D : () {
-          pub fn type_name() -> &''static Expr(str) : fn() -> &string : fn() -> &string
-            block (1 stmt) : &string
-              expr_stmt (value)
-                locator TYPE_NAME : &string
-          pub fn field_count() -> Expr(usize) : fn() -> u64 : fn() -> u64
-            block (1 stmt) : u64
-              expr_stmt (value)
-                locator FIELD_COUNT : u64
-        }
+      block (13 stmts) : ()
+        pub const FIELD_COUNT: i64 : i64
+          value 3 : i64
+        pub const POINT_NAME: &string : &string
+          value "struct Point3D" : &string
+        pub const SIZE: i64 : i64
+          value 24 : i64
+        pub const FIELDS: Vec<structural{name: any, type_name: any}> : Vec<structural{name: any, type_name: any}>
+          value [3 values] : Vec<structural{name: any, type_name: any}>
+        pub const X_TYPE: &string : &string
+          value "i64
+" : &string
         expr_stmt ;
           intrinsic println : ()
-            template: "{} has {} fields" Point3D::type_name(), Point3D::field_count()
-        pub const VARIANT_A: u8 : u8
-          value 1 : u8
-        pub const VARIANT_B: u8 : u8
-          value 2 : u8
-        pub enum Tag : Tag [A: () | B: ()] {
-          A: () = (VARIANT_A) as Expr(isize)
-          B: () = (VARIANT_B) as Expr(isize)
-        }
-        let tag
+            template: "{} has {} fields (size={})" POINT_NAME, FIELD_COUNT, SIZE
+        expr_stmt ;
+          intrinsic println : ()
+            template: "x type: {}" X_TYPE
+        expr_stmt ;
+          intrinsic println : ()
+            template: "fields:"
+        expr_stmt (value)
+          for : ()
+            iter:
+              invoke : Vec<structural{name: any, type_name: any}>
+                target: FIELDS.iter
+            body:
+              block (1 stmt) : ()
+                expr_stmt ;
+                  intrinsic println : ()
+                    template: "  {}: {}" field.name, field.type_name
+        let p
           init:
-            locator Tag::A : Tag [A: () | B: ()]
+            struct Point3D : Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64)}
+              x:
+                value 1 : i64
+              y:
+                value 2 : i64
+              z:
+                value 3 : i64
         expr_stmt ;
           intrinsic println : ()
-            template: "tag discriminant: {}" (tag) as u8
+            template: "point=({}, {}, {})" p.x, p.y, p.z
+        let lp
+          init:
+            struct LabeledPoint : Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)}
+              x:
+                value 4 : i64
+              y:
+                value 5 : i64
+              z:
+                value 6 : i64
+              label:
+                value "origin" : &string
+        expr_stmt ;
+          intrinsic println : ()
+            template: "labeled=({}, {}, {}, {})" lp.x, lp.y, lp.z, lp.label
 }

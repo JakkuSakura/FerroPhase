@@ -1,4 +1,9 @@
 hir::Program {
+    pub struct Pair<T> {
+        pub left: T,
+        pub right: T,
+    }
+
     pub fn add<T>(a: T, b: T) -> T {
         // params: [a: T, b: T]
         {
@@ -22,10 +27,32 @@ hir::Program {
         }
     }
 
+    pub fn sum_pair<T>(pair: Pair<T>) -> T {
+        // params: [pair: Pair<T>]
+        {
+            (pair.left + pair.right)
+        }
+    }
+
+    pub fn max<T>(a: T, b: T) -> T {
+        // params: [a: T, b: T]
+        {
+            let result = <control-flow>;
+            std::Println(3 args);
+            result
+        }
+    }
+
     pub fn main() -> () {
         {
             let _ = pipeline(10, 20);
             let _ = pipeline(1.5, 2.5);
+            let pair_i = Pair { left: 3, right: 7 };
+            let pair_f = Pair { left: 1.25, right: 2.75 };
+            std::Println(1 args);
+            std::Println(1 args);
+            let _ = max(10, 3);
+            let _ = max(2.5, 9);
         }
     }
 }
