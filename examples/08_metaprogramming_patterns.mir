@@ -6,17 +6,19 @@ mir::Program {
 
         fn Point3D::field_count() -> usize [body: body2]
     bodies:
-        body0 { arg_count: 0, locals: 8 }
+        body0 { arg_count: 0, locals: 10 }
             return_local: _0
             locals:
                 _0: ()
                 _1: <??>
                 _2: usize
                 _3: i32
-                _4: isize
+                _4: ()
                 _5: isize
-                _6: u8
-                _7: i32
+                _6: isize
+                _7: u8
+                _8: i32
+                _9: ()
             blocks:
                 bb0:
                     terminator: call fn Point3D::type_name() -> _1 then bb1
@@ -25,11 +27,13 @@ mir::Program {
                 bb2:
                     terminator: call global printf("%s has %llu fields\n", copy _1, copy _2) -> _3 then bb3
                 bb3:
-                    s0: _5 = aggregate(tuple; [1])
-                    s1: _4 = copy _5
-                    s2: _6 = cast(Misc, copy _4, u8)
-                    terminator: call global printf("tag discriminant: %hhu\n", copy _6) -> _7 then bb4
+                    s0: _4 = aggregate(tuple; [])
+                    s1: _6 = aggregate(tuple; [1])
+                    s2: _5 = copy _6
+                    s3: _7 = cast(Misc, copy _5, u8)
+                    terminator: call global printf("tag discriminant: %hhu\n", copy _7) -> _8 then bb4
                 bb4:
+                    s0: _9 = aggregate(tuple; [])
                     terminator: return
         body1 { arg_count: 0, locals: 1 }
             return_local: _0

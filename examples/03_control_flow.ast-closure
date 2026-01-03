@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (13 stmts) : ()
         pub const TEMP: i64 : i64
@@ -8,13 +7,8 @@ ast::File {
         pub const WEATHER: &string : &string
           value "warm" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld°C is %s
-" : &string
-              locator TEMP : i64
-              locator WEATHER : &string
+          intrinsic println : ()
+            template: "{}°C is {}" TEMP, WEATHER
         pub const IS_SUNNY: bool : bool
           value true : bool
         pub const IS_WARM: bool : bool
@@ -22,24 +16,15 @@ ast::File {
         pub const ACTIVITY: &string : &string
           value "outdoor" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Suggested: %s
-" : &string
-              locator ACTIVITY : &string
+          intrinsic println : ()
+            template: "Suggested: {}" ACTIVITY
         pub const SCORE: i64 : i64
           value 85 : i64
         pub const GRADE: &string : &string
           value "B" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Score %lld = grade %s
-" : &string
-              locator SCORE : i64
-              locator GRADE : &string
+          intrinsic println : ()
+            template: "Score {} = grade {}" SCORE, GRADE
         let value
           init:
             value 42 : i64
@@ -73,11 +58,6 @@ ast::File {
                       expr_stmt (value)
                         value "low" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Value %lld is %s
-" : &string
-              locator value : i64
-              locator category : &string
+          intrinsic println : ()
+            template: "Value {} is {}" value, category
 }

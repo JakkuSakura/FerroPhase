@@ -9,24 +9,19 @@ hir::Program {
                 10;
             pub const VERSION_LEN: usize =
                 5;
-            printf("name='%s' len=%llu
-", NAME, NAME_LEN);
-            printf("version='%s' len=%llu
-", VERSION, VERSION_LEN);
+            std::Println(2 args);
+            std::Println(2 args);
             pub const IS_EMPTY: bool =
                 false;
             pub const IS_LONG: bool =
                 true;
-            printf("empty=%d, long=%d
-", IS_EMPTY, IS_LONG);
+            std::Println(2 args);
             pub const BANNER: &str =
                 "FerroPhase v0.1.0";
-            printf("banner='%s'
-", BANNER);
+            std::Println(1 args);
             pub const BUFFER_SIZE: usize =
                 256;
-            printf("buffer_size=%llu
-", BUFFER_SIZE);
+            std::Println(1 args);
         }
     }
 }

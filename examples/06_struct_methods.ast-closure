@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub struct Point : Point{x: Expr(i64), y: Expr(i64)} {
       x: Expr(i64)
       y: Expr(i64)
@@ -140,11 +139,8 @@ ast::File {
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (13 stmts) : ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "=== Struct Operations ===
-" : &string
+          intrinsic println : ()
+            template: "=== Struct Operations ==="
         let mut p1
           init:
             invoke : Point{x: Expr(i64), y: Expr(i64)}
@@ -160,29 +156,11 @@ ast::File {
                 value 5 : i64
                 value 15 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "p1 = (%lld, %lld)
-" : &string
-              select .x [field] : i64
-                object:
-                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
-              select .y [field] : i64
-                object:
-                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
+          intrinsic println : ()
+            template: "p1 = ({}, {})" p1.x, p1.y
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "p2 = (%lld, %lld)
-" : &string
-              select .x [field] : i64
-                object:
-                  locator p2 : Point{x: Expr(i64), y: Expr(i64)}
-              select .y [field] : i64
-                object:
-                  locator p2 : Point{x: Expr(i64), y: Expr(i64)}
+          intrinsic println : ()
+            template: "p2 = ({}, {})" p2.x, p2.y
         expr_stmt ;
           invoke : ()
             target: p1.translate
@@ -192,28 +170,11 @@ ast::File {
                 value:
                   value 4 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "p1 after translate = (%lld, %lld)
-" : &string
-              select .x [field] : i64
-                object:
-                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
-              select .y [field] : i64
-                object:
-                  locator p1 : Point{x: Expr(i64), y: Expr(i64)}
+          intrinsic println : ()
+            template: "p1 after translate = ({}, {})" p1.x, p1.y
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Distance²(p1, p2) = %lld
-" : &string
-              invoke : i64
-                target: p1.distance2
-                args:
-                  reference (mutable: const) : &Point{x: Expr(i64), y: Expr(i64)}
-                    locator p2 : Point{x: Expr(i64), y: Expr(i64)}
+          intrinsic println : ()
+            template: "Distance²(p1, p2) = {}" p1.distance2(<expr>)
         let rect
           init:
             invoke : Rectangle{width: Expr(i64), height: Expr(i64)}
@@ -222,39 +183,15 @@ ast::File {
                 value 10 : i64
                 value 5 : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Rectangle: %lld×%lld
-" : &string
-              select .width [field] : i64
-                object:
-                  locator rect : Rectangle{width: Expr(i64), height: Expr(i64)}
-              select .height [field] : i64
-                object:
-                  locator rect : Rectangle{width: Expr(i64), height: Expr(i64)}
+          intrinsic println : ()
+            template: "Rectangle: {}×{}" rect.width, rect.height
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  area = %lld
-" : &string
-              invoke : i64
-                target: rect.area
+          intrinsic println : ()
+            template: "  area = {}" rect.area()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  perimeter = %lld
-" : &string
-              invoke : i64
-                target: rect.perimeter
+          intrinsic println : ()
+            template: "  perimeter = {}" rect.perimeter()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "  is_square = %d
-" : &string
-              invoke : bool
-                target: rect.is_square
+          intrinsic println : ()
+            template: "  is_square = {}" rect.is_square()
 }

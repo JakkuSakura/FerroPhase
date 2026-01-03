@@ -10,14 +10,8 @@ target triple = "arm64-apple-darwin25.0.0"
 
 define i32 @main() {
 bb0:
-  %alloca_58 = alloca i64, align 8
-  %alloca_count_58 = alloca i64, align 8
-  %alloca_54 = alloca i64, align 8
-  %alloca_count_54 = alloca i64, align 8
   %alloca_49 = alloca i64, align 8
   %alloca_count_49 = alloca i64, align 8
-  %alloca_47 = alloca i64, align 8
-  %alloca_count_47 = alloca i64, align 8
   %alloca_45 = alloca i64, align 8
   %alloca_count_45 = alloca i64, align 8
   %alloca_40 = alloca i64, align 8
@@ -81,21 +75,15 @@ bb2:                                              ; preds = %bb1
   %load_42 = load i64, ptr %alloca_count_38, align 8
   %iop_43 = mul i64 %load_41, %load_42
   store i64 %iop_43, ptr %alloca_count_40, align 8
-  store i64 4096, ptr %alloca_count_45, align 8
-  store i64 150, ptr %alloca_count_47, align 8
+  %load_46 = load i64, ptr %alloca_count_30, align 8
+  %iop_47 = mul i64 %load_46, 0
+  store i64 %iop_47, ptr %alloca_count_45, align 8
   %load_50 = load i64, ptr %alloca_count_45, align 8
-  %load_51 = load i64, ptr %alloca_count_47, align 8
-  %iop_52 = mul i64 %load_50, %load_51
-  store i64 %iop_52, ptr %alloca_count_49, align 8
-  %load_55 = load i64, ptr %alloca_count_30, align 8
-  %iop_56 = mul i64 %load_55, 0
-  store i64 %iop_56, ptr %alloca_count_54, align 8
-  %load_59 = load i64, ptr %alloca_count_54, align 8
-  store i64 %load_59, ptr %alloca_count_58, align 8
-  %load_61 = load i64, ptr %alloca_count_32, align 8
-  %load_62 = load ptr, ptr %alloca_count_34, align 8
-  %load_63 = load i64, ptr %alloca_count_58, align 8
-  %call_64 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.3, i64 %load_61, ptr %load_62, i64 %load_63)
+  store i64 %load_50, ptr %alloca_count_49, align 8
+  %load_52 = load i64, ptr %alloca_count_32, align 8
+  %load_53 = load ptr, ptr %alloca_count_34, align 8
+  %load_54 = load i64, ptr %alloca_count_49, align 8
+  %call_55 = call i32 (ptr, ...) @printf(ptr @.str.01_const_eval_basics.3, i64 %load_52, ptr %load_53, i64 %load_54)
   br label %bb3
 
 bb3:                                              ; preds = %bb2

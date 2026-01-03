@@ -6,16 +6,21 @@ lir::Program {
                 %1: ptr i8
                 %2: i64
                 %3: i32
-                %4: ptr i8
-                %5: i64
-                %6: i32
-                %7: i1
-                %8: i1
-                %9: i32
-                %10: ptr i8
+                %4: void
+                %5: ptr i8
+                %6: i64
+                %7: i32
+                %8: void
+                %9: i1
+                %10: i1
                 %11: i32
-                %12: i64
-                %13: i32
+                %12: void
+                %13: ptr i8
+                %14: i32
+                %15: void
+                %16: i64
+                %17: i32
+                %18: void
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
                 i1: store c"FerroPhase", %r0 align 8

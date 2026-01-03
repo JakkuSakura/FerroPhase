@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (13 stmts) : ()
         pub const NAME: &string : &string
@@ -12,49 +11,26 @@ ast::File {
         pub const VERSION_LEN: u64 : u64
           value 5 : u64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "name='%s' len=%llu
-" : &string
-              locator NAME : &string
-              locator NAME_LEN : u64
+          intrinsic println : ()
+            template: "name='{}' len={}" NAME, NAME_LEN
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "version='%s' len=%llu
-" : &string
-              locator VERSION : &string
-              locator VERSION_LEN : u64
+          intrinsic println : ()
+            template: "version='{}' len={}" VERSION, VERSION_LEN
         pub const IS_EMPTY: bool : bool
           value false : bool
         pub const IS_LONG: bool : bool
           value true : bool
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "empty=%d, long=%d
-" : &string
-              locator IS_EMPTY : bool
-              locator IS_LONG : bool
+          intrinsic println : ()
+            template: "empty={}, long={}" IS_EMPTY, IS_LONG
         pub const BANNER: &string : &string
           value "FerroPhase v0.1.0" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "banner='%s'
-" : &string
-              locator BANNER : &string
+          intrinsic println : ()
+            template: "banner='{}'" BANNER
         pub const BUFFER_SIZE: u64 : u64
           value 256 : u64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "buffer_size=%llu
-" : &string
-              locator BUFFER_SIZE : u64
+          intrinsic println : ()
+            template: "buffer_size={}" BUFFER_SIZE
 }

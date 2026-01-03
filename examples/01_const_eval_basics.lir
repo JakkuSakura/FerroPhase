@@ -8,22 +8,22 @@ lir::Program {
                 %3: i64
                 %4: i1
                 %5: i32
-                %6: i64
-                %7: { i64, i64 }
+                %6: void
+                %7: i64
                 %8: { i64, i64 }
-                %9: i32
-                %10: i64
-                %11: i64
-                %12: ptr i8
+                %9: { i64, i64 }
+                %10: i32
+                %11: void
+                %12: i64
                 %13: i64
-                %14: i64
+                %14: ptr i8
                 %15: i64
                 %16: i64
                 %17: i64
                 %18: i64
                 %19: i64
-                %20: i64
-                %21: i32
+                %20: i32
+                %21: void
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = alloca i32 1 align 8 : ptr i64
                 i1: store i64 4096, %r0 align 8
@@ -77,26 +77,17 @@ lir::Program {
                 i43: %r43 = mul %r41, %r42 : i64
                 i44: store %r43, %r40 align 8
                 i45: %r45 = alloca i32 1 align 8 : ptr i64
-                i46: store i64 4096, %r45 align 8
-                i47: %r47 = alloca i32 1 align 8 : ptr i64
-                i48: store i64 150, %r47 align 8
+                i46: %r46 = load %r30 align 8 : i64
+                i47: %r47 = mul %r46, i64 0 : i64
+                i48: store %r47, %r45 align 8
                 i49: %r49 = alloca i32 1 align 8 : ptr i64
                 i50: %r50 = load %r45 align 8 : i64
-                i51: %r51 = load %r47 align 8 : i64
-                i52: %r52 = mul %r50, %r51 : i64
-                i53: store %r52, %r49 align 8
-                i54: %r54 = alloca i32 1 align 8 : ptr i64
-                i55: %r55 = load %r30 align 8 : i64
-                i56: %r56 = mul %r55, i64 0 : i64
-                i57: store %r56, %r54 align 8
-                i58: %r58 = alloca i32 1 align 8 : ptr i64
-                i59: %r59 = load %r54 align 8 : i64
-                i60: store %r59, %r58 align 8
-                i61: %r61 = load %r32 align 8 : i64
-                i62: %r62 = load %r34 align 8 : ptr i8
-                i63: %r63 = load %r58 align 8 : i64
-                i64: %r64 = call c @printf(c"Const blocks: size=%lld, strategy=%s, memory=%lld
-", %r61, %r62, %r63) : i32
+                i51: store %r50, %r49 align 8
+                i52: %r52 = load %r32 align 8 : i64
+                i53: %r53 = load %r34 align 8 : ptr i8
+                i54: %r54 = load %r49 align 8 : i64
+                i55: %r55 = call c @printf(c"Const blocks: size=%lld, strategy=%s, memory=%lld
+", %r52, %r53, %r54) : i32
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2]:
                 terminator: ret void

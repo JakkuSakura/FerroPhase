@@ -4,10 +4,14 @@ target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:
 target triple = "arm64-apple-darwin25.0.0"
 
 @.str.05_struct_generation.0 = private unnamed_addr constant [16 x i8] c"x=%lld, y=%lld\0A\00", align 1
-@.str.05_struct_generation.1 = private unnamed_addr constant [18 x i8] c"array size: %lld\0A\00", align 1
+@.str.05_struct_generation.1 = private unnamed_addr constant [18 x i8] c"array size: %llu\0A\00", align 1
 
 define i32 @main() {
 bb0:
+  %alloca_15 = alloca i64, align 8
+  %alloca_count_15 = alloca i64, align 8
+  %alloca_13 = alloca [256 x i64], align 8
+  %alloca_count_13 = alloca [256 x i64], align 8
   %alloca_11 = alloca [256 x i64], align 8
   %alloca_count_11 = alloca [256 x i64], align 8
   %alloca_2 = alloca { i64, i64 }, align 8
@@ -24,7 +28,10 @@ bb0:
 
 bb1:                                              ; preds = %bb0
   store [256 x i64] zeroinitializer, ptr %alloca_count_11, align 8
-  %call_13 = call i32 (ptr, ...) @printf(ptr @.str.05_struct_generation.1, i64 256)
+  store [256 x i64] zeroinitializer, ptr %alloca_count_13, align 8
+  store i64 256, ptr %alloca_count_15, align 8
+  %load_17 = load i64, ptr %alloca_count_15, align 8
+  %call_18 = call i32 (ptr, ...) @printf(ptr @.str.05_struct_generation.1, i64 %load_17)
   br label %bb2
 
 bb2:                                              ; preds = %bb1

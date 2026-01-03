@@ -11,22 +11,22 @@ mir::Program {
                 _3: i64
                 _4: bool
                 _5: i32
-                _6: i64
-                _7: (i64, i64)
+                _6: ()
+                _7: i64
                 _8: (i64, i64)
-                _9: i32
-                _10: i64
-                _11: i64
-                _12: <??>
+                _9: (i64, i64)
+                _10: i32
+                _11: ()
+                _12: i64
                 _13: i64
-                _14: i64
+                _14: <??>
                 _15: i64
                 _16: i64
                 _17: i64
                 _18: i64
                 _19: i64
-                _20: i64
-                _21: i32
+                _20: i32
+                _21: ()
             blocks:
                 bb0:
                     s0: _2 = 4096
@@ -35,23 +35,23 @@ mir::Program {
                     s3: _4 = true
                     terminator: call global printf("Buffer: %lldKB, factorial(5)=%lld, large=%d\n", copy _1, copy _3, copy _4) -> _5 then bb1
                 bb1:
-                    s0: _7 = aggregate(tuple; [4096, 150])
-                    s1: _6 = Div(copy _7[Field(0, Ty { kind: Int(I64) })], 1024)
-                    s2: _8 = aggregate(tuple; [4096, 150])
-                    terminator: call global printf("Config: %lldKB buffer, %lld connections\n", copy _6, copy _8[Field(1, Ty { kind: Int(I64) })]) -> _9 then bb2
+                    s0: _6 = aggregate(tuple; [])
+                    s1: _8 = aggregate(tuple; [4096, 150])
+                    s2: _7 = Div(copy _8[Field(0, Ty { kind: Int(I64) })], 1024)
+                    s3: _9 = aggregate(tuple; [4096, 150])
+                    terminator: call global printf("Config: %lldKB buffer, %lld connections\n", copy _7, copy _9[Field(1, Ty { kind: Int(I64) })]) -> _10 then bb2
                 bb2:
-                    s0: _10 = 3
-                    s1: _11 = 8192
-                    s2: _12 = "large"
-                    s3: _17 = 4096
-                    s4: _18 = 150
-                    s5: _16 = Mul(copy _17, copy _18)
-                    s6: _19 = 4096
-                    s7: _20 = 150
-                    s8: _15 = Mul(copy _19, copy _20)
-                    s9: _14 = Mul(copy _10, 0)
-                    s10: _13 = copy _14
-                    terminator: call global printf("Const blocks: size=%lld, strategy=%s, memory=%lld\n", copy _11, copy _12, copy _13) -> _21 then bb3
+                    s0: _11 = aggregate(tuple; [])
+                    s1: _12 = 3
+                    s2: _13 = 8192
+                    s3: _14 = "large"
+                    s4: _18 = 4096
+                    s5: _19 = 150
+                    s6: _17 = Mul(copy _18, copy _19)
+                    s7: _16 = Mul(copy _12, 0)
+                    s8: _15 = copy _16
+                    terminator: call global printf("Const blocks: size=%lld, strategy=%s, memory=%lld\n", copy _13, copy _14, copy _15) -> _20 then bb3
                 bb3:
+                    s0: _21 = aggregate(tuple; [])
                     terminator: return
 }

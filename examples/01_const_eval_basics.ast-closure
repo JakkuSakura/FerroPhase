@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (13 stmts) : ()
         pub const BUFFER_SIZE: i64 : i64
@@ -12,18 +11,8 @@ ast::File {
         pub const IS_LARGE: bool : bool
           value true : bool
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Buffer: %lldKB, factorial(5)=%lld, large=%d
-" : &string
-              binop / : i64
-                lhs:
-                  locator BUFFER_SIZE : i64
-                rhs:
-                  value 1024 : i64
-              locator FACTORIAL_5 : i64
-              locator IS_LARGE : bool
+          intrinsic println : ()
+            template: "Buffer: {}KB, factorial(5)={}, large={}" (BUFFER_SIZE / 1024), FACTORIAL_5, IS_LARGE
         pub struct Config : Config{buffer_size: Expr(i64), max_connections: Expr(i64)} {
           buffer_size: Expr(i64)
           max_connections: Expr(i64)
@@ -31,21 +20,8 @@ ast::File {
         pub const DEFAULT_CONFIG: Config{buffer_size: Expr(i64), max_connections: Expr(i64)} : Config{buffer_size: Expr(i64), max_connections: Expr(i64)}
           value Config { 2 fields } : Config{buffer_size: Expr(i64), max_connections: Expr(i64)}
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Config: %lldKB buffer, %lld connections
-" : &string
-              binop / : i64
-                lhs:
-                  select .buffer_size [field] : i64
-                    object:
-                      locator DEFAULT_CONFIG : Config{buffer_size: Expr(i64), max_connections: Expr(i64)}
-                rhs:
-                  value 1024 : i64
-              select .max_connections [field] : i64
-                object:
-                  locator DEFAULT_CONFIG : Config{buffer_size: Expr(i64), max_connections: Expr(i64)}
+          intrinsic println : ()
+            template: "Config: {}KB buffer, {} connections" (DEFAULT_CONFIG.buffer_size / 1024), DEFAULT_CONFIG.max_connections
         let runtime_multiplier
           init:
             value 3 : i64
@@ -71,12 +47,6 @@ ast::File {
                           rhs:
                             locator MAX_CONNECTIONS : i64
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Const blocks: size=%lld, strategy=%s, memory=%lld
-" : &string
-              locator optimized_size : i64
-              locator cache_strategy : &string
-              locator total_memory : i64
+          intrinsic println : ()
+            template: "Const blocks: size={}, strategy={}, memory={}" optimized_size, cache_strategy, total_memory
 }

@@ -20,7 +20,6 @@ ast::File {
           locator x : unknown
         rhs:
           value 2 : i64
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub import std::fmt::Display : ()
     pub import std::ops::Add : ()
     pub fn<T: Add<T
@@ -29,12 +28,8 @@ ast::File {
 > + Display>(unknown, unknown, fn(unknown, unknown) -> unknown) -> ()
       block (1 stmt) : ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "{}" op(a, b)
     pub fn<T: Add<T
 >> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
 >>(unknown, unknown) -> unknown : fn<T: Add<T
@@ -73,11 +68,8 @@ ast::File {
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (11 stmts) : ()
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "Generic operations:
-" : &string
+          intrinsic println : ()
+            template: "Generic operations:"
         expr_stmt ;
           invoke : ()
             target: apply
@@ -93,70 +85,32 @@ ast::File {
               value 2.5 : f64
               locator add : fn(unknown, unknown) -> unknown
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-Conditional:
-" : &string
+          intrinsic println : ()
+            template: "
+Conditional:"
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: apply_if
-                args:
-                  value true : bool
-                  value 5 : i64
-                  value 3 : i64
-                  locator add__spec0 : fn(i64, i64) -> i64
+          intrinsic println : ()
+            template: "{}" apply_if(true, 5, 3, add__spec0)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%lld
-" : &string
-              invoke : i64
-                target: apply_if
-                args:
-                  value false : bool
-                  value 5 : i64
-                  value 3 : i64
-                  locator add__spec0 : fn(i64, i64) -> i64
+          intrinsic println : ()
+            template: "{}" apply_if(false, 5, 3, add__spec0)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "
-Closure factory:
-" : &string
+          intrinsic println : ()
+            template: "
+Closure factory:"
         pub const add_10: any : any
           expr.any : any
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "add_10(5) = %s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "add_10(5) = {}" add_10(5)
         let double : __Closure1{__fp_no_capture: i8}
           init:
             struct __Closure1 : __Closure1{__fp_no_capture: i8}
               __fp_no_capture:
                 value 0 : i8
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "double(7) = %lld
-" : &string
-              invoke : i64
-                target: __closure1_call
-                args:
-                  locator double : __Closure1{__fp_no_capture: i8}
-                  value 7 : i64
+          intrinsic println : ()
+            template: "double(7) = {}" __closure1_call(double, 7)
     pub fn add__spec0(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
       block (1 stmt) : i64
         expr_stmt (value)

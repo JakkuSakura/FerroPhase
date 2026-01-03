@@ -5,26 +5,22 @@ hir::Program {
                 25;
             pub const WEATHER: &str =
                 "warm";
-            printf("%lld°C is %s
-", TEMP, WEATHER);
+            std::Println(2 args);
             pub const IS_SUNNY: bool =
                 true;
             pub const IS_WARM: bool =
                 true;
             pub const ACTIVITY: &str =
                 "outdoor";
-            printf("Suggested: %s
-", ACTIVITY);
+            std::Println(1 args);
             pub const SCORE: i64 =
                 85;
             pub const GRADE: &str =
                 "B";
-            printf("Score %lld = grade %s
-", SCORE, GRADE);
+            std::Println(2 args);
             let value = 42;
             let category = <control-flow>;
-            printf("Value %lld is %s
-", value, category);
+            std::Println(2 args);
         }
     }
 }

@@ -9,7 +9,6 @@ hir::Program {
             // params: [x: i64, y: i64]
             {
                 Self { x: x, y: y }
-                Self { x: x, y: y }
             }
         }
 
@@ -27,7 +26,6 @@ hir::Program {
                 let dx = (self.x - other.x);
                 let dy = (self.y - other.y);
                 ((dx * dx) + (dy * dy))
-                ((dx * dx) + (dy * dy))
             }
         }
     }
@@ -42,14 +40,12 @@ hir::Program {
             // params: [width: i64, height: i64]
             {
                 Self { width: width, height: height }
-                Self { width: width, height: height }
             }
         }
 
         fn area(self: &Rectangle) -> i64 {
             // params: [self: &Rectangle]
             {
-                (self.width * self.height)
                 (self.width * self.height)
             }
         }
@@ -58,7 +54,6 @@ hir::Program {
             // params: [self: &Rectangle]
             {
                 (2 * (self.width + self.height))
-                (2 * (self.width + self.height))
             }
         }
 
@@ -66,35 +61,25 @@ hir::Program {
             // params: [self: &Rectangle]
             {
                 (self.width == self.height)
-                (self.width == self.height)
             }
         }
     }
 
     pub fn main() -> () {
         {
-            printf("=== Struct Operations ===
-");
+            std::Println(0 args);
             let mut p1 = Point::new(10, 20);
             let p2 = Point::new(5, 15);
-            printf("p1 = (%lld, %lld)
-", p1.x, p1.y);
-            printf("p2 = (%lld, %lld)
-", p2.x, p2.y);
+            std::Println(2 args);
+            std::Println(2 args);
             p1.translate(3, (-4));
-            printf("p1 after translate = (%lld, %lld)
-", p1.x, p1.y);
-            printf("Distance²(p1, p2) = %lld
-", p1.distance2(p2));
+            std::Println(2 args);
+            std::Println(1 args);
             let rect = Rectangle::new(10, 5);
-            printf("Rectangle: %lld×%lld
-", rect.width, rect.height);
-            printf("  area = %lld
-", rect.area());
-            printf("  perimeter = %lld
-", rect.perimeter());
-            printf("  is_square = %d
-", rect.is_square());
+            std::Println(2 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
         }
     }
 }
