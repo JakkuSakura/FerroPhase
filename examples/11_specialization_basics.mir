@@ -1,66 +1,110 @@
 mir::Program {
     items:
-        fn add(arg0: <??>, arg1: <??>) -> <??> [body: body0]
+        fn main() -> () [body: body0]
 
-        fn double(arg0: <??>) -> <??> [body: body1]
+        fn add__mono_a7af9f593fdc4675_0(arg0: i64, arg1: i64) -> i64 [body: body2]
 
-        fn pipeline(arg0: <??>, arg1: <??>) -> <??> [body: body2]
+        fn double__mono_a7af9f593fdc4675_1(arg0: i64) -> i64 [body: body3]
 
-        fn main() -> () [body: body3]
+        fn pipeline__mono_a7af9f593fdc4675_2(arg0: i64, arg1: i64) -> i64 [body: body1]
+
+        fn add__mono_d7ad91e83a08a980_0(arg0: f64, arg1: f64) -> f64 [body: body5]
+
+        fn double__mono_d7ad91e83a08a980_1(arg0: f64) -> f64 [body: body6]
+
+        fn pipeline__mono_d7ad91e83a08a980_2(arg0: f64, arg1: f64) -> f64 [body: body4]
     bodies:
-        body0 { arg_count: 2, locals: 4 }
-            return_local: _0
-            locals:
-                _0: <??>
-                _1: <??>
-                _2: <??>
-                _3: <??>
-            blocks:
-                bb0:
-                    s0: _3 = Add(copy _1, copy _2)
-                    s1: _0 = Add(copy _1, copy _2)
-                    terminator: return
-        body1 { arg_count: 1, locals: 3 }
-            return_local: _0
-            locals:
-                _0: <??>
-                _1: <??>
-                _2: <??>
-            blocks:
-                bb0:
-                    s0: _2 = Add(copy _1, copy _1)
-                    s1: _0 = Add(copy _1, copy _1)
-                    terminator: return
-        body2 { arg_count: 2, locals: 6 }
-            return_local: _0
-            locals:
-                _0: <??>
-                _1: <??>
-                _2: <??>
-                _3: <??>
-                _4: <??>
-                _5: i32
-            blocks:
-                bb0:
-                    terminator: call fn add(copy _1, copy _2) -> _4 then bb1
-                bb1:
-                    terminator: call fn double(copy _4) -> _3 then bb2
-                bb2:
-                    terminator: call global printf("specialized result: %s\n", "<unknown>") -> _5 then bb3
-                bb3:
-                    s0: _0 = copy _3
-                    terminator: return
-        body3 { arg_count: 0, locals: 3 }
+        body0 { arg_count: 0, locals: 3 }
             return_local: _0
             locals:
                 _0: ()
-                _1: <??>
-                _2: <??>
+                _1: i64
+                _2: f64
             blocks:
                 bb0:
-                    terminator: call fn pipeline(10, 20) -> _1 then bb1
+                    terminator: call fn pipeline__mono_a7af9f593fdc4675_2(10, 20) -> _1 then bb1
                 bb1:
-                    terminator: call fn pipeline(1.5, 2.5) -> _2 then bb2
+                    terminator: call fn pipeline__mono_d7ad91e83a08a980_2(1.5, 2.5) -> _2 then bb2
                 bb2:
+                    terminator: return
+        body1 { arg_count: 2, locals: 7 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: i64
+                _5: i32
+                _6: ()
+            blocks:
+                bb0:
+                    terminator: call fn add__mono_a7af9f593fdc4675_0(copy _1, copy _2) -> _4 then bb1
+                bb1:
+                    terminator: call fn double__mono_a7af9f593fdc4675_1(copy _4) -> _3 then bb2
+                bb2:
+                    terminator: call global printf("specialized result: %lld\n", copy _3) -> _5 then bb3
+                bb3:
+                    s0: _6 = aggregate(tuple; [])
+                    s1: _0 = copy _3
+                    terminator: return
+        body2 { arg_count: 2, locals: 3 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: i64
+            blocks:
+                bb0:
+                    s0: _0 = Add(copy _1, copy _2)
+                    terminator: return
+        body3 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+            blocks:
+                bb0:
+                    s0: _0 = Add(copy _1, copy _1)
+                    terminator: return
+        body4 { arg_count: 2, locals: 7 }
+            return_local: _0
+            locals:
+                _0: f64
+                _1: f64
+                _2: f64
+                _3: f64
+                _4: f64
+                _5: i32
+                _6: ()
+            blocks:
+                bb0:
+                    terminator: call fn add__mono_d7ad91e83a08a980_0(copy _1, copy _2) -> _4 then bb1
+                bb1:
+                    terminator: call fn double__mono_d7ad91e83a08a980_1(copy _4) -> _3 then bb2
+                bb2:
+                    terminator: call global printf("specialized result: %f\n", copy _3) -> _5 then bb3
+                bb3:
+                    s0: _6 = aggregate(tuple; [])
+                    s1: _0 = copy _3
+                    terminator: return
+        body5 { arg_count: 2, locals: 3 }
+            return_local: _0
+            locals:
+                _0: f64
+                _1: f64
+                _2: f64
+            blocks:
+                bb0:
+                    s0: _0 = Add(copy _1, copy _2)
+                    terminator: return
+        body6 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: f64
+                _1: f64
+            blocks:
+                bb0:
+                    s0: _0 = Add(copy _1, copy _1)
                     terminator: return
 }

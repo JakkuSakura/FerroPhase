@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub struct Pair : Pair{first: Expr(T), second: Expr(U)} {
       first: Expr(T)
       second: Expr(U)
@@ -38,6 +37,24 @@ ast::File {
                 body:
                   locator default : any
     }
+    pub fn<T: PartialOrd> max(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: PartialOrd>(unknown, unknown) -> unknown : fn<T: PartialOrd>(unknown, unknown) -> unknown
+      block (1 stmt) : unknown
+        expr_stmt (value)
+          if : unknown
+            cond:
+              binop > : bool
+                lhs:
+                  locator a : unknown
+                rhs:
+                  locator b : unknown
+            then:
+              block (1 stmt) : unknown
+                expr_stmt (value)
+                  locator a : unknown
+            else:
+              block (1 stmt) : unknown
+                expr_stmt (value)
+                  locator b : unknown
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (8 stmts) : ()
         let pair
@@ -48,39 +65,14 @@ ast::File {
                 value 42 : i64
                 value "hello" : &string
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "(%s, %s)
-" : &string
-              select .first [field] : any
-                object:
-                  locator pair : Pair{first: Expr(T), second: Expr(U)}
-              select .second [field] : any
-                object:
-                  locator pair : Pair{first: Expr(T), second: Expr(U)}
+          intrinsic println : ()
+            template: "({}, {})" pair.first, pair.second
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "max(10, 20) = %lld
-" : &string
-              invoke : i64
-                target: max
-                args:
-                  value 10 : i64
-                  value 20 : i64
+          intrinsic println : ()
+            template: "max(10, 20) = {}" max(10, 20)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "max(3.5, 2.1) = %f
-" : &string
-              invoke : f64
-                target: max
-                args:
-                  value 3.5 : f64
-                  value 2.1 : f64
+          intrinsic println : ()
+            template: "max(3.5, 2.1) = {}" max(3.5, 2.1)
         let some: Expr(Option<i64
 >)
           init:
@@ -93,23 +85,9 @@ ast::File {
           init:
             locator Option::None : Option [Some: (Expr(T)) | None: ()]
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : any
-                target: some.unwrap_or
-                args:
-                  value 0 : i64
+          intrinsic println : ()
+            template: "{}" some.unwrap_or(0)
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "%s
-" : &string
-              invoke : any
-                target: none.unwrap_or
-                args:
-                  value 99 : i64
+          intrinsic println : ()
+            template: "{}" none.unwrap_or(99)
 }

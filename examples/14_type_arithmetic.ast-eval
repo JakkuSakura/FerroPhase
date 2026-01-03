@@ -3,27 +3,13 @@ ast::File {
     pub import fp_rust::t : ()
     pub import std::fmt::Display : ()
     pub type Int = Expr(i64) : i64
-    pub structural Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
-      a: Expr(Int)
-      common: Expr(Int)
-      foo: Expr(Int)
-    pub structural Bar : Bar{common: Expr(Int), bar: Expr(Int)}
-      common: Expr(Int)
-      bar: Expr(Int)
-    pub structural FooPlusBar : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
-      a: Expr(Int)
-      common: Expr(Int)
-      foo: Expr(Int)
-      bar: Expr(Int)
+    pub type Foo = structural{a: Expr(Int), common: Expr(Int), foo: Expr(Int)} : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+    pub type Bar = structural{common: Expr(Int), bar: Expr(Int)} : Bar{common: Expr(Int), bar: Expr(Int)}
+    pub type FooPlusBar = TypeBinaryOp : FooPlusBar{a: Expr(Int), common: Expr(Int), foo: Expr(Int), bar: Expr(Int)}
     pub type FooOrBar = TypeBinaryOp : TypeBinaryOp
-    pub structural FooMinusBar : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
-      a: Expr(Int)
-      foo: Expr(Int)
-    pub structural FooAndBar : FooAndBar{common: Expr(Int)}
-      common: Expr(Int)
-    pub structural InlineRecord : InlineRecord{tag: Expr(Int), value: Expr(Int)}
-      tag: Expr(Int)
-      value: Expr(Int)
+    pub type FooMinusBar = TypeBinaryOp : FooMinusBar{a: Expr(Int), foo: Expr(Int)}
+    pub type FooAndBar = TypeBinaryOp : FooAndBar{common: Expr(Int)}
+    pub type InlineRecord = structural{tag: Expr(Int), value: Expr(Int)} : InlineRecord{tag: Expr(Int), value: Expr(Int)}
     pub type Int4 = [Expr(Int); 4] : [any; 4]
     pub fn describe_union(value: Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
       block (1 stmt) : any

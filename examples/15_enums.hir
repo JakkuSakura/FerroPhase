@@ -18,15 +18,6 @@ hir::Program {
                     Shape::Rectangle { .. } =>
                         "rectangle"
                 }
-                match (self)
-                {
-                    Shape::Point =>
-                        "point"
-                    Shape::Circle(_) =>
-                        "circle"
-                    Shape::Rectangle { .. } =>
-                        "rectangle"
-                }
             }
         }
     }
@@ -37,7 +28,7 @@ hir::Program {
         C = 5,
     }
 
-    pub enum Option {
+    pub enum Option<T> {
         Some,
         None,
     }
@@ -46,13 +37,6 @@ hir::Program {
         fn unwrap_or(self: Option<T>, default: T) -> T {
             // params: [self: Option<T>, default: T]
             {
-                match (self)
-                {
-                    Option::Some(v) =>
-                        v
-                    Option::None =>
-                        default
-                }
                 match (self)
                 {
                     Option::Some(v) =>
@@ -69,25 +53,18 @@ hir::Program {
             let point = Shape::Point;
             let circle = Shape::Circle(10);
             let rect = Shape::Rectangle { w: 5, h: 3 };
-            printf("%s
-", point.describe());
-            printf("%s
-", circle.describe());
-            printf("%s
-", rect.describe());
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
             let val = Value::C;
-            printf("discriminant: %d
-", (val as i32));
+            std::Println(1 args);
             let some: Option<i64> = Option::Some(42);
             let none: Option<i64> = Option::None;
-            printf("%s
-", some.unwrap_or(0));
-            printf("%s
-", none.unwrap_or(99));
+            std::Println(1 args);
+            std::Println(1 args);
             pub const CODE: i32 =
                 2;
-            printf("const: %d
-", CODE);
+            std::Println(1 args);
         }
     }
 }

@@ -6,7 +6,7 @@ mir::Program {
 
         fn apply_if(arg0: bool, arg1: i64, arg2: i64, arg3: <??>) -> i64 [body: body2]
 
-        fn make_adder(arg0: i64) -> <??> [body: body3]
+        fn make_adder(arg0: i64) -> (i64) [body: body3]
 
         fn main() -> () [body: body4]
 
@@ -17,8 +17,6 @@ mir::Program {
         fn apply__mono_a7af9f593fdc4675_4(arg0: i64, arg1: i64, arg2: <??>) -> () [body: body6]
 
         fn apply__mono_d7ad91e83a08a980_4(arg0: f64, arg1: f64, arg2: <??>) -> () [body: body7]
-
-        fn add_10(arg0: i64) -> <??> [body: body9]
     bodies:
         body0 { arg_count: 2, locals: 3 }
             return_local: _0
@@ -63,13 +61,13 @@ mir::Program {
         body3 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
-                _0: <??>
+                _0: (i64)
                 _1: i64
             blocks:
                 bb0:
                     s0: _0 = aggregate(tuple; [copy _1])
                     terminator: return
-        body4 { arg_count: 0, locals: 22 }
+        body4 { arg_count: 0, locals: 23 }
             return_local: _0
             locals:
                 _0: ()
@@ -87,13 +85,14 @@ mir::Program {
                 _12: ()
                 _13: i32
                 _14: ()
-                _15: <??>
-                _16: i32
-                _17: ()
-                _18: (i8)
-                _19: i64
-                _20: i32
-                _21: ()
+                _15: i64
+                _16: (i64)
+                _17: i32
+                _18: ()
+                _19: (i8)
+                _20: i64
+                _21: i32
+                _22: ()
             blocks:
                 bb0:
                     terminator: call global printf("Generic operations:\n") -> _1 then bb1
@@ -119,17 +118,19 @@ mir::Program {
                     terminator: call global printf("\nClosure factory:\n") -> _13 then bb9
                 bb9:
                     s0: _14 = aggregate(tuple; [])
-                    terminator: call fn add_10(5) -> _15 then bb10
+                    terminator: call fn make_adder(10) -> _16 then bb10
                 bb10:
-                    terminator: call global printf("add_10(5) = %s\n", copy _15) -> _16 then bb11
+                    terminator: call fn __closure0_call(copy _16, 5) -> _15 then bb11
                 bb11:
-                    s0: _17 = aggregate(tuple; [])
-                    s1: _18 = aggregate(tuple; [0])
-                    terminator: call fn __closure1_call(copy _18, 7) -> _19 then bb12
+                    terminator: call global printf("add_10(5) = %lld\n", copy _15) -> _17 then bb12
                 bb12:
-                    terminator: call global printf("double(7) = %lld\n", copy _19) -> _20 then bb13
+                    s0: _18 = aggregate(tuple; [])
+                    s1: _19 = aggregate(tuple; [0])
+                    terminator: call fn __closure1_call(copy _19, 7) -> _20 then bb13
                 bb13:
-                    s0: _21 = aggregate(tuple; [])
+                    terminator: call global printf("double(7) = %lld\n", copy _20) -> _21 then bb14
+                bb14:
+                    s0: _22 = aggregate(tuple; [])
                     terminator: return
         body5 { arg_count: 2, locals: 3 }
             return_local: _0
@@ -186,14 +187,5 @@ mir::Program {
             blocks:
                 bb0:
                     s0: _0 = Add(copy _1, copy _2)
-                    terminator: return
-        body9 { arg_count: 1, locals: 2 }
-            return_local: _0
-            locals:
-                _0: <??>
-                _1: i64
-            blocks:
-                bb0:
-                    s0: _0 = 0u
                     terminator: return
 }

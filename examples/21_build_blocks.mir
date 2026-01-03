@@ -6,41 +6,30 @@ mir::Program {
 
         fn main() -> () [body: body2]
     bodies:
-        body0 { arg_count: 1, locals: 3 }
+        body0 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
                 _0: <??>
                 _1: bool
-                _2: ()
             blocks:
                 bb0:
-                    s0: _2 = aggregate(tuple; [])
-                    s1: _0 = aggregate(tuple; [])
+                    s0: _0 = aggregate(tuple; [])
                     terminator: return
-        body1 { arg_count: 1, locals: 3 }
+        body1 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
                 _0: <??>
                 _1: bool
-                _2: ()
             blocks:
                 bb0:
                     terminator: switch copy _1 [1 -> bb1] otherwise -> bb2
                 bb1:
-                    s0: _2 = aggregate(tuple; [])
+                    s0: _0 = aggregate(tuple; [])
                     terminator: goto -> bb3
                 bb2:
-                    s0: _2 = aggregate(tuple; [])
+                    s0: _0 = aggregate(tuple; [])
                     terminator: goto -> bb3
                 bb3:
-                    terminator: switch copy _1 [1 -> bb4] otherwise -> bb5
-                bb4:
-                    s0: _0 = aggregate(tuple; [])
-                    terminator: goto -> bb6
-                bb5:
-                    s0: _0 = aggregate(tuple; [])
-                    terminator: goto -> bb6
-                bb6:
                     terminator: return
         body2 { arg_count: 0, locals: 5 }
             return_local: _0

@@ -124,8 +124,8 @@ fn main() {
     println!("LiteralInt {}", lit_int);
     println!("LiteralBool {}", lit_bool);
     println!("LiteralStr {}", lit_str);
-    print("LiteralUnit", lit_unit);
-    print("LiteralNull", lit_null);
+    println!("LiteralUnit {}", lit_unit);
+    println!("LiteralNull {}", lit_null);
     println!("LiteralStrEnum {}", lit_enum);
 
     let maybe: FooMaybe = Foo { a: 5, common: 6, foo: 7 };

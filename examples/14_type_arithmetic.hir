@@ -46,13 +46,6 @@ hir::Program {
                 Bar { common: common, bar: bar } =>
                     (common + bar)
             }
-            match (value)
-            {
-                Foo { a: a, common: common, foo: foo } =>
-                    ((a + common) + foo)
-                Bar { common: common, bar: bar } =>
-                    (common + bar)
-            }
         }
     }
 
@@ -64,8 +57,7 @@ hir::Program {
     pub fn print_display<T>(value: T) -> () {
         // params: [value: T]
         {
-            printf("%s
-", "<unknown>");
+            std::Println(1 args);
         }
     }
 
@@ -79,65 +71,44 @@ hir::Program {
                 null =>
                     0
             }
-            match (value)
-            {
-                Foo { a: a, common: common, foo: foo } =>
-                    ((a + common) + foo)
-                null =>
-                    0
-            }
         }
     }
 
     pub fn main() -> () {
         {
             let base_foo: Foo = Foo { a: 1, common: 2, foo: 3 };
-            printf("Foo a=%lld common=%lld foo=%lld
-", base_foo.a, base_foo.common, base_foo.foo);
+            std::Println(3 args);
             let base_bar: Bar = Bar { common: 4, bar: 5 };
-            printf("Bar common=%lld bar=%lld
-", base_bar.common, base_bar.bar);
+            std::Println(2 args);
             let merged: FooPlusBar = <control-flow>;
-            printf("FooPlusBar a=%lld common=%lld foo=%lld bar=%lld
-", merged.a, merged.common, merged.foo, merged.bar);
+            std::Println(4 args);
             let reduced: FooMinusBar = FooMinusBar { a: 10, foo: 20 };
-            printf("FooMinusBar a=%lld foo=%lld
-", reduced.a, reduced.foo);
+            std::Println(2 args);
             let overlap: FooAndBar = FooAndBar { common: 99 };
-            printf("FooAndBar common=%lld
-", overlap.common);
+            std::Println(1 args);
             let record: InlineRecord = InlineRecord { tag: 7, value: 42 };
-            printf("InlineRecord tag=%lld value=%lld
-", record.tag, record.value);
+            std::Println(2 args);
             let left: FooOrBar = Foo { a: 2, common: 3, foo: 4 };
             let right: FooOrBar = base_bar;
             let handler: fn(FooOrBar) -> i64 = describe_union;
-            printf("FooOrBar left sum=%s
-", "<unknown>");
-            printf("FooOrBar right sum=%s
-", "<unknown>");
+            std::Println(1 args);
+            std::Println(1 args);
             let _ints: [i64; 4] = [1, 2, 3, 4];
-            printf("Int4[0]=%s Int4[1]=%s Int4[2]=%s Int4[3]=%s
-", "<unknown>", "<unknown>", "<unknown>", "<unknown>");
+            std::Println(4 args);
             let lit_int: i64 = 42;
             let lit_bool: bool = true;
             let lit_str: &str = "hello";
             let lit_unit: () = <control-flow>;
             let lit_null: _ = null;
             let lit_enum: &str = "green";
-            printf("LiteralInt %s
-", "<unknown>");
-            printf("LiteralBool %s
-", "<unknown>");
-            printf("LiteralStr %s
-", "<unknown>");
-            printf("LiteralUnit %s", "<unknown>");
-            printf("LiteralNull %s", "<unknown>");
-            printf("LiteralStrEnum %s
-", "<unknown>");
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
+            std::Print(1 args);
+            std::Print(1 args);
+            std::Println(1 args);
             let maybe: FooMaybe = Foo { a: 5, common: 6, foo: 7 };
-            printf("FooMaybe sum=%s
-", "<unknown>");
+            std::Println(1 args);
             let _ = print_display;
         }
     }

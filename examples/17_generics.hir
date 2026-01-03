@@ -1,5 +1,5 @@
 hir::Program {
-    pub struct Pair {
+    pub struct Pair<T, U> {
         pub first: T,
         pub second: U,
     }
@@ -9,12 +9,11 @@ hir::Program {
             // params: [first: T, second: U]
             {
                 Self { first: first, second: second }
-                Self { first: first, second: second }
             }
         }
     }
 
-    pub enum Option {
+    pub enum Option<T> {
         Some,
         None,
     }
@@ -30,32 +29,34 @@ hir::Program {
                     Option::None =>
                         default
                 }
-                match (self)
-                {
-                    Option::Some(v) =>
-                        v
-                    Option::None =>
-                        default
-                }
             }
+        }
+    }
+
+    pub fn max<T>(a: T, b: T) -> T {
+        // params: [a: T, b: T]
+        {
+            if ((a > b))
+                {
+                    a
+                }
+            else
+                {
+                    b
+                }
         }
     }
 
     pub fn main() -> () {
         {
             let pair = Pair::new(42, "hello");
-            printf("(%s, %s)
-", pair.first, pair.second);
-            printf("max(10, 20) = %lld
-", max(10, 20));
-            printf("max(3.5, 2.1) = %f
-", max(3.5, 2.1));
+            std::Println(2 args);
+            std::Println(1 args);
+            std::Println(1 args);
             let some: Option<i64> = Option::Some(100);
             let none: Option<i64> = Option::None;
-            printf("%s
-", some.unwrap_or(0));
-            printf("%s
-", none.unwrap_or(99));
+            std::Println(1 args);
+            std::Println(1 args);
         }
     }
 }

@@ -1,0 +1,67 @@
+mir::Program {
+    items:
+        fn first_gt(arg0: <??>, arg1: <??>) -> i32 [body: body0]
+
+        fn main() -> () [body: body1]
+    bodies:
+        body0 { arg_count: 2, locals: 14 }
+            return_local: _0
+            locals:
+                _0: i32
+                _1: <??>
+                _2: <??>
+                _3: ()
+                _4: i64
+                _5: bool
+                _6: ()
+                _7: i64
+                _8: i32
+                _9: i64
+                _10: ()
+                _11: bool
+                _12: i64
+                _13: ()
+            blocks:
+                bb0:
+                    s0: _4 = 0
+                    terminator: goto -> bb1
+                bb1:
+                    s0: _6 = aggregate(tuple; [])
+                    s1: _5 = Lt(copy _4, 0)
+                    terminator: switch copy _5 [1 -> bb2] otherwise -> bb3
+                bb2:
+                    s0: _7 = copy _4
+                    s1: _9 = copy _4
+                    s2: _8 = copy _1[Index(9)]
+                    s3: _12 = copy _7
+                    s4: _11 = Gt(copy _8, copy _2[Index(12)])
+                    terminator: switch copy _11 [1 -> bb4] otherwise -> bb5
+                bb3:
+                    s0: _3 = aggregate(tuple; [])
+                    s1: _0 = 0
+                    terminator: <none>
+                bb4:
+                    s0: _13 = aggregate(tuple; [])
+                    s1: _10 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb5:
+                    s0: _10 = aggregate(tuple; [])
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _4 = Add(copy _4, 1)
+                    terminator: goto -> bb1
+        body1 { arg_count: 0, locals: 4 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i32
+                _2: <??>
+                _3: <??>
+            blocks:
+                bb0:
+                    s0: _2 = aggregate(array [i32]; [1, 2, 5])
+                    s1: _3 = aggregate(array [i32]; [0, 1, 3])
+                    terminator: call fn first_gt(copy _2, copy _3) -> _1 then bb1
+                bb1:
+                    terminator: return
+}

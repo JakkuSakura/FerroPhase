@@ -3,27 +3,13 @@ ast::File {
     pub import fp_rust::t
     pub import std::fmt::Display
     pub type Int = Expr(i64)
-    pub structural Foo
-      a: Expr(Int)
-      common: Expr(Int)
-      foo: Expr(Int)
-    pub structural Bar
-      common: Expr(Int)
-      bar: Expr(Int)
-    pub structural FooPlusBar
-      a: Expr(Int)
-      common: Expr(Int)
-      foo: Expr(Int)
-      bar: Expr(Int)
+    pub type Foo = structural{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}
+    pub type Bar = structural{common: Expr(Int), bar: Expr(Int)}
+    pub type FooPlusBar = TypeBinaryOp
     pub type FooOrBar = TypeBinaryOp
-    pub structural FooMinusBar
-      a: Expr(Int)
-      foo: Expr(Int)
-    pub structural FooAndBar
-      common: Expr(Int)
-    pub structural InlineRecord
-      tag: Expr(Int)
-      value: Expr(Int)
+    pub type FooMinusBar = TypeBinaryOp
+    pub type FooAndBar = TypeBinaryOp
+    pub type InlineRecord = structural{tag: Expr(Int), value: Expr(Int)}
     pub type Int4 = [Expr(Int); 4]
     pub fn describe_union(value: Expr(FooOrBar)) -> Expr(Int) : fn(any) -> any
       block (1 stmt)

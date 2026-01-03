@@ -59,7 +59,7 @@ ast::File {
               block (1 stmt) : i64
                 expr_stmt (value)
                   value 0 : i64
-    pub fn make_adder(n: Expr(i64)) -> fn(Expr(i64)) -> Expr(i64) : fn(i64) -> fn(i64) -> i64 : fn(i64) -> fn(i64) -> i64
+    pub fn make_adder(n: Expr(i64)) -> __Closure0{n: i64} : fn(i64) -> __Closure0{n: i64} : fn(i64) -> fn(i64) -> i64
       block (1 stmt) : fn(i64) -> i64
         expr_stmt (value)
           struct __Closure0 : __Closure0{n: i64}
@@ -98,11 +98,14 @@ Conditional:"
           intrinsic println : ()
             template: "
 Closure factory:"
-        pub const add_10: any : any
-          expr.any : any
+        pub const add_10: __Closure0{n: i64} : fn(i64) -> i64
+          invoke : __Closure0{n: i64}
+            target: make_adder
+            args:
+              value 10 : i64
         expr_stmt ;
           intrinsic println : ()
-            template: "add_10(5) = {}" add_10(5)
+            template: "add_10(5) = {}" __closure0_call(add_10, 5)
         let double : __Closure1{__fp_no_capture: i8}
           init:
             struct __Closure1 : __Closure1{__fp_no_capture: i8}

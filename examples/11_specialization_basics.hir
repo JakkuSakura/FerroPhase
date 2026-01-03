@@ -3,14 +3,12 @@ hir::Program {
         // params: [a: T, b: T]
         {
             (a + b)
-            (a + b)
         }
     }
 
     pub fn double<T>(x: T) -> T {
         // params: [x: T]
         {
-            (x + x)
             (x + x)
         }
     }
@@ -19,9 +17,7 @@ hir::Program {
         // params: [a: T, b: T]
         {
             let result = double(add(a, b));
-            printf("specialized result: %s
-", "<unknown>");
-            result
+            std::Println(1 args);
             result
         }
     }

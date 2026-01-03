@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub import std::fmt::Display : ()
     pub import std::ops::Add : ()
     pub fn<T: Add<T
@@ -41,12 +40,8 @@ ast::File {
                     locator a : unknown
                     locator b : unknown
         expr_stmt ;
-          invoke : ()
-            target: printf
-            args:
-              value "specialized result: %s
-" : &string
-              value "<unknown>" : &string
+          intrinsic println : ()
+            template: "specialized result: {}" result
         expr_stmt (value)
           locator result : unknown
     pub fn main() -> () : fn() -> () : fn() -> ()

@@ -36,11 +36,11 @@ ast::File {
             invoke : i32
               target: first_gt
               args:
-                array (3 values) : Vec<i32>
+                array (3 values) : [i32; 3]
                   value 1 : i64
                   value 2 : i64
                   value 5 : i64
-                array (3 values) : Vec<i32>
+                array (3 values) : [i32; 3]
                   value 0 : i64
                   value 1 : i64
                   value 3 : i64

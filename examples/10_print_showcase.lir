@@ -108,7 +108,7 @@ lir::Program {
                 i22: %r22 = call c @printf(c"Unit: %s", c"()") : i32
                 terminator: br bb17
             bb17 // label: bb17 // preds: [bb16] // succs: [bb18]:
-                i23: %r23 = call c @printf(c"Null: %s", c"<none>") : i32
+                i23: %r23 = call c @printf(c"Null: %s", c"null") : i32
                 terminator: br bb18
             bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:
                 i24: %r24 = call c @printf(c"

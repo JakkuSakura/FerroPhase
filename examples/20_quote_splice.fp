@@ -1,18 +1,30 @@
 #!/usr/bin/env fp run
-//! Quote and splice demonstration
+//! Quote, splice, and emit: staged code generation with runtime output.
 
-fn first_gt(const xs: [i32], ys: [i32]) -> i32 {
+fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
     const {
-        for (i, x) in xs.iter().enumerate() {
-            // Sugar: emit! { if x > ys[i] { return x; } }
-            splice ( quote<expr> {
-                if x > ys[i] { return x; }
-            } );
+        for (i, op) in ops.iter().enumerate() {
+            // Mix emit! and splice(quote<expr>) to generate different statements.
+            if op % 2 == 0 {
+                splice(quote<expr> { x = x + op; });
+            } else {
+                emit! { x = x + op; }
+            }
+
+            // Emit a runtime log at each generated step.
+            splice(quote<expr> { println!("step {}: {}", i, x); });
+
+            // Splice an early-return check into the runtime code.
+            splice(quote<expr> { if x >= limit { return x; } });
         }
     }
-    0
+    x
 }
 
 fn main() {
-    let _ = first_gt([1, 2, 5], [0, 1, 3]);
+    let result1 = apply_ops([1, 2, 3, 4], 0, 6);
+    println!("result1={}", result1);
+
+    let result2 = apply_ops([5, -2, 7], 10, 30);
+    println!("result2={}", result2);
 }

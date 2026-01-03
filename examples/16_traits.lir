@@ -2,13 +2,11 @@ lir::Program {
     globals:
         @global_0: i1 [linkage: internal] [visibility: hidden] const align 1 = bool false
     functions:
-        fn area(arg0: ptr { f64 }) -> f64 [cc: c, linkage: internal] {
+        fn Circle__area(arg0: ptr { f64 }) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: ptr { f64 } // arg
                 %2: f64
-                %3: f64
-                %4: f64
             bb0 // label: bb0:
                 i1: %r1 = alloca i32 1 align 8 : ptr f64
                 i2: %r2 = alloca i32 1 align 8 : ptr f64
@@ -16,52 +14,31 @@ lir::Program {
                 i4: %r4 = load %r3 align 8 : f64
                 i5: %r5 = mul f64 3.14159, %r4 : f64
                 i6: store %r5, %r2 align 8
-                i7: %r7 = alloca i32 1 align 8 : ptr f64
-                i8: %r8 = load %r2 align 8 : f64
-                i9: %r9 = bitcast %local1 to ptr f64 : ptr f64
-                i10: %r10 = load %r9 align 8 : f64
-                i11: %r11 = mul %r8, %r10 : f64
-                i12: store %r11, %r7 align 8
-                i13: %r13 = alloca i32 1 align 8 : ptr f64
-                i14: %r14 = bitcast %local1 to ptr f64 : ptr f64
-                i15: %r15 = load %r14 align 8 : f64
-                i16: %r16 = mul f64 3.14159, %r15 : f64
-                i17: store %r16, %r13 align 8
-                i18: %r18 = load %r13 align 8 : f64
-                i19: %r19 = bitcast %local1 to ptr f64 : ptr f64
-                i20: %r20 = load %r19 align 8 : f64
-                i21: %r21 = mul %r18, %r20 : f64
-                i22: store %r21, %r1 align 8
-                i23: %r23 = load %r1 align 8 : f64
-                terminator: ret %r23
+                i7: %r7 = load %r2 align 8 : f64
+                i8: %r8 = bitcast %local1 to ptr f64 : ptr f64
+                i9: %r9 = load %r8 align 8 : f64
+                i10: %r10 = mul %r7, %r9 : f64
+                i11: store %r10, %r1 align 8
+                i12: %r12 = load %r1 align 8 : f64
+                terminator: ret %r12
         }
 
-        fn area(arg0: ptr { f64, f64 }) -> f64 [cc: c, linkage: internal] {
+        fn Rectangle__area(arg0: ptr { f64, f64 }) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: ptr { f64, f64 } // arg
-                %2: f64
             bb0 // label: bb0:
-                i24: %r24 = alloca i32 1 align 8 : ptr f64
-                i25: %r25 = alloca i32 1 align 8 : ptr f64
-                i26: %r26 = bitcast %local1 to ptr f64 : ptr f64
-                i27: %r27 = load %r26 align 8 : f64
-                i28: %r28 = bitcast %local1 to ptr i8 : ptr i8
-                i29: %r29 = gep inbounds %r28 [i64 8] : ptr i8
-                i30: %r30 = bitcast %r29 to ptr f64 : ptr f64
-                i31: %r31 = load %r30 align 8 : f64
-                i32: %r32 = mul %r27, %r31 : f64
-                i33: store %r32, %r25 align 8
-                i34: %r34 = bitcast %local1 to ptr f64 : ptr f64
-                i35: %r35 = load %r34 align 8 : f64
-                i36: %r36 = bitcast %local1 to ptr i8 : ptr i8
-                i37: %r37 = gep inbounds %r36 [i64 8] : ptr i8
-                i38: %r38 = bitcast %r37 to ptr f64 : ptr f64
-                i39: %r39 = load %r38 align 8 : f64
-                i40: %r40 = mul %r35, %r39 : f64
-                i41: store %r40, %r24 align 8
-                i42: %r42 = load %r24 align 8 : f64
-                terminator: ret %r42
+                i13: %r13 = alloca i32 1 align 8 : ptr f64
+                i14: %r14 = bitcast %local1 to ptr f64 : ptr f64
+                i15: %r15 = load %r14 align 8 : f64
+                i16: %r16 = bitcast %local1 to ptr i8 : ptr i8
+                i17: %r17 = gep inbounds %r16 [i64 8] : ptr i8
+                i18: %r18 = bitcast %r17 to ptr f64 : ptr f64
+                i19: %r19 = load %r18 align 8 : f64
+                i20: %r20 = mul %r15, %r19 : f64
+                i21: store %r20, %r13 align 8
+                i22: %r22 = load %r13 align 8 : f64
+                terminator: ret %r22
         }
 
         fn main() -> void [cc: c, linkage: internal] {
@@ -71,25 +48,55 @@ lir::Program {
                 %2: ptr i8
                 %3: void
                 %4: void
-                %5: void
+                %5: ptr ptr i8
                 %6: void
+                %7: ptr ptr i8
+                %8: void
             bb0 // label: bb0 // succs: [bb1]:
-                i43: %r43 = alloca i32 1 align 8 : ptr ptr i8
-                i44: store struct ptr i8 { f64 5 }, %r43 align 8
-                i45: %r45 = alloca i32 1 align 8 : ptr ptr i8
-                i46: store struct ptr i8 { f64 4, f64 6 }, %r45 align 8
-                i47: %r47 = call c @opaque__describe(%r43)
+                i23: %r23 = alloca i32 1 align 8 : ptr ptr i8
+                i24: store f64 5, %r23 align 8
+                i25: %r25 = alloca i32 1 align 8 : ptr ptr i8
+                i26: %r26 = insertvalue undef { f64, f64 }, f64 4, [0] : { f64, f64 }
+                i27: %r27 = insertvalue %r26, f64 6, [1] : { f64, f64 }
+                i28: store %r27, %r25 align 8
+                i29: %r29 = load %r23 align 8 : ptr i8
+                i30: %r30 = call c @opaque__describe(%r29)
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i48: %r48 = call c @opaque__describe(%r45)
+                i31: %r31 = load %r25 align 8 : ptr i8
+                i32: %r32 = call c @opaque__describe(%r31)
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i49: %r49 = call c @print_area(%r43)
+                i33: %r33 = alloca i32 1 align 8 : ptr ptr ptr i8
+                i34: store %r23, %r33 align 8
+                i35: %r35 = load %r33 align 8 : ptr ptr i8
+                i36: %r36 = call c @print_area__mono_692e805f044e08ba_5(%r35)
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i50: %r50 = call c @print_area(%r45)
+                i37: %r37 = alloca i32 1 align 8 : ptr ptr ptr i8
+                i38: store %r25, %r37 align 8
+                i39: %r39 = load %r37 align 8 : ptr ptr i8
+                i40: %r40 = call c @print_area__mono_692e805f044e08ba_5(%r39)
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3]:
+                terminator: ret void
+        }
+
+        fn print_area__mono_692e805f044e08ba_5(arg0: ptr ptr i8) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr ptr i8 // arg
+                %2: void
+                %3: i32
+                %4: void
+            bb0 // label: bb0 // succs: [bb1]:
+                i41: %r41 = call c @T__area(%local1)
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i42: %r42 = call c @printf(c"%.2
+", c"()") : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1]:
                 terminator: ret void
         }
 
@@ -101,10 +108,10 @@ lir::Program {
                 terminator: ret void
         }
 
-        fn print_area(arg0: ptr i8) -> void [cc: c, linkage: internal] {
+        fn T__area(arg0: ptr ptr i8) -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: ptr i8 // arg
+                %1: ptr ptr i8 // arg
             bb0 // label: bb0:
                 terminator: ret void
         }

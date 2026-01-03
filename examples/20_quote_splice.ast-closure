@@ -1,6 +1,5 @@
 ast::File {
   items:
-    declare fn printf(fmt: string, *args: any) -> () : fn(string, any) -> () : fn(string, any) -> ()
     pub fn first_gt(const xs: [Expr(i32)], ys: [Expr(i32)]) -> Expr(i32) : fn([i32], [i32]) -> i32 : fn([i32], [i32]) -> i32
       block (2 stmts) : i64
         expr_stmt (value)
@@ -37,11 +36,11 @@ ast::File {
             invoke : i32
               target: first_gt
               args:
-                array (3 values) : Vec<i32>
+                array (3 values) : [i32; 3]
                   value 1 : i64
                   value 2 : i64
                   value 5 : i64
-                array (3 values) : Vec<i32>
+                array (3 values) : [i32; 3]
                   value 0 : i64
                   value 1 : i64
                   value 3 : i64
