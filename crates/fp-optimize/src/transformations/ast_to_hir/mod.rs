@@ -4,7 +4,7 @@ use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
 use fp_core::{ast, ast::ItemKind, hir};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use super::IrTransform;
@@ -1277,7 +1277,21 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::Structural(structural) => {
-                self.materialize_structural_type(structural)
+                let fields = structural
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        Ok(hir::TypeStructuralField {
+                            name: hir::Symbol::new(field.name.name.clone()),
+                            ty: Box::new(self.transform_type_to_hir(&field.value)?),
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Structural(hir::TypeStructural { fields }),
+                    Span::new(self.current_file, 0, 0),
+                ))
             }
             ast::Ty::Vec(vec_ty) => {
                 let elem = Box::new(self.transform_type_to_hir(&vec_ty.ty)?);
@@ -1317,10 +1331,17 @@ impl HirGenerator {
                     };
                     return Ok(expr);
                 }
-                Err(crate::error::optimization_error(format!(
-                    "unsupported type binary operation in AST→HIR lowering: {:?}",
-                    type_op
-                )))
+                let lhs = self.transform_type_to_hir(&type_op.lhs)?;
+                let rhs = self.transform_type_to_hir(&type_op.rhs)?;
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::TypeBinaryOp(hir::TypeBinaryOp {
+                        kind: type_op.kind,
+                        lhs: Box::new(lhs),
+                        rhs: Box::new(rhs),
+                    }),
+                    Span::new(self.current_file, 0, 0),
+                ))
             }
             ast::Ty::Value(type_value) => {
                 let expr = match type_value.value.as_ref() {
@@ -1646,25 +1667,6 @@ impl HirGenerator {
         self.struct_field_defs.insert(def_id, ast_fields);
     }
 
-    fn structural_fields_from_type(
-        &self,
-        structural: &ast::TypeStructural,
-    ) -> Vec<StructuralFieldSpec> {
-        structural
-            .fields
-            .iter()
-            .map(|field| {
-                let ty = self
-                    .literal_type_kind(&field.value)
-                    .unwrap_or(LiteralTypeKind::Infer);
-                StructuralFieldSpec {
-                    name: field.name.name.clone(),
-                    ty,
-                }
-            })
-            .collect()
-    }
-
     fn structural_fields_from_value(
         &self,
         structural: &ast::ValueStructural,
@@ -1737,46 +1739,6 @@ impl HirGenerator {
             }
         };
         Ok(expr)
-    }
-
-    fn materialize_structural_type(
-        &mut self,
-        structural: &ast::TypeStructural,
-    ) -> Result<hir::TypeExpr> {
-        let specs = self.structural_fields_from_type(structural);
-        let key = self.structural_value_key(&specs);
-        if let Some(def) = self.structural_value_defs.get(&key).cloned() {
-            let path = self.path_for_structural_def(&def);
-            return Ok(hir::TypeExpr::new(
-                self.next_id(),
-                hir::TypeExprKind::Path(path),
-                Span::new(self.current_file, 0, 0),
-            ));
-        }
-
-        let hir_fields = structural
-            .fields
-            .iter()
-            .map(|field| {
-                Ok(hir::StructField {
-                    hir_id: self.next_id(),
-                    name: hir::Symbol::new(field.name.name.clone()),
-                    ty: self.transform_type_to_hir(&field.value)?,
-                    vis: hir::Visibility::Public,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let ast_fields = structural.fields.clone();
-        let name = self.structural_value_name(&key);
-        let def = self.register_structural_value_def(name, specs, hir_fields, ast_fields);
-        self.structural_value_defs.insert(key, def.clone());
-        let path = self.path_for_structural_def(&def);
-
-        Ok(hir::TypeExpr::new(
-            self.next_id(),
-            hir::TypeExprKind::Path(path),
-            Span::new(self.current_file, 0, 0),
-        ))
     }
 
     fn materialize_structural_value_def(
@@ -2056,5 +2018,757 @@ impl<'a> IrTransform<&'a ast::File, hir::Program> for HirGenerator {
 impl Default for HirGenerator {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Remove generic template functions from the AST after specialization.
+/// Generic functions should have been fully specialized during const evaluation,
+/// so the templates are no longer needed.
+pub fn remove_generic_templates(ast: &mut ast::Node) -> Result<()> {
+    match ast.kind_mut() {
+        ast::NodeKind::File(file) => {
+            let refs = collect_value_refs(&file.items);
+            let mut module_path = Vec::new();
+            retain_items(&mut file.items, &mut module_path, &refs);
+
+            for item in &mut file.items {
+                remove_generics_from_item(item, &refs, &mut Vec::new())?;
+            }
+            Ok(())
+        }
+        ast::NodeKind::Item(item) => {
+            let refs = collect_value_refs(std::slice::from_ref(item));
+            remove_generics_from_item(item, &refs, &mut Vec::new())?;
+            Ok(())
+        }
+        ast::NodeKind::Expr(_) => Ok(()),
+        ast::NodeKind::Query(_) => Ok(()),
+        ast::NodeKind::Schema(_) => Ok(()),
+        ast::NodeKind::Workspace(_) => Ok(()),
+    }
+}
+
+fn remove_generics_from_item(
+    item: &mut ast::Item,
+    refs: &ValueRefs,
+    module_path: &mut Vec<String>,
+) -> Result<()> {
+    match item.kind_mut() {
+        ast::ItemKind::Module(module) => {
+            module
+                .items
+                .retain(|item| !should_drop_generic_template(item, module_path, refs));
+            module_path.push(module.name.as_str().to_string());
+            for child in &mut module.items {
+                remove_generics_from_item(child, refs, module_path)?;
+            }
+            module_path.pop();
+        }
+        ast::ItemKind::Impl(impl_block) => {
+            impl_block
+                .items
+                .retain(|item| !should_drop_generic_template(item, module_path, refs));
+            for child in &mut impl_block.items {
+                remove_generics_from_item(child, refs, module_path)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn retain_items(items: &mut Vec<ast::Item>, module_path: &mut Vec<String>, refs: &ValueRefs) {
+    items.retain(|item| !should_drop_generic_template(item, module_path, refs));
+    for item in items.iter_mut() {
+        match item.kind_mut() {
+            ast::ItemKind::Module(module) => {
+                module_path.push(module.name.as_str().to_string());
+                retain_items(&mut module.items, module_path, refs);
+                module_path.pop();
+            }
+            ast::ItemKind::Impl(impl_block) => {
+                retain_items(&mut impl_block.items, module_path, refs);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn should_drop_generic_template(
+    item: &ast::Item,
+    module_path: &[String],
+    refs: &ValueRefs,
+) -> bool {
+    let Some(func) = is_generic_template(item) else {
+        return false;
+    };
+
+    if refs.is_referenced(module_path, func) {
+        return false;
+    }
+
+    true
+}
+
+fn is_generic_template(item: &ast::Item) -> Option<&ast::ItemDefFunction> {
+    match item.kind() {
+        ast::ItemKind::DefFunction(func) if !func.sig.generics_params.is_empty() => Some(func),
+        _ => None,
+    }
+}
+
+#[derive(Default)]
+struct ValueRefs {
+    qualified: HashSet<String>,
+    unqualified: HashSet<(String, String)>,
+}
+
+impl ValueRefs {
+    fn record_qualified(&mut self, name: String) {
+        self.qualified.insert(name);
+    }
+
+    fn record_unqualified(&mut self, module: String, name: String) {
+        self.unqualified.insert((module, name));
+    }
+
+    fn is_referenced(&self, module_path: &[String], func: &ast::ItemDefFunction) -> bool {
+        let module = module_key(module_path);
+        let name = func.name.as_str().to_string();
+        let qualified = qualify_name(module_path, &name);
+
+        self.qualified.contains(&qualified) || self.unqualified.contains(&(module, name))
+    }
+}
+
+fn collect_value_refs(items: &[ast::Item]) -> ValueRefs {
+    let mut refs = ValueRefs::default();
+    let mut module_path = Vec::new();
+    collect_value_refs_in_items(items, &mut module_path, &mut refs);
+    refs
+}
+
+fn collect_value_refs_in_items(
+    items: &[ast::Item],
+    module_path: &mut Vec<String>,
+    refs: &mut ValueRefs,
+) {
+    for item in items {
+        match item.kind() {
+            ast::ItemKind::Module(module) => {
+                module_path.push(module.name.as_str().to_string());
+                collect_value_refs_in_items(&module.items, module_path, refs);
+                module_path.pop();
+            }
+            ast::ItemKind::DefFunction(func) => {
+                collect_value_refs_in_expr(&func.body, module_path, refs);
+            }
+            ast::ItemKind::DefConst(def) => {
+                collect_value_refs_in_expr(&def.value, module_path, refs);
+            }
+            ast::ItemKind::DefStatic(def) => {
+                collect_value_refs_in_expr(&def.value, module_path, refs);
+            }
+            ast::ItemKind::Impl(impl_block) => {
+                collect_value_refs_in_items(&impl_block.items, module_path, refs);
+            }
+            ast::ItemKind::Expr(expr) => {
+                collect_value_refs_in_expr(expr, module_path, refs);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn collect_value_refs_in_expr(expr: &ast::Expr, module_path: &[String], refs: &mut ValueRefs) {
+    match expr.kind() {
+        ast::ExprKind::Locator(locator) => record_locator(locator, module_path, refs),
+        ast::ExprKind::Value(value) => collect_value_refs_in_value(value.as_ref(), module_path, refs),
+        ast::ExprKind::Block(block) => {
+            for stmt in &block.stmts {
+                match stmt {
+                    ast::BlockStmt::Item(item) => {
+                        collect_value_refs_in_items(
+                            std::slice::from_ref(item.as_ref()),
+                            &mut module_path.to_vec(),
+                            refs,
+                        );
+                    }
+                    ast::BlockStmt::Let(stmt_let) => {
+                        if let Some(init) = &stmt_let.init {
+                            collect_value_refs_in_expr(init, module_path, refs);
+                        }
+                        if let Some(diverge) = &stmt_let.diverge {
+                            collect_value_refs_in_expr(diverge, module_path, refs);
+                        }
+                    }
+                    ast::BlockStmt::Expr(expr_stmt) => {
+                        collect_value_refs_in_expr(expr_stmt.expr.as_ref(), module_path, refs);
+                    }
+                    ast::BlockStmt::Noop | ast::BlockStmt::Any(_) => {}
+                }
+            }
+        }
+        ast::ExprKind::Match(m) => {
+            if let Some(scrutinee) = &m.scrutinee {
+                collect_value_refs_in_expr(scrutinee.as_ref(), module_path, refs);
+            }
+            for case in &m.cases {
+                collect_value_refs_in_match_case(case, module_path, refs);
+            }
+        }
+        ast::ExprKind::If(expr_if) => {
+            collect_value_refs_in_expr(expr_if.cond.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_if.then.as_ref(), module_path, refs);
+            if let Some(elze) = &expr_if.elze {
+                collect_value_refs_in_expr(elze.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::Loop(expr_loop) => {
+            collect_value_refs_in_expr(expr_loop.body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::While(ast::ExprWhile { cond, body }) => {
+            collect_value_refs_in_expr(cond.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Invoke(invoke) => {
+            collect_value_refs_in_invoke_target(&invoke.target, module_path, refs);
+            for arg in &invoke.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::ExprKind::Select(ast::ExprSelect { expr, field }) => {
+            collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(field.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Tuple(ast::ExprTuple { items }) => {
+            for item in items {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+        }
+        ast::ExprKind::Array(array) => {
+            for item in &array.items {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+        }
+        ast::ExprKind::Struct(ast::ExprStruct { fields, .. }) => {
+            for field in fields {
+                if let Some(value) = &field.value {
+                    collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+                }
+            }
+        }
+        ast::ExprKind::Structural(ast::ExprStructural { fields, .. }) => {
+            for field in fields {
+                collect_value_refs_in_expr(field.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::Unary(ast::ExprUnOp { expr, .. }) => {
+            collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Binary(binary) => {
+            collect_value_refs_in_expr(binary.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(binary.rhs.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Access(access) => {
+            collect_value_refs_in_expr(access.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(access.field.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Assign(assign) => {
+            collect_value_refs_in_expr(assign.target.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(assign.value.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Return(ret) => {
+            if let Some(value) = &ret.value {
+                collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::Break(expr_break) => {
+            if let Some(value) = &expr_break.value {
+                collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::Continue(_) => {}
+        ast::ExprKind::FormatString(ast::ExprFormatString { fragments }) => {
+            for fragment in fragments {
+                if let ast::FormatFragment::Expr(expr) = fragment {
+                    collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+                }
+            }
+        }
+        ast::ExprKind::Lambda(lambda) => {
+            collect_value_refs_in_expr(lambda.body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Quote(expr) => {
+            if let Some(body) = &expr.body {
+                collect_value_refs_in_expr(body, module_path, refs);
+            }
+        }
+        ast::ExprKind::Unquote(expr) => {
+            collect_value_refs_in_expr(expr.body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::ExprMap(map) => {
+            collect_value_refs_in_expr(map.body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::For(expr_for) => {
+            collect_value_refs_in_expr(expr_for.iter.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_for.body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Range(range) => {
+            collect_value_refs_in_expr(range.start.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(range.end.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Cast(cast) => {
+            collect_value_refs_in_expr(cast.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Typeof(t) => {
+            collect_value_refs_in_expr(t.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Yield(expr_yield) => {
+            if let Some(value) = &expr_yield.value {
+                collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::Repr(_) => {}
+        ast::ExprKind::FuncRef(func_ref) => {
+            collect_value_refs_in_expr(func_ref.func.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Typed(expr_typed) => {
+            collect_value_refs_in_expr(expr_typed.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Spawn(spawn) => {
+            collect_value_refs_in_expr(spawn.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Await(await_expr) => {
+            collect_value_refs_in_expr(await_expr.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Fetch(fetch) => {
+            collect_value_refs_in_expr(fetch.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Assertion(assertion) => {
+            collect_value_refs_in_expr(assertion.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Condition(cond) => {
+            collect_value_refs_in_expr(cond.value.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Update(update) => {
+            collect_value_refs_in_expr(update.expr.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Infix(infix) => {
+            collect_value_refs_in_expr(infix.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(infix.rhs.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Coalesce(coalesce) => {
+            collect_value_refs_in_expr(coalesce.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(coalesce.rhs.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Try(expr_try) => {
+            collect_value_refs_in_expr(expr_try.body.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::SelectWith(expr_select) => {
+            collect_value_refs_in_expr(expr_select.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_select.field.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::KeyValueMap(map) => {
+            for entry in &map.entries {
+                collect_value_refs_in_expr(entry.key.as_ref(), module_path, refs);
+                collect_value_refs_in_expr(entry.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::Call(call) => {
+            collect_value_refs_in_expr(call.func.as_ref(), module_path, refs);
+            for arg in &call.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::ExprKind::AwaitCall(call) => {
+            collect_value_refs_in_expr(call.func.as_ref(), module_path, refs);
+            for arg in &call.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::ExprKind::MatchTuple(expr_match) => {
+            for item in &expr_match.values {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+            for case in &expr_match.cases {
+                collect_value_refs_in_match_case(case, module_path, refs);
+            }
+        }
+        ast::ExprKind::Switch(expr_switch) => {
+            collect_value_refs_in_expr(expr_switch.expr.as_ref(), module_path, refs);
+            for case in &expr_switch.cases {
+                collect_value_refs_in_match_case(case, module_path, refs);
+            }
+            if let Some(default) = &expr_switch.default {
+                collect_value_refs_in_expr(default.as_ref(), module_path, refs);
+            }
+        }
+        ast::ExprKind::InfixCall(call) => {
+            collect_value_refs_in_expr(call.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(call.rhs.as_ref(), module_path, refs);
+        }
+        ast::ExprKind::Any(_) => {}
+        ast::ExprKind::SizeOf(expr) => {
+            collect_value_refs_in_expr(expr.ty.as_ref(), module_path, refs);
+        }
+    }
+}
+
+fn collect_value_refs_in_match_case(
+    case: &ast::ExprMatchCase,
+    module_path: &[String],
+    refs: &mut ValueRefs,
+) {
+    if let Some(cond) = &case.cond {
+        collect_value_refs_in_expr(cond.as_ref(), module_path, refs);
+    }
+    collect_value_refs_in_expr(case.body.as_ref(), module_path, refs);
+}
+
+fn collect_value_refs_in_invoke_target(
+    target: &ast::ExprInvokeTarget,
+    module_path: &[String],
+    refs: &mut ValueRefs,
+) {
+    match target {
+        ast::ExprInvokeTarget::Expr(expr) => collect_value_refs_in_expr(expr, module_path, refs),
+        ast::ExprInvokeTarget::Func(func) => collect_value_refs_in_expr(func, module_path, refs),
+        ast::ExprInvokeTarget::Instance(instance) => {
+            collect_value_refs_in_expr(instance.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(instance.method.as_ref(), module_path, refs);
+        }
+    }
+}
+
+fn collect_value_refs_in_value(value: &ast::Value, module_path: &[String], refs: &mut ValueRefs) {
+    match value {
+        ast::Value::Expr(expr) => collect_value_refs_in_expr(expr.as_ref(), module_path, refs),
+        ast::Value::Object(object) => {
+            for item in &object.items {
+                collect_value_refs_in_expr(item.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::Array(array) => {
+            for item in &array.items {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+        }
+        ast::Value::Tuple(tuple) => {
+            for item in &tuple.items {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+        }
+        ast::Value::Struct(struct_value) => {
+            for field in &struct_value.fields {
+                collect_value_refs_in_expr(field.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::Structural(struct_value) => {
+            for field in &struct_value.fields {
+                collect_value_refs_in_expr(field.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::FormatString(format) => {
+            for fragment in &format.fragments {
+                if let ast::FormatKwArg::Expr(expr) = fragment {
+                    collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+                }
+            }
+        }
+        ast::Value::Match(match_value) => {
+            collect_value_refs_in_expr(match_value.value.as_ref(), module_path, refs);
+            for case in &match_value.cases {
+                collect_value_refs_in_match_case(case, module_path, refs);
+            }
+        }
+        ast::Value::Invocation(invocation) => {
+            collect_value_refs_in_expr(invocation.target.as_ref(), module_path, refs);
+            for arg in &invocation.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::Value::InvokeTarget(target) => {
+            collect_value_refs_in_invoke_target(target, module_path, refs);
+        }
+        ast::Value::Selector(selector) => {
+            collect_value_refs_in_expr(selector.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(selector.field.as_ref(), module_path, refs);
+        }
+        ast::Value::Select(expr_select) => {
+            collect_value_refs_in_expr(expr_select.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_select.field.as_ref(), module_path, refs);
+        }
+        ast::Value::SelectWith(expr_select) => {
+            collect_value_refs_in_expr(expr_select.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_select.field.as_ref(), module_path, refs);
+        }
+        ast::Value::Call(call) => {
+            collect_value_refs_in_expr(call.func.as_ref(), module_path, refs);
+            for arg in &call.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::Value::AwaitCall(call) => {
+            collect_value_refs_in_expr(call.func.as_ref(), module_path, refs);
+            for arg in &call.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::Value::Lambda(lambda) => {
+            collect_value_refs_in_expr(lambda.body.as_ref(), module_path, refs);
+        }
+        ast::Value::Cast(cast) => {
+            collect_value_refs_in_expr(cast.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::Update(update) => {
+            collect_value_refs_in_expr(update.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::Infix(infix) => {
+            collect_value_refs_in_expr(infix.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(infix.rhs.as_ref(), module_path, refs);
+        }
+        ast::Value::Coalesce(coalesce) => {
+            collect_value_refs_in_expr(coalesce.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(coalesce.rhs.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprStruct(ast::ExprStruct { fields, .. }) => {
+            for field in fields {
+                if let Some(value) = &field.value {
+                    collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+                }
+            }
+        }
+        ast::Value::ExprStructural(ast::ExprStructural { fields, .. }) => {
+            for field in fields {
+                collect_value_refs_in_expr(field.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::ExprTuple(ast::ExprTuple { items }) => {
+            for item in items {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+        }
+        ast::Value::ExprSelect(ast::ExprSelect { expr, field }) => {
+            collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(field.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprUnOp(ast::ExprUnOp { expr, .. }) => {
+            collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprFormatString(ast::ExprFormatString { fragments }) => {
+            for fragment in fragments {
+                if let ast::FormatFragment::Expr(expr) = fragment {
+                    collect_value_refs_in_expr(expr.as_ref(), module_path, refs);
+                }
+            }
+        }
+        ast::Value::Locator(locator) => record_locator(locator, module_path, refs),
+        ast::Value::ExprQuote(quote) => {
+            if let Some(body) = &quote.body {
+                collect_value_refs_in_expr(body, module_path, refs);
+            }
+        }
+        ast::Value::ExprUnquote(unquote) => {
+            collect_value_refs_in_expr(unquote.body.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprMap(expr_map) => {
+            collect_value_refs_in_expr(expr_map.body.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprFor(expr_for) => {
+            collect_value_refs_in_expr(expr_for.iter.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_for.body.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprRange(range) => {
+            collect_value_refs_in_expr(range.start.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(range.end.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprYield(expr_yield) => {
+            if let Some(value) = &expr_yield.value {
+                collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::ExprAccess(access) => {
+            collect_value_refs_in_expr(access.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(access.field.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprAssign(assign) => {
+            collect_value_refs_in_expr(assign.target.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(assign.value.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprReturn(ret) => {
+            if let Some(value) = &ret.value {
+                collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::ExprBreak(expr_break) => {
+            if let Some(value) = &expr_break.value {
+                collect_value_refs_in_expr(value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::ExprContinue(_) => {}
+        ast::Value::ExprLoop(expr_loop) => {
+            collect_value_refs_in_expr(expr_loop.body.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprWhile(ast::ExprWhile { cond, body }) => {
+            collect_value_refs_in_expr(cond.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(body.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprFuncRef(func_ref) => {
+            collect_value_refs_in_expr(func_ref.func.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprTyped(expr_typed) => {
+            collect_value_refs_in_expr(expr_typed.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprSpawn(spawn) => {
+            collect_value_refs_in_expr(spawn.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprAwait(await_expr) => {
+            collect_value_refs_in_expr(await_expr.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprFetch(fetch) => {
+            collect_value_refs_in_expr(fetch.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprAssertion(assertion) => {
+            collect_value_refs_in_expr(assertion.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprCondition(cond) => {
+            collect_value_refs_in_expr(cond.value.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprUpdate(update) => {
+            collect_value_refs_in_expr(update.expr.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprInfix(infix) => {
+            collect_value_refs_in_expr(infix.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(infix.rhs.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprCoalesce(coalesce) => {
+            collect_value_refs_in_expr(coalesce.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(coalesce.rhs.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprTry(expr_try) => {
+            collect_value_refs_in_expr(expr_try.body.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprSelectWith(expr_select) => {
+            collect_value_refs_in_expr(expr_select.expr.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(expr_select.field.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprKeyValueMap(map) => {
+            for entry in &map.entries {
+                collect_value_refs_in_expr(entry.key.as_ref(), module_path, refs);
+                collect_value_refs_in_expr(entry.value.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::ExprCall(call) => {
+            collect_value_refs_in_expr(call.func.as_ref(), module_path, refs);
+            for arg in &call.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::Value::ExprAwaitCall(call) => {
+            collect_value_refs_in_expr(call.func.as_ref(), module_path, refs);
+            for arg in &call.args {
+                collect_value_refs_in_expr(arg, module_path, refs);
+            }
+        }
+        ast::Value::ExprMatchTuple(expr_match) => {
+            for item in &expr_match.values {
+                collect_value_refs_in_expr(item, module_path, refs);
+            }
+            for case in &expr_match.cases {
+                collect_value_refs_in_match_case(case, module_path, refs);
+            }
+        }
+        ast::Value::ExprSwitch(expr_switch) => {
+            collect_value_refs_in_expr(expr_switch.expr.as_ref(), module_path, refs);
+            for case in &expr_switch.cases {
+                collect_value_refs_in_match_case(case, module_path, refs);
+            }
+            if let Some(default) = &expr_switch.default {
+                collect_value_refs_in_expr(default.as_ref(), module_path, refs);
+            }
+        }
+        ast::Value::ExprInfixCall(call) => {
+            collect_value_refs_in_expr(call.lhs.as_ref(), module_path, refs);
+            collect_value_refs_in_expr(call.rhs.as_ref(), module_path, refs);
+        }
+        ast::Value::ExprSizeOf(expr) => {
+            collect_value_refs_in_expr(expr.ty.as_ref(), module_path, refs);
+        }
+        ast::Value::Bool(_)
+        | ast::Value::Int(_)
+        | ast::Value::Uint(_)
+        | ast::Value::Float(_)
+        | ast::Value::String(_)
+        | ast::Value::Char(_)
+        | ast::Value::Byte(_)
+        | ast::Value::Null(_)
+        | ast::Value::None(_)
+        | ast::Value::Unit(_)
+        | ast::Value::Void(_)
+        | ast::Value::Bytes(_)
+        | ast::Value::Bits(_)
+        | ast::Value::Query(_)
+        | ast::Value::ExprRepr(_)
+        | ast::Value::ExprAny(_)
+        | ast::Value::BooleanPattern(_)
+        | ast::Value::NumericPattern(_)
+        | ast::Value::QueryStmt(_)
+        | ast::Value::SchemaStmt(_)
+        | ast::Value::MacroRules(_)
+        | ast::Value::MacroCall(_) => {}
+    }
+}
+
+fn record_locator(locator: &ast::Locator, module_path: &[String], refs: &mut ValueRefs) {
+    match locator {
+        ast::Locator::Ident(ident) => {
+            let module = module_key(module_path);
+            let name = ident.as_str().to_string();
+            refs.record_unqualified(module, name.clone());
+            refs.record_qualified(qualify_name(module_path, &name));
+        }
+        ast::Locator::Path(path) => {
+            let qualified = path
+                .segments
+                .iter()
+                .map(|seg| seg.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            refs.record_qualified(qualified);
+        }
+        ast::Locator::ParameterPath(path) => {
+            let qualified = path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            let name = path
+                .segments
+                .last()
+                .map(|seg| seg.ident.as_str().to_string())
+                .unwrap_or_default();
+            refs.record_qualified(qualified);
+            if !name.is_empty() {
+                refs.record_unqualified(module_key(module_path), name);
+            }
+        }
+    }
+}
+
+fn qualify_name(module_path: &[String], name: &str) -> String {
+    if module_path.is_empty() {
+        name.to_string()
+    } else {
+        format!("{}::{}", module_path.join("::"), name)
+    }
+}
+
+fn module_key(module_path: &[String]) -> String {
+    if module_path.is_empty() {
+        String::new()
+    } else {
+        module_path.join("::")
     }
 }

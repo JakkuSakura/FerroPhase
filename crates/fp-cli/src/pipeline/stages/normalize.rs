@@ -19,27 +19,11 @@ impl Pipeline {
                 );
                 return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
             }
-            if let Err(err) = fp_optimize::transformations::materialize_structural_types(ast) {
-                manager.add_diagnostic(
-                    Diagnostic::error(format!("Type materialization failed: {}", err))
-                        .with_source_context(STAGE_INTRINSIC_NORMALIZE),
-                );
-                return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
-            }
             return Ok(());
         }
 
         match fp_optimize::transformations::normalize_intrinsics(ast) {
-            Ok(()) => {
-                if let Err(err) = fp_optimize::transformations::materialize_structural_types(ast) {
-                    manager.add_diagnostic(
-                        Diagnostic::error(format!("Type materialization failed: {}", err))
-                            .with_source_context(STAGE_INTRINSIC_NORMALIZE),
-                    );
-                    return Err(Self::stage_failure(STAGE_INTRINSIC_NORMALIZE));
-                }
-                Ok(())
-            }
+            Ok(()) => Ok(()),
             Err(err) => {
                 manager.add_diagnostic(
                     Diagnostic::error(format!("Intrinsic normalization failed: {}", err))

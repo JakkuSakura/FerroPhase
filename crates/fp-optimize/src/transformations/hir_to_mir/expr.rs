@@ -3,7 +3,7 @@
 // gradually split into stmt/control_flow/types/borrow submodules.
 
 // BEGIN ORIGINAL CONTENT
-use fp_core::ast::{DecimalType, TypeInt, TypePrimitive};
+use fp_core::ast::{DecimalType, TypeBinaryOpKind, TypeInt, TypePrimitive};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
@@ -141,6 +141,11 @@ struct StructLayout {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct StructuralLayoutKey {
+    fields: Vec<(String, Ty)>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct StructLayoutKey {
     def_id: hir::DefId,
     args: Vec<Ty>,
@@ -168,6 +173,7 @@ pub struct MirLowering {
     struct_defs: HashMap<hir::DefId, StructDefinition>,
     struct_layouts: HashMap<StructLayoutKey, StructLayout>,
     struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
+    structural_defs: HashMap<StructuralLayoutKey, hir::DefId>,
     enum_defs: HashMap<hir::DefId, EnumDefinition>,
     enum_layouts: HashMap<EnumLayoutKey, EnumLayout>,
     enum_variants: HashMap<hir::DefId, EnumVariantInfo>,
@@ -186,6 +192,7 @@ pub struct MirLowering {
     opaque_types: HashMap<String, Ty>,
     synthetic_runtime_functions: HashSet<String>,
     tolerate_errors: bool,
+    next_synthetic_hir_def_id: hir::DefId,
 }
 
 impl MirLowering {
@@ -214,6 +221,7 @@ impl MirLowering {
             struct_defs: HashMap::new(),
             struct_layouts: HashMap::new(),
             struct_layouts_by_ty: HashMap::new(),
+            structural_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_layouts: HashMap::new(),
             enum_variants: HashMap::new(),
@@ -232,6 +240,7 @@ impl MirLowering {
             opaque_types: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
             tolerate_errors: false,
+            next_synthetic_hir_def_id: 1,
         }
     }
 
@@ -241,6 +250,13 @@ impl MirLowering {
 
     fn lower_program(&mut self, program: &hir::Program) -> Result<mir::Program> {
         let mut mir_program = mir::Program::new();
+        self.next_synthetic_hir_def_id = program
+            .items
+            .iter()
+            .map(|item| item.def_id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
 
         for item in &program.items {
             match &item.kind {
@@ -938,6 +954,12 @@ impl MirLowering {
             hir::TypeExprKind::Primitive(primitive) => {
                 self.lower_primitive_type(primitive, ty_expr.span)
             }
+            hir::TypeExprKind::Structural(structural) => {
+                self.lower_structural_type_expr(structural, ty_expr.span)
+            }
+            hir::TypeExprKind::TypeBinaryOp(type_op) => {
+                self.lower_type_binary_op_expr(type_op, ty_expr.span)
+            }
             hir::TypeExprKind::Tuple(elements) => Ty {
                 kind: TyKind::Tuple(
                     elements
@@ -1040,6 +1062,314 @@ impl MirLowering {
             }
             _ => None,
         }
+    }
+
+    fn next_synthetic_def_id(&mut self) -> hir::DefId {
+        let id = self.next_synthetic_hir_def_id;
+        self.next_synthetic_hir_def_id = self.next_synthetic_hir_def_id.saturating_add(1);
+        id
+    }
+
+    fn lower_structural_type_expr(
+        &mut self,
+        structural: &hir::TypeStructural,
+        span: Span,
+    ) -> Ty {
+        let mut fields = Vec::with_capacity(structural.fields.len());
+        for field in &structural.fields {
+            fields.push(StructFieldDef {
+                name: field.name.as_str().to_string(),
+                ty: (*field.ty).clone(),
+            });
+        }
+
+        let key_fields = fields
+            .iter()
+            .map(|field| (field.name.clone(), self.lower_type_expr(&field.ty)))
+            .collect::<Vec<_>>();
+        let key = StructuralLayoutKey { fields: key_fields };
+
+        let def_id = if let Some(def_id) = self.structural_defs.get(&key).copied() {
+            def_id
+        } else {
+            let def_id = self.next_synthetic_def_id();
+            let mut field_index = HashMap::new();
+            for (idx, field) in fields.iter().enumerate() {
+                if field_index.insert(field.name.clone(), idx).is_some() {
+                    self.emit_error(
+                        span,
+                        format!("duplicate structural field `{}`", field.name),
+                    );
+                }
+            }
+
+            self.struct_defs.insert(
+                def_id,
+                StructDefinition {
+                    def_id,
+                    name: format!("__structural_{}", def_id),
+                    generics: Vec::new(),
+                    fields: fields.clone(),
+                    field_index,
+                },
+            );
+            self.structural_defs.insert(key, def_id);
+            def_id
+        };
+
+        self.struct_layout_for_instance(def_id, &[], span)
+            .map(|layout| layout.ty)
+            .unwrap_or_else(|| self.error_ty())
+    }
+
+    fn lower_type_binary_op_expr(
+        &mut self,
+        type_op: &hir::TypeBinaryOp,
+        span: Span,
+    ) -> Ty {
+        match type_op.kind {
+            TypeBinaryOpKind::Union => {
+                self.lower_union_type_expr(&type_op.lhs, &type_op.rhs, span)
+            }
+            TypeBinaryOpKind::Add | TypeBinaryOpKind::Intersect | TypeBinaryOpKind::Subtract => {
+                let lhs = self.structural_fields_for_type_expr(&type_op.lhs, span);
+                let rhs = self.structural_fields_for_type_expr(&type_op.rhs, span);
+                let (Some(lhs), Some(rhs)) = (lhs, rhs) else {
+                    self.emit_error(
+                        span,
+                        "type arithmetic requires structural or named struct operands",
+                    );
+                    return self.error_ty();
+                };
+
+                let combined = match type_op.kind {
+                    TypeBinaryOpKind::Add => self.merge_structural_fields(span, lhs, rhs),
+                    TypeBinaryOpKind::Intersect => {
+                        self.intersect_structural_fields(span, lhs, rhs)
+                    }
+                    TypeBinaryOpKind::Subtract => {
+                        self.subtract_structural_fields(span, lhs, rhs)
+                    }
+                    TypeBinaryOpKind::Union => unreachable!("union handled above"),
+                };
+                let fields = combined
+                    .into_iter()
+                    .map(|field| hir::TypeStructuralField {
+                        name: hir::Symbol::new(field.name),
+                        ty: Box::new(field.ty),
+                    })
+                    .collect::<Vec<_>>();
+                self.lower_structural_type_expr(&hir::TypeStructural { fields }, span)
+            }
+        }
+    }
+
+    fn structural_fields_for_type_expr(
+        &mut self,
+        ty_expr: &hir::TypeExpr,
+        span: Span,
+    ) -> Option<Vec<StructFieldDef>> {
+        match &ty_expr.kind {
+            hir::TypeExprKind::Structural(structural) => Some(
+                structural
+                    .fields
+                    .iter()
+                    .map(|field| StructFieldDef {
+                        name: field.name.as_str().to_string(),
+                        ty: (*field.ty).clone(),
+                    })
+                    .collect(),
+            ),
+            hir::TypeExprKind::Path(path) => {
+                if let Some(hir::Res::Def(def_id)) = &path.res {
+                    if let Some(def) = self.struct_defs.get(def_id) {
+                        return Some(def.fields.clone());
+                    }
+                }
+                self.emit_error(
+                    span,
+                    "type arithmetic requires struct operands with known definitions",
+                );
+                None
+            }
+            hir::TypeExprKind::TypeBinaryOp(type_op) => match type_op.kind {
+                TypeBinaryOpKind::Add | TypeBinaryOpKind::Intersect | TypeBinaryOpKind::Subtract => {
+                    let lhs = self.structural_fields_for_type_expr(&type_op.lhs, span)?;
+                    let rhs = self.structural_fields_for_type_expr(&type_op.rhs, span)?;
+                    Some(match type_op.kind {
+                        TypeBinaryOpKind::Add => self.merge_structural_fields(span, lhs, rhs),
+                        TypeBinaryOpKind::Intersect => {
+                            self.intersect_structural_fields(span, lhs, rhs)
+                        }
+                        TypeBinaryOpKind::Subtract => {
+                            self.subtract_structural_fields(span, lhs, rhs)
+                        }
+                        TypeBinaryOpKind::Union => unreachable!("union handled separately"),
+                    })
+                }
+                TypeBinaryOpKind::Union => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn merge_structural_fields(
+        &mut self,
+        span: Span,
+        mut lhs: Vec<StructFieldDef>,
+        rhs: Vec<StructFieldDef>,
+    ) -> Vec<StructFieldDef> {
+        for rhs_field in rhs {
+            if let Some(existing) = lhs.iter().find(|field| field.name == rhs_field.name) {
+                if existing.ty != rhs_field.ty {
+                    self.emit_error(
+                        span,
+                        format!(
+                            "conflicting field types for `{}` in structural merge",
+                            rhs_field.name
+                        ),
+                    );
+                }
+                continue;
+            }
+            lhs.push(rhs_field);
+        }
+        lhs
+    }
+
+    fn intersect_structural_fields(
+        &mut self,
+        span: Span,
+        lhs: Vec<StructFieldDef>,
+        rhs: Vec<StructFieldDef>,
+    ) -> Vec<StructFieldDef> {
+        lhs.into_iter()
+            .filter_map(|field| {
+                rhs.iter().find(|rhs_field| rhs_field.name == field.name).map(|rhs_field| {
+                    if rhs_field.ty != field.ty {
+                        self.emit_error(
+                            span,
+                            format!(
+                                "conflicting field types for `{}` in structural intersect",
+                                field.name
+                            ),
+                        );
+                    }
+                    field.clone()
+                })
+            })
+            .collect()
+    }
+
+    fn subtract_structural_fields(
+        &mut self,
+        _span: Span,
+        lhs: Vec<StructFieldDef>,
+        rhs: Vec<StructFieldDef>,
+    ) -> Vec<StructFieldDef> {
+        lhs.into_iter()
+            .filter(|field| !rhs.iter().any(|rhs_field| rhs_field.name == field.name))
+            .collect()
+    }
+
+    fn lower_union_type_expr(
+        &mut self,
+        lhs: &hir::TypeExpr,
+        rhs: &hir::TypeExpr,
+        span: Span,
+    ) -> Ty {
+        let def_id = self.next_synthetic_def_id();
+        let enum_name = format!("__union_{}", def_id);
+
+        let mut lhs_name = self.union_variant_name(lhs, "Left");
+        let mut rhs_name = self.union_variant_name(rhs, "Right");
+        if lhs_name == rhs_name {
+            rhs_name = format!("{}_rhs", rhs_name);
+        }
+
+        let variants = vec![
+            EnumVariantDef {
+                def_id: self.next_synthetic_def_id(),
+                name: lhs_name,
+                discriminant: 0,
+                payload: Some(lhs.clone()),
+            },
+            EnumVariantDef {
+                def_id: self.next_synthetic_def_id(),
+                name: rhs_name,
+                discriminant: 1,
+                payload: Some(rhs.clone()),
+            },
+        ];
+
+        self.register_synthetic_enum(def_id, enum_name, variants, span);
+
+        self.enum_layout_for_instance(def_id, &[], span)
+            .map(|layout| layout.enum_ty)
+            .unwrap_or_else(|| self.error_ty())
+    }
+
+    fn union_variant_name(&self, ty_expr: &hir::TypeExpr, fallback: &str) -> String {
+        match &ty_expr.kind {
+            hir::TypeExprKind::Path(path) => path
+                .segments
+                .last()
+                .map(|seg| seg.name.as_str().to_string())
+                .filter(|name| !name.is_empty())
+                .unwrap_or_else(|| fallback.to_string()),
+            _ => fallback.to_string(),
+        }
+    }
+
+    fn register_synthetic_enum(
+        &mut self,
+        def_id: hir::DefId,
+        name: String,
+        variants: Vec<EnumVariantDef>,
+        span: Span,
+    ) {
+        if self.enum_defs.contains_key(&def_id) {
+            return;
+        }
+
+        for variant in &variants {
+            let payload_def = variant.payload.as_ref().and_then(|payload| {
+                if let hir::TypeExprKind::Path(path) = &payload.kind {
+                    if let Some(hir::Res::Def(def_id)) = &path.res {
+                        return Some(*def_id);
+                    }
+                }
+                None
+            });
+            self.enum_variants.insert(
+                variant.def_id,
+                EnumVariantInfo {
+                    def_id: variant.def_id,
+                    enum_def: def_id,
+                    discriminant: variant.discriminant,
+                    payload_def,
+                },
+            );
+
+            let qualified_name = format!("{}::{}", name, variant.name);
+            self.enum_variant_names
+                .insert(qualified_name.clone(), variant.def_id);
+            self.enum_variant_names
+                .entry(variant.name.clone())
+                .or_insert(variant.def_id);
+        }
+
+        self.enum_defs.insert(
+            def_id,
+            EnumDefinition {
+                def_id,
+                name,
+                generics: Vec::new(),
+                variants,
+            },
+        );
+
+        let _ = self.enum_layout_for_instance(def_id, &[], span);
     }
 
     fn lower_primitive_type(&mut self, primitive: &TypePrimitive, span: Span) -> Ty {
@@ -1613,6 +1943,12 @@ impl MirLowering {
         match &ty_expr.kind {
             hir::TypeExprKind::Primitive(primitive) => {
                 self.lower_primitive_type(primitive, ty_expr.span)
+            }
+            hir::TypeExprKind::Structural(structural) => {
+                self.lower_structural_type_expr(structural, ty_expr.span)
+            }
+            hir::TypeExprKind::TypeBinaryOp(type_op) => {
+                self.lower_type_binary_op_expr(type_op, ty_expr.span)
             }
             hir::TypeExprKind::Tuple(elements) => Ty {
                 kind: TyKind::Tuple(
