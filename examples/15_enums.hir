@@ -1,4 +1,9 @@
 hir::Program {
+    struct __structural_value_2c846735da937b2 {
+        pub w: i64,
+        pub h: i64,
+    }
+
     pub enum Shape {
         Point,
         Circle,

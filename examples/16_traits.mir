@@ -61,21 +61,20 @@ mir::Program {
                     terminator: call fn print_area__mono_692e805f044e08ba_5(copy _7) -> _8 then bb4
                 bb4:
                     terminator: return
-        body3 { arg_count: 1, locals: 5 }
+        body3 { arg_count: 1, locals: 4 }
             return_local: _0
             locals:
                 _0: ()
                 _1: <??>
                 _2: ()
-                _3: i32
-                _4: ()
+                _3: ()
             blocks:
                 bb0:
                     terminator: call fn T::area(copy _1) -> _2 then bb1
                 bb1:
-                    terminator: call global printf("%.2\n", "()") -> _3 then bb2
-                bb2:
-                    s0: _4 = aggregate(tuple; [])
+                    s0: intrinsic Println "%.2
+" ["()"]
+                    s1: _3 = aggregate(tuple; [])
                     terminator: return
         body4 { arg_count: 1, locals: 2 }
             return_local: _0

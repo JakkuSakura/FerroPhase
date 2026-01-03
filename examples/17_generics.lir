@@ -4,23 +4,18 @@ lir::Program {
             locals:
                 %0: void
                 %1: { i64, ptr i8 }
-                %2: i32
-                %3: void
-                %4: i64
-                %5: i32
+                %2: void
+                %3: i64
+                %4: void
+                %5: f64
                 %6: void
-                %7: f64
-                %8: i32
-                %9: void
-                %10: { i64, i64 }
-                %11: { i64, i64 }
-                %12: { i64, i64 }
-                %13: i64
-                %14: i32
-                %15: void
-                %16: i64
-                %17: i32
-                %18: void
+                %7: { i64, i64 }
+                %8: { i64, i64 }
+                %9: { i64, i64 }
+                %10: i64
+                %11: void
+                %12: i64
+                %13: void
             bb0 // label: bb0 // succs: [bb1]:
                 i0: %r0 = call c @Pair__new__mono_a3cae9220656bc7e(i64 42, c"hello") : { i64, ptr i8 }
                 terminator: br bb1
@@ -35,24 +30,18 @@ lir::Program {
                 i8: %r8 = gep inbounds %r7 [i64 8] : ptr i8
                 i9: %r9 = bitcast %r8 to ptr ptr i8 : ptr ptr i8
                 i10: %r10 = load %r9 align 8 : ptr i8
-                i11: %r11 = call c @printf(c"(%lld, %s)
-", %r4, %r10) : i32
+                i11: %r11 = intrinsic Println "(%lld, %s)
+" (%r4, %r10)
+                i12: %r12 = call c @max__mono_a7af9f593fdc4675_6(i64 10, i64 20) : i64
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i12: %r12 = call c @max__mono_a7af9f593fdc4675_6(i64 10, i64 20) : i64
+                i13: %r13 = intrinsic Println "max(10, 20) = %lld
+" (%r12)
+                i14: %r14 = call c @max__mono_d7ad91e83a08a980_6(f64 3.5, f64 2.1) : f64
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i13: %r13 = call c @printf(c"max(10, 20) = %lld
-", %r12) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i14: %r14 = call c @max__mono_d7ad91e83a08a980_6(f64 3.5, f64 2.1) : f64
-                terminator: br bb5
-            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i15: %r15 = call c @printf(c"max(3.5, 2.1) = %f
-", %r14) : i32
-                terminator: br bb6
-            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
+                i15: %r15 = intrinsic Println "max(3.5, 2.1) = %f
+" (%r14)
                 i16: %r16 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i17: store struct { i64, i64 } { i64 0, i64 100 }, %r16 align 8
                 i18: %r18 = alloca i32 1 align 8 : ptr { i64, i64 }
@@ -62,20 +51,16 @@ lir::Program {
                 i22: store %r21, %r20 align 8
                 i23: %r23 = load %r16 align 8 : { i64, i64 }
                 i24: %r24 = call c @Option__unwrap_or__mono_a7af9f593fdc4675(%r23, i64 0) : i64
-                terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i25: %r25 = call c @printf(c"%lld
-", %r24) : i32
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i25: %r25 = intrinsic Println "%lld
+" (%r24)
                 i26: %r26 = load %r20 align 8 : { i64, i64 }
                 i27: %r27 = call c @Option__unwrap_or__mono_a7af9f593fdc4675(%r26, i64 99) : i64
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i28: %r28 = call c @printf(c"%lld
-", %r27) : i32
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9]:
+                terminator: br bb5
+            bb5 // label: bb5 // preds: [bb4]:
+                i28: %r28 = intrinsic Println "%lld
+" (%r27)
                 terminator: ret void
         }
 

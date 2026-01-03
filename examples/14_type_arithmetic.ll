@@ -17,9 +17,9 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.14_type_arithmetic.11 = private unnamed_addr constant [17 x i8] c"LiteralInt %lld\0A\00", align 1
 @.str.14_type_arithmetic.12 = private unnamed_addr constant [16 x i8] c"LiteralBool %d\0A\00", align 1
 @.str.14_type_arithmetic.13 = private unnamed_addr constant [15 x i8] c"LiteralStr %s\0A\00", align 1
-@.str.14_type_arithmetic.14 = private unnamed_addr constant [15 x i8] c"LiteralUnit %s\00", align 1
+@.str.14_type_arithmetic.14 = private unnamed_addr constant [16 x i8] c"LiteralUnit %s\0A\00", align 1
 @.str.14_type_arithmetic.15 = private unnamed_addr constant [3 x i8] c"()\00", align 1
-@.str.14_type_arithmetic.16 = private unnamed_addr constant [15 x i8] c"LiteralNull %s\00", align 1
+@.str.14_type_arithmetic.16 = private unnamed_addr constant [16 x i8] c"LiteralNull %s\0A\00", align 1
 @.str.14_type_arithmetic.17 = private unnamed_addr constant [5 x i8] c"null\00", align 1
 @.str.14_type_arithmetic.18 = private unnamed_addr constant [19 x i8] c"LiteralStrEnum %s\0A\00", align 1
 @.str.14_type_arithmetic.19 = private unnamed_addr constant [19 x i8] c"FooMaybe sum=%lld\0A\00", align 1
@@ -166,36 +166,34 @@ bb5:                                              ; No predecessors!
 
 define i32 @main() {
 bb0:
-  %alloca_271 = alloca ptr, align 8
-  %alloca_count_271 = alloca ptr, align 8
-  %alloca_266 = alloca { i64, i64, i64, i64 }, align 8
-  %alloca_count_266 = alloca { i64, i64, i64, i64 }, align 8
-  %alloca_253 = alloca ptr, align 8
-  %alloca_count_253 = alloca ptr, align 8
-  %alloca_251 = alloca ptr, align 8
-  %alloca_count_251 = alloca ptr, align 8
-  %alloca_249 = alloca ptr, align 8
-  %alloca_count_249 = alloca ptr, align 8
-  %alloca_247 = alloca i1, align 1
-  %alloca_count_247 = alloca i1, align 1
-  %alloca_245 = alloca i64, align 8
-  %alloca_count_245 = alloca i64, align 8
-  %alloca_218 = alloca i64, align 8
-  %alloca_count_218 = alloca i64, align 8
-  %alloca_216 = alloca i64, align 8
-  %alloca_count_216 = alloca i64, align 8
-  %alloca_214 = alloca i64, align 8
-  %alloca_count_214 = alloca i64, align 8
-  %alloca_212 = alloca i64, align 8
-  %alloca_count_212 = alloca i64, align 8
-  %alloca_209 = alloca [4 x i64], align 8
-  %alloca_count_209 = alloca [4 x i64], align 8
-  %alloca_207 = alloca [4 x i64], align 8
-  %alloca_count_207 = alloca [4 x i64], align 8
-  %alloca_200 = alloca ptr, align 8
-  %alloca_count_200 = alloca ptr, align 8
-  %alloca_197 = alloca { i64, i64, i64, i64 }, align 8
-  %alloca_count_197 = alloca { i64, i64, i64, i64 }, align 8
+  %alloca_267 = alloca ptr, align 8
+  %alloca_count_267 = alloca ptr, align 8
+  %alloca_262 = alloca { i64, i64, i64, i64 }, align 8
+  %alloca_count_262 = alloca { i64, i64, i64, i64 }, align 8
+  %alloca_250 = alloca ptr, align 8
+  %alloca_count_250 = alloca ptr, align 8
+  %alloca_248 = alloca ptr, align 8
+  %alloca_count_248 = alloca ptr, align 8
+  %alloca_246 = alloca ptr, align 8
+  %alloca_count_246 = alloca ptr, align 8
+  %alloca_244 = alloca i1, align 1
+  %alloca_count_244 = alloca i1, align 1
+  %alloca_242 = alloca i64, align 8
+  %alloca_count_242 = alloca i64, align 8
+  %alloca_215 = alloca i64, align 8
+  %alloca_count_215 = alloca i64, align 8
+  %alloca_213 = alloca i64, align 8
+  %alloca_count_213 = alloca i64, align 8
+  %alloca_211 = alloca i64, align 8
+  %alloca_count_211 = alloca i64, align 8
+  %alloca_209 = alloca i64, align 8
+  %alloca_count_209 = alloca i64, align 8
+  %alloca_206 = alloca [4 x i64], align 8
+  %alloca_count_206 = alloca [4 x i64], align 8
+  %alloca_204 = alloca [4 x i64], align 8
+  %alloca_count_204 = alloca [4 x i64], align 8
+  %alloca_197 = alloca ptr, align 8
+  %alloca_count_197 = alloca ptr, align 8
   %alloca_185 = alloca { i64, i64, i64, i64 }, align 8
   %alloca_count_185 = alloca { i64, i64, i64, i64 }, align 8
   %alloca_183 = alloca { i64, i64, i64, i64 }, align 8
@@ -223,17 +221,11 @@ bb0:
   %gep_110 = getelementptr inbounds i8, ptr %alloca_count_101, i64 16
   %load_112 = load i64, ptr %gep_110, align 8
   %call_113 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.0, i64 %load_104, i64 %load_108, i64 %load_112)
-  br label %bb1
-
-bb1:                                              ; preds = %bb0
   store { i64, i64 } { i64 4, i64 5 }, ptr %alloca_count_114, align 8
   %load_117 = load i64, ptr %alloca_count_114, align 8
   %gep_119 = getelementptr inbounds i8, ptr %alloca_count_114, i64 8
   %load_121 = load i64, ptr %gep_119, align 8
   %call_122 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.1, i64 %load_117, i64 %load_121)
-  br label %bb2
-
-bb2:                                              ; preds = %bb1
   %load_124 = load { i64, i64, i64 }, ptr %alloca_count_101, align 8
   store { i64, i64, i64 } %load_124, ptr %alloca_count_123, align 8
   %load_128 = load i64, ptr %alloca_count_123, align 8
@@ -256,31 +248,19 @@ bb2:                                              ; preds = %bb1
   %gep_156 = getelementptr inbounds i8, ptr %alloca_count_142, i64 24
   %load_158 = load i64, ptr %gep_156, align 8
   %call_159 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.2, i64 %load_146, i64 %load_150, i64 %load_154, i64 %load_158)
-  br label %bb3
-
-bb3:                                              ; preds = %bb2
   store { i64, i64 } { i64 10, i64 20 }, ptr %alloca_count_160, align 8
   %load_163 = load i64, ptr %alloca_count_160, align 8
   %gep_165 = getelementptr inbounds i8, ptr %alloca_count_160, i64 8
   %load_167 = load i64, ptr %gep_165, align 8
   %call_168 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.3, i64 %load_163, i64 %load_167)
-  br label %bb4
-
-bb4:                                              ; preds = %bb3
   store { i64 } { i64 99 }, ptr %alloca_count_169, align 8
   %load_172 = load i64, ptr %alloca_count_169, align 8
   %call_173 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.4, i64 %load_172)
-  br label %bb5
-
-bb5:                                              ; preds = %bb4
   store { i64, i64 } { i64 7, i64 42 }, ptr %alloca_count_174, align 8
   %load_177 = load i64, ptr %alloca_count_174, align 8
   %gep_179 = getelementptr inbounds i8, ptr %alloca_count_174, i64 8
   %load_181 = load i64, ptr %gep_179, align 8
   %call_182 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.5, i64 %load_177, i64 %load_181)
-  br label %bb6
-
-bb6:                                              ; preds = %bb5
   store { i64, i64, i64, i64 } { i64 0, i64 2, i64 3, i64 4 }, ptr %alloca_count_183, align 8
   %load_187 = load i64, ptr %alloca_count_114, align 8
   %gep_189 = getelementptr inbounds i8, ptr %alloca_count_114, i64 8
@@ -289,97 +269,64 @@ bb6:                                              ; preds = %bb5
   %insertvalue_194 = insertvalue { i64, i64, i64, i64 } %insertvalue_193, i64 %load_191, 2
   %insertvalue_195 = insertvalue { i64, i64, i64, i64 } %insertvalue_194, i64 0, 3
   store { i64, i64, i64, i64 } %insertvalue_195, ptr %alloca_count_185, align 8
-  %load_198 = load { i64, i64, i64, i64 }, ptr %alloca_count_185, align 8
-  store { i64, i64, i64, i64 } %load_198, ptr %alloca_count_197, align 8
-  %load_201 = load { i64, i64, i64, i64 }, ptr %alloca_count_183, align 8
+  %load_198 = load { i64, i64, i64, i64 }, ptr %alloca_count_183, align 8
+  %call_199 = call i64 @describe_union({ i64, i64, i64, i64 } %load_198)
+  br label %bb1
+
+bb1:                                              ; preds = %bb0
+  %call_200 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.6, i64 %call_199)
+  %load_201 = load { i64, i64, i64, i64 }, ptr %alloca_count_185, align 8
   %call_202 = call i64 @describe_union({ i64, i64, i64, i64 } %load_201)
-  br label %bb7
+  br label %bb2
 
-bb7:                                              ; preds = %bb6
-  %call_203 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.6, i64 %call_202)
-  br label %bb8
+bb2:                                              ; preds = %bb1
+  %call_203 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.7, i64 %call_202)
+  store [4 x i64] [i64 1, i64 2, i64 3, i64 4], ptr %alloca_count_204, align 8
+  %load_207 = load [4 x i64], ptr %alloca_count_204, align 8
+  store [4 x i64] %load_207, ptr %alloca_count_206, align 8
+  store i64 0, ptr %alloca_count_209, align 8
+  store i64 1, ptr %alloca_count_211, align 8
+  store i64 2, ptr %alloca_count_213, align 8
+  store i64 3, ptr %alloca_count_215, align 8
+  %load_217 = load i64, ptr %alloca_count_209, align 8
+  %iop_218 = mul i64 %load_217, 8
+  %gep_220 = getelementptr inbounds i8, ptr %alloca_count_206, i64 %iop_218
+  %load_222 = load i64, ptr %gep_220, align 8
+  %load_223 = load i64, ptr %alloca_count_211, align 8
+  %iop_224 = mul i64 %load_223, 8
+  %gep_226 = getelementptr inbounds i8, ptr %alloca_count_206, i64 %iop_224
+  %load_228 = load i64, ptr %gep_226, align 8
+  %load_229 = load i64, ptr %alloca_count_213, align 8
+  %iop_230 = mul i64 %load_229, 8
+  %gep_232 = getelementptr inbounds i8, ptr %alloca_count_206, i64 %iop_230
+  %load_234 = load i64, ptr %gep_232, align 8
+  %load_235 = load i64, ptr %alloca_count_215, align 8
+  %iop_236 = mul i64 %load_235, 8
+  %gep_238 = getelementptr inbounds i8, ptr %alloca_count_206, i64 %iop_236
+  %load_240 = load i64, ptr %gep_238, align 8
+  %call_241 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.8, i64 %load_222, i64 %load_228, i64 %load_234, i64 %load_240)
+  store i64 42, ptr %alloca_count_242, align 8
+  store i1 true, ptr %alloca_count_244, align 1
+  store ptr @.str.14_type_arithmetic.9, ptr %alloca_count_246, align 8
+  store ptr null, ptr %alloca_count_248, align 8
+  store ptr @.str.14_type_arithmetic.10, ptr %alloca_count_250, align 8
+  %load_252 = load i64, ptr %alloca_count_242, align 8
+  %call_253 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.11, i64 %load_252)
+  %load_254 = load i1, ptr %alloca_count_244, align 1
+  %call_255 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.12, i1 %load_254)
+  %load_256 = load ptr, ptr %alloca_count_246, align 8
+  %call_257 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.13, ptr %load_256)
+  %call_258 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.14, ptr @.str.14_type_arithmetic.15)
+  %call_259 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.16, ptr @.str.14_type_arithmetic.17)
+  %load_260 = load ptr, ptr %alloca_count_250, align 8
+  %call_261 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.18, ptr %load_260)
+  store { i64, i64, i64, i64 } { i64 0, i64 5, i64 6, i64 7 }, ptr %alloca_count_262, align 8
+  %load_264 = load { i64, i64, i64, i64 }, ptr %alloca_count_262, align 8
+  %call_265 = call i64 @describe_optional({ i64, i64, i64, i64 } %load_264)
+  br label %bb3
 
-bb8:                                              ; preds = %bb7
-  %load_204 = load { i64, i64, i64, i64 }, ptr %alloca_count_197, align 8
-  %call_205 = call i64 @describe_union({ i64, i64, i64, i64 } %load_204)
-  br label %bb9
-
-bb9:                                              ; preds = %bb8
-  %call_206 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.7, i64 %call_205)
-  br label %bb10
-
-bb10:                                             ; preds = %bb9
-  store [4 x i64] [i64 1, i64 2, i64 3, i64 4], ptr %alloca_count_207, align 8
-  %load_210 = load [4 x i64], ptr %alloca_count_207, align 8
-  store [4 x i64] %load_210, ptr %alloca_count_209, align 8
-  store i64 0, ptr %alloca_count_212, align 8
-  store i64 1, ptr %alloca_count_214, align 8
-  store i64 2, ptr %alloca_count_216, align 8
-  store i64 3, ptr %alloca_count_218, align 8
-  %load_220 = load i64, ptr %alloca_count_212, align 8
-  %iop_221 = mul i64 %load_220, 8
-  %gep_223 = getelementptr inbounds i8, ptr %alloca_count_209, i64 %iop_221
-  %load_225 = load i64, ptr %gep_223, align 8
-  %load_226 = load i64, ptr %alloca_count_214, align 8
-  %iop_227 = mul i64 %load_226, 8
-  %gep_229 = getelementptr inbounds i8, ptr %alloca_count_209, i64 %iop_227
-  %load_231 = load i64, ptr %gep_229, align 8
-  %load_232 = load i64, ptr %alloca_count_216, align 8
-  %iop_233 = mul i64 %load_232, 8
-  %gep_235 = getelementptr inbounds i8, ptr %alloca_count_209, i64 %iop_233
-  %load_237 = load i64, ptr %gep_235, align 8
-  %load_238 = load i64, ptr %alloca_count_218, align 8
-  %iop_239 = mul i64 %load_238, 8
-  %gep_241 = getelementptr inbounds i8, ptr %alloca_count_209, i64 %iop_239
-  %load_243 = load i64, ptr %gep_241, align 8
-  %call_244 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.8, i64 %load_225, i64 %load_231, i64 %load_237, i64 %load_243)
-  br label %bb11
-
-bb11:                                             ; preds = %bb10
-  store i64 42, ptr %alloca_count_245, align 8
-  store i1 true, ptr %alloca_count_247, align 1
-  store ptr @.str.14_type_arithmetic.9, ptr %alloca_count_249, align 8
-  store ptr null, ptr %alloca_count_251, align 8
-  store ptr @.str.14_type_arithmetic.10, ptr %alloca_count_253, align 8
-  %load_255 = load i64, ptr %alloca_count_245, align 8
-  %call_256 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.11, i64 %load_255)
-  br label %bb12
-
-bb12:                                             ; preds = %bb11
-  %load_257 = load i1, ptr %alloca_count_247, align 1
-  %zext = zext i1 %load_257 to i32
-  %call_259 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.12, i32 %zext)
-  br label %bb13
-
-bb13:                                             ; preds = %bb12
-  %load_260 = load ptr, ptr %alloca_count_249, align 8
-  %call_261 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.13, ptr %load_260)
-  br label %bb14
-
-bb14:                                             ; preds = %bb13
-  %call_262 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.14, ptr @.str.14_type_arithmetic.15)
-  br label %bb15
-
-bb15:                                             ; preds = %bb14
-  %call_263 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.16, ptr @.str.14_type_arithmetic.17)
-  br label %bb16
-
-bb16:                                             ; preds = %bb15
-  %load_264 = load ptr, ptr %alloca_count_253, align 8
-  %call_265 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.18, ptr %load_264)
-  br label %bb17
-
-bb17:                                             ; preds = %bb16
-  store { i64, i64, i64, i64 } { i64 0, i64 5, i64 6, i64 7 }, ptr %alloca_count_266, align 8
-  %load_268 = load { i64, i64, i64, i64 }, ptr %alloca_count_266, align 8
-  %call_269 = call i64 @describe_optional({ i64, i64, i64, i64 } %load_268)
-  br label %bb18
-
-bb18:                                             ; preds = %bb17
-  %call_270 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.19, i64 %call_269)
-  br label %bb19
-
-bb19:                                             ; preds = %bb18
+bb3:                                              ; preds = %bb2
+  %call_266 = call i32 (ptr, ...) @printf(ptr @.str.14_type_arithmetic.19, i64 %call_265)
   ret i32 0
 }
 

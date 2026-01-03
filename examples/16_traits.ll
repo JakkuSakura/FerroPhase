@@ -86,9 +86,6 @@ bb0:
 
 bb1:                                              ; preds = %bb0
   %call_42 = call i32 (ptr, ...) @printf(ptr @.str.16_traits.0, ptr @.str.16_traits.1)
-  br label %bb2
-
-bb2:                                              ; preds = %bb1
   ret void
 }
 

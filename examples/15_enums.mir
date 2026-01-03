@@ -40,7 +40,7 @@ mir::Program {
                 bb7:
                     s0: _0 = aggregate(tuple; [])
                     terminator: goto -> bb1
-        body1 { arg_count: 0, locals: 34 }
+        body1 { arg_count: 0, locals: 27 }
             return_local: _0
             locals:
                 _0: ()
@@ -50,33 +50,26 @@ mir::Program {
                 _4: (isize, i64, i64)
                 _5: <??>
                 _6: <??>
-                _7: i32
-                _8: ()
+                _7: ()
+                _8: <??>
                 _9: <??>
-                _10: <??>
-                _11: i32
-                _12: ()
-                _13: <??>
-                _14: <??>
-                _15: i32
-                _16: ()
-                _17: isize
-                _18: isize
-                _19: i32
-                _20: i32
-                _21: ()
-                _22: (isize, i64)
-                _23: (isize, i64)
-                _24: (isize, i64)
-                _25: i64
-                _26: i32
-                _27: ()
-                _28: i64
-                _29: i32
-                _30: ()
-                _31: i32
-                _32: i32
-                _33: ()
+                _10: ()
+                _11: <??>
+                _12: <??>
+                _13: ()
+                _14: isize
+                _15: isize
+                _16: i32
+                _17: ()
+                _18: (isize, i64)
+                _19: (isize, i64)
+                _20: (isize, i64)
+                _21: i64
+                _22: ()
+                _23: i64
+                _24: ()
+                _25: i32
+                _26: ()
             blocks:
                 bb0:
                     s0: _2 = aggregate(tuple; [0, 0, 0])
@@ -86,44 +79,44 @@ mir::Program {
                     s4: _6 = ref(Shared, _1)
                     terminator: call fn Shape::describe(copy _6) -> _5 then bb1
                 bb1:
-                    terminator: call global printf("%s\n", copy _5) -> _7 then bb2
+                    s0: intrinsic Println "%s
+" [copy _5]
+                    s1: _7 = aggregate(tuple; [])
+                    s2: _9 = ref(Shared, _3)
+                    terminator: call fn Shape::describe(copy _9) -> _8 then bb2
                 bb2:
-                    s0: _8 = aggregate(tuple; [])
-                    s1: _10 = ref(Shared, _3)
-                    terminator: call fn Shape::describe(copy _10) -> _9 then bb3
+                    s0: intrinsic Println "%s
+" [copy _8]
+                    s1: _10 = aggregate(tuple; [])
+                    s2: _12 = ref(Shared, _4)
+                    terminator: call fn Shape::describe(copy _12) -> _11 then bb3
                 bb3:
-                    terminator: call global printf("%s\n", copy _9) -> _11 then bb4
+                    s0: intrinsic Println "%s
+" [copy _11]
+                    s1: _13 = aggregate(tuple; [])
+                    s2: _15 = aggregate(tuple; [5])
+                    s3: _14 = copy _15
+                    s4: _16 = cast(Misc, copy _14, i32)
+                    s5: intrinsic Println "discriminant: %d
+" [copy _16]
+                    s6: _17 = aggregate(tuple; [])
+                    s7: _18 = aggregate(tuple; [0, 42])
+                    s8: _20 = aggregate(tuple; [1, 0])
+                    s9: _19 = copy _20
+                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _18, 0) -> _21 then bb4
                 bb4:
-                    s0: _12 = aggregate(tuple; [])
-                    s1: _14 = ref(Shared, _4)
-                    terminator: call fn Shape::describe(copy _14) -> _13 then bb5
+                    s0: intrinsic Println "%lld
+" [copy _21]
+                    s1: _22 = aggregate(tuple; [])
+                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _19, 99) -> _23 then bb5
                 bb5:
-                    terminator: call global printf("%s\n", copy _13) -> _15 then bb6
-                bb6:
-                    s0: _16 = aggregate(tuple; [])
-                    s1: _18 = aggregate(tuple; [5])
-                    s2: _17 = copy _18
-                    s3: _19 = cast(Misc, copy _17, i32)
-                    terminator: call global printf("discriminant: %d\n", copy _19) -> _20 then bb7
-                bb7:
-                    s0: _21 = aggregate(tuple; [])
-                    s1: _22 = aggregate(tuple; [0, 42])
-                    s2: _24 = aggregate(tuple; [1, 0])
-                    s3: _23 = copy _24
-                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _22, 0) -> _25 then bb8
-                bb8:
-                    terminator: call global printf("%lld\n", copy _25) -> _26 then bb9
-                bb9:
-                    s0: _27 = aggregate(tuple; [])
-                    terminator: call fn Option::unwrap_or__mono_a7af9f593fdc4675(copy _23, 99) -> _28 then bb10
-                bb10:
-                    terminator: call global printf("%lld\n", copy _28) -> _29 then bb11
-                bb11:
-                    s0: _30 = aggregate(tuple; [])
-                    s1: _31 = 2
-                    terminator: call global printf("const: %d\n", copy _31) -> _32 then bb12
-                bb12:
-                    s0: _33 = aggregate(tuple; [])
+                    s0: intrinsic Println "%lld
+" [copy _23]
+                    s1: _24 = aggregate(tuple; [])
+                    s2: _25 = 2
+                    s3: intrinsic Println "const: %d
+" [copy _25]
+                    s4: _26 = aggregate(tuple; [])
                     terminator: return
         body2 { arg_count: 2, locals: 7 }
             return_local: _0

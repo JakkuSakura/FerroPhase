@@ -203,21 +203,21 @@ lir::Program {
                 i75: %r75 = load %r72 align 1 : i1
                 terminator: cond_br %r75, bb1, bb2
             bb1 // label: bb1 // preds: [bb0] // succs: [bb3]:
-                i76: store %local1, %r70 align 8
+                i76: store %local1, %r71 align 8
                 terminator: br bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i77: store %local2, %r70 align 8
+                i77: store %local2, %r71 align 8
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb1, bb2]:
                 i78: %r78 = alloca i32 1 align 8 : ptr i64
-                i79: %r79 = load %r70 align 8 : i64
+                i79: %r79 = load %r71 align 8 : i64
                 i80: store %r79, %r78 align 8
                 i81: %r81 = load %r78 align 8 : i64
                 i82: %r82 = intrinsic Println "max(%lld, %lld) = %lld
 " (%local1, %local2, %r81)
                 i83: %r83 = load %r78 align 8 : i64
-                i84: store %r83, %r71 align 8
-                i85: %r85 = load %r71 align 8 : i64
+                i84: store %r83, %r70 align 8
+                i85: %r85 = load %r70 align 8 : i64
                 terminator: ret %r85
         }
 

@@ -1,15 +1,4 @@
 hir::Program {
-    struct __structural_value_c0eef43bfe1bfa0e {
-        pub a: i64,
-        pub common: i64,
-        pub foo: i64,
-    }
-
-    struct __structural_value_db50d021de22601b {
-        pub common: i64,
-        pub bar: i64,
-    }
-
     pub struct Foo {
         pub a: i64,
         pub common: i64,

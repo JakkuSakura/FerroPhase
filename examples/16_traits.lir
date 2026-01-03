@@ -87,16 +87,13 @@ lir::Program {
                 %0: void
                 %1: ptr ptr i8 // arg
                 %2: void
-                %3: i32
-                %4: void
+                %3: void
             bb0 // label: bb0 // succs: [bb1]:
                 i41: %r41 = call c @T__area(%local1)
                 terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i42: %r42 = call c @printf(c"%.2
-", c"()") : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1]:
+            bb1 // label: bb1 // preds: [bb0]:
+                i42: %r42 = intrinsic Println "%.2
+" (c"()")
                 terminator: ret void
         }
 

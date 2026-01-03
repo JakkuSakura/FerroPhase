@@ -946,6 +946,12 @@ impl Pipeline {
             })?
         };
         self.last_const_eval = Some(outcome.clone());
+        if !outcome.evaluated_constants.is_empty() {
+            fp_optimize::passes::rewrite_const_accesses(
+                &mut ast,
+                &outcome.evaluated_constants,
+            );
+        }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
             self.run_stage(
