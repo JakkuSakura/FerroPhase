@@ -1,4 +1,4 @@
-use fp_core::ast::{
+use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprField, ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct,
     Ident, ItemDefFunction, Locator, Path, Value,
 };
@@ -40,7 +40,6 @@ pub fn maybe_bootstrap_invoke_replacement(invoke: &ExprInvoke) -> Option<Expr> {
         return None;
     }
     match &invoke.target {
-        // std::env::var(_) => ""
         ExprInvokeTarget::Function(locator)
             if path_matches(locator, &["std", "env", "var"])
                 || path_matches(locator, &["env", "var"]) =>
@@ -56,7 +55,6 @@ pub fn is_bootstrap_cli_side_effect_call(invoke: &ExprInvoke) -> bool {
     if std::env::var_os("FERROPHASE_BOOTSTRAP").is_none() {
         return false;
     }
-    // Only rewrite main when explicitly requested. Default keeps the standard CLI path.
     if std::env::var_os("FP_BOOTSTRAP_REWRITE_MAIN").is_none() {
         return false;
     }
@@ -69,7 +67,6 @@ pub fn is_bootstrap_cli_side_effect_call(invoke: &ExprInvoke) -> bool {
             };
             matches!(
                 name,
-                // diagnostics/logging setup
                 "setup_error_reporting"
                     | "setup_logging"
                     | "registry"
@@ -88,8 +85,6 @@ pub fn is_bootstrap_cli_side_effect_call(invoke: &ExprInvoke) -> bool {
     }
 }
 
-// Attempt to rewrite fp-cli::bin main into a direct compile execution when bootstrapping.
-// This avoids relying on Clap parsing and other side-effectful runtime setup.
 pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
     if std::env::var_os("FERROPHASE_BOOTSTRAP").is_none() {
         return false;
@@ -98,9 +93,6 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
         return false;
     }
 
-    // Derive snapshot and output paths from environment at compile time.
-    // These values are baked into the Stage 1 compiler so it can deterministically
-    // emit Stage 2 LLVM without relying on external libraries (Clap/Std IO).
     let snapshot_path = match std::env::var("FP_BOOTSTRAP_SNAPSHOT") {
         Ok(s) if !s.trim().is_empty() => s,
         _ => return false,
@@ -112,7 +104,6 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
 
     let mut stmts: Vec<BlockStmt> = Vec::new();
 
-    // let mut pipeline = fp_cli::pipeline::Pipeline::new();
     let pipeline_new = Expr::new(ExprKind::Invoke(ExprInvoke {
         target: ExprInvokeTarget::Function(Locator::path(Path::new(vec![
             Ident::new("fp_cli"),
@@ -123,10 +114,9 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
         args: vec![],
     }));
     let pipeline_ident = Ident::new("pipeline");
-    let pipe_let = fp_core::ast::StmtLet::new_simple(pipeline_ident.clone(), pipeline_new.into());
+    let pipe_let = crate::ast::StmtLet::new_simple(pipeline_ident.clone(), pipeline_new.into());
     stmts.push(BlockStmt::Let(pipe_let));
 
-    // Build PipelineOptions { target: Llvm, base_path: Some(output_path), bootstrap_mode: true, ..Default::default() }
     let options_expr = Expr::new(ExprKind::Struct(ExprStruct {
         name: Box::new(Expr::locator(Locator::path(Path::new(vec![
             Ident::new("fp_cli"),
@@ -166,8 +156,6 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
         update: None,
     }));
 
-    // Call as an associated function to avoid method-call lowering pitfalls:
-    // fp_cli::pipeline::Pipeline::execute_compilation_from_snapshot_blocking(pipeline, snapshot, options)
     let exec_call = Expr::new(ExprKind::Invoke(ExprInvoke {
         target: ExprInvokeTarget::Function(Locator::path(Path::new(vec![
             Ident::new("fp_cli"),
@@ -184,9 +172,8 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
         ],
     }));
 
-    // Write value to a dummy let to ensure expression is executed.
     let _result_ident = Ident::new("_result");
-    let result_let = fp_core::ast::StmtLet::new_simple(_result_ident, exec_call.into());
+    let result_let = crate::ast::StmtLet::new_simple(_result_ident, exec_call.into());
     stmts.push(BlockStmt::Let(result_let));
 
     let body = ExprBlock::new_stmts(stmts);

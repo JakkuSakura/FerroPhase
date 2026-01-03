@@ -73,7 +73,7 @@ impl LanguageFrontend for FerroFrontend {
                     let mut ast = last.clone();
                     // Perform intrinsic normalization (includes Rust macro lowering via the
                     // provided normalizer strategy).
-                    fp_optimize::transformations::normalize_intrinsics_with(
+                    fp_core::intrinsics::normalize_intrinsics_with(
                         &mut ast,
                         intrinsic_normalizer.as_ref(),
                     )
@@ -109,7 +109,7 @@ impl LanguageFrontend for FerroFrontend {
             let diagnostics = self.ferro.diagnostics();
             let last = Node::expr(expr.clone());
             let mut ast = last.clone();
-            fp_optimize::transformations::normalize_intrinsics_with(
+            fp_core::intrinsics::normalize_intrinsics_with(
                 &mut ast,
                 intrinsic_normalizer.as_ref(),
             )
@@ -133,7 +133,7 @@ impl LanguageFrontend for FerroFrontend {
                 let diagnostics = self.ferro.diagnostics();
                 let last = Node::file(file);
                 let mut ast = last.clone();
-                fp_optimize::transformations::normalize_intrinsics_with(
+                fp_core::intrinsics::normalize_intrinsics_with(
                     &mut ast,
                     intrinsic_normalizer.as_ref(),
                 )

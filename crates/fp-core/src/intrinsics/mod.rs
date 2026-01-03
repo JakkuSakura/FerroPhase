@@ -214,5 +214,7 @@ pub enum StdIntrinsic {
 }
 
 pub mod calls;
+pub mod normalize;
 
 pub use calls::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
+pub use normalize::{normalize_intrinsics, normalize_intrinsics_with};
