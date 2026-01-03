@@ -1,25 +1,61 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> ()
-      block (8 stmts)
+      block (16 stmts)
         pub const FLAG_A: bool
           value true
         pub const FLAG_B: bool
           value false
-        pub struct Config {
-          x: Expr(i64)
-          y: Expr(i64)
-        }
-        pub const CONFIG: Config{x: Expr(i64), y: Expr(i64)}
-          value Config { 2 fields }
+        pub type Base = Base{id: i64, name: &'static Expr(str)}
+        pub type Config = Config{id: i64, name: &'static Expr(str), mode: &'static Expr(str)}
+        pub type ConfigClone = Clone_Config{id: i64, name: &'static Expr(str), mode: &'static Expr(str)}
+        let base
+          init:
+            struct Base
+              id:
+                value 1
+              name:
+                value "core"
         expr_stmt ;
           intrinsic println
-            template: "x={}, y={}" CONFIG.x, CONFIG.y
-        pub const SIZE: u64
-          value 256
-        pub const ITEMS: [i64; 256]
-          value [256 values]
+            template: "base: id={} name={}" base.id, base.name
+        let config
+          init:
+            struct Config
+              id:
+                value 2
+              name:
+                value "primary"
+              mode:
+                value "strict"
         expr_stmt ;
           intrinsic println
-            template: "array size: {}" ITEMS.len()
+            template: "config: id={} name={} mode={}" config.id, config.name, config.mode
+        let clone
+          init:
+            struct ConfigClone
+              id:
+                value 3
+              name:
+                value "shadow"
+              mode:
+                value "relaxed"
+        expr_stmt ;
+          intrinsic println
+            template: "config clone: id={} name={} mode={}" clone.id, clone.name, clone.mode
+        expr_stmt ;
+          intrinsic println
+            template: "config fields: {}" 3
+        expr_stmt ;
+          intrinsic println
+            template: "config has mode: {}" true
+        expr_stmt ;
+          intrinsic println
+            template: "config has max_retries: {}" false
+        expr_stmt ;
+          intrinsic println
+            template: "config size: {}" 24
+        expr_stmt ;
+          intrinsic println
+            template: "config type: {}" "struct Config"
 }

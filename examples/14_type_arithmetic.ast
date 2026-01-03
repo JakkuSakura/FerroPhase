@@ -193,10 +193,10 @@ ast::File {
           intrinsic println
             template: "LiteralStr {}" lit_str
         expr_stmt ;
-          intrinsic print
+          intrinsic println
             template: "LiteralUnit {}" lit_unit
         expr_stmt ;
-          intrinsic print
+          intrinsic println
             template: "LiteralNull {}" lit_null
         expr_stmt ;
           intrinsic println

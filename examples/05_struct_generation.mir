@@ -2,31 +2,49 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 10 }
+        body0 { arg_count: 0, locals: 12 }
             return_local: _0
             locals:
                 _0: ()
-                _1: (i64, i64)
-                _2: (i64, i64)
-                _3: i32
+                _1: (i64, <??>)
+                _2: ()
+                _3: (i64, <??>, <??>)
                 _4: ()
-                _5: usize
-                _6: <??>
-                _7: <??>
-                _8: i32
+                _5: (i64, <??>, <??>)
+                _6: ()
+                _7: ()
+                _8: ()
                 _9: ()
+                _10: ()
+                _11: ()
             blocks:
                 bb0:
-                    s0: _1 = aggregate(tuple; [100, 20])
-                    s1: _2 = aggregate(tuple; [100, 20])
-                    terminator: call global printf("x=%lld, y=%lld\n", copy _1[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]) -> _3 then bb1
-                bb1:
-                    s0: _4 = aggregate(tuple; [])
-                    s1: _6 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s2: _7 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s3: _5 = 256u
-                    terminator: call global printf("array size: %llu\n", copy _5) -> _8 then bb2
-                bb2:
-                    s0: _9 = aggregate(tuple; [])
+                    s0: _1 = aggregate(tuple; [1, "core"])
+                    s1: intrinsic Println "base: id=%lld name=%s
+" [copy _1[Field(0, Ty { kind: Int(I64) })], copy _1[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s2: _2 = aggregate(tuple; [])
+                    s3: _3 = aggregate(tuple; [2, "primary", "strict"])
+                    s4: intrinsic Println "config: id=%lld name=%s mode=%s
+" [copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })], copy _3[Field(2, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s5: _4 = aggregate(tuple; [])
+                    s6: _5 = aggregate(tuple; [3, "shadow", "relaxed"])
+                    s7: intrinsic Println "config clone: id=%lld name=%s mode=%s
+" [copy _5[Field(0, Ty { kind: Int(I64) })], copy _5[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })], copy _5[Field(2, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s8: _6 = aggregate(tuple; [])
+                    s9: intrinsic Println "config fields: %lld
+" [3]
+                    s10: _7 = aggregate(tuple; [])
+                    s11: intrinsic Println "config has mode: %d
+" [true]
+                    s12: _8 = aggregate(tuple; [])
+                    s13: intrinsic Println "config has max_retries: %d
+" [false]
+                    s14: _9 = aggregate(tuple; [])
+                    s15: intrinsic Println "config size: %lld
+" [24]
+                    s16: _10 = aggregate(tuple; [])
+                    s17: intrinsic Println "config type: %s
+" ["struct Config"]
+                    s18: _11 = aggregate(tuple; [])
                     terminator: return
 }

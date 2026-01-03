@@ -8,6 +8,11 @@ struct EnumerateLoopSpec {
     value_ident: ast::Ident,
 }
 
+struct IterLoopSpec {
+    base_segments: Vec<ast::Ident>,
+    value_ident: ast::Ident,
+}
+
 fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<ast::Expr> {
     RustParser::new().parse_expr(expr)
 }
@@ -309,6 +314,29 @@ impl HirGenerator {
 
                 Ok(hir::ExprKind::Struct(path, fields))
             }
+            Value::Structural(structural) => {
+                let def = self.materialize_structural_value_def(structural)?;
+                let path = self.path_for_structural_def(&def);
+
+                let mut fields = Vec::with_capacity(structural.fields.len());
+                for field in &structural.fields {
+                    let field_expr_kind =
+                        self.transform_value_to_hir(&Box::new(field.value.clone()))?;
+                    let field_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: field_expr_kind,
+                        span: self.create_span(1),
+                    };
+
+                    fields.push(hir::StructExprField {
+                        hir_id: self.next_id(),
+                        name: field.name.clone().into(),
+                        expr: field_expr,
+                    });
+                }
+
+                Ok(hir::ExprKind::Struct(path, fields))
+            }
             Value::List(list) => {
                 let mut elements = Vec::with_capacity(list.values.len());
                 for value in &list.values {
@@ -561,6 +589,7 @@ impl HirGenerator {
         &mut self,
         block: &ast::ExprBlock,
     ) -> Result<hir::ExprKind> {
+        self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
             let last_expr_index = block
@@ -597,6 +626,7 @@ impl HirGenerator {
             }))
         })();
         self.pop_value_scope();
+        self.pop_type_scope();
         result
     }
 
@@ -713,8 +743,11 @@ impl HirGenerator {
             if let Some(enum_spec) = self.extract_enumerate_loop_spec(for_expr)? {
                 return self.lower_enumerate_for_loop(for_expr, enum_spec);
             }
+            if let Some(iter_spec) = self.extract_iter_loop_spec(for_expr)? {
+                return self.lower_iter_for_loop(for_expr, iter_spec);
+            }
             return Err(crate::error::optimization_error(
-                "`for` loop lowering only supports range iterators and enumerate()",
+                "`for` loop lowering only supports range iterators, iter(), and enumerate()",
             ));
         }
 
@@ -959,6 +992,68 @@ impl HirGenerator {
         }))
     }
 
+    fn extract_iter_loop_spec(&mut self, for_expr: &ast::ExprFor) -> Result<Option<IterLoopSpec>> {
+        let ast::ExprKind::Invoke(invoke) = for_expr.iter.kind() else {
+            return Ok(None);
+        };
+        if !invoke.args.is_empty() {
+            return Ok(None);
+        }
+        let segments = match &invoke.target {
+            ast::ExprInvokeTarget::Function(locator) => match locator {
+                ast::Locator::Path(path) => path.segments.clone(),
+                ast::Locator::Ident(ident) => vec![ident.clone()],
+                ast::Locator::ParameterPath(path) => path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.ident.clone())
+                    .collect(),
+            },
+            ast::ExprInvokeTarget::Method(select) => {
+                let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
+                    return Ok(None);
+                };
+                base.push(select.field.clone());
+                base
+            }
+            ast::ExprInvokeTarget::Expr(expr) => {
+                let Some(segments) = self.path_segments_from_expr(expr) else {
+                    return Ok(None);
+                };
+                segments
+            }
+            _ => return Ok(None),
+        };
+        if segments.len() < 2 {
+            return Ok(None);
+        }
+        let last = segments.last().map(|seg| seg.as_str());
+        if last != Some("iter") {
+            return Ok(None);
+        }
+
+        let base_segments = segments[..segments.len() - 1].to_vec();
+        if base_segments.is_empty() {
+            return Err(crate::error::optimization_error(
+                "iter() base path is empty",
+            ));
+        }
+
+        let value_ident = match for_expr.pat.as_ident() {
+            Some(ident) => ident.clone(),
+            None => {
+                return Err(crate::error::optimization_error(
+                    "iter() loop pattern must be a simple binding",
+                ));
+            }
+        };
+
+        Ok(Some(IterLoopSpec {
+            base_segments,
+            value_ident,
+        }))
+    }
+
     fn lower_enumerate_for_loop(
         &mut self,
         for_expr: &ast::ExprFor,
@@ -1016,15 +1111,23 @@ impl HirGenerator {
             span: Span::new(self.current_file, 0, 0),
         };
 
-        let len_expr = hir::Expr {
-            hir_id: self.next_id(),
-            kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
-                kind: IntrinsicCallKind::Len,
-                payload: IntrinsicCallPayload::Args {
-                    args: vec![base_expr.clone()],
-                },
-            }),
-            span: Span::new(self.current_file, 0, 0),
+        let len_expr = if let Some(len) = self.lookup_const_list_length(&spec.base_segments) {
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Literal(hir::Lit::Integer(len as i64)),
+                span: Span::new(self.current_file, 0, 0),
+            }
+        } else {
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                    kind: IntrinsicCallKind::Len,
+                    payload: IntrinsicCallPayload::Args {
+                        args: vec![base_expr.clone()],
+                    },
+                }),
+                span: Span::new(self.current_file, 0, 0),
+            }
         };
 
         let cond_expr = hir::Expr {
@@ -1077,6 +1180,182 @@ impl HirGenerator {
             hir_id: self.next_id(),
             kind: hir::StmtKind::Local(index_local),
         });
+        body_stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Local(value_local),
+        });
+
+        let body_expr = self.transform_expr_to_hir(for_expr.body.as_ref())?;
+        if let hir::ExprKind::Block(block) = &body_expr.kind {
+            body_stmts.extend(block.stmts.clone());
+            if let Some(expr) = &block.expr {
+                body_stmts.push(hir::Stmt {
+                    hir_id: self.next_id(),
+                    kind: hir::StmtKind::Semi(*expr.clone()),
+                });
+            }
+        } else {
+            body_stmts.push(hir::Stmt {
+                hir_id: self.next_id(),
+                kind: hir::StmtKind::Semi(body_expr),
+            });
+        }
+
+        let increment = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Assign(
+                Box::new(idx_expr.clone()),
+                Box::new(hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Binary(
+                        hir::BinOp::Add,
+                        Box::new(idx_expr.clone()),
+                        Box::new(hir::Expr {
+                            hir_id: self.next_id(),
+                            kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
+                            span: Span::new(self.current_file, 0, 0),
+                        }),
+                    ),
+                    span: Span::new(self.current_file, 0, 0),
+                }),
+            ),
+            span: Span::new(self.current_file, 0, 0),
+        };
+        body_stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Semi(increment),
+        });
+
+        let while_block = hir::Block {
+            hir_id: self.next_id(),
+            stmts: body_stmts,
+            expr: None,
+        };
+        let while_expr = hir::ExprKind::While(Box::new(cond_expr), while_block);
+
+        stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Expr(hir::Expr {
+                hir_id: self.next_id(),
+                kind: while_expr,
+                span: Span::new(self.current_file, 0, 0),
+            }),
+        });
+
+        Ok(hir::ExprKind::Block(hir::Block {
+            hir_id: self.next_id(),
+            stmts,
+            expr: None,
+        }))
+    }
+
+    fn lower_iter_for_loop(
+        &mut self,
+        for_expr: &ast::ExprFor,
+        spec: IterLoopSpec,
+    ) -> Result<hir::ExprKind> {
+        use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+
+        let mut stmts = Vec::new();
+
+        let base_path = ast::Path::new(spec.base_segments.clone());
+        let base_locator = ast::Locator::path(base_path);
+        let base_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Path(
+                self.locator_to_hir_path_with_scope(&base_locator, PathResolutionScope::Value)?,
+            ),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let idx_hir_id = self.next_id();
+        let idx_name = hir::Symbol::new(format!("__fp_idx{}", idx_hir_id));
+        let idx_pat = hir::Pat {
+            hir_id: idx_hir_id,
+            kind: hir::PatKind::Binding {
+                name: idx_name.clone(),
+                mutable: true,
+            },
+        };
+        let idx_init = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Literal(hir::Lit::Integer(0)),
+            span: Span::new(self.current_file, 0, 0),
+        };
+        let idx_local = hir::Local {
+            hir_id: self.next_id(),
+            pat: idx_pat.clone(),
+            ty: None,
+            init: Some(idx_init),
+        };
+        self.register_pattern_bindings(&idx_pat);
+        stmts.push(hir::Stmt {
+            hir_id: self.next_id(),
+            kind: hir::StmtKind::Local(idx_local),
+        });
+
+        let idx_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: idx_name.clone(),
+                    args: None,
+                }],
+                res: Some(hir::Res::Local(idx_pat.hir_id)),
+            }),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let len_expr = if let Some(len) = self.lookup_const_list_length(&spec.base_segments) {
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Literal(hir::Lit::Integer(len as i64)),
+                span: Span::new(self.current_file, 0, 0),
+            }
+        } else {
+            hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
+                    kind: IntrinsicCallKind::Len,
+                    payload: IntrinsicCallPayload::Args {
+                        args: vec![base_expr.clone()],
+                    },
+                }),
+                span: Span::new(self.current_file, 0, 0),
+            }
+        };
+
+        let cond_expr = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Binary(
+                hir::BinOp::Lt,
+                Box::new(idx_expr.clone()),
+                Box::new(len_expr),
+            ),
+            span: Span::new(self.current_file, 0, 0),
+        };
+
+        let value_pat = hir::Pat {
+            hir_id: self.next_id(),
+            kind: hir::PatKind::Binding {
+                name: hir::Symbol::new(spec.value_ident.name.clone()),
+                mutable: false,
+            },
+        };
+        let value_init = hir::Expr {
+            hir_id: self.next_id(),
+            kind: hir::ExprKind::Index(Box::new(base_expr.clone()), Box::new(idx_expr.clone())),
+            span: Span::new(self.current_file, 0, 0),
+        };
+        let value_local = hir::Local {
+            hir_id: self.next_id(),
+            pat: value_pat.clone(),
+            ty: None,
+            init: Some(value_init),
+        };
+        self.register_pattern_bindings(&value_pat);
+
+        let mut body_stmts = Vec::new();
         body_stmts.push(hir::Stmt {
             hir_id: self.next_id(),
             kind: hir::StmtKind::Local(value_local),

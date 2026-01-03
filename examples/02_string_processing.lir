@@ -5,69 +5,136 @@ lir::Program {
                 %0: void
                 %1: ptr i8
                 %2: i64
-                %3: i32
-                %4: void
-                %5: ptr i8
-                %6: i64
-                %7: i32
-                %8: void
+                %3: void
+                %4: ptr i8
+                %5: i64
+                %6: void
+                %7: i1
+                %8: i1
                 %9: i1
-                %10: i1
-                %11: i32
-                %12: void
-                %13: ptr i8
-                %14: i32
+                %10: void
+                %11: ptr i8
+                %12: ptr i8
+                %13: void
+                %14: void
                 %15: void
                 %16: i64
-                %17: i32
-                %18: void
+                %17: i1
+                %18: [4 x ptr i8]
+                %19: i64
+                %20: [4 x i64]
+                %21: i64
+                %22: void
+                %23: i64
+                %24: void
+                %25: i1
+                %26: i1
+                %27: void
+                %28: ptr i8
+                %29: void
+                %30: i64
+                %31: void
             bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
-                i1: store c"FerroPhase", %r0 align 8
-                i2: %r2 = alloca i32 1 align 8 : ptr i64
-                i3: store i64 10, %r2 align 8
-                i4: %r4 = load %r0 align 8 : ptr i8
-                i5: %r5 = load %r2 align 8 : i64
-                i6: %r6 = call c @printf(c"name='%s' len=%llu
-", %r4, %r5) : i32
+                i0: %r0 = alloca i32 1 align 8 : ptr i64
+                i1: %r1 = alloca i32 1 align 8 : ptr ptr i8
+                i2: store c"FerroPhase", %r1 align 8
+                i3: %r3 = alloca i32 1 align 8 : ptr i64
+                i4: store i64 10, %r3 align 8
+                i5: %r5 = load %r1 align 8 : ptr i8
+                i6: %r6 = load %r3 align 8 : i64
+                i7: %r7 = intrinsic Println "name='%s' len=%llu
+" (%r5, %r6)
+                i8: %r8 = alloca i32 1 align 8 : ptr ptr i8
+                i9: store c"0.1.0", %r8 align 8
+                i10: %r10 = alloca i32 1 align 8 : ptr i64
+                i11: store i64 5, %r10 align 8
+                i12: %r12 = load %r8 align 8 : ptr i8
+                i13: %r13 = load %r10 align 8 : i64
+                i14: %r14 = intrinsic Println "version='%s' len=%llu
+" (%r12, %r13)
+                i15: %r15 = alloca i32 1 align 1 : ptr i1
+                i16: store bool true, %r15 align 1
+                i17: %r17 = alloca i32 1 align 1 : ptr i1
+                i18: store bool true, %r17 align 1
+                i19: %r19 = alloca i32 1 align 1 : ptr i1
+                i20: store bool true, %r19 align 1
+                i21: %r21 = load %r15 align 1 : i1
+                i22: %r22 = load %r17 align 1 : i1
+                i23: %r23 = load %r19 align 1 : i1
+                i24: %r24 = intrinsic Println "prefix_ok=%d, suffix_ok=%d, contains_phase=%d
+" (%r21, %r22, %r23)
+                i25: %r25 = alloca i32 1 align 8 : ptr ptr i8
+                i26: store c"Ferro", %r25 align 8
+                i27: %r27 = alloca i32 1 align 8 : ptr ptr i8
+                i28: store c"Phase", %r27 align 8
+                i29: %r29 = load %r25 align 8 : ptr i8
+                i30: %r30 = load %r27 align 8 : ptr i8
+                i31: %r31 = intrinsic Println "slices: short='%s' tail='%s'
+" (%r29, %r30)
+                i32: %r32 = intrinsic Println "words:
+" ()
+                i33: store i64 0, %r0 align 8
                 terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i7: %r7 = alloca i32 1 align 8 : ptr ptr i8
-                i8: store c"0.1.0", %r7 align 8
-                i9: %r9 = alloca i32 1 align 8 : ptr i64
-                i10: store i64 5, %r9 align 8
-                i11: %r11 = load %r7 align 8 : ptr i8
-                i12: %r12 = load %r9 align 8 : i64
-                i13: %r13 = call c @printf(c"version='%s' len=%llu
-", %r11, %r12) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i14: %r14 = alloca i32 1 align 1 : ptr i1
-                i15: store bool false, %r14 align 1
-                i16: %r16 = alloca i32 1 align 1 : ptr i1
-                i17: store bool true, %r16 align 1
-                i18: %r18 = load %r14 align 1 : i1
-                i19: %r19 = zext %r18 to i32 : i32
-                i20: %r20 = load %r16 align 1 : i1
-                i21: %r21 = zext %r20 to i32 : i32
-                i22: %r22 = call c @printf(c"empty=%d, long=%d
-", %r19, %r21) : i32
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i23: %r23 = alloca i32 1 align 8 : ptr ptr i8
-                i24: store c"FerroPhase v0.1.0", %r23 align 8
-                i25: %r25 = load %r23 align 8 : ptr i8
-                i26: %r26 = call c @printf(c"banner='%s'
-", %r25) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i27: %r27 = alloca i32 1 align 8 : ptr i64
-                i28: store i64 256, %r27 align 8
-                i29: %r29 = load %r27 align 8 : i64
-                i30: %r30 = call c @printf(c"buffer_size=%llu
-", %r29) : i32
-                terminator: br bb5
-            bb5 // label: bb5 // preds: [bb4]:
+            bb1 // label: bb1 // preds: [bb0, bb2] // succs: [bb2, bb3]:
+                i34: %r34 = alloca i32 1 align 1 : ptr i1
+                i35: %r35 = load %r0 align 8 : i64
+                i36: %r36 = lt %r35, i64 4 : i1
+                i37: store %r36, %r34 align 1
+                i38: %r38 = load %r34 align 1 : i1
+                terminator: cond_br %r38, bb2, bb3
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb1]:
+                i39: %r39 = alloca i32 1 align 8 : ptr [4 x ptr i8]
+                i40: store [4 x ptr i8] { c"alpha", c"beta", c"gamma", c"delta" }, %r39 align 8
+                i41: %r41 = alloca i32 1 align 8 : ptr i64
+                i42: %r42 = load %r0 align 8 : i64
+                i43: store %r42, %r41 align 8
+                i44: %r44 = alloca i32 1 align 8 : ptr [4 x i64]
+                i45: store [4 x i64] { i64 5, i64 4, i64 5, i64 5 }, %r44 align 8
+                i46: %r46 = alloca i32 1 align 8 : ptr i64
+                i47: %r47 = load %r0 align 8 : i64
+                i48: store %r47, %r46 align 8
+                i49: %r49 = load %r41 align 8 : i64
+                i50: %r50 = mul %r49, i64 8 : i64
+                i51: %r51 = bitcast %r39 to ptr i8 : ptr i8
+                i52: %r52 = gep inbounds %r51 [%r50] : ptr i8
+                i53: %r53 = bitcast %r52 to ptr ptr i8 : ptr ptr i8
+                i54: %r54 = load %r53 align 8 : ptr i8
+                i55: %r55 = load %r46 align 8 : i64
+                i56: %r56 = mul %r55, i64 8 : i64
+                i57: %r57 = bitcast %r44 to ptr i8 : ptr i8
+                i58: %r58 = gep inbounds %r57 [%r56] : ptr i8
+                i59: %r59 = bitcast %r58 to ptr i64 : ptr i64
+                i60: %r60 = load %r59 align 8 : i64
+                i61: %r61 = intrinsic Println "  %s -> len=%llu
+" (%r54, %r60)
+                i62: %r62 = load %r0 align 8 : i64
+                i63: %r63 = add %r62, i64 1 : i64
+                i64: store %r63, %r0 align 8
+                terminator: br bb1
+            bb3 // label: bb3 // preds: [bb1]:
+                i65: %r65 = alloca i32 1 align 8 : ptr i64
+                i66: store i64 19, %r65 align 8
+                i67: %r67 = load %r65 align 8 : i64
+                i68: %r68 = intrinsic Println "total word length=%llu
+" (%r67)
+                i69: %r69 = alloca i32 1 align 1 : ptr i1
+                i70: store bool false, %r69 align 1
+                i71: %r71 = alloca i32 1 align 1 : ptr i1
+                i72: store bool true, %r71 align 1
+                i73: %r73 = load %r69 align 1 : i1
+                i74: %r74 = load %r71 align 1 : i1
+                i75: %r75 = intrinsic Println "empty=%d, long=%d
+" (%r73, %r74)
+                i76: %r76 = alloca i32 1 align 8 : ptr ptr i8
+                i77: store c"FerroPhase v0.1.0", %r76 align 8
+                i78: %r78 = load %r76 align 8 : ptr i8
+                i79: %r79 = intrinsic Println "banner='%s'
+" (%r78)
+                i80: %r80 = alloca i32 1 align 8 : ptr i64
+                i81: store i64 256, %r80 align 8
+                i82: %r82 = load %r80 align 8 : i64
+                i83: %r83 = intrinsic Println "buffer_size=%llu
+" (%r82)
                 terminator: ret void
         }
 }

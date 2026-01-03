@@ -7,24 +7,21 @@ lir::Program {
                 %2: i64
                 %3: i64
                 %4: i1
-                %5: i32
-                %6: void
-                %7: i64
+                %5: void
+                %6: i64
+                %7: { i64, i64 }
                 %8: { i64, i64 }
-                %9: { i64, i64 }
-                %10: i32
-                %11: void
-                %12: i64
+                %9: void
+                %10: i64
+                %11: i64
+                %12: ptr i8
                 %13: i64
-                %14: ptr i8
+                %14: i64
                 %15: i64
                 %16: i64
                 %17: i64
-                %18: i64
-                %19: i64
-                %20: i32
-                %21: void
-            bb0 // label: bb0 // succs: [bb1]:
+                %18: void
+            bb0 // label: bb0:
                 i0: %r0 = alloca i32 1 align 8 : ptr i64
                 i1: store i64 4096, %r0 align 8
                 i2: %r2 = alloca i32 1 align 8 : ptr i64
@@ -38,58 +35,51 @@ lir::Program {
                 i10: %r10 = load %r2 align 8 : i64
                 i11: %r11 = load %r6 align 8 : i64
                 i12: %r12 = load %r8 align 1 : i1
-                i13: %r13 = zext %r12 to i32 : i32
-                i14: %r14 = call c @printf(c"Buffer: %lldKB, factorial(5)=%lld, large=%d
-", %r10, %r11, %r13) : i32
-                terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i15: %r15 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i16: store struct { i64, i64 } { i64 4096, i64 150 }, %r15 align 8
-                i17: %r17 = alloca i32 1 align 8 : ptr i64
-                i18: %r18 = bitcast %r15 to ptr i64 : ptr i64
-                i19: %r19 = load %r18 align 8 : i64
-                i20: %r20 = div %r19, i64 1024 : i64
-                i21: store %r20, %r17 align 8
-                i22: %r22 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i23: store struct { i64, i64 } { i64 4096, i64 150 }, %r22 align 8
-                i24: %r24 = load %r17 align 8 : i64
-                i25: %r25 = bitcast %r22 to ptr i8 : ptr i8
-                i26: %r26 = gep inbounds %r25 [i64 8] : ptr i8
-                i27: %r27 = bitcast %r26 to ptr i64 : ptr i64
-                i28: %r28 = load %r27 align 8 : i64
-                i29: %r29 = call c @printf(c"Config: %lldKB buffer, %lld connections
-", %r24, %r28) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i30: %r30 = alloca i32 1 align 8 : ptr i64
-                i31: store i64 3, %r30 align 8
-                i32: %r32 = alloca i32 1 align 8 : ptr i64
-                i33: store i64 8192, %r32 align 8
-                i34: %r34 = alloca i32 1 align 8 : ptr ptr i8
-                i35: store c"large", %r34 align 8
-                i36: %r36 = alloca i32 1 align 8 : ptr i64
-                i37: store i64 4096, %r36 align 8
-                i38: %r38 = alloca i32 1 align 8 : ptr i64
-                i39: store i64 150, %r38 align 8
-                i40: %r40 = alloca i32 1 align 8 : ptr i64
-                i41: %r41 = load %r36 align 8 : i64
-                i42: %r42 = load %r38 align 8 : i64
-                i43: %r43 = mul %r41, %r42 : i64
-                i44: store %r43, %r40 align 8
-                i45: %r45 = alloca i32 1 align 8 : ptr i64
-                i46: %r46 = load %r30 align 8 : i64
-                i47: %r47 = mul %r46, i64 0 : i64
-                i48: store %r47, %r45 align 8
-                i49: %r49 = alloca i32 1 align 8 : ptr i64
-                i50: %r50 = load %r45 align 8 : i64
-                i51: store %r50, %r49 align 8
-                i52: %r52 = load %r32 align 8 : i64
-                i53: %r53 = load %r34 align 8 : ptr i8
-                i54: %r54 = load %r49 align 8 : i64
-                i55: %r55 = call c @printf(c"Const blocks: size=%lld, strategy=%s, memory=%lld
-", %r52, %r53, %r54) : i32
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2]:
+                i13: %r13 = intrinsic Println "Buffer: %lldKB, factorial(5)=%lld, large=%d
+" (%r10, %r11, %r12)
+                i14: %r14 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i15: store struct { i64, i64 } { i64 4096, i64 150 }, %r14 align 8
+                i16: %r16 = alloca i32 1 align 8 : ptr i64
+                i17: %r17 = bitcast %r14 to ptr i64 : ptr i64
+                i18: %r18 = load %r17 align 8 : i64
+                i19: %r19 = div %r18, i64 1024 : i64
+                i20: store %r19, %r16 align 8
+                i21: %r21 = alloca i32 1 align 8 : ptr { i64, i64 }
+                i22: store struct { i64, i64 } { i64 4096, i64 150 }, %r21 align 8
+                i23: %r23 = load %r16 align 8 : i64
+                i24: %r24 = bitcast %r21 to ptr i8 : ptr i8
+                i25: %r25 = gep inbounds %r24 [i64 8] : ptr i8
+                i26: %r26 = bitcast %r25 to ptr i64 : ptr i64
+                i27: %r27 = load %r26 align 8 : i64
+                i28: %r28 = intrinsic Println "Config: %lldKB buffer, %lld connections
+" (%r23, %r27)
+                i29: %r29 = alloca i32 1 align 8 : ptr i64
+                i30: store i64 3, %r29 align 8
+                i31: %r31 = alloca i32 1 align 8 : ptr i64
+                i32: store i64 8192, %r31 align 8
+                i33: %r33 = alloca i32 1 align 8 : ptr ptr i8
+                i34: store c"large", %r33 align 8
+                i35: %r35 = alloca i32 1 align 8 : ptr i64
+                i36: store i64 4096, %r35 align 8
+                i37: %r37 = alloca i32 1 align 8 : ptr i64
+                i38: store i64 150, %r37 align 8
+                i39: %r39 = alloca i32 1 align 8 : ptr i64
+                i40: %r40 = load %r35 align 8 : i64
+                i41: %r41 = load %r37 align 8 : i64
+                i42: %r42 = mul %r40, %r41 : i64
+                i43: store %r42, %r39 align 8
+                i44: %r44 = alloca i32 1 align 8 : ptr i64
+                i45: %r45 = load %r29 align 8 : i64
+                i46: %r46 = mul %r45, i64 0 : i64
+                i47: store %r46, %r44 align 8
+                i48: %r48 = alloca i32 1 align 8 : ptr i64
+                i49: %r49 = load %r44 align 8 : i64
+                i50: store %r49, %r48 align 8
+                i51: %r51 = load %r31 align 8 : i64
+                i52: %r52 = load %r33 align 8 : ptr i8
+                i53: %r53 = load %r48 align 8 : i64
+                i54: %r54 = intrinsic Println "Const blocks: size=%lld, strategy=%s, memory=%lld
+" (%r51, %r52, %r53)
                 terminator: ret void
         }
 }

@@ -1,41 +1,69 @@
 ast::File {
   items:
+    pub struct Point3D {
+      x: Expr(i64)
+      y: Expr(i64)
+      z: Expr(i64)
+    }
+    pub type LabeledPoint = Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)}
+    pub const _GENERATED: ()
+      value ()
     pub fn main() -> () : fn() -> ()
-      block (10 stmts)
-        pub const FIELD_COUNT: u64
+      block (13 stmts)
+        pub const FIELD_COUNT: i64
           value 3
-        pub const TYPE_NAME: &string
-          value "Point3D"
-        pub struct Point3D {
-          x: Expr(i64)
-          y: Expr(i64)
-          z: Expr(i64)
-        }
-        impl Point3D {
-          pub fn type_name() -> &''static Expr(str) : fn() -> &string
-            block (1 stmt)
-              expr_stmt (value)
-                locator TYPE_NAME
-          pub fn field_count() -> Expr(usize) : fn() -> u64
-            block (1 stmt)
-              expr_stmt (value)
-                locator FIELD_COUNT
-        }
+        pub const POINT_NAME: &string
+          value "struct Point3D"
+        pub const SIZE: i64
+          value 24
+        pub const FIELDS: Vec<structural{name: any, type_name: any}>
+          value [3 values]
+        pub const X_TYPE: &string
+          value "i64
+"
         expr_stmt ;
           intrinsic println
-            template: "{} has {} fields" Point3D::type_name(), Point3D::field_count()
-        pub const VARIANT_A: u8
-          value 1
-        pub const VARIANT_B: u8
-          value 2
-        pub enum Tag {
-          A: () = (VARIANT_A) as Expr(isize)
-          B: () = (VARIANT_B) as Expr(isize)
-        }
-        let tag
+            template: "{} has {} fields (size={})" POINT_NAME, FIELD_COUNT, SIZE
+        expr_stmt ;
+          intrinsic println
+            template: "x type: {}" X_TYPE
+        expr_stmt ;
+          intrinsic println
+            template: "fields:"
+        expr_stmt (value)
+          for
+            iter:
+              invoke
+                target: FIELDS.iter
+            body:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic println
+                    template: "  {}: {}" field.name, field.type_name
+        let p
           init:
-            locator Tag::A
+            struct Point3D
+              x:
+                value 1
+              y:
+                value 2
+              z:
+                value 3
         expr_stmt ;
           intrinsic println
-            template: "tag discriminant: {}" (tag) as u8
+            template: "point=({}, {}, {})" p.x, p.y, p.z
+        let lp
+          init:
+            struct LabeledPoint
+              x:
+                value 4
+              y:
+                value 5
+              z:
+                value 6
+              label:
+                value "origin"
+        expr_stmt ;
+          intrinsic println
+            template: "labeled=({}, {}, {}, {})" lp.x, lp.y, lp.z, lp.label
 }

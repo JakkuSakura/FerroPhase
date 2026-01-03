@@ -23,7 +23,7 @@ fp run examples/01_const_eval_basics.fp
 | Example                      | Focus                      | Demonstrates                                          |
 |------------------------------|----------------------------|-------------------------------------------------------|
 | `01_const_eval_basics.fp`    | Const evaluation           | Arithmetic, const blocks, struct defaults             |
-| `02_string_processing.fp`    | String processing (future) | Placeholder for string intrinsics                     |
+| `02_string_processing.fp`    | String processing           | Const string intrinsics and slicing                   |
 | `03_control_flow.fp`         | Control flow               | Nested if/else, boolean logic, runtime conditions     |
 | `04_struct_introspection.fp` | Type introspection         | `sizeof!`, `field_count!`, `hasfield!`, transpilation |
 | `05_struct_generation.fp`    | Config-driven structs      | Const toggles, conditional defaults                   |
@@ -58,7 +58,5 @@ fp run examples/01_const_eval_basics.fp
 | Example                | Focus                       | Demonstrates                                                  |
 |------------------------|-----------------------------|---------------------------------------------------------------|
 | `19_wit_interface.wit` | WebAssembly Interface Types | Defining interfaces & records consumable via the WIT frontend |
-
-**Note:** Examples marked "(future)" are placeholders for upcoming features.
 
 See `docs/ConstEval.md` for background on the showcased features.

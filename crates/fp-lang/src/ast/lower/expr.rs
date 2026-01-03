@@ -382,13 +382,14 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprNumber))?;
             let stripped = strip_number_suffix(&raw);
-            if stripped.contains('.') {
-                let d = stripped
+            let normalized = stripped.replace('_', "");
+            if normalized.contains('.') {
+                let d = normalized
                     .parse::<f64>()
                     .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
                 Ok(Expr::value(Value::decimal(d)))
             } else {
-                let i = stripped
+                let i = normalized
                     .parse::<i64>()
                     .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
                 Ok(Expr::value(Value::int(i)))
@@ -491,20 +492,25 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         SyntaxKind::ExprRange => {
-            let lhs = first_child_expr(node)?;
-            let rhs = last_child_expr(node)?;
             let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
             let limit = match op.as_str() {
                 ".." => ExprRangeLimit::Exclusive,
                 "..=" => ExprRangeLimit::Inclusive,
                 _ => return Err(LowerError::MissingOperator),
             };
-            let lhs = lower_expr_from_cst(lhs)?;
-            let rhs = lower_expr_from_cst(rhs)?;
+            let (start_node, end_node) = range_child_exprs(node)?;
+            let start = start_node
+                .map(lower_expr_from_cst)
+                .transpose()?
+                .map(Box::new);
+            let end = end_node
+                .map(lower_expr_from_cst)
+                .transpose()?
+                .map(Box::new);
             Ok(ExprKind::Range(ExprRange {
-                start: Some(Box::new(lhs)),
+                start,
                 limit,
-                end: Some(Box::new(rhs)),
+                end,
                 step: None,
             })
             .into())
@@ -1144,6 +1150,7 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyBinary => lower_ty_binary(node),
         SyntaxKind::TyOptional => lower_ty_optional(node),
         SyntaxKind::TyValue => lower_ty_value(node),
+        SyntaxKind::TyExpr => lower_ty_expr(node),
         SyntaxKind::TyImplTraits => lower_ty_impl_traits(node),
         SyntaxKind::TyMacroCall => lower_ty_macro_call(node),
         other => Err(LowerError::UnexpectedNode(other)),
@@ -1163,13 +1170,14 @@ fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
                 Value::String(ValueString::new_ref(decoded))
             } else {
                 let stripped = strip_number_suffix(&raw);
-                if stripped.contains('.') {
-                    let d = stripped
+                let normalized = stripped.replace('_', "");
+                if normalized.contains('.') {
+                    let d = normalized
                         .parse::<f64>()
                         .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
                     Value::decimal(d)
                 } else {
-                    let i = stripped
+                    let i = normalized
                         .parse::<i64>()
                         .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
                     Value::int(i)
@@ -1178,6 +1186,23 @@ fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
         }
     };
     Ok(Ty::value(value))
+}
+
+fn lower_ty_expr(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let expr_node = node
+        .children
+        .iter()
+        .find_map(|child| match child {
+            crate::syntax::SyntaxElement::Node(n)
+                if n.kind.category() == CstCategory::Expr =>
+            {
+                Some(n.as_ref())
+            }
+            _ => None,
+        })
+        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyExpr))?;
+    let expr = lower_expr_from_cst(expr_node)?;
+    Ok(Ty::expr(expr))
 }
 
 fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
@@ -1607,6 +1632,46 @@ fn node_children_exprs<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a Syn
         }
         _ => None,
     })
+}
+
+fn range_child_exprs(
+    node: &SyntaxNode,
+) -> Result<(Option<&SyntaxNode>, Option<&SyntaxNode>), LowerError> {
+    let mut exprs = node_children_exprs(node);
+    let first = exprs.next();
+    let second = exprs.next();
+    if exprs.next().is_some() {
+        return Err(LowerError::UnexpectedNode(node.kind));
+    }
+
+    if let Some(second) = second {
+        return Ok((first, Some(second)));
+    }
+
+    if range_operator_is_leading(node) {
+        Ok((None, first))
+    } else {
+        Ok((first, None))
+    }
+}
+
+fn range_operator_is_leading(node: &SyntaxNode) -> bool {
+    for child in &node.children {
+        match child {
+            crate::syntax::SyntaxElement::Token(token)
+                if !token.is_trivia() && (token.text == ".." || token.text == "..=") =>
+            {
+                return true;
+            }
+            crate::syntax::SyntaxElement::Node(n)
+                if n.kind.category() == CstCategory::Expr =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    false
 }
 
 fn direct_operator_token_text(node: &SyntaxNode) -> Option<String> {

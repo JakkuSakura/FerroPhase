@@ -110,6 +110,7 @@ pub enum CstKind {
     TyBinary,
     TyOptional,
     TyValue,
+    TyExpr,
     TyImplTraits,
     TyMacroCall,
     TyNot,
@@ -197,6 +198,7 @@ impl CstKind {
             | CstKind::TyBinary
             | CstKind::TyOptional
             | CstKind::TyValue
+            | CstKind::TyExpr
             | CstKind::TyImplTraits
             | CstKind::TyMacroCall
             | CstKind::TyNot => CstCategory::Type,

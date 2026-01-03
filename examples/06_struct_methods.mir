@@ -99,94 +99,85 @@ mir::Program {
                 bb0:
                     s0: _0 = Eq(copy _1[Deref, Field(0, Ty { kind: Int(I64) })], copy _1[Deref, Field(1, Ty { kind: Int(I64) })])
                     terminator: return
-        body7 { arg_count: 0, locals: 34 }
+        body7 { arg_count: 0, locals: 25 }
             return_local: _0
             locals:
                 _0: ()
-                _1: i32
-                _2: ()
+                _1: ()
+                _2: (i64, i64)
                 _3: (i64, i64)
-                _4: (i64, i64)
-                _5: i32
+                _4: ()
+                _5: ()
                 _6: ()
-                _7: i32
-                _8: ()
+                _7: <??>
+                _8: i64
                 _9: ()
-                _10: <??>
-                _11: i64
-                _12: i32
+                _10: i64
+                _11: <??>
+                _12: <??>
                 _13: ()
-                _14: i64
-                _15: <??>
-                _16: <??>
-                _17: i32
+                _14: (i64, i64)
+                _15: ()
+                _16: i64
+                _17: <??>
                 _18: ()
-                _19: (i64, i64)
-                _20: i32
+                _19: i64
+                _20: <??>
                 _21: ()
-                _22: i64
+                _22: bool
                 _23: <??>
-                _24: i32
-                _25: ()
-                _26: i64
-                _27: <??>
-                _28: i32
-                _29: ()
-                _30: bool
-                _31: <??>
-                _32: i32
-                _33: ()
+                _24: ()
             blocks:
                 bb0:
-                    terminator: call global printf("=== Struct Operations ===\n") -> _1 then bb1
+                    s0: intrinsic Println "=== Struct Operations ===
+" []
+                    s1: _1 = aggregate(tuple; [])
+                    terminator: call fn Point::new(10, 20) -> _2 then bb1
                 bb1:
-                    s0: _2 = aggregate(tuple; [])
-                    terminator: call fn Point::new(10, 20) -> _3 then bb2
+                    terminator: call fn Point::new(5, 15) -> _3 then bb2
                 bb2:
-                    terminator: call fn Point::new(5, 15) -> _4 then bb3
+                    s0: intrinsic Println "p1 = (%lld, %lld)
+" [copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]]
+                    s1: _4 = aggregate(tuple; [])
+                    s2: intrinsic Println "p2 = (%lld, %lld)
+" [copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })]]
+                    s3: _5 = aggregate(tuple; [])
+                    s4: _7 = ref(Shared, _2)
+                    s5: _8 = Neg(4)
+                    terminator: call fn Point::translate(copy _7, 3, copy _8) -> _6 then bb3
                 bb3:
-                    terminator: call global printf("p1 = (%lld, %lld)\n", copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })]) -> _5 then bb4
+                    s0: intrinsic Println "p1 after translate = (%lld, %lld)
+" [copy _2[Field(0, Ty { kind: Int(I64) })], copy _2[Field(1, Ty { kind: Int(I64) })]]
+                    s1: _9 = aggregate(tuple; [])
+                    s2: _11 = ref(Shared, _2)
+                    s3: _12 = ref(Shared, _3)
+                    terminator: call fn Point::distance2(copy _11, copy _12) -> _10 then bb4
                 bb4:
-                    s0: _6 = aggregate(tuple; [])
-                    terminator: call global printf("p2 = (%lld, %lld)\n", copy _4[Field(0, Ty { kind: Int(I64) })], copy _4[Field(1, Ty { kind: Int(I64) })]) -> _7 then bb5
+                    s0: intrinsic Println "Distance²(p1, p2) = %lld
+" [copy _10]
+                    s1: _13 = aggregate(tuple; [])
+                    terminator: call fn Rectangle::new(10, 5) -> _14 then bb5
                 bb5:
-                    s0: _8 = aggregate(tuple; [])
-                    s1: _10 = ref(Shared, _3)
-                    s2: _11 = Neg(4)
-                    terminator: call fn Point::translate(copy _10, 3, copy _11) -> _9 then bb6
+                    s0: intrinsic Println "Rectangle: %lld×%lld
+" [copy _14[Field(0, Ty { kind: Int(I64) })], copy _14[Field(1, Ty { kind: Int(I64) })]]
+                    s1: _15 = aggregate(tuple; [])
+                    s2: _17 = ref(Shared, _14)
+                    terminator: call fn Rectangle::area(copy _17) -> _16 then bb6
                 bb6:
-                    terminator: call global printf("p1 after translate = (%lld, %lld)\n", copy _3[Field(0, Ty { kind: Int(I64) })], copy _3[Field(1, Ty { kind: Int(I64) })]) -> _12 then bb7
+                    s0: intrinsic Println "  area = %lld
+" [copy _16]
+                    s1: _18 = aggregate(tuple; [])
+                    s2: _20 = ref(Shared, _14)
+                    terminator: call fn Rectangle::perimeter(copy _20) -> _19 then bb7
                 bb7:
-                    s0: _13 = aggregate(tuple; [])
-                    s1: _15 = ref(Shared, _3)
-                    s2: _16 = ref(Shared, _4)
-                    terminator: call fn Point::distance2(copy _15, copy _16) -> _14 then bb8
+                    s0: intrinsic Println "  perimeter = %lld
+" [copy _19]
+                    s1: _21 = aggregate(tuple; [])
+                    s2: _23 = ref(Shared, _14)
+                    terminator: call fn Rectangle::is_square(copy _23) -> _22 then bb8
                 bb8:
-                    terminator: call global printf("Distance²(p1, p2) = %lld\n", copy _14) -> _17 then bb9
-                bb9:
-                    s0: _18 = aggregate(tuple; [])
-                    terminator: call fn Rectangle::new(10, 5) -> _19 then bb10
-                bb10:
-                    terminator: call global printf("Rectangle: %lld×%lld\n", copy _19[Field(0, Ty { kind: Int(I64) })], copy _19[Field(1, Ty { kind: Int(I64) })]) -> _20 then bb11
-                bb11:
-                    s0: _21 = aggregate(tuple; [])
-                    s1: _23 = ref(Shared, _19)
-                    terminator: call fn Rectangle::area(copy _23) -> _22 then bb12
-                bb12:
-                    terminator: call global printf("  area = %lld\n", copy _22) -> _24 then bb13
-                bb13:
-                    s0: _25 = aggregate(tuple; [])
-                    s1: _27 = ref(Shared, _19)
-                    terminator: call fn Rectangle::perimeter(copy _27) -> _26 then bb14
-                bb14:
-                    terminator: call global printf("  perimeter = %lld\n", copy _26) -> _28 then bb15
-                bb15:
-                    s0: _29 = aggregate(tuple; [])
-                    s1: _31 = ref(Shared, _19)
-                    terminator: call fn Rectangle::is_square(copy _31) -> _30 then bb16
-                bb16:
-                    terminator: call global printf("  is_square = %d\n", copy _30) -> _32 then bb17
-                bb17:
-                    s0: _33 = aggregate(tuple; [])
+                    s0: intrinsic Println "  is_square = %d
+" [copy _22]
+                    s1: _24 = aggregate(tuple; [])
                     terminator: return
 }

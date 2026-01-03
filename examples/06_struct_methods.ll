@@ -183,53 +183,41 @@ bb0:
   %alloca_101 = alloca { i64, i64 }, align 8
   %alloca_count_101 = alloca { i64, i64 }, align 8
   %call_98 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.0)
+  %call_99 = call { i64, i64 } @Point__new(i64 10, i64 20)
   br label %bb1
 
 bb1:                                              ; preds = %bb0
-  %call_99 = call { i64, i64 } @Point__new(i64 10, i64 20)
+  %call_100 = call { i64, i64 } @Point__new(i64 5, i64 15)
   br label %bb2
 
 bb2:                                              ; preds = %bb1
-  %call_100 = call { i64, i64 } @Point__new(i64 5, i64 15)
-  br label %bb3
-
-bb3:                                              ; preds = %bb2
   store { i64, i64 } %call_99, ptr %alloca_count_101, align 8
   %load_104 = load i64, ptr %alloca_count_101, align 8
   store { i64, i64 } %call_99, ptr %alloca_count_105, align 8
   %gep_108 = getelementptr inbounds i8, ptr %alloca_count_105, i64 8
   %load_110 = load i64, ptr %gep_108, align 8
   %call_111 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.1, i64 %load_104, i64 %load_110)
-  br label %bb4
-
-bb4:                                              ; preds = %bb3
   store { i64, i64 } %call_100, ptr %alloca_count_112, align 8
   %load_115 = load i64, ptr %alloca_count_112, align 8
   store { i64, i64 } %call_100, ptr %alloca_count_116, align 8
   %gep_119 = getelementptr inbounds i8, ptr %alloca_count_116, i64 8
   %load_121 = load i64, ptr %gep_119, align 8
   %call_122 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.2, i64 %load_115, i64 %load_121)
-  br label %bb5
-
-bb5:                                              ; preds = %bb4
   store { i64, i64 } %call_99, ptr %alloca_count_124, align 8
   store ptr %alloca_count_124, ptr %alloca_count_123, align 8
   store i64 -4, ptr %alloca_count_127, align 8
   %load_130 = load ptr, ptr %alloca_count_123, align 8
   %load_131 = load i64, ptr %alloca_count_127, align 8
   call void @Point__translate(ptr %load_130, i64 3, i64 %load_131)
-  br label %bb6
+  br label %bb3
 
-bb6:                                              ; preds = %bb5
+bb3:                                              ; preds = %bb2
   store { i64, i64 } %call_99, ptr %alloca_count_133, align 8
   %load_136 = load i64, ptr %alloca_count_133, align 8
   store { i64, i64 } %call_99, ptr %alloca_count_137, align 8
   %gep_140 = getelementptr inbounds i8, ptr %alloca_count_137, i64 8
   %load_142 = load i64, ptr %gep_140, align 8
   %call_143 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.3, i64 %load_136, i64 %load_142)
-  br label %bb7
-
-bb7:                                              ; preds = %bb6
   store { i64, i64 } %call_99, ptr %alloca_count_145, align 8
   store ptr %alloca_count_145, ptr %alloca_count_144, align 8
   store { i64, i64 } %call_100, ptr %alloca_count_149, align 8
@@ -237,60 +225,44 @@ bb7:                                              ; preds = %bb6
   %load_152 = load ptr, ptr %alloca_count_144, align 8
   %load_153 = load ptr, ptr %alloca_count_148, align 8
   %call_154 = call i64 @Point__distance2(ptr %load_152, ptr %load_153)
-  br label %bb8
+  br label %bb4
 
-bb8:                                              ; preds = %bb7
+bb4:                                              ; preds = %bb3
   %call_155 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.4, i64 %call_154)
-  br label %bb9
-
-bb9:                                              ; preds = %bb8
   %call_156 = call { i64, i64 } @Rectangle__new(i64 10, i64 5)
-  br label %bb10
+  br label %bb5
 
-bb10:                                             ; preds = %bb9
+bb5:                                              ; preds = %bb4
   store { i64, i64 } %call_156, ptr %alloca_count_157, align 8
   %load_160 = load i64, ptr %alloca_count_157, align 8
   store { i64, i64 } %call_156, ptr %alloca_count_161, align 8
   %gep_164 = getelementptr inbounds i8, ptr %alloca_count_161, i64 8
   %load_166 = load i64, ptr %gep_164, align 8
   %call_167 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.5, i64 %load_160, i64 %load_166)
-  br label %bb11
-
-bb11:                                             ; preds = %bb10
   store { i64, i64 } %call_156, ptr %alloca_count_169, align 8
   store ptr %alloca_count_169, ptr %alloca_count_168, align 8
   %load_172 = load ptr, ptr %alloca_count_168, align 8
   %call_173 = call i64 @Rectangle__area(ptr %load_172)
-  br label %bb12
+  br label %bb6
 
-bb12:                                             ; preds = %bb11
+bb6:                                              ; preds = %bb5
   %call_174 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.6, i64 %call_173)
-  br label %bb13
-
-bb13:                                             ; preds = %bb12
   store { i64, i64 } %call_156, ptr %alloca_count_176, align 8
   store ptr %alloca_count_176, ptr %alloca_count_175, align 8
   %load_179 = load ptr, ptr %alloca_count_175, align 8
   %call_180 = call i64 @Rectangle__perimeter(ptr %load_179)
-  br label %bb14
+  br label %bb7
 
-bb14:                                             ; preds = %bb13
+bb7:                                              ; preds = %bb6
   %call_181 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.7, i64 %call_180)
-  br label %bb15
-
-bb15:                                             ; preds = %bb14
   store { i64, i64 } %call_156, ptr %alloca_count_183, align 8
   store ptr %alloca_count_183, ptr %alloca_count_182, align 8
   %load_186 = load ptr, ptr %alloca_count_182, align 8
   %call_187 = call i1 @Rectangle__is_square(ptr %load_186)
-  br label %bb16
+  br label %bb8
 
-bb16:                                             ; preds = %bb15
-  %zext = zext i1 %call_187 to i32
-  %call_189 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.8, i32 %zext)
-  br label %bb17
-
-bb17:                                             ; preds = %bb16
+bb8:                                              ; preds = %bb7
+  %call_188 = call i32 (ptr, ...) @printf(ptr @.str.06_struct_methods.8, i1 %call_187)
   ret i32 0
 }
 

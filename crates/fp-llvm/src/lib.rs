@@ -4,6 +4,7 @@ pub mod debug_info;
 pub mod linking;
 pub mod pretty;
 pub mod runtime;
+pub mod runtime_symbols;
 pub mod target;
 
 use crate::codegen::LirCodegen;

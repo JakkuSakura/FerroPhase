@@ -12,6 +12,53 @@ pub type RegisterId = u32;
 pub type BasicBlockId = u32;
 pub type LabelId = u32;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RuntimeSymbol {
+    Printf,
+    Fprintf,
+    Malloc,
+    Free,
+    Realloc,
+    Sin,
+    Sinf,
+    Cos,
+    Cosf,
+    Tan,
+    Tanf,
+    Sqrt,
+    Sqrtf,
+    Pow,
+    Powf,
+    Strlen,
+    Strcmp,
+    Exit,
+}
+
+impl RuntimeSymbol {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RuntimeSymbol::Printf => "printf",
+            RuntimeSymbol::Fprintf => "fprintf",
+            RuntimeSymbol::Malloc => "malloc",
+            RuntimeSymbol::Free => "free",
+            RuntimeSymbol::Realloc => "realloc",
+            RuntimeSymbol::Sin => "sin",
+            RuntimeSymbol::Sinf => "sinf",
+            RuntimeSymbol::Cos => "cos",
+            RuntimeSymbol::Cosf => "cosf",
+            RuntimeSymbol::Tan => "tan",
+            RuntimeSymbol::Tanf => "tanf",
+            RuntimeSymbol::Sqrt => "sqrt",
+            RuntimeSymbol::Sqrtf => "sqrtf",
+            RuntimeSymbol::Pow => "pow",
+            RuntimeSymbol::Powf => "powf",
+            RuntimeSymbol::Strlen => "strlen",
+            RuntimeSymbol::Strcmp => "strcmp",
+            RuntimeSymbol::Exit => "exit",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LirProgram {
     pub functions: Vec<LirFunction>,
@@ -137,6 +184,13 @@ pub enum LirInstructionKind {
         tail_call: bool,
     },
 
+    // Backend runtime intrinsics
+    IntrinsicCall {
+        kind: LirIntrinsicKind,
+        format: String,
+        args: Vec<LirValue>,
+    },
+
     // Helper to materialize integer-to-integer casts for runtime lowering
     SextOrTrunc(LirValue, LirType),
 
@@ -171,6 +225,12 @@ pub enum LirInstructionKind {
     // Misc
     Unreachable,
     Freeze(LirValue),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LirIntrinsicKind {
+    Print,
+    Println,
 }
 
 #[derive(Debug, Clone, PartialEq)]

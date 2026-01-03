@@ -704,6 +704,32 @@ impl<'a> LirCodegen<'a> {
                     }
                 }
             }
+            lir::LirInstructionKind::IntrinsicCall { kind, format, args } => {
+                let mut call_args = Vec::with_capacity(args.len() + 1);
+                call_args.push(lir::LirValue::Constant(lir::LirConstant::String(
+                    format.clone(),
+                )));
+                call_args.extend(args.into_iter());
+
+                let call_site = match kind {
+                    lir::LirIntrinsicKind::Print | lir::LirIntrinsicKind::Println => {
+                        self.lower_call_instruction(
+                            instr_id,
+                            ty_hint.clone(),
+                            lir::LirValue::Function("printf".to_string()),
+                            call_args,
+                            lir::CallingConvention::C,
+                            false,
+                        )?
+                    }
+                };
+
+                if let ValueKind::Basic(result) = call_site.try_as_basic_value() {
+                    if let Some(hint) = ty_hint {
+                        self.record_result(instr_id, Some(hint), result);
+                    }
+                }
+            }
             lir::LirInstructionKind::Unreachable => {
                 self.llvm_ctx
                     .builder

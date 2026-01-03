@@ -73,63 +73,42 @@ bb0:
   %alloca_33 = alloca { i8 }, align 8
   %alloca_count_33 = alloca { i8 }, align 8
   %call_21 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.0)
+  call void @apply__mono_a7af9f593fdc4675_4(i64 10, i64 20, ptr @add__mono_692e805f044e08ba_5)
   br label %bb1
 
 bb1:                                              ; preds = %bb0
-  call void @apply__mono_a7af9f593fdc4675_4(i64 10, i64 20, ptr @add__mono_692e805f044e08ba_5)
+  call void @apply__mono_d7ad91e83a08a980_4(double 1.500000e+00, double 2.500000e+00, ptr @add__mono_692e805f044e08ba_5)
   br label %bb2
 
 bb2:                                              ; preds = %bb1
-  call void @apply__mono_d7ad91e83a08a980_4(double 1.500000e+00, double 2.500000e+00, ptr @add__mono_692e805f044e08ba_5)
+  %call_24 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.1)
+  %call_25 = call i64 @apply_if(i1 true, i64 5, i64 3, ptr @add__spec0)
   br label %bb3
 
 bb3:                                              ; preds = %bb2
-  %call_24 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.1)
+  %call_26 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.2, i64 %call_25)
+  %call_27 = call i64 @apply_if(i1 false, i64 5, i64 3, ptr @add__spec0)
   br label %bb4
 
 bb4:                                              ; preds = %bb3
-  %call_25 = call i64 @apply_if(i1 true, i64 5, i64 3, ptr @add__spec0)
+  %call_28 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.2, i64 %call_27)
+  %call_29 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.3)
+  %call_30 = call { i64 } @make_adder(i64 10)
   br label %bb5
 
 bb5:                                              ; preds = %bb4
-  %call_26 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.2, i64 %call_25)
+  %call_31 = call i64 @__closure0_call({ i64 } %call_30, i64 5)
   br label %bb6
 
 bb6:                                              ; preds = %bb5
-  %call_27 = call i64 @apply_if(i1 false, i64 5, i64 3, ptr @add__spec0)
-  br label %bb7
-
-bb7:                                              ; preds = %bb6
-  %call_28 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.2, i64 %call_27)
-  br label %bb8
-
-bb8:                                              ; preds = %bb7
-  %call_29 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.3)
-  br label %bb9
-
-bb9:                                              ; preds = %bb8
-  %call_30 = call { i64 } @make_adder(i64 10)
-  br label %bb10
-
-bb10:                                             ; preds = %bb9
-  %call_31 = call i64 @__closure0_call({ i64 } %call_30, i64 5)
-  br label %bb11
-
-bb11:                                             ; preds = %bb10
   %call_32 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.4, i64 %call_31)
-  br label %bb12
-
-bb12:                                             ; preds = %bb11
   store { i8 } zeroinitializer, ptr %alloca_count_33, align 1
   %load_35 = load { i8 }, ptr %alloca_count_33, align 1
   %call_36 = call i64 @__closure1_call({ i8 } %load_35, i64 7)
-  br label %bb13
+  br label %bb7
 
-bb13:                                             ; preds = %bb12
+bb7:                                              ; preds = %bb6
   %call_37 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.5, i64 %call_36)
-  br label %bb14
-
-bb14:                                             ; preds = %bb13
   ret i32 0
 }
 
@@ -142,9 +121,6 @@ bb0:
 
 bb1:                                              ; preds = %bb0
   %call_47 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.2, i64 %call_46)
-  br label %bb2
-
-bb2:                                              ; preds = %bb1
   ret void
 }
 
@@ -167,9 +143,6 @@ bb0:
 
 bb1:                                              ; preds = %bb0
   %call_49 = call i32 (ptr, ...) @printf(ptr @.str.09_higher_order_functions.6, double %call_48)
-  br label %bb2
-
-bb2:                                              ; preds = %bb1
   ret void
 }
 

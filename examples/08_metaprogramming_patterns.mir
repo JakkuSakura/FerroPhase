@@ -1,54 +1,83 @@
 mir::Program {
     items:
         fn main() -> () [body: body0]
-
-        fn Point3D::type_name() -> <??> [body: body1]
-
-        fn Point3D::field_count() -> usize [body: body2]
     bodies:
-        body0 { arg_count: 0, locals: 10 }
+        body0 { arg_count: 0, locals: 27 }
             return_local: _0
             locals:
                 _0: ()
                 _1: <??>
-                _2: usize
-                _3: i32
+                _2: i64
+                _3: i64
                 _4: ()
-                _5: isize
-                _6: isize
-                _7: u8
-                _8: i32
-                _9: ()
+                _5: <??>
+                _6: ()
+                _7: ()
+                _8: ()
+                _9: i64
+                _10: bool
+                _11: (<??>, <??>)
+                _12: <??>
+                _13: (<??>, <??>)
+                _14: (<??>, <??>)
+                _15: (<??>, <??>)
+                _16: i64
+                _17: <??>
+                _18: (<??>, <??>)
+                _19: (<??>, <??>)
+                _20: (<??>, <??>)
+                _21: i64
+                _22: ()
+                _23: (i64, i64, i64)
+                _24: ()
+                _25: (i64, i64, i64, <??>)
+                _26: ()
             blocks:
                 bb0:
-                    terminator: call fn Point3D::type_name() -> _1 then bb1
+                    s0: _1 = "struct Point3D"
+                    s1: _2 = 3
+                    s2: _3 = 24
+                    s3: intrinsic Println "%s has %lld fields (size=%lld)
+" [copy _1, copy _2, copy _3]
+                    s4: _4 = aggregate(tuple; [])
+                    s5: _5 = "i64\n"
+                    s6: intrinsic Println "x type: %s
+" [copy _5]
+                    s7: _6 = aggregate(tuple; [])
+                    s8: intrinsic Println "fields:
+" []
+                    s9: _7 = aggregate(tuple; [])
+                    s10: _9 = 0
+                    terminator: goto -> bb1
                 bb1:
-                    terminator: call fn Point3D::field_count() -> _2 then bb2
+                    s0: _10 = Lt(copy _9, 3)
+                    terminator: switch copy _10 [1 -> bb2] otherwise -> bb3
                 bb2:
-                    terminator: call global printf("%s has %llu fields\n", copy _1, copy _2) -> _3 then bb3
+                    s0: _13 = aggregate(tuple; ["x", "i64\n"])
+                    s1: _14 = aggregate(tuple; ["y", "i64\n"])
+                    s2: _15 = aggregate(tuple; ["z", "i64\n"])
+                    s3: _12 = aggregate(array [(<??>, <??>)]; [copy _13, copy _14, copy _15])
+                    s4: _16 = copy _9
+                    s5: _18 = aggregate(tuple; ["x", "i64\n"])
+                    s6: _19 = aggregate(tuple; ["y", "i64\n"])
+                    s7: _20 = aggregate(tuple; ["z", "i64\n"])
+                    s8: _17 = aggregate(array [(<??>, <??>)]; [copy _18, copy _19, copy _20])
+                    s9: _21 = copy _9
+                    s10: _11 = copy _17[Index(21)]
+                    s11: intrinsic Println "  %s: %s
+" [copy _11[Field(0, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })], copy _11[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s12: _22 = aggregate(tuple; [])
+                    s13: _9 = Add(copy _9, 1)
+                    terminator: goto -> bb1
                 bb3:
-                    s0: _4 = aggregate(tuple; [])
-                    s1: _6 = aggregate(tuple; [1])
-                    s2: _5 = copy _6
-                    s3: _7 = cast(Misc, copy _5, u8)
-                    terminator: call global printf("tag discriminant: %hhu\n", copy _7) -> _8 then bb4
-                bb4:
-                    s0: _9 = aggregate(tuple; [])
-                    terminator: return
-        body1 { arg_count: 0, locals: 1 }
-            return_local: _0
-            locals:
-                _0: <??>
-            blocks:
-                bb0:
-                    s0: _0 = "Point3D"
-                    terminator: return
-        body2 { arg_count: 0, locals: 1 }
-            return_local: _0
-            locals:
-                _0: usize
-            blocks:
-                bb0:
-                    s0: _0 = 3
+                    s0: _8 = aggregate(tuple; [])
+                    s1: _23 = aggregate(tuple; [1, 2, 3])
+                    s2: intrinsic Println "point=(%lld, %lld, %lld)
+" [copy _23[Field(0, Ty { kind: Int(I64) })], copy _23[Field(1, Ty { kind: Int(I64) })], copy _23[Field(2, Ty { kind: Int(I64) })]]
+                    s3: _24 = aggregate(tuple; [])
+                    s4: _25 = aggregate(tuple; [4, 5, 6, "origin"])
+                    s5: intrinsic Println "labeled=(%lld, %lld, %lld, %s)
+" [copy _25[Field(0, Ty { kind: Int(I64) })], copy _25[Field(1, Ty { kind: Int(I64) })], copy _25[Field(2, Ty { kind: Int(I64) })], copy _25[Field(3, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s6: _26 = aggregate(tuple; [])
                     terminator: return
 }

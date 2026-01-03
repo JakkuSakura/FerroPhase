@@ -281,8 +281,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ExprKind::Match(match_expr) => self.infer_match(match_expr)?,
             ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
             ExprKind::For(for_expr) => {
-                let _pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
-                let _iter_ty = self.infer_expr(for_expr.iter.as_mut())?;
+                let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
+                let iter_var = self.infer_expr(for_expr.iter.as_mut())?;
+                if let Ok(iter_ty) = self.resolve_to_ty(iter_var) {
+                    if let Some(elem_var) = self.iter_element_var_from_ty(&iter_ty) {
+                        self.unify(pat_info.var, elem_var)?;
+                    }
+                }
                 // For now, treat `for` as producing unit.
                 let unit_var = self.fresh_type_var();
                 self.bind(unit_var, TypeTerm::Unit);
@@ -617,7 +622,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         arg_vars.len()
                     ));
                 }
-                self.bind(result_var, TypeTerm::Any);
+                let fields = vec![
+                    StructuralField::new(
+                        Ident::new("name".to_string()),
+                        Ty::Primitive(TypePrimitive::String),
+                    ),
+                    StructuralField::new(
+                        Ident::new("type_name".to_string()),
+                        Ty::Primitive(TypePrimitive::String),
+                    ),
+                ];
+                let struct_ty = TypeStructural { fields };
+                let elem_var = self.fresh_type_var();
+                self.bind(elem_var, TypeTerm::Structural(struct_ty));
+                self.bind(result_var, TypeTerm::Vec(elem_var));
             }
             IntrinsicCallKind::CreateStruct
             | IntrinsicCallKind::CloneStruct
@@ -1500,11 +1518,56 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             // Keep iterator methods permissive for now; these are primarily
             // used by examples and desugar into Rust iterator chains.
             "iter" | "enumerate" => {
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => {
+                        let result_var = self.fresh_type_var();
+                        self.bind(result_var, TypeTerm::Any);
+                        return Ok(Some(result_var));
+                    }
+                };
+
+                let elem_ty = match obj_ty {
+                    Ty::Vec(vec) => Some(*vec.ty.clone()),
+                    Ty::Array(array) => Some(*array.elem.clone()),
+                    Ty::Slice(slice) => Some(*slice.elem.clone()),
+                    _ => None,
+                };
+
+                let elem_ty = match elem_ty {
+                    Some(ty) => ty,
+                    None => {
+                        let result_var = self.fresh_type_var();
+                        self.bind(result_var, TypeTerm::Any);
+                        return Ok(Some(result_var));
+                    }
+                };
+
+                let iter_elem_var = if field.name.as_str() == "enumerate" {
+                    let index_var = self.fresh_type_var();
+                    self.bind(index_var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                    let value_var = self.type_from_ast_ty(&elem_ty)?;
+                    let tuple_var = self.fresh_type_var();
+                    self.bind(tuple_var, TypeTerm::Tuple(vec![index_var, value_var]));
+                    tuple_var
+                } else {
+                    self.type_from_ast_ty(&elem_ty)?
+                };
+
                 let result_var = self.fresh_type_var();
-                self.bind(result_var, TypeTerm::Any);
+                self.bind(result_var, TypeTerm::Vec(iter_elem_var));
                 Ok(Some(result_var))
             }
             _ => Ok(None),
+        }
+    }
+
+    fn iter_element_var_from_ty(&mut self, ty: &Ty) -> Option<TypeVarId> {
+        match ty {
+            Ty::Vec(vec) => self.type_from_ast_ty(&vec.ty).ok(),
+            Ty::Array(array) => self.type_from_ast_ty(&array.elem).ok(),
+            Ty::Slice(slice) => self.type_from_ast_ty(&slice.elem).ok(),
+            _ => None,
         }
     }
 

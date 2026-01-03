@@ -3,163 +3,101 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: i32
+                %1: void
                 %2: void
-                %3: i32
+                %3: void
                 %4: void
-                %5: i32
+                %5: void
                 %6: void
-                %7: i32
+                %7: void
                 %8: void
-                %9: i32
+                %9: void
                 %10: void
-                %11: i32
-                %12: void
-                %13: i32
+                %11: void
+                %12: { f64, f64 }
+                %13: { i8, i8, i8 }
                 %14: void
-                %15: i32
+                %15: i64
                 %16: void
-                %17: i32
+                %17: i64
                 %18: void
-                %19: i32
+                %19: i64
                 %20: void
-                %21: i32
+                %21: void
                 %22: void
-                %23: { f64, f64 }
-                %24: { i8, i8, i8 }
-                %25: i32
-                %26: void
-                %27: i64
-                %28: i32
-                %29: void
-                %30: i64
-                %31: i32
-                %32: void
-                %33: i64
-                %34: i32
-                %35: void
-                %36: i32
-                %37: void
-                %38: i32
-                %39: void
-                %40: i32
-                %41: void
-                %42: i32
-                %43: void
-            bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = call c @printf(c"=== Struct Introspection ===
-") : i32
-                terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i1: %r1 = call c @printf(c"Point size: %llu bytes
-", i64 16) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i2: %r2 = call c @printf(c"Color size: %llu bytes
-", i64 3) : i32
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i3: %r3 = call c @printf(c"Point fields: %llu
-", i64 2) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i4: %r4 = call c @printf(c"Color fields: %llu
-", i64 3) : i32
-                terminator: br bb5
-            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i5: %r5 = zext bool true to i32 : i32
-                i6: %r6 = call c @printf(c"Point has x: %d
-", %r5) : i32
-                terminator: br bb6
-            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i7: %r7 = zext bool false to i32 : i32
-                i8: %r8 = call c @printf(c"Point has z: %d
-", %r7) : i32
-                terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i9: %r9 = call c @printf(c"Point methods: %llu
-", i64 0) : i32
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i10: %r10 = call c @printf(c"Color methods: %llu
-", i64 0) : i32
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i11: %r11 = call c @printf(c"
+                %23: void
+                %24: void
+            bb0 // label: bb0:
+                i0: %r0 = intrinsic Println "=== Struct Introspection ===
+" ()
+                i1: %r1 = intrinsic Println "Point size: %lld bytes
+" (i64 16)
+                i2: %r2 = intrinsic Println "Color size: %lld bytes
+" (i64 24)
+                i3: %r3 = intrinsic Println "Point fields: %lld
+" (i64 2)
+                i4: %r4 = intrinsic Println "Color fields: %lld
+" (i64 3)
+                i5: %r5 = intrinsic Println "Point has x: %d
+" (bool true)
+                i6: %r6 = intrinsic Println "Point has z: %d
+" (bool false)
+                i7: %r7 = intrinsic Println "Point methods: %lld
+" (i64 0)
+                i8: %r8 = intrinsic Println "Color methods: %lld
+" (i64 0)
+                i9: %r9 = intrinsic Println "
 ✓ Introspection completed!
-") : i32
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i12: %r12 = call c @printf(c"
+" ()
+                i10: %r10 = intrinsic Println "
 === Transpilation Demo ===
-") : i32
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i13: %r13 = alloca i32 1 align 8 : ptr { f64, f64 }
-                i14: store struct { f64, f64 } { f64 0, f64 0 }, %r13 align 8
-                i15: %r15 = alloca i32 1 align 1 : ptr { i8, i8, i8 }
-                i16: store struct { i8, i8, i8 } { i8 255, i8 0, i8 0 }, %r15 align 1
-                i17: %r17 = call c @printf(c"Transpilation target sizes:
-") : i32
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i18: %r18 = alloca i32 1 align 8 : ptr i64
-                i19: store i64 16, %r18 align 8
-                i20: %r20 = load %r18 align 8 : i64
-                i21: %r21 = call c @printf(c"  Point: %llu bytes (const)
-", %r20) : i32
-                terminator: br bb13
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i22: %r22 = alloca i32 1 align 8 : ptr i64
-                i23: store i64 24, %r22 align 8
-                i24: %r24 = load %r22 align 8 : i64
-                i25: %r25 = call c @printf(c"  Color: %llu bytes (const)
-", %r24) : i32
-                terminator: br bb14
-            bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i26: %r26 = alloca i32 1 align 8 : ptr i64
-                i27: store i64 40, %r26 align 8
-                i28: %r28 = load %r26 align 8 : i64
-                i29: %r29 = call c @printf(c"  Combined: %llu bytes
-", %r28) : i32
-                terminator: br bb15
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i30: %r30 = call c @printf(c"Runtime instances:
-") : i32
-                terminator: br bb16
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i31: %r31 = bitcast %r13 to ptr f64 : ptr f64
-                i32: %r32 = load %r31 align 8 : f64
-                i33: %r33 = bitcast %r13 to ptr i8 : ptr i8
-                i34: %r34 = gep inbounds %r33 [i64 8] : ptr i8
-                i35: %r35 = bitcast %r34 to ptr f64 : ptr f64
-                i36: %r36 = load %r35 align 8 : f64
-                i37: %r37 = call c @printf(c"  Origin: (%f, %f)
-", %r32, %r36) : i32
-                terminator: br bb17
-            bb17 // label: bb17 // preds: [bb16] // succs: [bb18]:
-                i38: %r38 = bitcast %r15 to ptr i8 : ptr i8
-                i39: %r39 = load %r38 align 1 : i8
-                i40: %r40 = zext %r39 to i32 : i32
-                i41: %r41 = bitcast %r15 to ptr i8 : ptr i8
-                i42: %r42 = gep inbounds %r41 [i64 1] : ptr i8
-                i43: %r43 = bitcast %r42 to ptr i8 : ptr i8
-                i44: %r44 = load %r43 align 1 : i8
-                i45: %r45 = zext %r44 to i32 : i32
-                i46: %r46 = bitcast %r15 to ptr i8 : ptr i8
-                i47: %r47 = gep inbounds %r46 [i64 2] : ptr i8
-                i48: %r48 = bitcast %r47 to ptr i8 : ptr i8
-                i49: %r49 = load %r48 align 1 : i8
-                i50: %r50 = zext %r49 to i32 : i32
-                i51: %r51 = call c @printf(c"  Red: rgb(%hhu, %hhu, %hhu)
-", %r40, %r45, %r50) : i32
-                terminator: br bb18
-            bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:
-                i52: %r52 = call c @printf(c"
+" ()
+                i11: %r11 = alloca i32 1 align 8 : ptr { f64, f64 }
+                i12: store struct { f64, f64 } { f64 0, f64 0 }, %r11 align 8
+                i13: %r13 = alloca i32 1 align 1 : ptr { i8, i8, i8 }
+                i14: store struct { i8, i8, i8 } { i8 255, i8 0, i8 0 }, %r13 align 1
+                i15: %r15 = intrinsic Println "Transpilation target sizes:
+" ()
+                i16: %r16 = alloca i32 1 align 8 : ptr i64
+                i17: store i64 16, %r16 align 8
+                i18: %r18 = load %r16 align 8 : i64
+                i19: %r19 = intrinsic Println "  Point: %llu bytes (const)
+" (%r18)
+                i20: %r20 = alloca i32 1 align 8 : ptr i64
+                i21: store i64 24, %r20 align 8
+                i22: %r22 = load %r20 align 8 : i64
+                i23: %r23 = intrinsic Println "  Color: %llu bytes (const)
+" (%r22)
+                i24: %r24 = alloca i32 1 align 8 : ptr i64
+                i25: store i64 40, %r24 align 8
+                i26: %r26 = load %r24 align 8 : i64
+                i27: %r27 = intrinsic Println "  Combined: %llu bytes
+" (%r26)
+                i28: %r28 = intrinsic Println "Runtime instances:
+" ()
+                i29: %r29 = bitcast %r11 to ptr f64 : ptr f64
+                i30: %r30 = load %r29 align 8 : f64
+                i31: %r31 = bitcast %r11 to ptr i8 : ptr i8
+                i32: %r32 = gep inbounds %r31 [i64 8] : ptr i8
+                i33: %r33 = bitcast %r32 to ptr f64 : ptr f64
+                i34: %r34 = load %r33 align 8 : f64
+                i35: %r35 = intrinsic Println "  Origin: (%f, %f)
+" (%r30, %r34)
+                i36: %r36 = bitcast %r13 to ptr i8 : ptr i8
+                i37: %r37 = load %r36 align 1 : i8
+                i38: %r38 = bitcast %r13 to ptr i8 : ptr i8
+                i39: %r39 = gep inbounds %r38 [i64 1] : ptr i8
+                i40: %r40 = bitcast %r39 to ptr i8 : ptr i8
+                i41: %r41 = load %r40 align 1 : i8
+                i42: %r42 = bitcast %r13 to ptr i8 : ptr i8
+                i43: %r43 = gep inbounds %r42 [i64 2] : ptr i8
+                i44: %r44 = bitcast %r43 to ptr i8 : ptr i8
+                i45: %r45 = load %r44 align 1 : i8
+                i46: %r46 = intrinsic Println "  Red: rgb(%hhu, %hhu, %hhu)
+" (%r37, %r41, %r45)
+                i47: %r47 = intrinsic Println "
 ✓ Introspection enables external code generation!
-") : i32
-                terminator: br bb19
-            bb19 // label: bb19 // preds: [bb18]:
+" ()
                 terminator: ret void
         }
 }

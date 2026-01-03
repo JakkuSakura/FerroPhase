@@ -157,21 +157,21 @@ lir::Program {
                 i70: %r70 = alloca i32 1 align 8 : ptr i64
                 i71: %r71 = alloca i32 1 align 8 : ptr i64
                 i72: store i64 0, %r70 align 8
-                i73: store i64 0, %r71 align 8
+                i73: store i64 0, %r69 align 8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0, bb4, bb6] // succs: [bb2, bb3]:
                 i74: %r74 = alloca i32 1 align 1 : ptr i1
-                i75: %r75 = load %r71 align 8 : i64
+                i75: %r75 = load %r69 align 8 : i64
                 i76: %r76 = lt %r75, %local1 : i1
                 i77: store %r76, %r74 align 1
                 i78: %r78 = load %r74 align 1 : i1
                 terminator: cond_br %r78, bb2, bb3
             bb2 // label: bb2 // preds: [bb1] // succs: [bb4, bb5]:
-                i79: %r79 = load %r71 align 8 : i64
+                i79: %r79 = load %r69 align 8 : i64
                 i80: %r80 = add %r79, i64 1 : i64
-                i81: store %r80, %r71 align 8
+                i81: store %r80, %r69 align 8
                 i82: %r82 = alloca i32 1 align 8 : ptr i64
-                i83: %r83 = load %r71 align 8 : i64
+                i83: %r83 = load %r69 align 8 : i64
                 i84: %r84 = rem %r83, i64 2 : i64
                 i85: store %r84, %r82 align 8
                 i86: %r86 = alloca i32 1 align 1 : ptr i1
@@ -182,8 +182,8 @@ lir::Program {
                 terminator: cond_br %r90, bb4, bb5
             bb3 // label: bb3 // preds: [bb1]:
                 i91: %r91 = load %r70 align 8 : i64
-                i92: store %r91, %r69 align 8
-                i93: %r93 = load %r69 align 8 : i64
+                i92: store %r91, %r71 align 8
+                i93: %r93 = load %r71 align 8 : i64
                 terminator: ret %r93
             bb4 // label: bb4 // preds: [bb2] // succs: [bb1]:
                 terminator: br bb1
@@ -191,7 +191,7 @@ lir::Program {
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5, bb7] // succs: [bb1]:
                 i94: %r94 = load %r70 align 8 : i64
-                i95: %r95 = load %r71 align 8 : i64
+                i95: %r95 = load %r69 align 8 : i64
                 i96: %r96 = add %r94, %r95 : i64
                 i97: store %r96, %r70 align 8
                 terminator: br bb1
@@ -202,214 +202,160 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: i32
+                %1: void
                 %2: void
-                %3: i32
+                %3: i64
                 %4: void
                 %5: i64
-                %6: i32
+                %6: void
                 %7: void
                 %8: i64
-                %9: i32
-                %10: void
-                %11: i32
+                %9: void
+                %10: i64
+                %11: void
                 %12: void
                 %13: i64
-                %14: i32
-                %15: void
-                %16: i64
-                %17: i32
-                %18: void
-                %19: i32
+                %14: void
+                %15: i64
+                %16: void
+                %17: void
+                %18: i64
+                %19: void
                 %20: void
                 %21: i64
-                %22: i32
-                %23: void
-                %24: i64
-                %25: i32
-                %26: void
-                %27: i32
+                %22: void
+                %23: i64
+                %24: i1
+                %25: void
+                %26: i64
+                %27: i1
                 %28: void
-                %29: i64
-                %30: i32
+                %29: i1
+                %30: void
                 %31: void
-                %32: i32
-                %33: void
-                %34: i64
+                %32: void
+                %33: i64
+                %34: void
                 %35: void
-                %36: i64
-                %37: i1
-                %38: void
-                %39: i64
-                %40: i1
-                %41: void
-                %42: i1
-                %43: i32
-                %44: void
-                %45: i32
-                %46: void
-                %47: i32
-                %48: void
-                %49: i64
-                %50: i32
-                %51: void
-                %52: i32
-                %53: void
             bb0 // label: bb0 // succs: [bb1]:
                 i98: %r98 = alloca i32 1 align 8 : ptr i64
                 i99: %r99 = alloca i32 1 align 8 : ptr i64
                 i100: %r100 = alloca i32 1 align 8 : ptr i64
-                i101: %r101 = call c @printf(c"=== Loop Constructs ===
+                i101: %r101 = intrinsic Println "=== Loop Constructs ===
 
-") : i32
+" ()
+                i102: %r102 = intrinsic Println "1. While loop - factorial:
+" ()
+                i103: %r103 = call c @factorial(i64 5) : i64
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i102: %r102 = call c @printf(c"1. While loop - factorial:
-") : i32
+                i104: %r104 = intrinsic Println "  5! = %lld
+" (%r103)
+                i105: %r105 = call c @factorial(i64 7) : i64
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i103: %r103 = call c @factorial(i64 5) : i64
+                i106: %r106 = intrinsic Println "  7! = %lld
+" (%r105)
+                i107: %r107 = intrinsic Println "
+2. For loop - sum range:
+" ()
+                i108: %r108 = call c @sum_range(i64 1, i64 10) : i64
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i104: %r104 = call c @printf(c"  5! = %lld
-", %r103) : i32
+                i109: %r109 = intrinsic Println "  sum(1..10) = %lld
+" (%r108)
+                i110: %r110 = call c @sum_range(i64 5, i64 15) : i64
                 terminator: br bb4
             bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i105: %r105 = call c @factorial(i64 7) : i64
+                i111: %r111 = intrinsic Println "  sum(5..15) = %lld
+" (%r110)
+                i112: %r112 = intrinsic Println "
+3. Loop with break expression:
+" ()
+                i113: %r113 = call c @find_first_divisor(i64 24) : i64
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i106: %r106 = call c @printf(c"  7! = %lld
-", %r105) : i32
+                i114: %r114 = intrinsic Println "  First divisor of 24: %lld
+" (%r113)
+                i115: %r115 = call c @find_first_divisor(i64 17) : i64
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i107: %r107 = call c @printf(c"
-2. For loop - sum range:
-") : i32
+                i116: %r116 = intrinsic Println "  First divisor of 17: %lld
+" (%r115)
+                i117: %r117 = intrinsic Println "
+4. Loop with continue:
+" ()
+                i118: %r118 = call c @sum_even_numbers(i64 10) : i64
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i108: %r108 = call c @sum_range(i64 1, i64 10) : i64
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i109: %r109 = call c @printf(c"  sum(1..10) = %lld
-", %r108) : i32
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i110: %r110 = call c @sum_range(i64 5, i64 15) : i64
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i111: %r111 = call c @printf(c"  sum(5..15) = %lld
-", %r110) : i32
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i112: %r112 = call c @printf(c"
-3. Loop with break expression:
-") : i32
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i113: %r113 = call c @find_first_divisor(i64 24) : i64
-                terminator: br bb13
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i114: %r114 = call c @printf(c"  First divisor of 24: %lld
-", %r113) : i32
-                terminator: br bb14
-            bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i115: %r115 = call c @find_first_divisor(i64 17) : i64
-                terminator: br bb15
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i116: %r116 = call c @printf(c"  First divisor of 17: %lld
-", %r115) : i32
-                terminator: br bb16
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i117: %r117 = call c @printf(c"
-4. Loop with continue:
-") : i32
-                terminator: br bb17
-            bb17 // label: bb17 // preds: [bb16] // succs: [bb18]:
-                i118: %r118 = call c @sum_even_numbers(i64 10) : i64
-                terminator: br bb18
-            bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:
-                i119: %r119 = call c @printf(c"  Sum of even numbers < 10: %lld
-", %r118) : i32
-                terminator: br bb19
-            bb19 // label: bb19 // preds: [bb18] // succs: [bb20]:
-                i120: %r120 = call c @printf(c"
+                i119: %r119 = intrinsic Println "  Sum of even numbers < 10: %lld
+" (%r118)
+                i120: %r120 = intrinsic Println "
 5. Nested loops:
-") : i32
-                terminator: br bb20
-            bb20 // label: bb20 // preds: [bb19] // succs: [bb21]:
+" ()
                 i121: store i64 0, %r100 align 8
                 i122: store i64 1, %r98 align 8
-                terminator: br bb21
-            bb21 // label: bb21 // preds: [bb20, bb26] // succs: [bb22, bb23]:
+                terminator: br bb8
+            bb8 // label: bb8 // preds: [bb7, bb13] // succs: [bb9, bb10]:
                 i123: %r123 = alloca i32 1 align 1 : ptr i1
                 i124: %r124 = load %r98 align 8 : i64
                 i125: %r125 = lt %r124, i64 4 : i1
                 i126: store %r125, %r123 align 1
                 i127: %r127 = load %r123 align 1 : i1
-                terminator: cond_br %r127, bb22, bb23
-            bb22 // label: bb22 // preds: [bb21] // succs: [bb24]:
+                terminator: cond_br %r127, bb9, bb10
+            bb9 // label: bb9 // preds: [bb8] // succs: [bb11]:
                 i128: store i64 1, %r99 align 8
-                terminator: br bb24
-            bb23 // label: bb23 // preds: [bb21] // succs: [bb31]:
+                terminator: br bb11
+            bb10 // label: bb10 // preds: [bb8]:
                 i129: %r129 = load %r100 align 8 : i64
-                i130: %r130 = call c @printf(c"
+                i130: %r130 = intrinsic Println "
   Iterations: %lld
-", %r129) : i32
-                terminator: br bb31
-            bb24 // label: bb24 // preds: [bb22, bb29] // succs: [bb25, bb26]:
-                i131: %r131 = alloca i32 1 align 1 : ptr i1
-                i132: %r132 = load %r99 align 8 : i64
-                i133: %r133 = lt %r132, i64 4 : i1
-                i134: store %r133, %r131 align 1
-                i135: %r135 = load %r131 align 1 : i1
-                terminator: cond_br %r135, bb25, bb26
-            bb31 // label: bb31 // preds: [bb23] // succs: [bb32]:
-                i136: %r136 = call c @printf(c"
+" (%r129)
+                i131: %r131 = intrinsic Println "
 6. Compile-time iteration (simulated):
-") : i32
-                terminator: br bb32
-            bb25 // label: bb25 // preds: [bb24] // succs: [bb27, bb28]:
-                i137: %r137 = load %r100 align 8 : i64
-                i138: %r138 = add %r137, i64 1 : i64
-                i139: store %r138, %r100 align 8
-                i140: %r140 = alloca i32 1 align 1 : ptr i1
-                i141: %r141 = load %r98 align 8 : i64
-                i142: %r142 = load %r99 align 8 : i64
-                i143: %r143 = eq %r141, %r142 : i1
-                i144: store %r143, %r140 align 1
-                i145: %r145 = load %r140 align 1 : i1
-                terminator: cond_br %r145, bb27, bb28
-            bb26 // label: bb26 // preds: [bb24] // succs: [bb21]:
-                i146: %r146 = load %r98 align 8 : i64
-                i147: %r147 = add %r146, i64 1 : i64
-                i148: store %r147, %r98 align 8
-                terminator: br bb21
-            bb32 // label: bb32 // preds: [bb31] // succs: [bb33]:
-                i149: %r149 = alloca i32 1 align 8 : ptr i64
-                i150: store i64 120, %r149 align 8
-                i151: %r151 = load %r149 align 8 : i64
-                i152: %r152 = call c @printf(c"  const 5! = %lld
-", %r151) : i32
-                terminator: br bb33
-            bb27 // label: bb27 // preds: [bb25] // succs: [bb30]:
-                i153: %r153 = load %r98 align 8 : i64
-                i154: %r154 = call c @printf(c"[%lld] ", %r153) : i32
-                terminator: br bb30
-            bb28 // label: bb28 // preds: [bb25] // succs: [bb29]:
-                terminator: br bb29
-            bb33 // label: bb33 // preds: [bb32] // succs: [bb34]:
-                i155: %r155 = call c @printf(c"
+" ()
+                i132: %r132 = alloca i32 1 align 8 : ptr i64
+                i133: store i64 120, %r132 align 8
+                i134: %r134 = load %r132 align 8 : i64
+                i135: %r135 = intrinsic Println "  const 5! = %lld
+" (%r134)
+                i136: %r136 = intrinsic Println "
 ✓ Loop constructs demonstrated!
-") : i32
-                terminator: br bb34
-            bb30 // label: bb30 // preds: [bb27] // succs: [bb29]:
-                terminator: br bb29
-            bb29 // label: bb29 // preds: [bb28, bb30] // succs: [bb24]:
+" ()
+                terminator: ret void
+            bb11 // label: bb11 // preds: [bb9, bb16] // succs: [bb12, bb13]:
+                i137: %r137 = alloca i32 1 align 1 : ptr i1
+                i138: %r138 = load %r99 align 8 : i64
+                i139: %r139 = lt %r138, i64 4 : i1
+                i140: store %r139, %r137 align 1
+                i141: %r141 = load %r137 align 1 : i1
+                terminator: cond_br %r141, bb12, bb13
+            bb12 // label: bb12 // preds: [bb11] // succs: [bb14, bb15]:
+                i142: %r142 = load %r100 align 8 : i64
+                i143: %r143 = add %r142, i64 1 : i64
+                i144: store %r143, %r100 align 8
+                i145: %r145 = alloca i32 1 align 1 : ptr i1
+                i146: %r146 = load %r98 align 8 : i64
+                i147: %r147 = load %r99 align 8 : i64
+                i148: %r148 = eq %r146, %r147 : i1
+                i149: store %r148, %r145 align 1
+                i150: %r150 = load %r145 align 1 : i1
+                terminator: cond_br %r150, bb14, bb15
+            bb13 // label: bb13 // preds: [bb11] // succs: [bb8]:
+                i151: %r151 = load %r98 align 8 : i64
+                i152: %r152 = add %r151, i64 1 : i64
+                i153: store %r152, %r98 align 8
+                terminator: br bb8
+            bb14 // label: bb14 // preds: [bb12] // succs: [bb16]:
+                i154: %r154 = load %r98 align 8 : i64
+                i155: %r155 = intrinsic Print "[%lld] " (%r154)
+                terminator: br bb16
+            bb15 // label: bb15 // preds: [bb12] // succs: [bb16]:
+                terminator: br bb16
+            bb16 // label: bb16 // preds: [bb14, bb15] // succs: [bb11]:
                 i156: %r156 = load %r99 align 8 : i64
                 i157: %r157 = add %r156, i64 1 : i64
                 i158: store %r157, %r99 align 8
-                terminator: br bb24
-            bb34 // label: bb34 // preds: [bb33]:
-                terminator: ret void
+                terminator: br bb11
         }
 }

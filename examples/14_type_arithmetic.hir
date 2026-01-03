@@ -1,4 +1,15 @@
 hir::Program {
+    struct __structural_value_c0eef43bfe1bfa0e {
+        pub a: i64,
+        pub common: i64,
+        pub foo: i64,
+    }
+
+    struct __structural_value_db50d021de22601b {
+        pub common: i64,
+        pub bar: i64,
+    }
+
     pub struct Foo {
         pub a: i64,
         pub common: i64,
@@ -104,8 +115,8 @@ hir::Program {
             std::Println(1 args);
             std::Println(1 args);
             std::Println(1 args);
-            std::Print(1 args);
-            std::Print(1 args);
+            std::Println(1 args);
+            std::Println(1 args);
             std::Println(1 args);
             let maybe: FooMaybe = Foo { a: 5, common: 6, foo: 7 };
             std::Println(1 args);

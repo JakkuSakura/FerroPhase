@@ -129,6 +129,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                     return;
                 }
+                if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
+                    let value = self.eval_intrinsic(call);
+                    if !matches!(value, Value::Undefined(_)) {
+                        let mut replacement = Expr::value(value.clone());
+                        if let Some(ty) = expr_ty_snapshot.clone() {
+                            replacement.ty = Some(ty);
+                        }
+                        *expr = replacement;
+                        self.mark_mutated();
+                        return;
+                    }
+                }
                 self.evaluate_intrinsic_for_function_analysis(call);
             }
             ExprKind::Await(await_expr) => {

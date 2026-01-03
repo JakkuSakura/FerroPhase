@@ -3,118 +3,76 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: i32
+                %1: void
                 %2: void
-                %3: i32
+                %3: void
                 %4: void
-                %5: i32
+                %5: void
                 %6: void
-                %7: i32
+                %7: void
                 %8: void
-                %9: i32
-                %10: void
-                %11: i32
+                %9: void
+                %10: i64
+                %11: void
                 %12: void
-                %13: i32
+                %13: void
                 %14: void
-                %15: i32
+                %15: void
                 %16: void
-                %17: i32
+                %17: void
                 %18: void
-                %19: i64
-                %20: i32
+                %19: void
+                %20: void
                 %21: void
-                %22: i32
+                %22: void
                 %23: void
-                %24: i32
+                %24: void
                 %25: void
-                %26: i32
+                %26: void
                 %27: void
-                %28: i32
-                %29: void
-                %30: i32
-                %31: void
-                %32: i32
-                %33: void
-                %34: void
-                %35: i32
-                %36: void
-                %37: i32
-                %38: void
-                %39: i32
-                %40: void
-            bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = call c @printf(c"Hello") : i32
-                terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i1: %r1 = call c @printf(c"World with newlines") : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
-                i2: %r2 = call c @printf(c"
-") : i32
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i3: %r3 = call c @printf(c"Number: %lld", i64 42) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
-                i4: %r4 = zext bool true to i32 : i32
-                i5: %r5 = zext bool false to i32 : i32
-                i6: %r6 = call c @printf(c"Boolean: %d %d", %r4, %r5) : i32
-                terminator: br bb5
-            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i7: %r7 = zext bool true to i32 : i32
-                i8: %r8 = call c @printf(c"Mixed: %lld %f %s %d", i64 1, f64 2.5, c"text", %r7) : i32
-                terminator: br bb6
-            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i9: %r9 = call c @printf(c"
-") : i32
-                terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i10: %r10 = call c @printf(c"Namespace test %s", c"still works") : i32
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i11: %r11 = call c @printf(c"
-") : i32
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i12: %r12 = alloca i32 1 align 8 : ptr i64
-                i13: store i64 7, %r12 align 8
-                i14: %r14 = load %r12 align 8 : i64
-                i15: %r15 = call c @printf(c"value = %lld
-", %r14) : i32
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i16: %r16 = call c @printf(c"math: %lld + %lld = %lld
-", i64 2, i64 3, i64 5) : i32
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i17: %r17 = call c @printf(c"This %s %s %s %s", c"stays", c"on", c"one", c"line") : i32
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
-                i18: %r18 = call c @printf(c"
-") : i32
-                terminator: br bb13
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i19: %r19 = call c @printf(c"Continuing without newline") : i32
-                terminator: br bb14
-            bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
-                i20: %r20 = call c @printf(c" - appended content") : i32
-                terminator: br bb15
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i21: %r21 = call c @printf(c"
-") : i32
-                terminator: br bb16
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
-                i22: %r22 = call c @printf(c"Unit: %s", c"()") : i32
-                terminator: br bb17
-            bb17 // label: bb17 // preds: [bb16] // succs: [bb18]:
-                i23: %r23 = call c @printf(c"Null: %s", c"null") : i32
-                terminator: br bb18
-            bb18 // label: bb18 // preds: [bb17] // succs: [bb19]:
-                i24: %r24 = call c @printf(c"
-") : i32
-                terminator: br bb19
-            bb19 // label: bb19 // preds: [bb18]:
+                %28: void
+            bb0 // label: bb0:
+                i0: %r0 = intrinsic Print "Hello" ()
+                i1: %r1 = intrinsic Print "World with newlines" ()
+                i2: %r2 = intrinsic Println "
+" ()
+                i3: %r3 = intrinsic Print "Number: %lld" (i64 42)
+                i4: %r4 = intrinsic Print "Boolean: %d %d" (bool true, bool false)
+                i5: %r5 = intrinsic Print "Mixed: %lld %f %s %d" (i64 1, f64 2.5, c"text", bool true)
+                i6: %r6 = intrinsic Println "
+" ()
+                i7: %r7 = intrinsic Print "Namespace test %s" (c"still works")
+                i8: %r8 = intrinsic Println "
+" ()
+                i9: %r9 = alloca i32 1 align 8 : ptr i64
+                i10: store i64 7, %r9 align 8
+                i11: %r11 = load %r9 align 8 : i64
+                i12: %r12 = intrinsic Println "value = %lld
+" (%r11)
+                i13: %r13 = intrinsic Println "math: %lld + %lld = %lld
+" (i64 2, i64 3, i64 5)
+                i14: %r14 = intrinsic Println "float: %f
+" (f64 3.14159)
+                i15: %r15 = intrinsic Println "chars: %s %s
+" (c"()", c"()")
+                i16: %r16 = intrinsic Println "tuple: (%lld, %lld)
+" (i64 1, i64 2)
+                i17: %r17 = intrinsic Println "bools: %d %d
+" (bool true, bool false)
+                i18: %r18 = intrinsic Print "This %s %s %s %s" (c"stays", c"on", c"one", c"line")
+                i19: %r19 = intrinsic Println "
+" ()
+                i20: %r20 = intrinsic Print "Continuing without newline" ()
+                i21: %r21 = intrinsic Print " - appended content" ()
+                i22: %r22 = intrinsic Println "
+" ()
+                i23: %r23 = intrinsic Print "Unit: %s" (c"()")
+                i24: %r24 = intrinsic Print "Null: %s" (c"null")
+                i25: %r25 = intrinsic Println "
+" ()
+                i26: %r26 = intrinsic Println "escaped: %s %s
+" (c"line1
+line2", c"tab	end")
                 terminator: ret void
         }
 }

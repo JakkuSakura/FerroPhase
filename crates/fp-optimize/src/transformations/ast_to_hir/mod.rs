@@ -41,6 +41,9 @@ pub struct HirGenerator {
     type_aliases: HashMap<String, ast::Ty>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
     trait_defs: HashMap<String, ast::ItemDefTrait>,
+    structural_value_defs: HashMap<String, StructuralValueDef>,
+    const_list_length_scopes: Vec<HashMap<String, usize>>,
+    synthetic_items: Vec<hir::Item>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -53,10 +56,29 @@ pub struct HirGenerator {
     pub max_errors: usize,
 }
 
+enum MaterializedTypeAlias {
+    Struct(ast::TypeStruct),
+    Structural(ast::TypeStructural),
+    Enum(ast::TypeEnum),
+}
+
 #[derive(Debug, Clone)]
 struct SymbolEntry {
     res: hir::Res,
     export: SymbolExport,
+}
+
+#[derive(Debug, Clone)]
+struct StructuralValueDef {
+    name: String,
+    def_id: hir::DefId,
+    fields: Vec<StructuralFieldSpec>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct StructuralFieldSpec {
+    name: String,
+    ty: LiteralTypeKind,
 }
 
 #[derive(Debug, Clone)]
@@ -80,7 +102,7 @@ enum PathResolutionScope {
     Type,
 }
 
-#[derive(Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 enum LiteralTypeKind {
     Primitive(ast::TypePrimitive),
     Unit,
@@ -106,6 +128,9 @@ impl HirGenerator {
             type_aliases: HashMap::new(),
             struct_field_defs: HashMap::new(),
             trait_defs: HashMap::new(),
+            structural_value_defs: HashMap::new(),
+            const_list_length_scopes: vec![HashMap::new()],
+            synthetic_items: Vec::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -406,6 +431,9 @@ impl HirGenerator {
             type_aliases: HashMap::new(),
             struct_field_defs: HashMap::new(),
             trait_defs: HashMap::new(),
+            structural_value_defs: HashMap::new(),
+            const_list_length_scopes: vec![HashMap::new()],
+            synthetic_items: Vec::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -545,6 +573,10 @@ impl HirGenerator {
         self.current_position = 0;
         self.type_aliases.clear();
         self.trait_defs.clear();
+        self.structural_value_defs.clear();
+        self.const_list_length_scopes.clear();
+        self.const_list_length_scopes.push(HashMap::new());
+        self.synthetic_items.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
@@ -613,6 +645,41 @@ impl HirGenerator {
                 }
                 ItemKind::DefType(def_type) => {
                     self.register_type_alias(&def_type.name.name, &def_type.value);
+                    if let Some(materialized) = self.materialized_type_alias(def_type) {
+                        let def_id = self.allocate_def_id_for_item(item);
+                        self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                        match materialized {
+                            MaterializedTypeAlias::Struct(struct_ty) => {
+                                self.struct_field_defs
+                                    .insert(def_id, struct_ty.fields.clone());
+                            }
+                            MaterializedTypeAlias::Structural(structural) => {
+                                self.struct_field_defs
+                                    .insert(def_id, structural.fields.clone());
+                            }
+                            MaterializedTypeAlias::Enum(enum_ty) => {
+                                for variant in &enum_ty.variants {
+                                    let variant_def_id = self.next_def_id();
+                                    self.register_value_def(
+                                        &variant.name.name,
+                                        variant_def_id,
+                                        &def_type.visibility,
+                                    );
+
+                                    let qualified_variant =
+                                        format!("{}::{}", def_type.name.name, variant.name.name);
+                                    let fully_qualified = self.qualify_name(&qualified_variant);
+                                    self.record_value_symbol(
+                                        &qualified_variant,
+                                        hir::Res::Def(variant_def_id),
+                                        &def_type.visibility,
+                                    );
+                                    self.enum_variant_def_ids
+                                        .insert(fully_qualified, variant_def_id);
+                                }
+                            }
+                        }
+                    }
                 }
                 ItemKind::Impl(_) => {
                     self.allocate_def_id_for_item(item);
@@ -701,12 +768,17 @@ impl HirGenerator {
 
     fn push_value_scope(&mut self) {
         self.value_scopes.push(HashMap::new());
+        self.const_list_length_scopes.push(HashMap::new());
     }
 
     fn pop_value_scope(&mut self) {
         self.value_scopes.pop();
         if self.value_scopes.is_empty() {
             self.value_scopes.push(HashMap::new());
+        }
+        self.const_list_length_scopes.pop();
+        if self.const_list_length_scopes.is_empty() {
+            self.const_list_length_scopes.push(HashMap::new());
         }
     }
 
@@ -765,6 +837,14 @@ impl HirGenerator {
             self.append_item(&mut program, item)?;
         }
 
+        if !self.synthetic_items.is_empty() {
+            let mut synthetic = std::mem::take(&mut self.synthetic_items);
+            for item in &synthetic {
+                program.def_map.insert(item.def_id, item.clone());
+            }
+            program.items.splice(0..0, synthetic.drain(..));
+        }
+
         Ok(program)
     }
 
@@ -784,6 +864,10 @@ impl HirGenerator {
             }
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
+                if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
+                    program.def_map.insert(hir_item.def_id, hir_item.clone());
+                    program.items.push(hir_item);
+                }
                 Ok(())
             }
             ItemKind::Expr(expr) => {
@@ -836,17 +920,23 @@ impl HirGenerator {
             }
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
-                let unit_block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                let unit_expr = hir::Expr {
-                    hir_id: self.next_id(),
-                    kind: hir::ExprKind::Block(unit_block),
-                    span: self.create_span(1),
-                };
-                Ok(hir::StmtKind::Expr(unit_expr))
+                if let Some(hir_item) =
+                    self.materialize_def_type_item(item.as_ref(), def_type)?
+                {
+                    Ok(hir::StmtKind::Item(hir_item))
+                } else {
+                    let unit_block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    let unit_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: hir::ExprKind::Block(unit_block),
+                        span: self.create_span(1),
+                    };
+                    Ok(hir::StmtKind::Expr(unit_expr))
+                }
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item.as_ref())?;
@@ -968,7 +1058,16 @@ impl HirGenerator {
                             .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
                             .transpose()?;
                         let payload = match &variant.value {
-                            ast::Ty::Unit(_) => None,
+                            ast::Ty::Unit(_) => {
+                                if let Some(alias) =
+                                    self.lookup_type_alias(&[variant.name.name.clone()])
+                                {
+                                    let alias = alias.clone();
+                                    Some(self.transform_type_to_hir(&alias)?)
+                                } else {
+                                    None
+                                }
+                            }
                             other => Some(self.transform_type_to_hir(other)?),
                         };
 
@@ -1062,8 +1161,23 @@ impl HirGenerator {
     }
 
     fn transform_const_def(&mut self, const_def: &ast::ItemDefConst) -> Result<hir::Const> {
+        let list_len = self.const_list_length_from_expr(&const_def.value);
+        if let Some(len) = list_len {
+            self.record_const_list_length(&const_def.name.name, len);
+        }
         let ty = if let Some(ty) = &const_def.ty {
-            self.transform_type_to_hir(ty)?
+            if let (ast::Ty::Vec(vec_ty), Some(len)) = (ty, list_len) {
+                let len_expr = ast::Expr::new(ast::ExprKind::Value(Box::new(ast::Value::int(
+                    len as i64,
+                ))));
+                let array_ty = ast::Ty::Array(ast::TypeArray {
+                    elem: vec_ty.ty.clone(),
+                    len: Box::new(len_expr),
+                });
+                self.transform_type_to_hir(&array_ty)?
+            } else {
+                self.transform_type_to_hir(ty)?
+            }
         } else {
             self.create_unit_type()
         };
@@ -1080,6 +1194,34 @@ impl HirGenerator {
             ty,
             body,
         })
+    }
+
+    fn const_list_length_from_expr(&self, expr: &ast::Expr) -> Option<usize> {
+        match expr.kind() {
+            ast::ExprKind::Array(array) => Some(array.values.len()),
+            ast::ExprKind::Value(value) => match value.as_ref() {
+                ast::Value::List(list) => Some(list.values.len()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    fn record_const_list_length(&mut self, name: &str, len: usize) {
+        if let Some(scope) = self.const_list_length_scopes.last_mut() {
+            scope.insert(name.to_string(), len);
+        }
+    }
+
+    fn lookup_const_list_length(&self, segments: &[ast::Ident]) -> Option<usize> {
+        if segments.len() != 1 {
+            return None;
+        }
+        let name = segments[0].name.as_str();
+        self.const_list_length_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).copied())
     }
 
     /// Transform an AST type into a HIR type
@@ -1135,16 +1277,7 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::Structural(structural) => {
-                let elements = structural
-                    .fields
-                    .iter()
-                    .map(|field| Ok(Box::new(self.transform_type_to_hir(&field.value)?)))
-                    .collect::<Result<Vec<_>>>()?;
-                Ok(hir::TypeExpr::new(
-                    self.next_id(),
-                    hir::TypeExprKind::Tuple(elements),
-                    Span::new(self.current_file, 0, 0),
-                ))
+                self.materialize_structural_type(structural)
             }
             ast::Ty::Vec(vec_ty) => {
                 let elem = Box::new(self.transform_type_to_hir(&vec_ty.ty)?);
@@ -1384,6 +1517,359 @@ impl HirGenerator {
         }
     }
 
+    fn literal_type_kind_from_value(&self, value: &ast::Value) -> Option<LiteralTypeKind> {
+        match value {
+            ast::Value::Int(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Int(
+                ast::TypeInt::I64,
+            ))),
+            ast::Value::Bool(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Bool)),
+            ast::Value::Decimal(_) => Some(LiteralTypeKind::Primitive(
+                ast::TypePrimitive::Decimal(ast::DecimalType::F64),
+            )),
+            ast::Value::String(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String)),
+            ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
+            ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
+            ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Infer),
+            _ => None,
+        }
+    }
+
+    fn structural_specs_compatible(
+        &self,
+        existing: &[StructuralFieldSpec],
+        incoming: &[StructuralFieldSpec],
+    ) -> bool {
+        if existing.len() != incoming.len() {
+            return false;
+        }
+
+        existing.iter().zip(incoming.iter()).all(|(lhs, rhs)| {
+            if lhs.name != rhs.name {
+                return false;
+            }
+            matches!(lhs.ty, LiteralTypeKind::Infer) || lhs.ty == rhs.ty
+        })
+    }
+
+    fn structural_value_key(&self, fields: &[StructuralFieldSpec]) -> String {
+        let mut parts = Vec::with_capacity(fields.len());
+        for field in fields {
+            let ty_key = match field.ty {
+                LiteralTypeKind::Primitive(prim) => format!("{:?}", prim),
+                LiteralTypeKind::Unit => "unit".to_string(),
+                LiteralTypeKind::Infer => "infer".to_string(),
+            };
+            parts.push(format!("{}:{}", field.name, ty_key));
+        }
+        parts.join("|")
+    }
+
+    fn structural_value_name(&self, key: &str) -> String {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        key.hash(&mut hasher);
+        format!("__structural_value_{:x}", hasher.finish())
+    }
+
+    fn find_compatible_structural_value_def(
+        &self,
+        fields: &[StructuralFieldSpec],
+    ) -> Option<StructuralValueDef> {
+        self.structural_value_defs
+            .values()
+            .find(|candidate| self.structural_specs_compatible(&candidate.fields, fields))
+            .cloned()
+    }
+
+    fn register_structural_value_def(
+        &mut self,
+        name: String,
+        fields: Vec<StructuralFieldSpec>,
+        hir_fields: Vec<hir::StructField>,
+        ast_fields: Vec<ast::StructuralField>,
+    ) -> StructuralValueDef {
+        let def_id = self.next_def_id();
+        let name_symbol = hir::Symbol::new(self.qualify_name(&name));
+        let hir_id = self.next_id();
+        let span = self.create_span(1);
+
+        let struct_item = hir::Item {
+            hir_id,
+            def_id,
+            visibility: hir::Visibility::Private,
+            kind: hir::ItemKind::Struct(hir::Struct {
+                name: name_symbol,
+                fields: hir_fields,
+                generics: hir::Generics::default(),
+            }),
+            span,
+        };
+
+        self.register_type_def(&name, def_id, &ast::Visibility::Private);
+        self.struct_field_defs.insert(def_id, ast_fields);
+        self.synthetic_items.push(struct_item);
+
+        StructuralValueDef {
+            name,
+            def_id,
+            fields,
+        }
+    }
+
+    fn should_update_structural_def(&self, def_id: hir::DefId) -> bool {
+        let Some(fields) = self.struct_field_defs.get(&def_id) else {
+            return false;
+        };
+        fields.iter().all(|field| {
+            matches!(
+                field.value,
+                ast::Ty::Any(_) | ast::Ty::Unknown(_)
+            )
+        })
+    }
+
+    fn update_structural_def_fields(
+        &mut self,
+        def_id: hir::DefId,
+        hir_fields: Vec<hir::StructField>,
+        ast_fields: Vec<ast::StructuralField>,
+    ) {
+        if let Some(item) = self
+            .synthetic_items
+            .iter_mut()
+            .find(|item| item.def_id == def_id)
+        {
+            if let hir::ItemKind::Struct(strukt) = &mut item.kind {
+                strukt.fields = hir_fields;
+            }
+        }
+        self.struct_field_defs.insert(def_id, ast_fields);
+    }
+
+    fn structural_fields_from_type(
+        &self,
+        structural: &ast::TypeStructural,
+    ) -> Vec<StructuralFieldSpec> {
+        structural
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = self
+                    .literal_type_kind(&field.value)
+                    .unwrap_or(LiteralTypeKind::Infer);
+                StructuralFieldSpec {
+                    name: field.name.name.clone(),
+                    ty,
+                }
+            })
+            .collect()
+    }
+
+    fn structural_fields_from_value(
+        &self,
+        structural: &ast::ValueStructural,
+    ) -> Result<Vec<StructuralFieldSpec>> {
+        structural
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = self
+                    .literal_type_kind_from_value(&field.value)
+                    .ok_or_else(|| {
+                        crate::error::optimization_error(format!(
+                            "unsupported structural field value for HIR materialization: {:?}",
+                            field.value
+                        ))
+                    })?;
+                Ok(StructuralFieldSpec {
+                    name: field.name.name.clone(),
+                    ty,
+                })
+            })
+            .collect()
+    }
+
+    fn path_for_structural_def(&mut self, def: &StructuralValueDef) -> hir::Path {
+        hir::Path {
+            segments: vec![hir::PathSegment {
+                name: hir::Symbol::new(def.name.clone()),
+                args: None,
+            }],
+            res: Some(hir::Res::Def(def.def_id)),
+        }
+    }
+
+    fn hir_type_for_value(&mut self, value: &ast::Value) -> Result<hir::TypeExpr> {
+        let span = Span::new(self.current_file, 0, 0);
+        let expr = match value {
+            ast::Value::Int(_) => {
+                self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))
+            }
+            ast::Value::Bool(_) => self.primitive_type_to_hir(ast::TypePrimitive::Bool),
+            ast::Value::Decimal(_) => self.primitive_type_to_hir(ast::TypePrimitive::Decimal(
+                ast::DecimalType::F64,
+            )),
+            ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
+            ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
+            ast::Value::Unit(_) => self.create_unit_type(),
+            ast::Value::Null(_) | ast::Value::None(_) => hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Infer,
+                span,
+            ),
+            ast::Value::Struct(struct_val) => {
+                let path = self.locator_to_hir_path_with_scope(
+                    &Locator::Ident(struct_val.ty.name.clone()),
+                    PathResolutionScope::Type,
+                )?;
+                hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
+            }
+            ast::Value::Structural(structural) => {
+                let def = self.materialize_structural_value_def(structural)?;
+                let path = self.path_for_structural_def(&def);
+                hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
+            }
+            other => {
+                return Err(crate::error::optimization_error(format!(
+                    "unsupported structural field value type: {:?}",
+                    other
+                )))
+            }
+        };
+        Ok(expr)
+    }
+
+    fn materialize_structural_type(
+        &mut self,
+        structural: &ast::TypeStructural,
+    ) -> Result<hir::TypeExpr> {
+        let specs = self.structural_fields_from_type(structural);
+        let key = self.structural_value_key(&specs);
+        if let Some(def) = self.structural_value_defs.get(&key).cloned() {
+            let path = self.path_for_structural_def(&def);
+            return Ok(hir::TypeExpr::new(
+                self.next_id(),
+                hir::TypeExprKind::Path(path),
+                Span::new(self.current_file, 0, 0),
+            ));
+        }
+
+        let hir_fields = structural
+            .fields
+            .iter()
+            .map(|field| {
+                Ok(hir::StructField {
+                    hir_id: self.next_id(),
+                    name: hir::Symbol::new(field.name.name.clone()),
+                    ty: self.transform_type_to_hir(&field.value)?,
+                    vis: hir::Visibility::Public,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let ast_fields = structural.fields.clone();
+        let name = self.structural_value_name(&key);
+        let def = self.register_structural_value_def(name, specs, hir_fields, ast_fields);
+        self.structural_value_defs.insert(key, def.clone());
+        let path = self.path_for_structural_def(&def);
+
+        Ok(hir::TypeExpr::new(
+            self.next_id(),
+            hir::TypeExprKind::Path(path),
+            Span::new(self.current_file, 0, 0),
+        ))
+    }
+
+    fn materialize_structural_value_def(
+        &mut self,
+        structural: &ast::ValueStructural,
+    ) -> Result<StructuralValueDef> {
+        let specs = self.structural_fields_from_value(structural)?;
+        if let Some(def) = self.find_compatible_structural_value_def(&specs) {
+            if self.should_update_structural_def(def.def_id) {
+                let hir_fields = structural
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        Ok(hir::StructField {
+                            hir_id: self.next_id(),
+                            name: hir::Symbol::new(field.name.name.clone()),
+                            ty: self.hir_type_for_value(&field.value)?,
+                            vis: hir::Visibility::Public,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                let ast_fields = structural
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        let ty = self
+                            .literal_type_kind_from_value(&field.value)
+                            .and_then(|kind| match kind {
+                                LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
+                                LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
+                                LiteralTypeKind::Infer => Some(ast::Ty::Any(ast::TypeAny)),
+                            })
+                            .ok_or_else(|| {
+                                crate::error::optimization_error(format!(
+                                    "unsupported structural field value type: {:?}",
+                                    field.value
+                                ))
+                            })?;
+                        Ok(ast::StructuralField::new(field.name.clone(), ty))
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                self.update_structural_def_fields(def.def_id, hir_fields, ast_fields);
+            }
+            return Ok(def);
+        }
+
+        let key = self.structural_value_key(&specs);
+        if let Some(def) = self.structural_value_defs.get(&key).cloned() {
+            return Ok(def);
+        }
+
+        let hir_fields = structural
+            .fields
+            .iter()
+            .map(|field| {
+                Ok(hir::StructField {
+                    hir_id: self.next_id(),
+                    name: hir::Symbol::new(field.name.name.clone()),
+                    ty: self.hir_type_for_value(&field.value)?,
+                    vis: hir::Visibility::Public,
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let ast_fields = structural
+            .fields
+            .iter()
+            .map(|field| {
+                let ty = self
+                    .literal_type_kind_from_value(&field.value)
+                    .and_then(|kind| match kind {
+                        LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
+                        LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
+                        LiteralTypeKind::Infer => Some(ast::Ty::Any(ast::TypeAny)),
+                    })
+                    .ok_or_else(|| {
+                        crate::error::optimization_error(format!(
+                            "unsupported structural field value type: {:?}",
+                            field.value
+                        ))
+                    })?;
+                Ok(ast::StructuralField::new(field.name.clone(), ty))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let name = self.structural_value_name(&key);
+        let def = self.register_structural_value_def(name, specs, hir_fields, ast_fields);
+        self.structural_value_defs.insert(key, def.clone());
+        Ok(def)
+    }
+
     fn register_type_alias(&mut self, name: &str, ty: &ast::Ty) {
         let qualified = self.qualify_name(name);
         self.type_aliases.insert(qualified, ty.clone());
@@ -1398,6 +1884,160 @@ impl HirGenerator {
         self.type_aliases
             .get(&qualified)
             .or_else(|| segments.get(0).and_then(|name| self.type_aliases.get(name)))
+    }
+
+    fn materialized_type_alias(&self, def_type: &ast::ItemDefType) -> Option<MaterializedTypeAlias> {
+        match &def_type.value {
+            ast::Ty::Struct(struct_ty) => {
+                Some(MaterializedTypeAlias::Struct(struct_ty.clone()))
+            }
+            ast::Ty::Structural(structural) => {
+                Some(MaterializedTypeAlias::Structural(structural.clone()))
+            }
+            ast::Ty::Enum(enum_ty) => Some(MaterializedTypeAlias::Enum(enum_ty.clone())),
+            _ => None,
+        }
+    }
+
+    fn materialize_def_type_item(
+        &mut self,
+        item: &ast::Item,
+        def_type: &ast::ItemDefType,
+    ) -> Result<Option<hir::Item>> {
+        let def_id = self.def_id_for_item(item);
+        let hir_id = self.next_id();
+        let span = self.create_span(1);
+
+        let (kind, visibility) = match self.materialized_type_alias(def_type) {
+            Some(MaterializedTypeAlias::Struct(struct_ty)) => {
+                self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                self.push_type_scope();
+                let generics = self.transform_generics(&struct_ty.generics_params);
+                let name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
+                let fields = struct_ty
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        Ok(hir::StructField {
+                            hir_id: self.next_id(),
+                            name: hir::Symbol::new(field.name.name.clone()),
+                            ty: self.transform_type_to_hir(&field.value)?,
+                            vis: hir::Visibility::Public,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                self.pop_type_scope();
+
+                (
+                    hir::ItemKind::Struct(hir::Struct {
+                        name,
+                        fields,
+                        generics,
+                    }),
+                    self.map_visibility(&def_type.visibility),
+                )
+            }
+            Some(MaterializedTypeAlias::Structural(structural)) => {
+                self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                let name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
+                let fields = structural
+                    .fields
+                    .iter()
+                    .map(|field| {
+                        Ok(hir::StructField {
+                            hir_id: self.next_id(),
+                            name: hir::Symbol::new(field.name.name.clone()),
+                            ty: self.transform_type_to_hir(&field.value)?,
+                            vis: hir::Visibility::Public,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+
+                (
+                    hir::ItemKind::Struct(hir::Struct {
+                        name,
+                        fields,
+                        generics: hir::Generics::default(),
+                    }),
+                    self.map_visibility(&def_type.visibility),
+                )
+            }
+            Some(MaterializedTypeAlias::Enum(enum_ty)) => {
+                self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                self.push_type_scope();
+                let generics = self.transform_generics(&enum_ty.generics_params);
+                let qualified_enum_name = hir::Symbol::new(self.qualify_name(&def_type.name.name));
+
+                let variants = enum_ty
+                    .variants
+                    .iter()
+                    .map(|variant| {
+                        let qualified_variant =
+                            format!("{}::{}", def_type.name.name, variant.name.name);
+                        let fully_qualified = self.qualify_name(&qualified_variant);
+
+                        let variant_def_id = if let Some(def_id) =
+                            self.enum_variant_def_ids.get(&fully_qualified).copied()
+                        {
+                            def_id
+                        } else {
+                            let new_id = self.next_def_id();
+                            self.enum_variant_def_ids
+                                .insert(fully_qualified.clone(), new_id);
+                            new_id
+                        };
+
+                        self.register_value_def(
+                            &variant.name.name,
+                            variant_def_id,
+                            &def_type.visibility,
+                        );
+                        self.record_value_symbol(
+                            &qualified_variant,
+                            hir::Res::Def(variant_def_id),
+                            &def_type.visibility,
+                        );
+
+                        let discriminant = variant
+                            .discriminant
+                            .as_ref()
+                            .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                            .transpose()?;
+                        let payload = match &variant.value {
+                            ast::Ty::Unit(_) => None,
+                            other => Some(self.transform_type_to_hir(other)?),
+                        };
+
+                        Ok(hir::EnumVariant {
+                            hir_id: self.next_id(),
+                            def_id: variant_def_id,
+                            name: hir::Symbol::new(variant.name.name.clone()),
+                            discriminant,
+                            payload,
+                        })
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                self.pop_type_scope();
+
+                (
+                    hir::ItemKind::Enum(hir::Enum {
+                        name: qualified_enum_name,
+                        variants,
+                        generics,
+                    }),
+                    self.map_visibility(&def_type.visibility),
+                )
+            }
+            None => return Ok(None),
+        };
+
+        Ok(Some(hir::Item {
+            hir_id,
+            def_id,
+            kind,
+            visibility,
+            span,
+        }))
     }
 }
 

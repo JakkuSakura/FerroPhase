@@ -3,41 +3,66 @@ lir::Program {
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
-                %1: { i64, i64 }
-                %2: { i64, i64 }
-                %3: i32
+                %1: { i64, ptr i8 }
+                %2: void
+                %3: { i64, ptr i8, ptr i8 }
                 %4: void
-                %5: i64
-                %6: [256 x i64]
-                %7: [256 x i64]
-                %8: i32
+                %5: { i64, ptr i8, ptr i8 }
+                %6: void
+                %7: void
+                %8: void
                 %9: void
-            bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i1: store struct { i64, i64 } { i64 100, i64 20 }, %r0 align 8
-                i2: %r2 = alloca i32 1 align 8 : ptr { i64, i64 }
-                i3: store struct { i64, i64 } { i64 100, i64 20 }, %r2 align 8
-                i4: %r4 = bitcast %r0 to ptr i64 : ptr i64
-                i5: %r5 = load %r4 align 8 : i64
-                i6: %r6 = bitcast %r2 to ptr i8 : ptr i8
-                i7: %r7 = gep inbounds %r6 [i64 8] : ptr i8
-                i8: %r8 = bitcast %r7 to ptr i64 : ptr i64
-                i9: %r9 = load %r8 align 8 : i64
-                i10: %r10 = call c @printf(c"x=%lld, y=%lld
-", %r5, %r9) : i32
-                terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i11: %r11 = alloca i32 1 align 8 : ptr [256 x i64]
-                i12: store [256 x i64] { i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0 }, %r11 align 8
-                i13: %r13 = alloca i32 1 align 8 : ptr [256 x i64]
-                i14: store [256 x i64] { i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0, i64 0 }, %r13 align 8
-                i15: %r15 = alloca i32 1 align 8 : ptr i64
-                i16: store i64 256, %r15 align 8
-                i17: %r17 = load %r15 align 8 : i64
-                i18: %r18 = call c @printf(c"array size: %llu
-", %r17) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1]:
+                %10: void
+                %11: void
+            bb0 // label: bb0:
+                i0: %r0 = alloca i32 1 align 8 : ptr { i64, ptr i8 }
+                i1: store struct { i64, ptr i8 } { i64 1, c"core" }, %r0 align 8
+                i2: %r2 = bitcast %r0 to ptr i64 : ptr i64
+                i3: %r3 = load %r2 align 8 : i64
+                i4: %r4 = bitcast %r0 to ptr i8 : ptr i8
+                i5: %r5 = gep inbounds %r4 [i64 8] : ptr i8
+                i6: %r6 = bitcast %r5 to ptr ptr i8 : ptr ptr i8
+                i7: %r7 = load %r6 align 8 : ptr i8
+                i8: %r8 = intrinsic Println "base: id=%lld name=%s
+" (%r3, %r7)
+                i9: %r9 = alloca i32 1 align 8 : ptr { i64, ptr i8, ptr i8 }
+                i10: store struct { i64, ptr i8, ptr i8 } { i64 2, c"primary", c"strict" }, %r9 align 8
+                i11: %r11 = bitcast %r9 to ptr i64 : ptr i64
+                i12: %r12 = load %r11 align 8 : i64
+                i13: %r13 = bitcast %r9 to ptr i8 : ptr i8
+                i14: %r14 = gep inbounds %r13 [i64 8] : ptr i8
+                i15: %r15 = bitcast %r14 to ptr ptr i8 : ptr ptr i8
+                i16: %r16 = load %r15 align 8 : ptr i8
+                i17: %r17 = bitcast %r9 to ptr i8 : ptr i8
+                i18: %r18 = gep inbounds %r17 [i64 16] : ptr i8
+                i19: %r19 = bitcast %r18 to ptr ptr i8 : ptr ptr i8
+                i20: %r20 = load %r19 align 8 : ptr i8
+                i21: %r21 = intrinsic Println "config: id=%lld name=%s mode=%s
+" (%r12, %r16, %r20)
+                i22: %r22 = alloca i32 1 align 8 : ptr { i64, ptr i8, ptr i8 }
+                i23: store struct { i64, ptr i8, ptr i8 } { i64 3, c"shadow", c"relaxed" }, %r22 align 8
+                i24: %r24 = bitcast %r22 to ptr i64 : ptr i64
+                i25: %r25 = load %r24 align 8 : i64
+                i26: %r26 = bitcast %r22 to ptr i8 : ptr i8
+                i27: %r27 = gep inbounds %r26 [i64 8] : ptr i8
+                i28: %r28 = bitcast %r27 to ptr ptr i8 : ptr ptr i8
+                i29: %r29 = load %r28 align 8 : ptr i8
+                i30: %r30 = bitcast %r22 to ptr i8 : ptr i8
+                i31: %r31 = gep inbounds %r30 [i64 16] : ptr i8
+                i32: %r32 = bitcast %r31 to ptr ptr i8 : ptr ptr i8
+                i33: %r33 = load %r32 align 8 : ptr i8
+                i34: %r34 = intrinsic Println "config clone: id=%lld name=%s mode=%s
+" (%r25, %r29, %r33)
+                i35: %r35 = intrinsic Println "config fields: %lld
+" (i64 3)
+                i36: %r36 = intrinsic Println "config has mode: %d
+" (bool true)
+                i37: %r37 = intrinsic Println "config has max_retries: %d
+" (bool false)
+                i38: %r38 = intrinsic Println "config size: %lld
+" (i64 24)
+                i39: %r39 = intrinsic Println "config type: %s
+" (c"struct Config")
                 terminator: ret void
         }
 }

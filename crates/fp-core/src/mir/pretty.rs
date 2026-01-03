@@ -186,6 +186,14 @@ fn summarize_statement(stmt: &Statement, _ctx: &PrettyCtx<'_>) -> String {
         StatementKind::Assign(place, rvalue) => {
             format!("{} = {}", format_place(place), summarize_rvalue(rvalue))
         }
+        StatementKind::IntrinsicCall { kind, format, args } => {
+            let args = args
+                .iter()
+                .map(summarize_operand)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("intrinsic {:?} \"{}\" [{}]", kind, format, args)
+        }
         StatementKind::SetDiscriminant {
             place,
             variant_index,

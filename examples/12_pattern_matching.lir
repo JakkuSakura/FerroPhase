@@ -218,36 +218,27 @@ lir::Program {
                 %3: { i64, i8, i8, i8 }
                 %4: ptr i8
                 %5: ptr { i64, i8, i8, i8 }
-                %6: i32
-                %7: void
-                %8: ptr i8
-                %9: ptr { i64, i8, i8, i8 }
-                %10: i32
-                %11: void
-                %12: ptr i8
-                %13: i64
-                %14: i32
-                %15: void
-                %16: ptr i8
-                %17: i32
+                %6: void
+                %7: ptr i8
+                %8: ptr { i64, i8, i8, i8 }
+                %9: void
+                %10: ptr i8
+                %11: i64
+                %12: void
+                %13: ptr i8
+                %14: void
+                %15: ptr i8
+                %16: void
+                %17: ptr i8
                 %18: void
-                %19: ptr i8
-                %20: i32
+                %19: i64
+                %20: { i64, i64 }
                 %21: void
-                %22: ptr i8
-                %23: i32
+                %22: i64
+                %23: { i64, i64 }
                 %24: void
                 %25: i64
-                %26: { i64, i64 }
-                %27: i32
-                %28: void
-                %29: i64
-                %30: { i64, i64 }
-                %31: i32
-                %32: void
-                %33: i64
-                %34: i32
-                %35: void
+                %26: void
             bb0 // label: bb0 // succs: [bb1]:
                 i116: %r116 = alloca i32 1 align 8 : ptr { i64, i8, i8, i8 }
                 i117: store struct { i64, i8, i8, i8 } { i64 0, i8 0, i8 0, i8 0 }, %r116 align 8
@@ -262,79 +253,61 @@ lir::Program {
                 i126: %r126 = call c @describe(%r125) : ptr i8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i127: %r127 = call c @printf(c"%s
-", %r126) : i32
-                terminator: br bb2
-            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i127: %r127 = intrinsic Println "%s
+" (%r126)
                 i128: %r128 = alloca i32 1 align 8 : ptr ptr { i64, i8, i8, i8 }
                 i129: store %r121, %r128 align 8
                 i130: %r130 = load %r128 align 8 : ptr { i64, i8, i8, i8 }
                 i131: %r131 = call c @describe(%r130) : ptr i8
-                terminator: br bb3
-            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
-                i132: %r132 = call c @printf(c"%s
-", %r131) : i32
-                terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i132: %r132 = intrinsic Println "%s
+" (%r131)
                 i133: %r133 = alloca i32 1 align 8 : ptr i64
                 i134: %r134 = sub i64 0, i64 5 : i64
                 i135: store %r134, %r133 align 8
                 i136: %r136 = load %r133 align 8 : i64
                 i137: %r137 = call c @classify(%r136) : ptr i8
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i138: %r138 = intrinsic Println "%s
+" (%r137)
+                i139: %r139 = call c @classify(i64 0) : ptr i8
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i140: %r140 = intrinsic Println "%s
+" (%r139)
+                i141: %r141 = call c @classify(i64 4) : ptr i8
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i138: %r138 = call c @printf(c"%s
-", %r137) : i32
+                i142: %r142 = intrinsic Println "%s
+" (%r141)
+                i143: %r143 = call c @classify(i64 7) : ptr i8
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i139: %r139 = call c @classify(i64 0) : ptr i8
-                terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
-                i140: %r140 = call c @printf(c"%s
-", %r139) : i32
-                terminator: br bb8
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i141: %r141 = call c @classify(i64 4) : ptr i8
-                terminator: br bb9
-            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
-                i142: %r142 = call c @printf(c"%s
-", %r141) : i32
-                terminator: br bb10
-            bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i143: %r143 = call c @classify(i64 7) : ptr i8
-                terminator: br bb11
-            bb11 // label: bb11 // preds: [bb10] // succs: [bb12]:
-                i144: %r144 = call c @printf(c"%s
-", %r143) : i32
-                terminator: br bb12
-            bb12 // label: bb12 // preds: [bb11] // succs: [bb13]:
+                i144: %r144 = intrinsic Println "%s
+" (%r143)
                 i145: %r145 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i146: store struct { i64, i64 } { i64 0, i64 42 }, %r145 align 8
                 i147: %r147 = load %r145 align 8 : { i64, i64 }
                 i148: %r148 = call c @unwrap_or(%r147, i64 0) : i64
-                terminator: br bb13
-            bb13 // label: bb13 // preds: [bb12] // succs: [bb14]:
-                i149: %r149 = call c @printf(c"%lld
-", %r148) : i32
-                terminator: br bb14
-            bb14 // label: bb14 // preds: [bb13] // succs: [bb15]:
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
+                i149: %r149 = intrinsic Println "%lld
+" (%r148)
                 i150: %r150 = alloca i32 1 align 8 : ptr { i64, i64 }
                 i151: store struct { i64, i64 } { i64 1, i64 0 }, %r150 align 8
                 i152: %r152 = load %r150 align 8 : { i64, i64 }
                 i153: %r153 = call c @unwrap_or(%r152, i64 99) : i64
-                terminator: br bb15
-            bb15 // label: bb15 // preds: [bb14] // succs: [bb16]:
-                i154: %r154 = call c @printf(c"%lld
-", %r153) : i32
-                terminator: br bb16
-            bb16 // label: bb16 // preds: [bb15] // succs: [bb17]:
+                terminator: br bb8
+            bb8 // label: bb8 // preds: [bb7]:
+                i154: %r154 = intrinsic Println "%lld
+" (%r153)
                 i155: %r155 = alloca i32 1 align 8 : ptr i64
                 i156: store i64 0, %r155 align 8
                 i157: %r157 = load %r155 align 8 : i64
-                i158: %r158 = call c @printf(c"0x%06X
-", %r157) : i32
-                terminator: br bb17
-            bb17 // label: bb17 // preds: [bb16]:
+                i158: %r158 = intrinsic Println "0x%06X
+" (%r157)
                 terminator: ret void
         }
 }

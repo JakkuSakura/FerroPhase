@@ -8,7 +8,7 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use itertools::Itertools;
-use proc_macro2::Span;
+use proc_macro2::{Span, TokenStream, TokenTree};
 use quote::{quote, ToTokens};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use syn::parse::{Parse, ParseStream, Parser};
@@ -1152,24 +1152,22 @@ impl<'a> ExprParser<'a> {
                     }
                 }
 
-                let fn_name = match kind {
-                    IntrinsicCallKind::Println => "println",
-                    IntrinsicCallKind::Print => "print",
-                    _ => "println",
-                };
-
-                Ok(ExprInvoke {
-                    target: ExprInvokeTarget::expr(Expr::path(fp_core::ast::Path::from(
-                        Ident::new(fn_name),
-                    ))),
-                    args,
-                }
+                Ok(ExprIntrinsicCall::new(
+                    kind,
+                    IntrinsicCallPayload::Args { args },
+                )
                 .into())
             }
             Err(e) => self.err(
                 format!(
-                    "Failed to parse println! macro arguments '{}': {}",
-                    tokens_str, e
+                    "Failed to parse {}! macro arguments '{}': {}",
+                    match kind {
+                        IntrinsicCallKind::Println => "println",
+                        IntrinsicCallKind::Print => "print",
+                        _ => "print",
+                    },
+                    tokens_str,
+                    e
                 ),
                 Expr::unit(),
             ),
@@ -1181,28 +1179,100 @@ impl<'a> ExprParser<'a> {
         mac: &syn::Macro,
         kind: IntrinsicCallKind,
     ) -> Result<Expr> {
-        let tokens_str = mac.tokens.to_string();
-
-        let args = if tokens_str.trim().is_empty() {
-            Vec::new()
-        } else {
-            let wrapped = format!("dummy({})", tokens_str);
-            let call = match syn::parse_str::<syn::ExprCall>(&wrapped) {
-                Ok(call) => call,
-                Err(e) => {
-                    return self.err(
-                        format!("Failed to parse intrinsic arguments: {}", e),
-                        Expr::unit(),
-                    );
-                }
-            };
-            call.args
-                .into_iter()
-                .map(|arg| self.parse_expr(arg))
-                .collect::<Result<Vec<_>>>()?
-        };
+        let args = self.parse_intrinsic_args(mac)?;
 
         Ok(ExprIntrinsicCall::new(kind, IntrinsicCallPayload::Args { args }).into())
+    }
+
+    fn parse_intrinsic_args(&self, mac: &syn::Macro) -> Result<Vec<Expr>> {
+        if mac.tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut args = Vec::new();
+        for tokens in split_macro_args(mac.tokens.clone()) {
+            if tokens.is_empty() {
+                return self.err(
+                    "Failed to parse intrinsic arguments: empty argument",
+                    Vec::new(),
+                );
+            }
+
+            match syn::parse2::<syn::Expr>(tokens.clone()) {
+                Ok(expr) => args.push(self.parse_expr(expr)?),
+                Err(_) => {
+                    // Allow type arguments (e.g., &'static str) in metaprogramming intrinsics.
+                    if let Some(expr) = self.try_parse_quote_expr(tokens.clone()) {
+                        args.push(expr);
+                        continue;
+                    }
+                    let ty = match syn::parse2::<syn::Type>(tokens.clone()) {
+                        Ok(ty) => ty,
+                        Err(err) => {
+                            return self.err(
+                                format!(
+                                    "Failed to parse intrinsic argument as expr or type: {}",
+                                    err
+                                ),
+                                Vec::new(),
+                            );
+                        }
+                    };
+                    let ast_ty = self.parser.parse_type(ty)?;
+                    args.push(Expr::value(Value::Type(ast_ty)));
+                }
+            }
+        }
+
+        Ok(args)
+    }
+
+    fn try_parse_quote_expr(&self, tokens: TokenStream) -> Option<Expr> {
+        let mut iter = tokens.into_iter().peekable();
+        let TokenTree::Ident(ident) = iter.next()? else {
+            return None;
+        };
+        if ident.to_string() != "quote" {
+            return None;
+        }
+
+        let mut kind: Option<QuoteFragmentKind> = None;
+        if let Some(TokenTree::Punct(punct)) = iter.peek() {
+            if punct.as_char() == '<' {
+                iter.next();
+                let TokenTree::Ident(kind_ident) = iter.next()? else {
+                    return None;
+                };
+                kind = match kind_ident.to_string().as_str() {
+                    "expr" => Some(QuoteFragmentKind::Expr),
+                    "stmt" => Some(QuoteFragmentKind::Stmt),
+                    "item" => Some(QuoteFragmentKind::Item),
+                    "type" => Some(QuoteFragmentKind::Type),
+                    _ => return None,
+                };
+                let TokenTree::Punct(close) = iter.next()? else {
+                    return None;
+                };
+                if close.as_char() != '>' {
+                    return None;
+                }
+            }
+        }
+
+        let TokenTree::Group(group) = iter.next()? else {
+            return None;
+        };
+        if !matches!(group.delimiter(), proc_macro2::Delimiter::Brace) {
+            return None;
+        }
+        if iter.next().is_some() {
+            return None;
+        }
+
+        let block_tokens = TokenStream::from(TokenTree::Group(group));
+        let syn_block = syn::parse2::<syn::Block>(block_tokens).ok()?;
+        let ast_block = self.parser.parse_block(syn_block).ok()?;
+        Some(Expr::from(ExprKind::Quote(ExprQuote { block: ast_block, kind })))
     }
 
     fn parse_expr_const(&self, expr: syn::ExprConst) -> Result<Expr> {
@@ -1310,6 +1380,30 @@ impl<'a> ExprParser<'a> {
                 _ => None,
             })
     }
+}
+
+fn split_macro_args(tokens: TokenStream) -> Vec<TokenStream> {
+    let mut args = Vec::new();
+    let mut current = TokenStream::new();
+
+    for token in tokens {
+        if let TokenTree::Punct(punct) = &token {
+            if punct.as_char() == ',' {
+                if !current.is_empty() {
+                    args.push(current);
+                    current = TokenStream::new();
+                }
+                continue;
+            }
+        }
+        current.extend(std::iter::once(token));
+    }
+
+    if !current.is_empty() {
+        args.push(current);
+    }
+
+    args
 }
 
 impl RustParser {

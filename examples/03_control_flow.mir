@@ -2,65 +2,61 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 19 }
+        body0 { arg_count: 0, locals: 15 }
             return_local: _0
             locals:
                 _0: ()
                 _1: i64
                 _2: <??>
-                _3: i32
-                _4: ()
-                _5: <??>
-                _6: i32
-                _7: ()
-                _8: i64
-                _9: <??>
-                _10: i32
-                _11: ()
-                _12: i64
-                _13: <??>
-                _14: <??>
-                _15: bool
-                _16: bool
-                _17: i32
-                _18: ()
+                _3: ()
+                _4: <??>
+                _5: ()
+                _6: i64
+                _7: <??>
+                _8: ()
+                _9: i64
+                _10: <??>
+                _11: <??>
+                _12: bool
+                _13: bool
+                _14: ()
             blocks:
                 bb0:
                     s0: _1 = 25
                     s1: _2 = "warm"
-                    terminator: call global printf("%lld°C is %s\n", copy _1, copy _2) -> _3 then bb1
+                    s2: intrinsic Println "%lld°C is %s
+" [copy _1, copy _2]
+                    s3: _3 = aggregate(tuple; [])
+                    s4: _4 = "outdoor"
+                    s5: intrinsic Println "Suggested: %s
+" [copy _4]
+                    s6: _5 = aggregate(tuple; [])
+                    s7: _6 = 85
+                    s8: _7 = "B"
+                    s9: intrinsic Println "Score %lld = grade %s
+" [copy _6, copy _7]
+                    s10: _8 = aggregate(tuple; [])
+                    s11: _9 = 42
+                    s12: _12 = Gt(copy _9, 50)
+                    terminator: switch copy _12 [1 -> bb1] otherwise -> bb2
                 bb1:
-                    s0: _4 = aggregate(tuple; [])
-                    s1: _5 = "outdoor"
-                    terminator: call global printf("Suggested: %s\n", copy _5) -> _6 then bb2
+                    s0: _11 = "high"
+                    terminator: goto -> bb3
                 bb2:
-                    s0: _7 = aggregate(tuple; [])
-                    s1: _8 = 85
-                    s2: _9 = "B"
-                    terminator: call global printf("Score %lld = grade %s\n", copy _8, copy _9) -> _10 then bb3
+                    s0: _13 = Gt(copy _9, 25)
+                    terminator: switch copy _13 [1 -> bb4] otherwise -> bb5
                 bb3:
-                    s0: _11 = aggregate(tuple; [])
-                    s1: _12 = 42
-                    s2: _15 = Gt(copy _12, 50)
-                    terminator: switch copy _15 [1 -> bb4] otherwise -> bb5
+                    s0: _10 = copy _11
+                    s1: intrinsic Println "Value %lld is %s
+" [copy _9, copy _10]
+                    s2: _14 = aggregate(tuple; [])
+                    terminator: <none>
                 bb4:
-                    s0: _14 = "high"
+                    s0: _11 = "medium"
                     terminator: goto -> bb6
                 bb5:
-                    s0: _16 = Gt(copy _12, 25)
-                    terminator: switch copy _16 [1 -> bb7] otherwise -> bb8
-                bb6:
-                    s0: _13 = copy _14
-                    terminator: call global printf("Value %lld is %s\n", copy _12, copy _13) -> _17 then bb10
-                bb7:
-                    s0: _14 = "medium"
-                    terminator: goto -> bb9
-                bb8:
-                    s0: _14 = "low"
-                    terminator: goto -> bb9
-                bb9:
+                    s0: _11 = "low"
                     terminator: goto -> bb6
-                bb10:
-                    s0: _18 = aggregate(tuple; [])
-                    terminator: return
+                bb6:
+                    terminator: goto -> bb3
 }
