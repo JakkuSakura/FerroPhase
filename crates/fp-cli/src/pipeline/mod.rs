@@ -18,18 +18,15 @@ use fp_core::diagnostics::{
 };
 #[cfg(feature = "bootstrap")]
 use fp_core::intrinsics::NoopIntrinsicNormalizer;
-use fp_core::intrinsics::{IntrinsicMaterializer, IntrinsicNormalizer};
+use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::workspace::{WorkspaceDocument, WorkspaceModule, WorkspacePackage};
 use fp_core::{hir, lir};
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome};
-use fp_llvm::{
-    LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicMaterializer,
-};
+use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
 use fp_optimize::transformations::{
-    HirGenerator, IrTransform, LirGenerator, MirLowering, materialize_intrinsics,
-    remove_generic_templates,
+    HirGenerator, IrTransform, LirGenerator, MirLowering, remove_generic_templates,
 };
 #[cfg(feature = "bootstrap")]
 use fp_rust::printer::RustPrinter;
@@ -271,30 +268,6 @@ pub enum PipelineOutput {
 }
 
 // BackendArtifacts and LlvmArtifacts moved to pipeline::artifacts
-
-struct IntrinsicsMaterializer {
-    strategy: Box<dyn IntrinsicMaterializer>,
-}
-
-struct NoopIntrinsicMaterializer;
-impl IntrinsicMaterializer for NoopIntrinsicMaterializer {}
-
-impl IntrinsicsMaterializer {
-    fn for_target(target: &PipelineTarget) -> Self {
-        match target {
-            PipelineTarget::Llvm | PipelineTarget::Binary => Self {
-                strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
-            },
-            _ => Self {
-                strategy: Box::new(NoopIntrinsicMaterializer),
-            },
-        }
-    }
-
-    fn materialize(&self, ast: &mut Node) -> fp_core::error::Result<()> {
-        materialize_intrinsics(ast, self.strategy.as_ref())
-    }
-}
 
 pub struct Pipeline {
     frontends: HashMap<String, Arc<dyn LanguageFrontend>>,
