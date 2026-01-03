@@ -11,7 +11,7 @@ impl Pipeline {
             // language-specific hooks (e.g., macro lowering) to the provided
             // frontend normalizer.
             if let Err(err) =
-                fp_optimize::transformations::normalize_intrinsics_with(ast, &**normalizer)
+                fp_core::intrinsics::normalize_intrinsics_with(ast, &**normalizer)
             {
                 manager.add_diagnostic(
                     Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
@@ -22,7 +22,7 @@ impl Pipeline {
             return Ok(());
         }
 
-        match fp_optimize::transformations::normalize_intrinsics(ast) {
+        match fp_core::intrinsics::normalize_intrinsics(ast) {
             Ok(()) => Ok(()),
             Err(err) => {
                 manager.add_diagnostic(

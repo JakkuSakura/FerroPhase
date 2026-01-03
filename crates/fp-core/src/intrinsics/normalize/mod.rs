@@ -1,9 +1,9 @@
-use fp_core::ast::{
+use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprIntrinsicContainer,
     ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Value,
 };
-use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
+use crate::error::Result;
+use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
 
 mod bootstrap;
 mod format;
@@ -49,8 +49,7 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
             }
         }
         ItemKind::DefFunction(function) => {
-            // Bootstrap: try to rewrite fp-cli main to a minimal compile path
-            if crate::transformations::normalize_intrinsics::bootstrap::maybe_rewrite_cli_main(function) {
+            if bootstrap::maybe_rewrite_cli_main(function) {
                 return Ok(());
             }
             normalize_expr(function.body.as_mut(), strategy)?
@@ -126,8 +125,6 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
                 }
                 NormalizeOutcome::Normalized(expr_new) => {
                     *expr = expr_new;
-                    // Strategy owns this node; keep normalizing the replacement
-                    // expression through the shared framework.
                     continue;
                 }
             }
@@ -169,7 +166,7 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             ExprKind::Invoke(invoke) => {
                 normalize_invoke(invoke, strategy)?;
 
-                if let Some(intrinsic_call) = fp_core::ast::intrinsic_call_from_invoke(invoke) {
+                if let Some(intrinsic_call) = crate::ast::intrinsic_call_from_invoke(invoke) {
                     replacement = Some(Expr::new(ExprKind::IntrinsicCall(intrinsic_call)));
                 } else if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
                     replacement = Some(repl);
@@ -235,8 +232,6 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
                 normalize_intrinsic_call(call, strategy)?;
             }
             ExprKind::IntrinsicContainer(collection) => {
-                // Preserve intrinsic containers as a canonical AST node; downstream
-                // passes (typing/const-eval/materialization) understand it directly.
                 match collection {
                     ExprIntrinsicContainer::VecElements { elements } => {
                         for element in elements {
@@ -346,20 +341,20 @@ fn normalize_intrinsic_call(
     strategy: &dyn IntrinsicNormalizer,
 ) -> Result<()> {
     match &mut call.payload {
-        fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
+        crate::intrinsics::IntrinsicCallPayload::Format { template } => {
             normalize_format_string(template, strategy)?;
         }
-        fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
+        crate::intrinsics::IntrinsicCallPayload::Args { args } => {
             for arg in args.iter_mut() {
                 normalize_expr(arg, strategy)?;
             }
             if matches!(
                 call.kind,
-                fp_core::intrinsics::IntrinsicCallKind::Print
-                    | fp_core::intrinsics::IntrinsicCallKind::Println
+                crate::intrinsics::IntrinsicCallKind::Print
+                    | crate::intrinsics::IntrinsicCallKind::Println
             ) {
                 if let Some(template) = format::convert_print_args_to_format(args) {
-                    call.payload = fp_core::intrinsics::IntrinsicCallPayload::Format { template };
+                    call.payload = crate::intrinsics::IntrinsicCallPayload::Format { template };
                 }
             }
         }
@@ -371,13 +366,13 @@ fn normalize_intrinsic_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::transformations::normalize_intrinsics::bootstrap as b;
-    use fp_core::ast::{FormatTemplatePart, Ident, Locator, Path};
+    use crate::intrinsics::normalize::bootstrap as b;
+    use crate::ast::{FormatTemplatePart, Ident, Locator, Path};
 
     #[test]
     fn test_convert_print_args_to_format() {
         let lit = Expr::new(ExprKind::Value(Box::new(Value::string("hello".into()))));
-        let out = crate::transformations::normalize_intrinsics::format::convert_print_args_to_format(&[lit])
+        let out = crate::intrinsics::normalize::format::convert_print_args_to_format(&[lit])
             .expect("format");
         assert_eq!(out.parts.len(), 1);
         match &out.parts[0] {

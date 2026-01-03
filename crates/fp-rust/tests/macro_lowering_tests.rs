@@ -18,7 +18,7 @@ fn normalize_expr_tree(expr: fp_core::ast::Expr) -> Result<fp_core::ast::Expr> {
     // Then run the shared intrinsic normalization pass over a Node wrapper to recursively
     // lower nested macros and normalize intrinsic forms.
     let mut node = Node::new(NodeKind::Expr(expr.clone()));
-    fp_optimize::transformations::normalize_intrinsics_with(
+    fp_core::intrinsics::normalize_intrinsics_with(
         &mut node,
         &fp_rust::normalization::RustIntrinsicNormalizer,
     )?;

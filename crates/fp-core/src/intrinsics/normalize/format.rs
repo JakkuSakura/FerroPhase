@@ -1,4 +1,4 @@
-use fp_core::ast::{
+use crate::ast::{
     Expr, ExprFormatString, ExprKind, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Value,
 };
 
@@ -21,7 +21,6 @@ pub fn convert_print_args_to_format(args: &[Expr]) -> Option<ExprFormatString> {
         }
     }
 
-    // Multi-arg print: render as a space-separated `{}` template.
     let mut parts = Vec::new();
     for idx in 0..args.len() {
         parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
