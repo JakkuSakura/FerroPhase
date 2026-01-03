@@ -40,6 +40,7 @@ pub struct HirGenerator {
     enum_variant_def_ids: HashMap<String, hir::DefId>,
     type_aliases: HashMap<String, ast::Ty>,
     struct_field_defs: HashMap<hir::DefId, Vec<ast::StructuralField>>,
+    trait_defs: HashMap<String, ast::ItemDefTrait>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -104,6 +105,7 @@ impl HirGenerator {
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
             struct_field_defs: HashMap::new(),
+            trait_defs: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -403,6 +405,7 @@ impl HirGenerator {
             enum_variant_def_ids: HashMap::new(),
             type_aliases: HashMap::new(),
             struct_field_defs: HashMap::new(),
+            trait_defs: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -541,6 +544,7 @@ impl HirGenerator {
         self.next_hir_id = 0;
         self.current_position = 0;
         self.type_aliases.clear();
+        self.trait_defs.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
@@ -604,6 +608,8 @@ impl HirGenerator {
                 ItemKind::DefTrait(def_trait) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_trait.name.name, def_id, &def_trait.visibility);
+                    self.trait_defs
+                        .insert(def_trait.name.name.clone(), def_trait.clone());
                 }
                 ItemKind::DefType(def_type) => {
                     self.register_type_alias(&def_type.name.name, &def_type.value);

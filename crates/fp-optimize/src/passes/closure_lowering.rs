@@ -22,7 +22,7 @@ struct ClosureInfo {
     env_struct_ident: Ident,
     env_struct_ty: Ty,
     call_fn_ident: Ident,
-    call_ret_ty: Ty,
+    call_ret_ty: Option<Ty>,
     #[allow(dead_code)]
     fn_ty: Ty,
 }
@@ -91,42 +91,14 @@ impl ClosureLowering {
 
     fn transform_function(&mut self, func: &mut ItemDefFunction) -> Result<Option<ClosureInfo>> {
         if let Some(info) = self.transform_closure_expr(func.body.as_mut())? {
-            // Update function return typing to reflect lowered environment struct.
-            let env_ret_ty = info.env_struct_ty.clone();
-
-            if let Some(ty_fn) = func.ty.as_mut() {
-                ty_fn.ret_ty = Some(Box::new(env_ret_ty.clone()));
-            }
-
-            if func.ty.is_none() {
-                func.ty = Some(TypeFunction {
-                    params: func
-                        .sig
-                        .params
-                        .iter()
-                        .map(|param| param.ty.clone())
-                        .collect(),
-                    generics_params: func.sig.generics_params.clone(),
-                    ret_ty: Some(Box::new(env_ret_ty.clone())),
-                });
-            }
-
-            if func.ty_annotation.is_some() || func.ty.is_some() {
-                func.ty_annotation = func.ty.as_ref().map(|ty_fn| Ty::Function(ty_fn.clone()));
-            }
-
-            if let Some(ret_slot) = func.sig.ret_ty.as_mut() {
-                *ret_slot = env_ret_ty.clone();
-            } else {
-                func.sig.ret_ty = Some(env_ret_ty.clone());
-            }
-
+            self.update_function_signature(func, &info);
             return Ok(Some(info));
         }
 
         if let ExprKind::Block(block) = func.body.kind_mut() {
             if let Some(last_expr) = block.last_expr_mut() {
                 if let Some(info) = self.transform_closure_expr(last_expr)? {
+                    self.update_function_signature(func, &info);
                     return Ok(Some(info));
                 }
             }
@@ -135,16 +107,64 @@ impl ClosureLowering {
         Ok(None)
     }
 
+    fn update_function_signature(&self, func: &mut ItemDefFunction, info: &ClosureInfo) {
+        // Update function return typing to reflect lowered environment struct.
+        let env_ret_ty = info.env_struct_ty.clone();
+
+        if let Some(ty_fn) = func.ty.as_mut() {
+            ty_fn.ret_ty = Some(Box::new(env_ret_ty.clone()));
+        }
+
+        if func.ty.is_none() {
+            func.ty = Some(TypeFunction {
+                params: func
+                    .sig
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect(),
+                generics_params: func.sig.generics_params.clone(),
+                ret_ty: Some(Box::new(env_ret_ty.clone())),
+            });
+        }
+
+        if func.ty_annotation.is_some() || func.ty.is_some() {
+            func.ty_annotation = func.ty.as_ref().map(|ty_fn| Ty::Function(ty_fn.clone()));
+        }
+
+        if let Some(ret_slot) = func.sig.ret_ty.as_mut() {
+            *ret_slot = env_ret_ty;
+        } else {
+            func.sig.ret_ty = Some(env_ret_ty);
+        }
+    }
+
     fn transform_closure_expr(&mut self, expr: &mut Expr) -> Result<Option<ClosureInfo>> {
-        let Some(expr_ty) = expr.ty().cloned() else {
-            return Ok(None);
-        };
-        let Ty::Function(fn_ty) = expr_ty.clone() else {
+        let expr_ty = expr.ty().cloned();
+        let ExprKind::Closure(closure) = expr.kind_mut() else {
             return Ok(None);
         };
 
-        let ExprKind::Closure(closure) = expr.kind_mut() else {
-            return Ok(None);
+        let fn_ty = match expr_ty {
+            Some(Ty::Function(fn_ty)) => fn_ty,
+            _ => {
+                let params = closure
+                    .params
+                    .iter()
+                    .map(|param| param.ty().cloned().unwrap_or_else(|| Ty::Any(TypeAny)))
+                    .collect();
+                let ret_ty = closure
+                    .ret_ty
+                    .as_ref()
+                    .map(|ty| ty.as_ref().clone())
+                    .or_else(|| closure.body.ty().cloned())
+                    .unwrap_or_else(|| Ty::Unknown(TypeUnknown));
+                TypeFunction {
+                    params,
+                    generics_params: Vec::new(),
+                    ret_ty: Some(Box::new(ret_ty)),
+                }
+            }
         };
 
         let mut param_names = Vec::new();
@@ -240,10 +260,7 @@ impl ClosureLowering {
                 Some(ty.as_ref().clone())
             }
         });
-        let call_ret_ty = inferred_ret_ty
-            .clone()
-            .or(fallback_ret_ty)
-            .unwrap_or_else(|| Ty::Unknown(TypeUnknown));
+        let call_ret_ty = inferred_ret_ty.clone().or(fallback_ret_ty);
 
         self.rewrite_captured_usage(
             &mut rewritten_body,
@@ -256,13 +273,18 @@ impl ClosureLowering {
             ItemDefFunction::new_simple(call_ident.clone(), rewritten_body.into());
         fn_item_ast.visibility = Visibility::Private;
         fn_item_ast.sig.params = fn_params;
-        fn_item_ast.sig.ret_ty = Some(call_ret_ty.clone());
+        // Leave the return type unset when inference is required.
+        if let Some(ret_ty) = call_ret_ty.clone() {
+            fn_item_ast.sig.ret_ty = Some(ret_ty.clone());
+        }
         fn_item_ast.ty = Some(TypeFunction {
             params: fn_param_tys.clone(),
             generics_params: Vec::new(),
-            ret_ty: Some(Box::new(call_ret_ty.clone())),
+            ret_ty: call_ret_ty.clone().map(|ty| Box::new(ty)),
         });
-        fn_item_ast.ty_annotation = fn_item_ast.ty.clone().map(|ty_fn| Ty::Function(ty_fn));
+        if call_ret_ty.is_some() {
+            fn_item_ast.ty_annotation = fn_item_ast.ty.clone().map(|ty_fn| Ty::Function(ty_fn));
+        }
 
         let fn_item = Item::new(ItemKind::DefFunction(fn_item_ast));
 
@@ -297,7 +319,7 @@ impl ClosureLowering {
             env_struct_ty,
             call_fn_ident: call_ident,
             call_ret_ty: call_ret_ty.clone(),
-            fn_ty: expr_ty,
+            fn_ty: Ty::Function(fn_ty),
         };
 
         Ok(Some(info))
@@ -390,7 +412,9 @@ impl ClosureLowering {
                             new_args.extend(invoke.args.iter().cloned());
                             invoke.target = ExprInvokeTarget::Function(call_locator);
                             invoke.args = new_args;
-                            expr.set_ty(info.call_ret_ty.clone());
+                            if let Some(ret_ty) = info.call_ret_ty.clone() {
+                                expr.set_ty(ret_ty);
+                            }
                         }
                     }
                     ExprInvokeTarget::Function(locator) => {
@@ -409,7 +433,9 @@ impl ClosureLowering {
                                 new_args.extend(invoke.args.iter().cloned());
                                 invoke.target = ExprInvokeTarget::Function(call_locator);
                                 invoke.args = new_args;
-                                expr.set_ty(info.call_ret_ty.clone());
+                                if let Some(ret_ty) = info.call_ret_ty.clone() {
+                                    expr.set_ty(ret_ty);
+                                }
                             }
                         }
                     }

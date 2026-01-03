@@ -2360,6 +2360,7 @@ struct BodyBuilder<'a> {
     method_context: Option<MethodContext>,
     type_substs: HashMap<String, Ty>,
     loop_stack: Vec<LoopContext>,
+    null_locals: HashSet<mir::LocalId>,
 }
 
 struct PlaceInfo {
@@ -2434,6 +2435,7 @@ impl<'a> BodyBuilder<'a> {
             method_context,
             type_substs,
             loop_stack: Vec::new(),
+            null_locals: HashSet::new(),
         };
 
         let body_params = builder
@@ -2460,6 +2462,27 @@ impl<'a> BodyBuilder<'a> {
         let local_id = self.locals.len() as mir::LocalId;
         self.locals.push(decl);
         local_id
+    }
+
+    fn is_null_literal_expr(expr: &hir::Expr) -> bool {
+        matches!(expr.kind, hir::ExprKind::Literal(hir::Lit::Null))
+    }
+
+    fn update_null_tracking(&mut self, place: mir::Place, ty: Option<&Ty>, expr: &hir::Expr) {
+        if !place.projection.is_empty() {
+            return;
+        }
+        if let Some(ty) = ty {
+            if !matches!(ty.kind, TyKind::Infer(_) | TyKind::Error(_)) {
+                self.null_locals.remove(&place.local);
+                return;
+            }
+        }
+        if Self::is_null_literal_expr(expr) {
+            self.null_locals.insert(place.local);
+        } else {
+            self.null_locals.remove(&place.local);
+        }
     }
 
     fn lower_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Ty {
@@ -2529,6 +2552,18 @@ impl<'a> BodyBuilder<'a> {
                 .struct_layouts_by_ty
                 .get(ty)
                 .map(|key| key.def_id),
+        }
+    }
+
+    fn enum_def_from_ty(&self, ty: &Ty) -> Option<hir::DefId> {
+        match &ty.kind {
+            TyKind::Ref(_, inner, _) => self.enum_def_from_ty(inner.as_ref()),
+            TyKind::RawPtr(type_and_mut) => self.enum_def_from_ty(type_and_mut.ty.as_ref()),
+            _ => self
+                .lowering
+                .enum_layouts
+                .iter()
+                .find_map(|(key, layout)| (layout.enum_ty == *ty).then_some(key.def_id)),
         }
     }
 
@@ -3226,6 +3261,11 @@ impl<'a> BodyBuilder<'a> {
         self.bind_pattern(&local.pat, local_id, declared_ty.as_ref());
 
         if let Some(init_expr) = &local.init {
+            self.update_null_tracking(
+                mir::Place::from_local(local_id),
+                declared_ty.as_ref(),
+                init_expr,
+            );
             self.lower_assignment(local_id, declared_ty.as_ref(), init_expr)?;
         }
 
@@ -3276,6 +3316,11 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
+                self.update_null_tracking(
+                    place_info.place.clone(),
+                    Some(&place_info.ty),
+                    value_expr,
+                );
                 let expected_ty = place_info.ty.clone();
                 self.lower_expr_into_place(value_expr, place_info.place, &expected_ty)?;
             }
@@ -3390,6 +3435,33 @@ impl<'a> BodyBuilder<'a> {
             .cloned()
     }
 
+    fn enum_variant_for_payload(
+        &self,
+        expected_ty: &Ty,
+        payload_ty: &Ty,
+    ) -> Option<(EnumVariantInfo, EnumLayout)> {
+        let layout = self.lowering.enum_layout_for_ty(expected_ty)?.clone();
+        for (def_id, payloads) in &layout.variant_payloads {
+            let matches = if payloads.is_empty() {
+                MirLowering::is_unit_ty(payload_ty)
+            } else if payloads.len() == 1 {
+                payloads[0] == *payload_ty
+            } else {
+                let tuple_ty = Ty {
+                    kind: TyKind::Tuple(payloads.iter().cloned().map(Box::new).collect()),
+                };
+                tuple_ty == *payload_ty
+            };
+
+            if matches {
+                if let Some(info) = self.lowering.enum_variants.get(def_id) {
+                    return Some((info.clone(), layout));
+                }
+            }
+        }
+        None
+    }
+
     fn assign_enum_variant(
         &mut self,
         place: mir::Place,
@@ -3433,6 +3505,59 @@ impl<'a> BodyBuilder<'a> {
                 let expected_ty = payload_tys.get(idx).unwrap_or(slot_ty);
                 let operand = self.lower_operand(arg, Some(expected_ty))?;
                 operands.push(operand.operand);
+            } else {
+                operands.push(mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: self.lowering.default_constant_for_ty(slot_ty),
+                }));
+            }
+        }
+
+        self.push_statement(mir::Statement {
+            source_info: span,
+            kind: mir::StatementKind::Assign(
+                place,
+                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+            ),
+        });
+        Ok(())
+    }
+
+    fn assign_enum_variant_from_place(
+        &mut self,
+        place: mir::Place,
+        variant: &EnumVariantInfo,
+        layout: &EnumLayout,
+        payload_place: mir::Place,
+        span: Span,
+    ) -> Result<()> {
+        let payload_tys = layout
+            .variant_payloads
+            .get(&variant.def_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                self.lowering.emit_error(
+                    span,
+                    "enum variant payload layout not registered",
+                );
+                Vec::new()
+            });
+
+        let mut operands = Vec::with_capacity(1 + layout.payload_tys.len());
+        operands.push(mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Int(variant.discriminant),
+        }));
+
+        for (idx, slot_ty) in layout.payload_tys.iter().enumerate() {
+            if let Some(payload_ty) = payload_tys.get(idx) {
+                let mut field_place = payload_place.clone();
+                field_place
+                    .projection
+                    .push(mir::PlaceElem::Field(idx, payload_ty.clone()));
+                operands.push(mir::Operand::Copy(field_place));
             } else {
                 operands.push(mir::Operand::Constant(mir::Constant {
                     span,
@@ -4315,6 +4440,25 @@ impl<'a> BodyBuilder<'a> {
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
         if let Some(place) = self.lower_place(expr)? {
             if let Some(expected_ty) = expected {
+                if let Some((variant, layout)) =
+                    self.enum_variant_for_payload(expected_ty, &place.ty)
+                {
+                    let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
+                    let enum_place = mir::Place::from_local(local_id);
+                    self.assign_enum_variant_from_place(
+                        enum_place.clone(),
+                        &variant,
+                        &layout,
+                        place.place.clone(),
+                        expr.span,
+                    )?;
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(enum_place),
+                        ty: layout.enum_ty.clone(),
+                    });
+                }
+            }
+            if let Some(expected_ty) = expected {
                 if let TyKind::Ref(_, _, mutability) = &expected_ty.kind {
                     let region = ();
                     let borrow_kind = match mutability {
@@ -5098,7 +5242,20 @@ impl<'a> BodyBuilder<'a> {
                     mir::Operand::Constant(mir::Constant {
                         span,
                         user_ty: None,
-                        literal: mir::ConstantKind::Str("<none>".to_string()),
+                        literal: mir::ConstantKind::Str("null".to_string()),
+                    }),
+                    self.lowering.raw_string_ptr_ty(),
+                    "%s".to_string(),
+                ));
+            }
+        }
+        if let mir::Operand::Copy(place) | mir::Operand::Move(place) = &operand {
+            if place.projection.is_empty() && self.null_locals.contains(&place.local) {
+                return Ok((
+                    mir::Operand::Constant(mir::Constant {
+                        span,
+                        user_ty: None,
+                        literal: mir::ConstantKind::Str("null".to_string()),
                     }),
                     self.lowering.raw_string_ptr_ty(),
                     "%s".to_string(),
@@ -5997,6 +6154,17 @@ impl<'a> BodyBuilder<'a> {
                                 resolved_info = Some((info.clone(), Some(place_info)));
                             }
                         }
+                    } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
+                        if let Some(enum_entry) = self.lowering.enum_defs.get(&enum_def) {
+                            if let Some(info) = self
+                                .lowering
+                                .struct_methods
+                                .get(&enum_entry.name)
+                                .and_then(|methods| methods.get(&String::from(method_key.clone())))
+                            {
+                                resolved_info = Some((info.clone(), Some(place_info)));
+                            }
+                        }
                     }
                 }
 
@@ -6074,6 +6242,77 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(struct_entry) = self.lowering.struct_defs.get(&def_id) {
                             let method_key =
                                 format!("{}::{}", struct_entry.name, method_name.as_str());
+                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned()
+                            {
+                                let method_ctx = self.lowering.make_method_context(&def.self_ty);
+                                let tentative_sig = self
+                                    .lowering
+                                    .lower_function_sig(&def.function.sig, method_ctx.as_ref());
+                                let receiver_expected = tentative_sig.inputs.get(0);
+                                let receiver_operand =
+                                    self.lower_operand(receiver, receiver_expected)?;
+
+                                let mut lowered_args = Vec::with_capacity(args.len() + 1);
+                                let mut arg_types = Vec::with_capacity(args.len() + 1);
+                                arg_types.push(receiver_operand.ty.clone());
+                                lowered_args.push(receiver_operand.operand);
+                                for (idx, arg) in args.iter().enumerate() {
+                                    let expected = tentative_sig.inputs.get(idx + 1);
+                                    let operand = self.lower_operand(arg, expected)?;
+                                    arg_types.push(operand.ty.clone());
+                                    lowered_args.push(operand.operand);
+                                }
+
+                                let info = self.lowering.ensure_method_specialization(
+                                    self.program,
+                                    &def,
+                                    &[],
+                                    &arg_types,
+                                    expr.span,
+                                )?;
+
+                                let func_operand = mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Fn(
+                                        mir::Symbol::new(info.fn_name.clone()),
+                                        info.fn_ty.clone(),
+                                    ),
+                                });
+
+                                let continue_block = self.new_block();
+                                let destination = Some((place.clone(), continue_block));
+                                let terminator = mir::Terminator {
+                                    source_info: expr.span,
+                                    kind: mir::TerminatorKind::Call {
+                                        func: func_operand,
+                                        args: lowered_args,
+                                        destination: destination.clone(),
+                                        cleanup: None,
+                                        from_hir_call: true,
+                                        fn_span: expr.span,
+                                    },
+                                };
+
+                                self.blocks[self.current_block as usize].terminator =
+                                    Some(terminator);
+                                self.current_block = continue_block;
+
+                                let result_ty = info.sig.output.clone();
+                                if (place.local as usize) < self.locals.len() {
+                                    self.locals[place.local as usize].ty = result_ty.clone();
+                                }
+                                if let Some(struct_def) = self.struct_def_from_ty(&result_ty) {
+                                    self.local_structs.insert(place.local, struct_def);
+                                }
+
+                                return Ok(());
+                            }
+                        }
+                    } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
+                        if let Some(enum_entry) = self.lowering.enum_defs.get(&enum_def) {
+                            let method_key =
+                                format!("{}::{}", enum_entry.name, method_name.as_str());
                             if let Some(def) = self.lowering.method_defs.get(&method_key).cloned()
                             {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty);

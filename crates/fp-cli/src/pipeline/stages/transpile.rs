@@ -35,9 +35,6 @@ impl Pipeline {
         manager: &DiagnosticManager,
     ) -> Result<BackendArtifacts, CliError> {
         let mut mir_lowering = MirLowering::new();
-        if self.bootstrap_mode || options.bootstrap_mode {
-            mir_lowering.set_error_tolerance(true);
-        }
         let mir_result = mir_lowering.transform(hir_program.clone());
         let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
         manager.add_diagnostics(mir_diags);

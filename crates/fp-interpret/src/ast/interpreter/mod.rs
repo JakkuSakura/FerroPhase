@@ -463,8 +463,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.insert_value(def.name.as_str(), value.clone());
                 self.evaluated_constants.insert(qualified, value.clone());
 
-                let should_replace =
-                    !matches!(value, Value::Undefined(_)) && !matches!(value, Value::Unit(_));
+                // Preserve unevaluated placeholders (e.g., closures) so later lowering
+                // can still see the original expression shape.
+                let should_replace = !matches!(
+                    value,
+                    Value::Undefined(_) | Value::Unit(_) | Value::Any(_)
+                );
 
                 if should_replace {
                     let mut expr_value = Expr::value(value);
@@ -499,11 +503,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                         def.value.set_ty(fn_ty.clone());
                     }
                 }
-                let mut expr_value = Expr::value(value.clone());
-                expr_value.set_ty(def.ty.clone());
-                self.insert_value(def.name.as_str(), value);
-                *def.value = expr_value;
-                self.mark_mutated();
+                self.insert_value(def.name.as_str(), value.clone());
+                if !matches!(value, Value::Any(_) | Value::Undefined(_) | Value::Unit(_)) {
+                    let mut expr_value = Expr::value(value.clone());
+                    expr_value.set_ty(def.ty.clone());
+                    *def.value = expr_value;
+                    self.mark_mutated();
+                }
             }
             ItemKind::Module(module) => {
                 self.module_stack.push(module.name.as_str().to_string());

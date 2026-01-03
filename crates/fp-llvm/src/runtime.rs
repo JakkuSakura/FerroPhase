@@ -336,7 +336,7 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
     };
     let replacement = match ty {
         Ty::Unit(_) => Some(make_string_literal_expr("()".to_string())),
-        Ty::Nothing(_) => Some(make_string_literal_expr("<none>".to_string())),
+        Ty::Nothing(_) => Some(make_string_literal_expr("null".to_string())),
         Ty::Unknown(_) => Some(make_string_literal_expr("<unknown>".to_string())),
         _ => None,
     };

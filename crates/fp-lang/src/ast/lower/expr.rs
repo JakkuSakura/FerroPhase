@@ -989,23 +989,29 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                     crate::syntax::SyntaxElement::Token(tok) if !tok.is_trivia() && tok.text == ".."
                 )
             });
+            let mut exprs = node_children_exprs(node);
+            let name_node = exprs
+                .next()
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprStruct))?;
+            let name_expr = lower_expr_from_cst(name_node)?;
 
-            let expr = lower_expr_from_cst(node)?;
-            let (_ty, kind) = expr.into_parts();
-            let ExprKind::Struct(struct_expr) = kind else {
-                return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
-            };
-
-            let fields = struct_expr
-                .fields
-                .into_iter()
-                .map(|field| PatternStructField {
-                    name: field.name,
+            let mut fields = Vec::new();
+            for child in &node.children {
+                let crate::syntax::SyntaxElement::Node(field) = child else {
+                    continue;
+                };
+                if field.kind != SyntaxKind::StructField {
+                    continue;
+                }
+                let name = direct_first_non_trivia_token_text(field)
+                    .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::StructField))?;
+                fields.push(PatternStructField {
+                    name: Ident::new(name),
                     rename: None,
-                })
-                .collect();
+                });
+            }
 
-            if let ExprKind::Locator(locator) = struct_expr.name.kind() {
+            if let ExprKind::Locator(locator) = name_expr.kind() {
                 let ident = match locator {
                     Locator::Ident(ident) => Some(ident.clone()),
                     Locator::Path(path) if path.segments.len() == 1 => {
@@ -1023,7 +1029,7 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
             }
 
             Ok(Pattern::new(PatternKind::Variant(PatternVariant {
-                name: *struct_expr.name,
+                name: name_expr,
                 pattern: Some(Box::new(Pattern::new(PatternKind::Structural(
                     PatternStructural { fields, has_rest },
                 )))),
