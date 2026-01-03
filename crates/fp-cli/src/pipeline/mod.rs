@@ -27,10 +27,10 @@ use fp_llvm::{
     LlvmCompiler, LlvmConfig, linking::LinkerConfig, runtime::LlvmRuntimeIntrinsicMaterializer,
 };
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
-use fp_optimize::passes::{
-    NoopIntrinsicMaterializer, lower_closures, materialize_intrinsics, normalize_intrinsics,
+use fp_optimize::transformations::{
+    HirGenerator, IrTransform, LirGenerator, MirLowering, materialize_intrinsics,
+    remove_generic_templates,
 };
-use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 #[cfg(feature = "bootstrap")]
 use fp_rust::printer::RustPrinter;
 use fp_typescript::frontend::TsParseMode;
@@ -52,7 +52,7 @@ mod diagnostics;
 mod stages;
 mod workspace;
 use self::diagnostics as diag;
-use artifacts::{BackendArtifacts, LlvmArtifacts, MirArtifacts};
+use artifacts::{BackendArtifacts, LlvmArtifacts};
 use workspace::{WorkspaceLirReplay, determine_main_package_name};
 
 #[cfg(feature = "bootstrap")]
@@ -240,10 +240,11 @@ const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
-const STAGE_HIR_TO_MIR: &str = "hir→mir";
-const STAGE_MIR_TO_LIR: &str = "mir→lir";
+const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
+const STAGE_TYPE_POST_CLOSURE: &str = "ast→typed(post-closure)";
+const STAGE_CLOSURE_LOWERING: &str = "closure-lowering";
 const STAGE_LINK_BINARY: &str = "link-binary";
 const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
 const STAGE_AST_INTERPRET: &str = "ast-interpret";
@@ -277,10 +278,13 @@ struct IntrinsicsMaterializer {
     strategy: Box<dyn IntrinsicMaterializer>,
 }
 
+struct NoopIntrinsicMaterializer;
+impl IntrinsicMaterializer for NoopIntrinsicMaterializer {}
+
 impl IntrinsicsMaterializer {
     fn for_target(target: &PipelineTarget) -> Self {
         match target {
-            PipelineTarget::Llvm | PipelineTarget::Binary | PipelineTarget::Rust => Self {
+            PipelineTarget::Llvm | PipelineTarget::Binary => Self {
                 strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
             },
             _ => Self {
@@ -783,20 +787,6 @@ impl Pipeline {
             )?;
         }
 
-        self.run_stage(
-            STAGE_RUNTIME_MATERIALIZE,
-            &diagnostic_manager,
-            &pipeline_options,
-            |pipeline| {
-                pipeline.stage_materialize_runtime_intrinsics(
-                    ast,
-                    &PipelineTarget::Rust,
-                    &pipeline_options,
-                    &diagnostic_manager,
-                )
-            },
-        )?;
-
         // For transpilation we prefer to run const-eval before type checking so that
         // quote/splice expansion and other compile-time rewrites are reflected in the
         // typed AST.
@@ -827,6 +817,8 @@ impl Pipeline {
         }
 
         if options.run_const_eval && stage_enabled(&pipeline_options, STAGE_CONST_EVAL) {
+            remove_generic_templates(ast)?;
+
             if options.save_intermediates {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
                     self.save_pretty(ast, base_path, EXT_AST_EVAL, &pipeline_options)?;
@@ -946,12 +938,6 @@ impl Pipeline {
             })?
         };
         self.last_const_eval = Some(outcome.clone());
-        if !outcome.evaluated_constants.is_empty() {
-            fp_optimize::passes::rewrite_const_accesses(
-                &mut ast,
-                &outcome.evaluated_constants,
-            );
-        }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
             self.run_stage(
@@ -983,7 +969,77 @@ impl Pipeline {
             self.save_bootstrap_snapshot(&ast, base_path)?;
         }
 
-        // No post-materialize typing for compilation targets; transpile pipeline handles it.
+        if stage_enabled(options, STAGE_RUNTIME_MATERIALIZE) {
+            self.run_stage(
+                STAGE_RUNTIME_MATERIALIZE,
+                &diagnostic_manager,
+                options,
+                |pipeline| {
+                    pipeline.stage_materialize_runtime_intrinsics(
+                        &mut ast,
+                        target,
+                        options,
+                        &diagnostic_manager,
+                    )
+                },
+            )?;
+        }
+
+        if !options.bootstrap_mode {
+            if stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
+                self.run_stage(
+                    STAGE_TYPE_POST_MATERIALIZE,
+                    &diagnostic_manager,
+                    options,
+                    |pipeline| {
+                        pipeline.stage_type_check(
+                            &mut ast,
+                            STAGE_TYPE_POST_MATERIALIZE,
+                            &diagnostic_manager,
+                            options,
+                        )
+                    },
+                )?;
+            }
+
+            // Remove generic template functions after type checking completes.
+            if stage_enabled(options, STAGE_CONST_EVAL) {
+                remove_generic_templates(&mut ast)?;
+            }
+
+            // Closure lowering is required for lower-level backends. For the Rust
+            // backend, preserve closures and other higher-level constructs.
+            if !matches!(target, PipelineTarget::Rust)
+                && stage_enabled(options, STAGE_CLOSURE_LOWERING)
+            {
+                self.run_stage(
+                    STAGE_CLOSURE_LOWERING,
+                    &diagnostic_manager,
+                    options,
+                    |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
+                )?;
+
+                if options.save_intermediates {
+                    self.save_pretty(&ast, base_path, "ast-closure", options)?;
+                }
+
+                if stage_enabled(options, STAGE_TYPE_POST_CLOSURE) {
+                    self.run_stage(
+                        STAGE_TYPE_POST_CLOSURE,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_type_check(
+                                &mut ast,
+                                STAGE_TYPE_POST_CLOSURE,
+                                &diagnostic_manager,
+                                options,
+                            )
+                        },
+                    )?;
+                }
+            }
+        }
 
         let output = if matches!(target, PipelineTarget::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
@@ -1004,26 +1060,13 @@ impl Pipeline {
 
             match target {
                 PipelineTarget::Llvm => {
-                    let mir_artifacts = self.run_stage(
-                        STAGE_HIR_TO_MIR,
-                        &diagnostic_manager,
-                        options,
-                        |pipeline| {
-                            pipeline.stage_hir_to_mir(
-                                &hir_program,
-                                options,
-                                base_path,
-                                &diagnostic_manager,
-                            )
-                        },
-                    )?;
                     let backend = self.run_stage(
-                        STAGE_MIR_TO_LIR,
+                        STAGE_BACKEND_LOWERING,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_mir_to_lir_llvm(
-                                &mir_artifacts,
+                            pipeline.stage_backend_lowering(
+                                &hir_program,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1041,26 +1084,13 @@ impl Pipeline {
                     PipelineOutput::Code(llvm.ir_text)
                 }
                 PipelineTarget::Binary => {
-                    let mir_artifacts = self.run_stage(
-                        STAGE_HIR_TO_MIR,
-                        &diagnostic_manager,
-                        options,
-                        |pipeline| {
-                            pipeline.stage_hir_to_mir(
-                                &hir_program,
-                                options,
-                                base_path,
-                                &diagnostic_manager,
-                            )
-                        },
-                    )?;
                     let backend = self.run_stage(
-                        STAGE_MIR_TO_LIR,
+                        STAGE_BACKEND_LOWERING,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_mir_to_lir_llvm(
-                                &mir_artifacts,
+                            pipeline.stage_backend_lowering(
+                                &hir_program,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1093,26 +1123,13 @@ impl Pipeline {
                     PipelineOutput::Binary(binary_path)
                 }
                 PipelineTarget::Bytecode => {
-                    let mir_artifacts = self.run_stage(
-                        STAGE_HIR_TO_MIR,
-                        &diagnostic_manager,
-                        options,
-                        |pipeline| {
-                            pipeline.stage_hir_to_mir(
-                                &hir_program,
-                                options,
-                                base_path,
-                                &diagnostic_manager,
-                            )
-                        },
-                    )?;
                     let backend = self.run_stage(
-                        STAGE_MIR_TO_LIR,
+                        STAGE_BACKEND_LOWERING,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_mir_to_lir(
-                                &mir_artifacts,
+                            pipeline.stage_backend_lowering(
+                                &hir_program,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1396,6 +1413,8 @@ impl Pipeline {
             self.last_const_eval = Some(outcome);
         }
 
+        remove_generic_templates(&mut ast)?;
+
         if options.save_intermediates && !options.bootstrap_mode {
             self.save_pretty(&ast, &base_path, EXT_AST_EVAL, &options)?;
         }
@@ -1434,6 +1453,30 @@ impl Pipeline {
                 },
             )?;
 
+            self.run_stage(
+                STAGE_CLOSURE_LOWERING,
+                &diagnostic_manager,
+                &options,
+                |pipeline| pipeline.stage_closure_lowering(&mut ast, &diagnostic_manager),
+            )?;
+
+            if options.save_intermediates {
+                self.save_pretty(&ast, &base_path, "ast-closure", &options)?;
+            }
+
+            self.run_stage(
+                STAGE_TYPE_POST_CLOSURE,
+                &diagnostic_manager,
+                &options,
+                |pipeline| {
+                    pipeline.stage_type_check(
+                        &mut ast,
+                        STAGE_TYPE_POST_CLOSURE,
+                        &diagnostic_manager,
+                        &options,
+                    )
+                },
+            )?;
         }
 
         let hir_program = self.run_stage(
@@ -1451,26 +1494,13 @@ impl Pipeline {
             },
         )?;
 
-        let mir_artifacts = self.run_stage(
-            STAGE_HIR_TO_MIR,
-            &diagnostic_manager,
-            &options,
-            |pipeline| {
-                pipeline.stage_hir_to_mir(
-                    &hir_program,
-                    &options,
-                    &base_path,
-                    &diagnostic_manager,
-                )
-            },
-        )?;
         self.run_stage(
-            STAGE_MIR_TO_LIR,
+            STAGE_BACKEND_LOWERING,
             &diagnostic_manager,
             &options,
             |pipeline| {
-                pipeline.stage_mir_to_lir(
-                    &mir_artifacts,
+                pipeline.stage_backend_lowering(
+                    &hir_program,
                     &options,
                     &base_path,
                     &diagnostic_manager,
@@ -2569,6 +2599,12 @@ mod tests {
             }
         }
 
+        fn closure_lowering(&self, ast: &mut Node) {
+            if let Err(err) = self.pipeline.stage_closure_lowering(ast, &self.diagnostics) {
+                self.fail_with_diagnostics("closure lowering", err);
+            }
+        }
+
         fn materialize_runtime(&self, ast: &mut Node, target: PipelineTarget) {
             if let Err(err) = self.pipeline.stage_materialize_runtime_intrinsics(
                 ast,
@@ -2609,23 +2645,14 @@ mod tests {
         }
 
         fn backend(&self, hir: &hir::Program) -> BackendArtifacts {
-            let mir = match self.pipeline.stage_hir_to_mir(
+            match self.pipeline.stage_backend_lowering(
                 hir,
                 &self.options,
                 Path::new("unit_test"),
                 &self.diagnostics,
             ) {
                 Ok(artifacts) => artifacts,
-                Err(err) => self.fail_with_diagnostics("HIR→MIR lowering", err),
-            };
-            match self.pipeline.stage_mir_to_lir(
-                &mir,
-                &self.options,
-                Path::new("unit_test"),
-                &self.diagnostics,
-            ) {
-                Ok(artifacts) => artifacts,
-                Err(err) => self.fail_with_diagnostics("MIR→LIR lowering", err),
+                Err(err) => self.fail_with_diagnostics("HIR→MIR→LIR lowering", err),
             }
         }
 
@@ -3126,6 +3153,7 @@ fn main() {
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
+        harness.closure_lowering(&mut ast);
         harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
@@ -3205,6 +3233,7 @@ fn main() {
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
+        harness.closure_lowering(&mut ast);
         harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
@@ -3259,6 +3288,7 @@ fn main() {
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
+        harness.closure_lowering(&mut ast);
         harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);

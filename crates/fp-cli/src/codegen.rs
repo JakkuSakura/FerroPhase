@@ -1,6 +1,6 @@
 use crate::CliError;
 use fp_core::ast::{AstSerializer, Node, NodeKind};
-use fp_optimize::passes::materialize_structural_types;
+use fp_optimize::transformations::materialize_structural_types;
 use fp_rust::printer::RustPrinter;
 use quote::quote;
 
