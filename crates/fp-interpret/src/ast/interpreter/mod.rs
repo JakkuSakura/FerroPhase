@@ -472,10 +472,22 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                 // Preserve unevaluated placeholders (e.g., closures) so later lowering
                 // can still see the original expression shape.
-                let should_replace = !matches!(
+                let mut should_replace = !matches!(
                     value,
                     Value::Undefined(_) | Value::Unit(_) | Value::Any(_)
                 );
+                if matches!(value, Value::Map(_)) {
+                    should_replace = false;
+                }
+                if matches!(value, Value::List(_)) {
+                    let mut is_array = false;
+                    if let Some(ty) = def.ty_annotation().or_else(|| def.ty.as_ref()) {
+                        is_array = matches!(ty, Ty::Array(_));
+                    }
+                    if !is_array {
+                        should_replace = false;
+                    }
+                }
 
                 if should_replace {
                     let mut expr_value = Expr::value(value);
@@ -2140,23 +2152,49 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     // Evaluate indexing on list/tuple values.
     fn evaluate_index(&mut self, target: Value, index: Value) -> Value {
-        let idx = match index {
-            Value::Int(int) if int.value >= 0 => int.value as usize,
-            other => {
-                self.emit_error(format!("index must be a non-negative integer, found {}", other));
-                return Value::undefined();
-            }
-        };
-
         match target {
-            Value::List(list) => list.values.get(idx).cloned().unwrap_or_else(|| {
-                self.emit_error("index out of bounds for list");
-                Value::undefined()
-            }),
-            Value::Tuple(tuple) => tuple.values.get(idx).cloned().unwrap_or_else(|| {
-                self.emit_error("index out of bounds for tuple");
-                Value::undefined()
-            }),
+            Value::List(list) => {
+                let idx = match index {
+                    Value::Int(int) if int.value >= 0 => int.value as usize,
+                    other => {
+                        self.emit_error(format!(
+                            "index must be a non-negative integer, found {}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                list.values.get(idx).cloned().unwrap_or_else(|| {
+                    self.emit_error("index out of bounds for list");
+                    Value::undefined()
+                })
+            }
+            Value::Tuple(tuple) => {
+                let idx = match index {
+                    Value::Int(int) if int.value >= 0 => int.value as usize,
+                    other => {
+                        self.emit_error(format!(
+                            "index must be a non-negative integer, found {}",
+                            other
+                        ));
+                        return Value::undefined();
+                    }
+                };
+                tuple.values.get(idx).cloned().unwrap_or_else(|| {
+                    self.emit_error("index out of bounds for tuple");
+                    Value::undefined()
+                })
+            }
+            Value::Map(map) => {
+                let key = index;
+                match map.get(&key) {
+                    Some(value) => value.clone(),
+                    None => {
+                        self.emit_error(format!("HashMap constant does not contain key '{}'", key));
+                        Value::undefined()
+                    }
+                }
+            }
             other => {
                 self.emit_error(format!("cannot index into value {}", other));
                 Value::undefined()
@@ -2611,6 +2649,169 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::undefined()
             }
         }
+    }
+
+    fn replace_expr_with_value(&mut self, expr: &mut Expr, value: Value) {
+        let mut replacement = Expr::value(value);
+        if let Some(ty) = expr.ty().cloned() {
+            replacement.set_ty(ty);
+        }
+        *expr = replacement;
+        self.mark_mutated();
+    }
+
+    fn replace_expr_with_todo(&mut self, expr: &mut Expr, message: &str) {
+        self.emit_error(format!("todo: {}", message));
+        self.replace_expr_with_value(expr, Value::undefined());
+    }
+
+    fn lookup_const_collection_value(&self, locator: &Locator) -> Option<Value> {
+        if let Some(ident) = locator.as_ident() {
+            if let Some(value) = self.lookup_value(ident.as_str()) {
+                if matches!(value, Value::List(_) | Value::Map(_)) {
+                    return Some(value);
+                }
+            }
+        }
+
+        let mut names = vec![locator.to_string()];
+        if let Some(ident) = locator.as_ident() {
+            let simple = ident.as_str().to_string();
+            if !names.contains(&simple) {
+                names.push(simple);
+            }
+            let qualified = self.qualified_name(ident.as_str());
+            if !names.contains(&qualified) {
+                names.push(qualified);
+            }
+        }
+
+        for name in names {
+            if let Some(value) = self.evaluated_constants.get(&name) {
+                if matches!(value, Value::List(_) | Value::Map(_)) {
+                    return Some(value.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    fn lookup_const_collection_from_expr(&self, expr: &Expr) -> Option<Value> {
+        let ExprKind::Locator(locator) = expr.kind() else {
+            return None;
+        };
+        self.lookup_const_collection_value(locator)
+    }
+
+    fn literal_value_from_expr(&self, expr: &Expr) -> Option<Value> {
+        let ExprKind::Value(value) = expr.kind() else {
+            return None;
+        };
+        match value.as_ref() {
+            Value::Int(_)
+            | Value::Bool(_)
+            | Value::Decimal(_)
+            | Value::Char(_)
+            | Value::String(_) => Some(value.as_ref().clone()),
+            _ => None,
+        }
+    }
+
+    fn try_fold_runtime_const_collection_expr(&mut self, expr: &mut Expr) -> bool {
+        if self.in_const_region() {
+            return false;
+        }
+
+        match expr.kind_mut() {
+            ExprKind::Invoke(invoke) => {
+                if let ExprInvokeTarget::Method(select) = &mut invoke.target {
+                    if select.field.name.as_str() == "len" && invoke.args.is_empty() {
+                        if let Some(value) =
+                            self.lookup_const_collection_from_expr(select.obj.as_ref())
+                        {
+                            let len = match value {
+                                Value::List(list) => list.values.len(),
+                                Value::Map(map) => map.len(),
+                                _ => return false,
+                            };
+                            self.replace_expr_with_value(expr, Value::int(len as i64));
+                            return true;
+                        }
+                    }
+                }
+            }
+            ExprKind::Index(index_expr) => {
+                if let Some(value) =
+                    self.lookup_const_collection_from_expr(index_expr.obj.as_ref())
+                {
+                    let Some(key) = self.literal_value_from_expr(index_expr.index.as_ref()) else {
+                        self.replace_expr_with_todo(
+                            expr,
+                            "runtime collection indexing requires a literal key",
+                        );
+                        return true;
+                    };
+
+                    let replacement = match value {
+                        Value::List(list) => match key {
+                            Value::Int(int) if int.value >= 0 => list
+                                .values
+                                .get(int.value as usize)
+                                .cloned()
+                                .unwrap_or_else(|| {
+                                    self.emit_error("index out of bounds for list");
+                                    Value::undefined()
+                                }),
+                            _ => {
+                                self.emit_error("list index must be a non-negative integer");
+                                Value::undefined()
+                            }
+                        },
+                        Value::Map(map) => map.get(&key).cloned().unwrap_or_else(|| {
+                            self.emit_error(format!(
+                                "HashMap constant does not contain key '{}'",
+                                key
+                            ));
+                            Value::undefined()
+                        }),
+                        _ => return false,
+                    };
+                    self.replace_expr_with_value(expr, replacement);
+                    return true;
+                }
+            }
+            ExprKind::Locator(locator) => {
+                if let Some(value) = self.lookup_const_collection_value(locator) {
+                    if matches!(value, Value::List(_)) {
+                        if expr
+                            .ty()
+                            .map(|ty| matches!(ty, Ty::Array(_)))
+                            .unwrap_or(false)
+                        {
+                            return false;
+                        }
+                    }
+                    self.replace_expr_with_todo(
+                        expr,
+                        "runtime collection values are not supported yet",
+                    );
+                    return true;
+                }
+            }
+            ExprKind::Value(value) => {
+                if matches!(value.as_ref(), Value::List(_) | Value::Map(_)) {
+                    self.replace_expr_with_todo(
+                        expr,
+                        "runtime collection literals are not supported yet",
+                    );
+                    return true;
+                }
+            }
+            _ => {}
+        }
+
+        false
     }
 
     // removed unused function_ret_ty_from_ty (no callers)
