@@ -2,13 +2,15 @@ mir::Program {
     items:
         fn factorial(arg0: i64) -> i64 [body: body0]
 
-        fn sum_range(arg0: i64, arg1: i64) -> i64 [body: body1]
+        fn const_factorial(arg0: i64) -> i64 [body: body1]
 
-        fn find_first_divisor(arg0: i64) -> i64 [body: body2]
+        fn sum_range(arg0: i64, arg1: i64) -> i64 [body: body2]
 
-        fn sum_even_numbers(arg0: i64) -> i64 [body: body3]
+        fn find_first_divisor(arg0: i64) -> i64 [body: body3]
 
-        fn main() -> () [body: body4]
+        fn sum_even_numbers(arg0: i64) -> i64 [body: body4]
+
+        fn main() -> () [body: body5]
     bodies:
         body0 { arg_count: 1, locals: 5 }
             return_local: _0
@@ -33,7 +35,30 @@ mir::Program {
                 bb3:
                     s0: _0 = copy _2
                     terminator: return
-        body1 { arg_count: 2, locals: 7 }
+        body1 { arg_count: 1, locals: 5 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: i64
+                _2: bool
+                _3: i64
+                _4: i64
+            blocks:
+                bb0:
+                    s0: _2 = Le(copy _1, 1)
+                    terminator: switch copy _2 [1 -> bb1] otherwise -> bb2
+                bb1:
+                    s0: _0 = 1
+                    terminator: goto -> bb3
+                bb2:
+                    s0: _4 = Sub(copy _1, 1)
+                    terminator: call fn const_factorial(copy _4) -> _3 then bb4
+                bb3:
+                    terminator: <none>
+                bb4:
+                    s0: _0 = Mul(copy _1, copy _3)
+                    terminator: goto -> bb3
+        body2 { arg_count: 2, locals: 7 }
             return_local: _0
             locals:
                 _0: i64
@@ -59,7 +84,7 @@ mir::Program {
                     s0: _4 = aggregate(tuple; [])
                     s1: _0 = copy _3
                     terminator: return
-        body2 { arg_count: 1, locals: 9 }
+        body3 { arg_count: 1, locals: 9 }
             return_local: _0
             locals:
                 _0: i64
@@ -108,7 +133,7 @@ mir::Program {
                 bb11:
                     s0: _6 = aggregate(tuple; [])
                     terminator: goto -> bb10
-        body3 { arg_count: 1, locals: 8 }
+        body4 { arg_count: 1, locals: 8 }
             return_local: _0
             locals:
                 _0: i64
@@ -146,7 +171,7 @@ mir::Program {
                 bb7:
                     s0: _5 = aggregate(tuple; [])
                     terminator: goto -> bb6
-        body4 { arg_count: 0, locals: 41 }
+        body5 { arg_count: 0, locals: 41 }
             return_local: _0
             locals:
                 _0: ()
@@ -277,10 +302,10 @@ mir::Program {
                     s0: _31 = Add(copy _31, 1)
                     terminator: goto -> bb29
                 bb35:
-                    terminator: call global printf("\n6. Compile-time iteration (simulated):\n") -> _37 then bb36
+                    terminator: call global printf("\n6. Compile-time recursion:\n") -> _37 then bb36
                 bb36:
                     s0: _38 = 120
-                    terminator: call global printf("  const 5! = %lld\n", copy _38) -> _39 then bb37
+                    terminator: call global printf("  const_factorial(5) = %lld\n", copy _38) -> _39 then bb37
                 bb37:
                     terminator: call global printf("\n✓ Loop constructs demonstrated!\n") -> _40 then bb38
                 bb38:
