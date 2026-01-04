@@ -31,9 +31,14 @@ fn max<T: PartialOrd>(a: T, b: T) -> T {
 }
 
 fn main() {
+    println!("📘 Tutorial: 17_generics.fp");
+    println!("🧭 Focus: Generics: type parameters and monomorphization");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Generic struct
     let pair = Pair::new(42, "hello");
-    println!("({}, {})", pair.first, pair.second);
+    println!("pair = ({}, {})", pair.first, pair.second);
 
     // Generic function (monomorphized)
     println!("max(10, 20) = {}", max(10, 20));
@@ -42,6 +47,6 @@ fn main() {
     // Generic enum
     let some: Option<i64> = Option::Some(100);
     let none: Option<i64> = Option::None;
-    println!("{}", some.unwrap_or(0));
-    println!("{}", none.unwrap_or(99));
+    println!("unwrap_or(Some(100), 0) = {}", some.unwrap_or(0));
+    println!("unwrap_or(None, 99) = {}", none.unwrap_or(99));
 }

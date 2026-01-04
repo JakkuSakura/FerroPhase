@@ -5,7 +5,7 @@ use std::fmt::Display;
 use std::ops::Add;
 
 fn apply<T: Add<Output = T> + Display>(a: T, b: T, op: fn(T, T) -> T) {
-    println!("{}", op(a, b));
+    println!("apply({}, {}) = {}", a, b, op(a, b));
 }
 
 fn add<T: Add<Output = T>>(a: T, b: T) -> T {
@@ -25,6 +25,11 @@ fn make_adder(n: i64) -> impl Fn(i64) -> i64 {
 }
 
 fn main() {
+    println!("📘 Tutorial: 09_higher_order_functions.fp");
+    println!("🧭 Focus: Higher-order functions: passing functions as arguments and closures");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Pass function as argument
     println!("Generic operations:");
     apply(10i64, 20i64, add);
@@ -32,8 +37,8 @@ fn main() {
 
     // Conditional with function
     println!("\nConditional:");
-    println!("{}", apply_if(true, 5, 3, add));
-    println!("{}", apply_if(false, 5, 3, add));
+    println!("apply_if(true, 5, 3) = {}", apply_if(true, 5, 3, add));
+    println!("apply_if(false, 5, 3) = {}", apply_if(false, 5, 3, add));
 
     // Return function (closure)
     println!("\nClosure factory:");

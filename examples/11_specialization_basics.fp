@@ -34,6 +34,11 @@ fn max<T: PartialOrd + Copy + Display>(a: T, b: T) -> T {
 }
 
 fn main() {
+    println!("📘 Tutorial: 11_specialization_basics.fp");
+    println!("🧭 Focus: Function specialization via generic monomorphization");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Each concrete type generates a specialized version of the generic functions.
     let _ = pipeline(10i64, 20i64);
     let _ = pipeline(1.5f64, 2.5f64);

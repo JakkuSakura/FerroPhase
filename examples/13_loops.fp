@@ -47,6 +47,11 @@ fn sum_even_numbers(limit: i64) -> i64 {
 }
 
 fn main() {
+    println!("📘 Tutorial: 13_loops.fp");
+    println!("🧭 Focus: Loop constructs: while, for, and loop.");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     println!("=== Loop Constructs ===\n");
 
     // While loops

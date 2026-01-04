@@ -2,6 +2,11 @@
 //! Struct generation with compile-time conditionals
 
 fn main() {
+    println!("📘 Tutorial: 05_struct_generation.fp");
+    println!("🧭 Focus: Struct generation with compile-time conditionals");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Const flags affect struct generation
     const FLAG_A: bool = true;
     const FLAG_B: bool = false;

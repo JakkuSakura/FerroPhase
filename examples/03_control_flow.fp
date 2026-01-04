@@ -10,6 +10,11 @@
 //! Note: Loop/break/continue/return statements are parsed but have MIR generation bugs
 
 fn main() {
+    println!("📘 Tutorial: 03_control_flow.fp");
+    println!("🧭 Focus: Control flow: if/else expressions with const and runtime evaluation");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Const if/else chains
     const TEMP: i64 = 25;
     const WEATHER: &str = if TEMP > 30 {

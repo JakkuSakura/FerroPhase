@@ -2,6 +2,11 @@
 //! Compile-time validation using const expressions and introspection
 
 fn main() {
+    println!("📘 Tutorial: 07_compile_time_validation.fp");
+    println!("🧭 Focus: Compile-time validation using const expressions and introspection");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     struct Data {
         a: i64,
         b: i64,

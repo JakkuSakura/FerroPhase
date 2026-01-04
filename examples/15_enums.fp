@@ -38,14 +38,19 @@ impl<T> Option<T> {
 }
 
 fn main() {
+    println!("📘 Tutorial: 15_enums.fp");
+    println!("🧭 Focus: Enum variants: unit, tuple, struct variants and discriminants");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Unit, tuple, struct variants
     let point = Shape::Point;
     let circle = Shape::Circle(10);
     let rect = Shape::Rectangle { w: 5, h: 3 };
 
-    println!("{}", point.describe());
-    println!("{}", circle.describe());
-    println!("{}", rect.describe());
+    println!("shape point -> {}", point.describe());
+    println!("shape circle -> {}", circle.describe());
+    println!("shape rectangle -> {}", rect.describe());
 
     // Discriminants
     let val = Value::C;
@@ -54,8 +59,8 @@ fn main() {
     // Generic enum
     let some: Option<i64> = Option::Some(42);
     let none: Option<i64> = Option::None;
-    println!("{}", some.unwrap_or(0));
-    println!("{}", none.unwrap_or(99));
+    println!("unwrap_or(Some(42), 0) = {}", some.unwrap_or(0));
+    println!("unwrap_or(None, 99) = {}", none.unwrap_or(99));
 
     // Const discriminant
     const CODE: i32 = Value::B as i32;
