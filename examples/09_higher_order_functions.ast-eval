@@ -9,7 +9,7 @@ ast::File {
       block (1 stmt) : ()
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" op(a, b)
+            template: "apply({}, {}) = {}" a, b, op(a, b)
     pub fn<T: Add<T
 >> add(a: Expr(T), b: Expr(T)) -> Expr(T) : fn<T: Add<T
 >>(unknown, unknown) -> unknown : fn<T: Add<T
@@ -49,7 +49,22 @@ ast::File {
               rhs:
                 locator n : i64
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (11 stmts) : ()
+      block (16 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 09_higher_order_functions.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Higher-order functions: passing functions as arguments and closures"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
           intrinsic println : ()
             template: "Generic operations:"
@@ -69,18 +84,16 @@ ast::File {
               locator add : fn(unknown, unknown) -> unknown
         expr_stmt ;
           intrinsic println : ()
-            template: "
-Conditional:"
+            template: "\nConditional:"
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" apply_if(true, 5, 3, add__spec0)
+            template: "apply_if(true, 5, 3) = {}" apply_if(true, 5, 3, add__spec0)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" apply_if(false, 5, 3, add__spec0)
+            template: "apply_if(false, 5, 3) = {}" apply_if(false, 5, 3, add__spec0)
         expr_stmt ;
           intrinsic println : ()
-            template: "
-Closure factory:"
+            template: "\nClosure factory:"
         pub const add_10: fn(i64) -> i64 : fn(i64) -> i64
           invoke : fn(i64) -> i64
             target: make_adder

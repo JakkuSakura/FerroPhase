@@ -56,7 +56,22 @@ ast::File {
                 expr_stmt (value)
                   locator b
     pub fn main() -> () : fn() -> ()
-      block (8 stmts)
+      block (13 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 17_generics.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Generics: type parameters and monomorphization"
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         let pair
           init:
             invoke
@@ -66,7 +81,7 @@ ast::File {
                 value "hello"
         expr_stmt ;
           intrinsic println
-            template: "({}, {})" pair.first, pair.second
+            template: "pair = ({}, {})" pair.first, pair.second
         expr_stmt ;
           intrinsic println
             template: "max(10, 20) = {}" max(10, 20)
@@ -86,8 +101,8 @@ ast::File {
             locator Option::None
         expr_stmt ;
           intrinsic println
-            template: "{}" some.unwrap_or(0)
+            template: "unwrap_or(Some(100), 0) = {}" some.unwrap_or(0)
         expr_stmt ;
           intrinsic println
-            template: "{}" none.unwrap_or(99)
+            template: "unwrap_or(None, 99) = {}" none.unwrap_or(99)
 }

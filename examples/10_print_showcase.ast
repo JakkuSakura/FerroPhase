@@ -1,7 +1,22 @@
 ast::File {
   items:
     pub const fn main() -> () : fn() -> ()
-      block (25 stmts)
+      block (30 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 10_print_showcase.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting"
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         expr_stmt ;
           intrinsic print
             template: "Hello"
@@ -76,6 +91,5 @@ ast::File {
             template: ""
         expr_stmt ;
           intrinsic println
-            template: "escaped: {} {}" "line1
-line2", "tab	end"
+            template: "escaped: {} {}" "line1\nline2", "tab\tend"
 }

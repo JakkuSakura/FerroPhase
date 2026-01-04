@@ -1,6 +1,11 @@
 hir::Program {
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 04_struct_introspection.fp\n");
+            printf("🧭 Focus: Struct introspection demonstration\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub struct Point {
                 pub x: f64,
                 pub y: f64,
@@ -26,17 +31,17 @@ hir::Program {
                 0;
             pub const COLOR_METHODS: usize =
                 0;
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(0 args);
+            printf("=== Struct Introspection ===\n");
+            printf("Point size: %lld bytes\n", 16);
+            printf("Color size: %lld bytes\n", 24);
+            printf("Point fields: %lld\n", 2);
+            printf("Color fields: %lld\n", 3);
+            printf("Point has x: %d\n", true);
+            printf("Point has z: %d\n", false);
+            printf("Point methods: %lld\n", 0);
+            printf("Color methods: %lld\n", 0);
+            printf("\n✓ Introspection completed!\n");
+            printf("\n=== Transpilation Demo ===\n");
             pub const POINT_SIZE_CONST: usize =
                 16;
             pub const COLOR_SIZE_CONST: usize =
@@ -45,14 +50,14 @@ hir::Program {
                 40;
             let origin = Point { x: 0, y: 0 };
             let red = Color { r: 255, g: 0, b: 0 };
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(2 args);
-            std::Println(3 args);
-            std::Println(0 args);
+            printf("Transpilation target sizes:\n");
+            printf("  Point: %llu bytes (const)\n", POINT_SIZE_CONST);
+            printf("  Color: %llu bytes (const)\n", COLOR_SIZE_CONST);
+            printf("  Combined: %llu bytes\n", TOTAL_SIZE);
+            printf("Runtime instances:\n");
+            printf("  Origin: (%f, %f)\n", origin.x, origin.y);
+            printf("  Red: rgb(%hhu, %hhu, %hhu)\n", red.r, red.g, red.b);
+            printf("\n✓ Introspection enables external code generation!\n");
         }
     }
 }

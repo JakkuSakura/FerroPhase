@@ -89,7 +89,22 @@ ast::File {
         expr_stmt (value)
           locator result : unknown
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (8 stmts) : ()
+      block (13 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 11_specialization_basics.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Function specialization via generic monomorphization"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         let _
           init:
             invoke : i64

@@ -1,6 +1,11 @@
 hir::Program {
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 01_const_eval_basics.fp\n");
+            printf("🧭 Focus: Basic const evaluation with compile-time arithmetic and const blocks\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub const BUFFER_SIZE: i64 =
                 4096;
             pub const MAX_CONNECTIONS: i64 =
@@ -9,19 +14,19 @@ hir::Program {
                 120;
             pub const IS_LARGE: bool =
                 true;
-            std::Println(3 args);
+            printf("Buffer: %lldKB, factorial(5)=%lld, large=%d\n", (BUFFER_SIZE / 1024), FACTORIAL_5, IS_LARGE);
             pub struct Config {
                 pub buffer_size: i64,
                 pub max_connections: i64,
             }
             pub const DEFAULT_CONFIG: Config =
                 Config { buffer_size: 4096, max_connections: 150 };
-            std::Println(2 args);
+            printf("Config: %lldKB buffer, %lld connections\n", (DEFAULT_CONFIG.buffer_size / 1024), DEFAULT_CONFIG.max_connections);
             let runtime_multiplier = 3;
             let optimized_size = 8192;
             let cache_strategy = "large";
             let total_memory = (runtime_multiplier * std::ConstBlock(1 args));
-            std::Println(3 args);
+            printf("Const blocks: size=%lld, strategy=%s, memory=%lld\n", optimized_size, cache_strategy, total_memory);
         }
     }
 }

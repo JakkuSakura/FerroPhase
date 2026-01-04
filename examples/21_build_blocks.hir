@@ -1,36 +1,16 @@
 hir::Program {
-    pub fn build_items(flag: bool) -> <error> {
-        // params: [flag: bool]
-        {
-            {
-            }
-        }
-    }
-
-    pub fn build_items_2(flag: bool) -> <error> {
-        // params: [flag: bool]
-        {
-            if (flag)
-                {
-                    pub struct Alpha {
-                        pub id: i64,
-                    }
-                }
-            else
-                {
-                    pub struct Beta {
-                        pub id: i64,
-                    }
-                }
-        }
-    }
-
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 21_build_blocks.fp\n");
+            printf("🧭 Focus: Build blocks with typed quote tokens and expression-driven splice.\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             let alpha = Alpha { id: 1 };
-            let _ = alpha.id;
+            std::Println(1 args);
             let beta = Beta { id: 2 };
-            let _ = beta.id;
+            std::Println(1 args);
+            printf("generated types are usable at runtime\n");
         }
     }
 

@@ -1,64 +1,45 @@
 ast::File {
   items:
-    pub const fn build_items(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
-      block (1 stmt)
-        expr_stmt (value)
-          quote Item
-            if
-              cond:
-                locator flag
-              then:
-                block (1 stmt)
-                  pub struct Alpha {
-                    id: Expr(i64)
-                  }
-              else:
-                block (1 stmt)
-                  pub struct Beta {
-                    id: Expr(i64)
-                  }
-    pub const fn build_items_2(flag: Expr(bool)) -> QuoteToken<item> : fn(bool) -> QuoteToken<item>
-      block (1 stmt)
-        expr_stmt (value)
-          if
-            cond:
-              locator flag
-            then:
-              block (1 stmt)
-                pub struct Alpha {
-                  id: Expr(i64)
-                }
-            else:
-              block (1 stmt)
-                pub struct Beta {
-                  id: Expr(i64)
-                }
     expr_item
       value ()
     expr_item
       value ()
     pub fn main() -> () : fn() -> ()
-      block (4 stmts)
+      block (10 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 21_build_blocks.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Build blocks with typed quote tokens and expression-driven splice."
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         let alpha
           init:
             struct Alpha
               id:
                 value 1
-        let _
-          init:
-            select .id [unknown]
-              object:
-                locator alpha
+        expr_stmt ;
+          intrinsic println
+            template: "build_items(true) -> Alpha {{ id: {} }}" alpha.id
         let beta
           init:
             struct Beta
               id:
                 value 2
-        let _
-          init:
-            select .id [unknown]
-              object:
-                locator beta
+        expr_stmt ;
+          intrinsic println
+            template: "build_items_2(false) -> Beta {{ id: {} }}" beta.id
+        expr_stmt ;
+          intrinsic println
+            template: "generated types are usable at runtime"
     pub struct Alpha {
       id: Expr(i64)
     }

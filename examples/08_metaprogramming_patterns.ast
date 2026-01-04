@@ -9,18 +9,34 @@ ast::File {
     pub const _GENERATED: ()
       value ()
     pub fn main() -> () : fn() -> ()
-      block (13 stmts)
+      block (18 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 08_metaprogramming_patterns.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Metaprogramming: using const metadata to drive code generation"
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         pub const FIELD_COUNT: i64
           value 3
         pub const POINT_NAME: &string
           value "struct Point3D"
         pub const SIZE: i64
           value 24
-        pub const FIELDS: Vec<structural{name: any, type_name: any}>
-          value [3 values]
+        pub const FIELDS: Vec<structural{name: &string, type_name: &string}>
+          intrinsic reflect_fields
+            args:
+              locator Point3D
         pub const X_TYPE: &string
-          value "i64
-"
+          value "i64\n"
         expr_stmt ;
           intrinsic println
             template: "{} has {} fields (size={})" POINT_NAME, FIELD_COUNT, SIZE

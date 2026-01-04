@@ -1,7 +1,22 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> ()
-      block (13 stmts)
+      block (18 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 03_control_flow.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Control flow: if/else expressions with const and runtime evaluation"
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         pub const TEMP: i64
           value 25
         pub const WEATHER: &string

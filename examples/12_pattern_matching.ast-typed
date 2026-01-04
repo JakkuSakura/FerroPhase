@@ -73,7 +73,22 @@ ast::File {
               body:
                 locator default : i64
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (12 stmts) : ()
+      block (17 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 12_pattern_matching.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Pattern matching: match expressions with guards and destructuring"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         let red
           init:
             locator Color::Red : Color [Red: () | Green: () | Rgb: (Expr(u8), Expr(u8), Expr(u8))]
@@ -87,28 +102,28 @@ ast::File {
                 value 32 : i64
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" describe(<expr>)
+            template: "describe(red) = {}" describe(<expr>)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" describe(<expr>)
+            template: "describe(rgb) = {}" describe(<expr>)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" classify((-5))
+            template: "classify(-5) = {}" classify((-5))
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" classify(0)
+            template: "classify(0) = {}" classify(0)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" classify(4)
+            template: "classify(4) = {}" classify(4)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" classify(7)
+            template: "classify(7) = {}" classify(7)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" unwrap_or(Option::Some(42), 0)
+            template: "unwrap_or(Some(42), 0) = {}" unwrap_or(Option::Some(42), 0)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" unwrap_or(Option::None, 99)
+            template: "unwrap_or(None, 99) = {}" unwrap_or(Option::None, 99)
         pub const CODE: i64 : i64
           value 0 : i64
         expr_stmt ;

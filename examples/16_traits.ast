@@ -53,7 +53,22 @@ ast::File {
           intrinsic println
             template: "{:.2}" shape.area()
     pub fn main() -> () : fn() -> ()
-      block (6 stmts)
+      block (11 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 16_traits.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Traits: defining shared behavior with default methods"
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         let circle
           init:
             struct Circle

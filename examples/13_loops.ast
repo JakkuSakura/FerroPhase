@@ -179,11 +179,25 @@ ast::File {
         expr_stmt (value)
           locator sum
     pub fn main() -> () : fn() -> ()
-      block (20 stmts)
+      block (25 stmts)
         expr_stmt ;
           intrinsic println
-            template: "=== Loop Constructs ===
-"
+            template: "📘 Tutorial: 13_loops.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Loop constructs: while, for, and loop."
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
+        expr_stmt ;
+          intrinsic println
+            template: "=== Loop Constructs ===\n"
         expr_stmt ;
           intrinsic println
             template: "1. While loop - factorial:"
@@ -195,8 +209,7 @@ ast::File {
             template: "  7! = {}" factorial(7)
         expr_stmt ;
           intrinsic println
-            template: "
-2. For loop - sum range:"
+            template: "\n2. For loop - sum range:"
         expr_stmt ;
           intrinsic println
             template: "  sum(1..10) = {}" sum_range(1, 10)
@@ -205,8 +218,7 @@ ast::File {
             template: "  sum(5..15) = {}" sum_range(5, 15)
         expr_stmt ;
           intrinsic println
-            template: "
-3. Loop with break expression:"
+            template: "\n3. Loop with break expression:"
         expr_stmt ;
           intrinsic println
             template: "  First divisor of 24: {}" find_first_divisor(24)
@@ -215,15 +227,13 @@ ast::File {
             template: "  First divisor of 17: {}" find_first_divisor(17)
         expr_stmt ;
           intrinsic println
-            template: "
-4. Loop with continue:"
+            template: "\n4. Loop with continue:"
         expr_stmt ;
           intrinsic println
             template: "  Sum of even numbers < 10: {}" sum_even_numbers(10)
         expr_stmt ;
           intrinsic println
-            template: "
-5. Nested loops:"
+            template: "\n5. Nested loops:"
         let mut count
           init:
             value 0
@@ -272,12 +282,10 @@ ast::File {
                                     template: "[{}] " i
         expr_stmt ;
           intrinsic println
-            template: "
-  Iterations: {}" count
+            template: "\n  Iterations: {}" count
         expr_stmt ;
           intrinsic println
-            template: "
-6. Compile-time iteration (simulated):"
+            template: "\n6. Compile-time iteration (simulated):"
         pub const FACTORIAL_CONST: i64
           value 120
         expr_stmt ;
@@ -285,6 +293,5 @@ ast::File {
             template: "  const 5! = {}" FACTORIAL_CONST
         expr_stmt ;
           intrinsic println
-            template: "
-✓ Loop constructs demonstrated!"
+            template: "\n✓ Loop constructs demonstrated!"
 }

@@ -1,6 +1,11 @@
 hir::Program {
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 05_struct_generation.fp\n");
+            printf("🧭 Focus: Struct generation with compile-time conditionals\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub const FLAG_A: bool =
                 true;
             pub const FLAG_B: bool =
@@ -20,16 +25,16 @@ hir::Program {
                 pub mode: &str,
             }
             let base = Base { id: 1, name: "core" };
-            std::Println(2 args);
+            printf("base: id=%lld name=%s\n", base.id, base.name);
             let config = Config { id: 2, name: "primary", mode: "strict" };
-            std::Println(3 args);
+            printf("config: id=%lld name=%s mode=%s\n", config.id, config.name, config.mode);
             let clone = ConfigClone { id: 3, name: "shadow", mode: "relaxed" };
-            std::Println(3 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
+            printf("config clone: id=%lld name=%s mode=%s\n", clone.id, clone.name, clone.mode);
+            printf("config fields: %lld\n", 3);
+            printf("config has mode: %d\n", true);
+            printf("config has max_retries: %d\n", false);
+            printf("config size: %lld\n", 24);
+            printf("config type: %s\n", "struct Config");
         }
     }
 }

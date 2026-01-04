@@ -137,7 +137,22 @@ ast::File {
                     locator self : &Rectangle{width: Expr(i64), height: Expr(i64)}
     }
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (13 stmts) : ()
+      block (18 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 06_struct_methods.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Struct methods and field access"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
           intrinsic println : ()
             template: "=== Struct Operations ==="
