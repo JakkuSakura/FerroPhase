@@ -7,6 +7,12 @@ pub(crate) struct MirArtifacts {
     pub(crate) mir_text: String,
 }
 
+#[derive(Debug)]
+pub(crate) struct LirArtifacts {
+    pub(crate) lir_program: lir::LirProgram,
+    pub(crate) lir_text: String,
+}
+
 /// Backend intermediate artifacts (MIR/LIR text and program) used by the pipeline.
 /// Internal to the `pipeline` module.
 #[derive(Debug)]
