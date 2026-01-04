@@ -2708,12 +2708,66 @@ impl<'ctx> AstInterpreter<'ctx> {
         let ExprKind::Value(value) = expr.kind() else {
             return None;
         };
-        match value.as_ref() {
+        self.literal_value_from_value(value.as_ref())
+    }
+
+    fn literal_value_from_value(&self, value: &Value) -> Option<Value> {
+        match value {
             Value::Int(_)
             | Value::Bool(_)
             | Value::Decimal(_)
             | Value::Char(_)
-            | Value::String(_) => Some(value.as_ref().clone()),
+            | Value::String(_) => Some(value.clone()),
+            _ => None,
+        }
+    }
+
+    fn const_scalar_from_locator(&self, locator: &Locator) -> Option<Value> {
+        if let Some(ident) = locator.as_ident() {
+            if let Some(value) = self.lookup_value(ident.as_str()) {
+                if let Some(literal) = self.literal_value_from_value(&value) {
+                    return Some(literal);
+                }
+            }
+        }
+
+        let mut names = vec![locator.to_string()];
+        if let Some(ident) = locator.as_ident() {
+            let simple = ident.as_str().to_string();
+            if !names.contains(&simple) {
+                names.push(simple);
+            }
+            let qualified = self.qualified_name(ident.as_str());
+            if !names.contains(&qualified) {
+                names.push(qualified);
+            }
+        }
+
+        for name in names {
+            if let Some(value) = self.evaluated_constants.get(&name) {
+                if let Some(literal) = self.literal_value_from_value(value) {
+                    return Some(literal);
+                }
+            }
+        }
+
+        None
+    }
+
+    fn const_fold_expr_value(&self, expr: &Expr) -> Option<Value> {
+        match expr.kind() {
+            ExprKind::Value(_) => self.literal_value_from_expr(expr),
+            ExprKind::Locator(locator) => self.const_scalar_from_locator(locator),
+            ExprKind::Paren(paren) => self.const_fold_expr_value(paren.expr.as_ref()),
+            ExprKind::UnOp(unop) => {
+                let value = self.const_fold_expr_value(unop.val.as_ref())?;
+                self.evaluate_unary(unop.op, value).ok()
+            }
+            ExprKind::BinOp(binop) => {
+                let lhs = self.const_fold_expr_value(binop.lhs.as_ref())?;
+                let rhs = self.const_fold_expr_value(binop.rhs.as_ref())?;
+                self.evaluate_binop(binop.op, lhs, rhs).ok()
+            }
             _ => None,
         }
     }
@@ -2745,12 +2799,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(value) =
                     self.lookup_const_collection_from_expr(index_expr.obj.as_ref())
                 {
-                    let Some(key) = self.literal_value_from_expr(index_expr.index.as_ref()) else {
-                        self.replace_expr_with_todo(
-                            expr,
-                            "runtime collection indexing requires a literal key",
-                        );
-                        return true;
+                    let Some(key) = self.const_fold_expr_value(index_expr.index.as_ref()) else {
+                        return false;
                     };
 
                     let replacement = match value {
@@ -2778,33 +2828,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                         _ => return false,
                     };
                     self.replace_expr_with_value(expr, replacement);
-                    return true;
-                }
-            }
-            ExprKind::Locator(locator) => {
-                if let Some(value) = self.lookup_const_collection_value(locator) {
-                    if matches!(value, Value::List(_)) {
-                        if expr
-                            .ty()
-                            .map(|ty| matches!(ty, Ty::Array(_)))
-                            .unwrap_or(false)
-                        {
-                            return false;
-                        }
-                    }
-                    self.replace_expr_with_todo(
-                        expr,
-                        "runtime collection values are not supported yet",
-                    );
-                    return true;
-                }
-            }
-            ExprKind::Value(value) => {
-                if matches!(value.as_ref(), Value::List(_) | Value::Map(_)) {
-                    self.replace_expr_with_todo(
-                        expr,
-                        "runtime collection literals are not supported yet",
-                    );
                     return true;
                 }
             }

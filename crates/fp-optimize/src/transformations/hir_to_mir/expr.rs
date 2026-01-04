@@ -3064,6 +3064,7 @@ struct BodyBuilder<'a> {
     local_map: HashMap<hir::HirId, mir::LocalId>,
     fallback_locals: HashMap<String, mir::LocalId>,
     local_structs: HashMap<mir::LocalId, hir::DefId>,
+    container_locals: HashMap<mir::LocalId, mir::ContainerKind>,
     const_items: HashMap<hir::DefId, hir::Const>,
     blocks: Vec<mir::BasicBlockData>,
     current_block: mir::BasicBlockId,
@@ -3139,6 +3140,7 @@ impl<'a> BodyBuilder<'a> {
             local_map: HashMap::new(),
             fallback_locals: HashMap::new(),
             local_structs: HashMap::new(),
+            container_locals: HashMap::new(),
             const_items: HashMap::new(),
             blocks: vec![mir::BasicBlockData::new(None)],
             current_block: 0,
@@ -5738,6 +5740,111 @@ impl<'a> BodyBuilder<'a> {
                     ty: target_ty,
                 })
             }
+            hir::ExprKind::Index(base, index) => {
+                let base_info = self.lower_operand(base, None)?;
+                if self.is_list_container(&base_info.ty) {
+                    let index_ty = Ty {
+                        kind: TyKind::Uint(UintTy::Usize),
+                    };
+                    let index_operand = self.lower_operand(index, Some(&index_ty))?;
+                    let element_ty = expected
+                        .cloned()
+                        .unwrap_or_else(|| self.lowering.error_ty());
+                    let kind = mir::ContainerKind::List {
+                        elem_ty: element_ty.clone(),
+                        len: self
+                            .local_id_from_expr(base)
+                            .and_then(|id| self.container_locals.get(&id))
+                            .and_then(|kind| match kind {
+                                mir::ContainerKind::List { len, .. } => Some(*len),
+                                _ => None,
+                            })
+                            .unwrap_or(0),
+                    };
+                    let local_id = self.allocate_temp(element_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::ContainerGet {
+                                kind,
+                                container: base_info.operand,
+                                key: index_operand.operand,
+                            },
+                        ),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: element_ty,
+                    });
+                }
+                if self.is_map_container(&base_info.ty) {
+                    let index_operand = self.lower_operand(index, None)?;
+                    let value_ty = expected
+                        .cloned()
+                        .unwrap_or_else(|| self.lowering.error_ty());
+                    let mut kind = mir::ContainerKind::Map {
+                        key_ty: index_operand.ty.clone(),
+                        value_ty: value_ty.clone(),
+                        len: 0,
+                    };
+                    if let Some(local_id) = self.local_id_from_expr(base) {
+                        if let Some(container_kind) = self.container_locals.get(&local_id) {
+                            if let mir::ContainerKind::Map {
+                                key_ty,
+                                value_ty,
+                                len,
+                            } = container_kind
+                            {
+                                kind = mir::ContainerKind::Map {
+                                    key_ty: key_ty.clone(),
+                                    value_ty: value_ty.clone(),
+                                    len: *len,
+                                };
+                            }
+                        }
+                    }
+                    if matches!(kind, mir::ContainerKind::Map { len: 0, .. }) {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "map indexing requires a literal HashMap for now",
+                        );
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                            ty: value_ty,
+                        });
+                    }
+                    let local_id = self.allocate_temp(value_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::ContainerGet {
+                                kind,
+                                container: base_info.operand,
+                                key: index_operand.operand,
+                            },
+                        ),
+                    });
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: value_ty,
+                    });
+                }
+                self.lowering.emit_error(
+                    expr.span,
+                    "index access requires array, slice, or supported container",
+                );
+                let ty = expected
+                    .cloned()
+                    .unwrap_or_else(|| self.lowering.error_ty());
+                Ok(OperandInfo {
+                    operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                    ty,
+                })
+            }
             hir::ExprKind::IntrinsicCall(call) => {
                 if matches!(
                     call.kind,
@@ -5795,6 +5902,33 @@ impl<'a> BodyBuilder<'a> {
                             },
                         });
                     };
+
+                    if let Some(local_id) = self.local_id_from_expr(arg) {
+                        if let Some(kind) = self.container_locals.get(&local_id).cloned() {
+                            let len_ty = Ty {
+                                kind: TyKind::Uint(UintTy::U64),
+                            };
+                            let local_id_out = self.allocate_temp(len_ty.clone(), expr.span);
+                            let local_place = mir::Place::from_local(local_id_out);
+                            let statement = mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    local_place.clone(),
+                                    mir::Rvalue::ContainerLen {
+                                        kind,
+                                        container: mir::Operand::copy(mir::Place::from_local(
+                                            local_id,
+                                        )),
+                                    },
+                                ),
+                            };
+                            self.push_statement(statement);
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::copy(local_place),
+                                ty: len_ty,
+                            });
+                        }
+                    }
 
                     let place = if let Some(place_info) = self.lower_place(arg)? {
                         place_info.place
@@ -6874,6 +7008,10 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
+                if self.is_list_container(&base_ty) || self.is_map_container(&base_ty) {
+                    return Ok(None);
+                }
+
                 let element_ty = match &base_ty.kind {
                     TyKind::Array(elem, _) => *elem.clone(),
                     TyKind::Slice(elem) => *elem.clone(),
@@ -7440,6 +7578,30 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if method_name.as_str() == "len" && args.is_empty() {
+                    if let Some(local_id) = self.local_id_from_expr(receiver) {
+                        if let Some(kind) = self.container_locals.get(&local_id).cloned() {
+                            let len_ty = Ty {
+                                kind: TyKind::Uint(UintTy::Usize),
+                            };
+                            if (place.local as usize) < self.locals.len() {
+                                self.locals[place.local as usize].ty = len_ty.clone();
+                            }
+                            let statement = mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place,
+                                    mir::Rvalue::ContainerLen {
+                                        kind,
+                                        container: mir::Operand::copy(mir::Place::from_local(
+                                            local_id,
+                                        )),
+                                    },
+                                ),
+                            };
+                            self.push_statement(statement);
+                            return Ok(());
+                        }
+                    }
                     if let hir::ExprKind::Path(path) = &receiver.kind {
                         if let Some(hir::Res::Def(def_id)) = &path.res {
                             if let Some(const_info) = self.lowering.const_values.get(def_id) {
@@ -7643,6 +7805,98 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_call(expr, callee, args, Some((place, expected_ty.clone())))?;
             }
             hir::ExprKind::Array(elements) => {
+                if self.is_map_container(expected_ty) {
+                    let mut entries = Vec::with_capacity(elements.len());
+                    let mut key_ty: Option<Ty> = None;
+                    let mut value_ty: Option<Ty> = None;
+
+                    for element in elements {
+                        let hir::ExprKind::Array(entry) = &element.kind else {
+                            self.lowering.emit_error(
+                                element.span,
+                                "HashMap literal expects array entries",
+                            );
+                            continue;
+                        };
+                        if entry.len() != 2 {
+                            self.lowering.emit_error(
+                                element.span,
+                                "HashMap literal expects array entries of length 2",
+                            );
+                            continue;
+                        }
+                        let key_operand = self.lower_operand(&entry[0], None)?;
+                        let value_operand = self.lower_operand(&entry[1], None)?;
+                        if key_ty.is_none() {
+                            key_ty = Some(key_operand.ty.clone());
+                        }
+                        if value_ty.is_none() {
+                            value_ty = Some(value_operand.ty.clone());
+                        }
+                        entries.push((key_operand.operand, value_operand.operand));
+                    }
+
+                    let key_ty = key_ty.unwrap_or_else(|| self.lowering.error_ty());
+                    let value_ty = value_ty.unwrap_or_else(|| self.lowering.error_ty());
+                    let kind = mir::ContainerKind::Map {
+                        key_ty: key_ty.clone(),
+                        value_ty: value_ty.clone(),
+                        len: entries.len() as u64,
+                    };
+
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::ContainerMapLiteral {
+                                kind: kind.clone(),
+                                entries,
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    if place.projection.is_empty() {
+                        self.locals[place.local as usize].ty = expected_ty.clone();
+                        self.container_locals.insert(place.local, kind);
+                    }
+                    return Ok(());
+                }
+
+                if self.is_list_container(expected_ty) {
+                    let mut operands = Vec::with_capacity(elements.len());
+                    let mut elem_ty: Option<Ty> = None;
+                    for element in elements {
+                        let lowered = self.lower_operand(element, None)?;
+                        if elem_ty.is_none() {
+                            elem_ty = Some(lowered.ty.clone());
+                        }
+                        operands.push(lowered.operand);
+                    }
+
+                    let elem_ty = elem_ty.unwrap_or_else(|| self.lowering.error_ty());
+                    let kind = mir::ContainerKind::List {
+                        elem_ty: elem_ty.clone(),
+                        len: operands.len() as u64,
+                    };
+
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::ContainerLiteral {
+                                kind: kind.clone(),
+                                elements: operands,
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    if place.projection.is_empty() {
+                        self.locals[place.local as usize].ty = expected_ty.clone();
+                        self.container_locals.insert(place.local, kind);
+                    }
+                    return Ok(());
+                }
+
                 let element_ty = self
                     .expect_array_element_ty(expected_ty)
                     .unwrap_or_else(|| {
@@ -7805,6 +8059,41 @@ impl<'a> BodyBuilder<'a> {
             },
             _ => None,
         }
+    }
+
+    fn container_type_name(&self, ty: &Ty) -> Option<String> {
+        self.lowering.display_type_name(ty)
+    }
+
+    fn is_list_container(&self, ty: &Ty) -> bool {
+        self.container_type_name(ty)
+            .map(|name| {
+                let tail = name.split("::").last().unwrap_or(name.as_str());
+                matches!(tail, "Vec" | "List" | "list")
+            })
+            .unwrap_or(false)
+    }
+
+    fn is_map_container(&self, ty: &Ty) -> bool {
+        self.container_type_name(ty)
+            .map(|name| {
+                let tail = name.split("::").last().unwrap_or(name.as_str());
+                tail == "HashMap"
+            })
+            .unwrap_or(false)
+    }
+
+    fn local_id_from_expr(&self, expr: &hir::Expr) -> Option<mir::LocalId> {
+        let hir::ExprKind::Path(path) = &expr.kind else {
+            return None;
+        };
+        if let Some(hir::Res::Local(hir_id)) = &path.res {
+            return self.local_map.get(hir_id).copied();
+        }
+        path.segments
+            .first()
+            .filter(|_| path.segments.len() == 1)
+            .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied())
     }
 
     fn evaluate_array_length(&self, expr: &hir::Expr) -> Option<u64> {

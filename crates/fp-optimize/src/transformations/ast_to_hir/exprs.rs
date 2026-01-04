@@ -367,9 +367,30 @@ impl HirGenerator {
                 }
                 Ok(hir::ExprKind::Array(elements))
             }
-            Value::Map(_) => Err(crate::error::optimization_error(
-                "HashMap values are only supported during compile-time evaluation",
-            )),
+            Value::Map(map) => {
+                let mut entries = Vec::with_capacity(map.entries.len());
+                for entry in &map.entries {
+                    let key_kind = self.transform_value_to_hir(&Box::new(entry.key.clone()))?;
+                    let value_kind = self.transform_value_to_hir(&Box::new(entry.value.clone()))?;
+                    let key_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: key_kind,
+                        span: self.create_span(1),
+                    };
+                    let value_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: value_kind,
+                        span: self.create_span(1),
+                    };
+                    let entry = hir::ExprKind::Array(vec![key_expr, value_expr]);
+                    entries.push(hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: entry,
+                        span: self.create_span(1),
+                    });
+                }
+                Ok(hir::ExprKind::Array(entries))
+            }
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
             _ => Err(crate::error::optimization_error(format!(
                 "Unimplemented AST value type for HIR transformation: {:?}",
