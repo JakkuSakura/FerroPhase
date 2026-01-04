@@ -2659,7 +2659,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         *expr = replacement;
         self.mark_mutated();
     }
-
+    #[allow(unused)]
     fn replace_expr_with_todo(&mut self, expr: &mut Expr, message: &str) {
         self.emit_error(format!("todo: {}", message));
         self.replace_expr_with_value(expr, Value::undefined());

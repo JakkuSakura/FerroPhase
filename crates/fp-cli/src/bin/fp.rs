@@ -149,7 +149,7 @@ async fn main() -> Result<()> {
         Err(e) => {
             use tracing::error;
             // Emit via structured logging rather than printing directly
-            error!(error = %e, "Error: {}", e);
+            error!("{}", e);
             if cli.verbose > 0 {
                 error!(?e, "detailed error context");
             }
