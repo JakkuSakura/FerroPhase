@@ -11,7 +11,7 @@ use crate::ast::{
     Pattern, PatternKind, PatternStructField, SchemaDocument, SchemaKind, SchemaNode,
 };
 use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-use crate::pretty::{PrettyCtx, PrettyPrintable};
+use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use crate::query;
 
 impl PrettyPrintable for ast::Expr {
@@ -1092,8 +1092,8 @@ fn summarize_value(value: &ast::Value) -> String {
         ast::Value::Int(int_val) => int_val.value.to_string(),
         ast::Value::Bool(bool_val) => bool_val.value.to_string(),
         ast::Value::Decimal(decimal) => decimal.value.to_string(),
-        ast::Value::Char(ch) => format!("'{}'", ch.value),
-        ast::Value::String(string) => format!("\"{}\"", string.value),
+        ast::Value::Char(ch) => format!("'{}'", escape_char(ch.value)),
+        ast::Value::String(string) => format!("\"{}\"", escape_string(&string.value)),
         ast::Value::List(list) => format!("[{} values]", list.values.len()),
         ast::Value::Map(map) => format!("{{{} entries}}", map.entries.len()),
         ast::Value::Bytes(bytes) => format!("bytes(len={})", bytes.value.len()),
@@ -1478,7 +1478,7 @@ fn render_format_template(template: &ast::ExprFormatString) -> String {
 
 fn render_format_part(part: &ast::FormatTemplatePart) -> String {
     match part {
-        ast::FormatTemplatePart::Literal(text) => text.clone(),
+        ast::FormatTemplatePart::Literal(text) => escape_string(text),
         ast::FormatTemplatePart::Placeholder(placeholder) => {
             format!("{{{}}}", render_format_placeholder(placeholder))
         }

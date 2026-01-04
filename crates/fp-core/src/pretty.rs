@@ -101,3 +101,34 @@ where
 {
     PrettyDisplay::new(value, options)
 }
+
+pub fn escape_string(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                use std::fmt::Write as _;
+                let _ = write!(out, "\\u{{{:x}}}", ch as u32);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+pub fn escape_char(ch: char) -> String {
+    match ch {
+        '\'' => "\\'".to_string(),
+        '\\' => "\\\\".to_string(),
+        '\n' => "\\n".to_string(),
+        '\r' => "\\r".to_string(),
+        '\t' => "\\t".to_string(),
+        ch if ch.is_control() => format!("\\u{{{:x}}}", ch as u32),
+        _ => ch.to_string(),
+    }
+}

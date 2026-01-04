@@ -23,7 +23,6 @@
 //! ```
 
 use clap::{Parser, Subcommand};
-use console::style;
 use fp_cli::{
     Result,
     cli::CliConfig,
@@ -150,7 +149,7 @@ async fn main() -> Result<()> {
         Err(e) => {
             use tracing::error;
             // Emit via structured logging rather than printing directly
-            error!(error = %e, "{} {}", style("Error:").red().bold(), e);
+            error!(error = %e, "Error: {}", e);
             if cli.verbose > 0 {
                 error!(?e, "detailed error context");
             }
