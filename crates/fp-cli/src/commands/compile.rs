@@ -282,11 +282,7 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
         )));
     }
 
-    info!(
-        "{} Executing compiled binary: {}",
-        style("🚀").cyan(),
-        path.display()
-    );
+    info!("🚀 Executing compiled binary: {}", path.display());
 
     let output = Command::new(path).output().await.map_err(|e| {
         CliError::Compilation(format!("Failed to execute '{}': {}", path.display(), e))
