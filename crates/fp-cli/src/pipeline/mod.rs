@@ -1466,8 +1466,6 @@ impl Pipeline {
 
         Ok(BackendArtifacts {
             lir_program: lir.lir_program,
-            mir_text: mir.mir_text,
-            lir_text: lir.lir_text,
         })
     }
 
@@ -2622,8 +2620,6 @@ mod tests {
 
             BackendArtifacts {
                 lir_program: lir.lir_program,
-                mir_text: mir.mir_text,
-                lir_text: lir.lir_text,
             }
         }
 

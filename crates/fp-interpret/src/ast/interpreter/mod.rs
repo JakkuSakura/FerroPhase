@@ -6,12 +6,12 @@ use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::Pattern;
 use fp_core::ast::TypeQuoteToken;
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprClosure, ExprFormatString, ExprIntrinsicCall, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprRange, ExprRangeLimit, FormatArgRef, FormatTemplatePart, FunctionParam, Item,
-    ItemDefFunction, ItemKind, Node, NodeKind, StmtLet, StructuralField, Ty, TypeAny,
-    Path, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit, TypeVec, Value, ValueField,
-    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString, ExprIntrinsicCall,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprRange, ExprRangeLimit, FormatArgRef,
+    FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemKind, Node, NodeKind, Path,
+    StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
+    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit,
+    TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::ast::DecimalType;
 use fp_core::ast::{Ident, Locator};
@@ -292,6 +292,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(mut pending) = self.pending_items.pop() {
                     if !pending.is_empty() {
                         file.items.append(&mut pending);
+                        self.mark_mutated();
+                    }
+                }
+                if matches!(self.mode, InterpreterMode::CompileTime) {
+                    // Quote-only functions are compile-time artifacts; drop them before HIR lowering.
+                    if strip_quote_only_items(&mut file.items) {
                         self.mark_mutated();
                     }
                 }
@@ -1997,19 +2003,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     ) -> Value {
         if let ExprKind::Locator(locator) = struct_expr.name.kind_mut() {
             if let Some(info) = self.lookup_enum_variant(locator) {
-                if matches!(info.payload, EnumVariantPayload::Struct(_)) {
-                    let mut fields = Vec::new();
-                    for field in &mut struct_expr.fields {
-                        let value = if let Some(expr) = field.value.as_mut() {
-                            match self.eval_expr_runtime(expr) {
-                                RuntimeFlow::Value(value) => value,
-                                other => return self.finish_runtime_flow(other),
-                            }
-                        } else {
-                            Value::undefined()
-                        };
-                        fields.push(ValueField::new(field.name.clone(), value));
-                    }
+                if let EnumVariantPayload::Struct(field_names) = &info.payload {
+                    let fields = self.build_struct_literal_fields_runtime(
+                        Some(field_names),
+                        &mut struct_expr.fields,
+                    );
                     return self.build_enum_value(
                         &info,
                         Some(Value::Structural(ValueStructural::new(fields))),
@@ -2030,8 +2028,94 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         };
 
-        let mut fields = Vec::new();
-        for field in &mut struct_expr.fields {
+        let expected_names = match &struct_ty {
+            StructLiteralType::Struct(struct_ty) => Some(
+                struct_ty
+                    .fields
+                    .iter()
+                    .map(|field| field.name.clone())
+                    .collect::<Vec<_>>(),
+            ),
+            StructLiteralType::Structural(structural) => Some(
+                structural
+                    .fields
+                    .iter()
+                    .map(|field| field.name.clone())
+                    .collect::<Vec<_>>(),
+            ),
+        };
+        let fields = self.build_struct_literal_fields_runtime(
+            expected_names.as_deref(),
+            &mut struct_expr.fields,
+        );
+
+        match struct_ty {
+            StructLiteralType::Struct(struct_ty) => Value::Struct(ValueStruct::new(struct_ty, fields)),
+            StructLiteralType::Structural(_) => Value::Structural(ValueStructural::new(fields)),
+        }
+    }
+
+    fn build_struct_literal_fields_runtime(
+        &mut self,
+        expected_names: Option<&[Ident]>,
+        fields: &mut [ExprField],
+    ) -> Vec<ValueField> {
+        let mut value_fields = Vec::new();
+        if let Some(expected) = expected_names {
+            let mut field_indices = HashMap::new();
+            for (idx, field) in fields.iter().enumerate() {
+                let name = field.name.as_str().to_string();
+                if field_indices.insert(name.clone(), idx).is_some() {
+                    self.emit_error(format!(
+                        "duplicate field '{}' in struct literal",
+                        field.name
+                    ));
+                }
+            }
+            for expected_name in expected {
+                if let Some(index) = field_indices.get(expected_name.as_str()) {
+                    let field = &mut fields[*index];
+                    let value = field
+                        .value
+                        .as_mut()
+                        .map(|expr| {
+                            let flow = self.eval_expr_runtime(expr);
+                            match flow {
+                                RuntimeFlow::Value(value) => value,
+                                other => self.finish_runtime_flow(other),
+                            }
+                        })
+                        .unwrap_or_else(|| {
+                            self.emit_error(format!(
+                                "missing initializer for field '{}' in struct literal",
+                                field.name
+                            ));
+                            Value::undefined()
+                        });
+                    value_fields.push(ValueField::new(field.name.clone(), value));
+                } else {
+                    self.emit_error(format!(
+                        "missing initializer for field '{}' in struct literal",
+                        expected_name
+                    ));
+                    value_fields.push(ValueField::new(
+                        expected_name.clone(),
+                        Value::undefined(),
+                    ));
+                }
+            }
+            for field in fields.iter() {
+                if !expected.iter().any(|name| name == &field.name) {
+                    self.emit_error(format!(
+                        "field '{}' does not exist on this struct",
+                        field.name
+                    ));
+                }
+            }
+            return value_fields;
+        }
+
+        for field in fields {
             let value = field
                 .value
                 .as_mut()
@@ -2048,13 +2132,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                         Value::undefined()
                     })
                 });
-            fields.push(ValueField::new(field.name.clone(), value));
+            value_fields.push(ValueField::new(field.name.clone(), value));
         }
 
-        match struct_ty {
-            StructLiteralType::Struct(struct_ty) => Value::Struct(ValueStruct::new(struct_ty, fields)),
-            StructLiteralType::Structural(_) => Value::Structural(ValueStructural::new(fields)),
-        }
+        value_fields
     }
 
     // Evaluate indexing on list/tuple values.
@@ -2692,6 +2773,49 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     // build_quoted_fragment moved to interpreter_splicing.rs
+}
+
+fn strip_quote_only_items(items: &mut Vec<Item>) -> bool {
+    let mut changed = false;
+    items.retain(|item| {
+        let keep = !is_quote_only_item(item);
+        if !keep {
+            changed = true;
+        }
+        keep
+    });
+
+    for item in items.iter_mut() {
+        match item.kind_mut() {
+            ItemKind::Module(module) => {
+                if strip_quote_only_items(&mut module.items) {
+                    changed = true;
+                }
+            }
+            ItemKind::Impl(impl_block) => {
+                if strip_quote_only_items(&mut impl_block.items) {
+                    changed = true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    changed
+}
+
+fn is_quote_only_item(item: &Item) -> bool {
+    match item.kind() {
+        ItemKind::DefFunction(func) => {
+            func.sig.quote_kind.is_some()
+                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::QuoteToken(_)))
+        }
+        ItemKind::DeclFunction(func) => {
+            func.sig.quote_kind.is_some()
+                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::QuoteToken(_)))
+        }
+        _ => false,
+    }
 }
 
 fn intrinsic_symbol(kind: IntrinsicCallKind) -> Option<&'static str> {

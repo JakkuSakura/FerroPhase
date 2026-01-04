@@ -1,6 +1,5 @@
 use fp_core::ast::Locator;
 use fp_core::ast::Pattern;
-use fp_core::intrinsics::IntrinsicCallPayload;
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
@@ -107,7 +106,7 @@ enum PathResolutionScope {
 enum LiteralTypeKind {
     Primitive(ast::TypePrimitive),
     Unit,
-    Infer,
+    Null,
 }
 
 impl HirGenerator {
@@ -167,44 +166,9 @@ impl HirGenerator {
         self.errors.len() < self.max_errors
     }
 
-    #[allow(dead_code)]
-    fn build_error(message: impl Into<String>) -> Diagnostic {
-        Diagnostic::error(message.into()).with_source_context(DIAGNOSTIC_CONTEXT)
-    }
-
     /// Add a warning to the collection
-    #[allow(dead_code)]
     fn add_warning(&mut self, warning: Diagnostic) {
         self.warnings.push(warning);
-    }
-
-    /// Check if we should continue after an error (in tolerance mode)
-    #[allow(dead_code)]
-    fn should_continue_after_error(&self) -> bool {
-        self.error_tolerance && self.errors.len() < self.max_errors
-    }
-
-    /// Create an error HIR expression for recovery
-    #[allow(dead_code)]
-    fn create_error_expr(&mut self) -> hir::Expr {
-        // Create a literal placeholder expression for error recovery
-        hir::Expr {
-            hir_id: self.next_id(),
-            kind: hir::ExprKind::Literal(hir::Lit::Bool(false)), // Placeholder expression for recovery
-            span: Span::new(
-                self.current_file,
-                self.current_position,
-                self.current_position,
-            ),
-        }
-    }
-
-    /// Create an error HIR item for recovery  
-    #[allow(dead_code)]
-    fn create_error_item(&mut self) -> hir::Item {
-        // For now, skip creating error recovery items since HIR structure is complex
-        // In practice, error recovery at item level would handle this differently
-        panic!("Item-level error recovery not implemented yet")
     }
 
     /// Get all collected errors and warnings
@@ -1261,6 +1225,7 @@ impl HirGenerator {
                 ))
             }
             ast::Ty::Unit(_) => Ok(self.create_unit_type()),
+            ast::Ty::Nothing(_) => Ok(self.create_null_type()),
             ast::Ty::Any(_) => Ok(hir::TypeExpr::new(
                 self.next_id(),
                 hir::TypeExprKind::Infer,
@@ -1330,11 +1295,7 @@ impl HirGenerator {
                     let expr = match kind {
                         LiteralTypeKind::Primitive(prim) => self.primitive_type_to_hir(prim),
                         LiteralTypeKind::Unit => self.create_unit_type(),
-                        LiteralTypeKind::Infer => hir::TypeExpr::new(
-                            self.next_id(),
-                            hir::TypeExprKind::Infer,
-                            Span::new(self.current_file, 0, 0),
-                        ),
+                        LiteralTypeKind::Null => self.create_null_type(),
                     };
                     return Ok(expr);
                 }
@@ -1362,11 +1323,7 @@ impl HirGenerator {
                     ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
                     ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
                     ast::Value::Unit(_) => self.create_unit_type(),
-                    ast::Value::Null(_) | ast::Value::None(_) => hir::TypeExpr::new(
-                        self.next_id(),
-                        hir::TypeExprKind::Infer,
-                        Span::new(self.current_file, 0, 0),
-                    ),
+                    ast::Value::Null(_) | ast::Value::None(_) => self.create_null_type(),
                     other => {
                         return Err(crate::error::optimization_error(format!(
                             "unsupported literal type in AST→HIR lowering: {:?}",
@@ -1377,13 +1334,22 @@ impl HirGenerator {
                 Ok(expr)
             }
             ast::Ty::QuoteToken(_) => {
-                self.add_warning(
-                    Diagnostic::warning(
-                        "quote token types should be removed by const-eval; substituting error type"
-                            .to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT),
-                );
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "quote token types should be removed by const-eval; substituting error type"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                } else {
+                    self.add_error(
+                        Diagnostic::error(
+                            "quote token types should be removed by const-eval".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                }
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,
@@ -1512,6 +1478,20 @@ impl HirGenerator {
         )
     }
 
+    fn create_null_type(&mut self) -> hir::TypeExpr {
+        hir::TypeExpr::new(
+            self.next_id(),
+            hir::TypeExprKind::Path(hir::Path {
+                segments: vec![hir::PathSegment {
+                    name: hir::Symbol::new("null"),
+                    args: None,
+                }],
+                res: None,
+            }),
+            Span::new(self.current_file, 0, 0),
+        )
+    }
+
     fn literal_type_kind(&self, ty: &ast::Ty) -> Option<LiteralTypeKind> {
         match ty {
             ast::Ty::Value(type_value) => match type_value.value.as_ref() {
@@ -1529,7 +1509,7 @@ impl HirGenerator {
                 }
                 ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
                 ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
-                ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Infer),
+                ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Null),
                 _ => None,
             },
             ast::Ty::TypeBinaryOp(op) if matches!(op.kind, ast::TypeBinaryOpKind::Union) => {
@@ -1557,7 +1537,7 @@ impl HirGenerator {
             ast::Value::String(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::String)),
             ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
             ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
-            ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Infer),
+            ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Null),
             _ => None,
         }
     }
@@ -1575,7 +1555,7 @@ impl HirGenerator {
             if lhs.name != rhs.name {
                 return false;
             }
-            matches!(lhs.ty, LiteralTypeKind::Infer) || lhs.ty == rhs.ty
+            lhs.ty == rhs.ty
         })
     }
 
@@ -1585,7 +1565,7 @@ impl HirGenerator {
             let ty_key = match field.ty {
                 LiteralTypeKind::Primitive(prim) => format!("{:?}", prim),
                 LiteralTypeKind::Unit => "unit".to_string(),
-                LiteralTypeKind::Infer => "infer".to_string(),
+                LiteralTypeKind::Null => "null".to_string(),
             };
             parts.push(format!("{}:{}", field.name, ty_key));
         }
@@ -1777,7 +1757,7 @@ impl HirGenerator {
                             .and_then(|kind| match kind {
                                 LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
                                 LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
-                                LiteralTypeKind::Infer => Some(ast::Ty::Any(ast::TypeAny)),
+                                LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
                             })
                             .ok_or_else(|| {
                                 crate::error::optimization_error(format!(
@@ -1821,7 +1801,7 @@ impl HirGenerator {
                     .and_then(|kind| match kind {
                         LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
                         LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
-                        LiteralTypeKind::Infer => Some(ast::Ty::Any(ast::TypeAny)),
+                        LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
                     })
                     .ok_or_else(|| {
                         crate::error::optimization_error(format!(
@@ -2059,8 +2039,6 @@ struct ClosureInfo {
     env_struct_ty: ast::Ty,
     call_fn_ident: ast::Ident,
     call_ret_ty: ast::Ty,
-    #[allow(dead_code)]
-    fn_ty: ast::Ty,
 }
 
 #[derive(Clone)]
@@ -2269,12 +2247,7 @@ impl ClosureLowering {
             .or(fallback_ret_ty)
             .unwrap_or_else(|| ast::Ty::Unknown(ast::TypeUnknown));
 
-        self.rewrite_captured_usage(
-            &mut rewritten_body,
-            &captures,
-            &env_param_ident,
-            &env_struct_ty,
-        );
+        self.rewrite_captured_usage(&mut rewritten_body, &captures, &env_param_ident);
 
         let mut fn_item_ast =
             ast::ItemDefFunction::new_simple(call_ident.clone(), rewritten_body.into());
@@ -2327,7 +2300,6 @@ impl ClosureLowering {
             env_struct_ty,
             call_fn_ident: call_ident,
             call_ret_ty: call_ret_ty.clone(),
-            fn_ty: expr_ty,
         };
 
         Ok(Some(info))
@@ -2648,10 +2620,8 @@ impl ClosureLowering {
         expr: &mut ast::Expr,
         captures: &[Capture],
         env_ident: &ast::Ident,
-        env_ty: &ast::Ty,
     ) {
-        let mut replacer =
-            CaptureReplacer::new(captures, env_ident.clone(), env_ty.clone());
+        let mut replacer = CaptureReplacer::new(captures, env_ident.clone());
         replacer.visit(expr);
     }
 }
@@ -2848,13 +2818,9 @@ impl CaptureCollector {
                     }
                 }
             },
-            ast::ExprKind::IntrinsicContainer(_) => {
-                unreachable!("intrinsic collections should have been expanded")
-            }
             ast::ExprKind::Any(_)
             | ast::ExprKind::Id(_)
-            | ast::ExprKind::Closure(_)
-            | ast::ExprKind::Closured(_) => {}
+            => {}
         }
     }
 
@@ -2940,11 +2906,10 @@ fn collect_pattern_idents(pat: &ast::Pattern, out: &mut Vec<String>) {
 struct CaptureReplacer {
     captures: HashMap<String, ast::Ty>,
     env_ident: ast::Ident,
-    env_ty: ast::Ty,
 }
 
 impl CaptureReplacer {
-    fn new(captures: &[Capture], env_ident: ast::Ident, env_ty: ast::Ty) -> Self {
+    fn new(captures: &[Capture], env_ident: ast::Ident) -> Self {
         let mut capture_map = HashMap::new();
         for capture in captures {
             capture_map.insert(capture.name.as_str().to_string(), capture.ty.clone());
@@ -2952,7 +2917,6 @@ impl CaptureReplacer {
         Self {
             captures: capture_map,
             env_ident,
-            env_ty,
         }
     }
 
@@ -3118,14 +3082,15 @@ impl CaptureReplacer {
             ast::ExprKind::Splice(s) => {
                 self.visit(s.token.as_mut());
             }
-            ast::ExprKind::IntrinsicContainer(_) => {
-                unreachable!("intrinsic collections should have been expanded")
+            ast::ExprKind::IntrinsicContainer(container) => {
+                let mut new_expr = container.clone().into_const_expr();
+                self.visit(&mut new_expr);
+                *expr = new_expr;
             }
             ast::ExprKind::Any(_)
             | ast::ExprKind::Id(_)
             | ast::ExprKind::Closure(_)
-            | ast::ExprKind::Closured(_)
-            | ast::ExprKind::Locator(_) => {}
+            | ast::ExprKind::Closured(_) => {}
         }
     }
 

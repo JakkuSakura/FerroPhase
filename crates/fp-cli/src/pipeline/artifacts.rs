@@ -18,8 +18,6 @@ pub(crate) struct LirArtifacts {
 #[derive(Debug)]
 pub(crate) struct BackendArtifacts {
     pub(crate) lir_program: lir::LirProgram,
-    pub(crate) mir_text: String,
-    pub(crate) lir_text: String,
 }
 
 /// LLVM artifacts produced by LIR→LLVM lowering.

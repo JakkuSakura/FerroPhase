@@ -1447,8 +1447,8 @@ impl LirGenerator {
         })?;
 
         let element_ty = match &base_ty.kind {
-            TyKind::Array(elem, _) => (*elem.clone()),
-            TyKind::Slice(elem) => (*elem.clone()),
+            TyKind::Array(elem, _) => *elem.clone(),
+            TyKind::Slice(elem) => *elem.clone(),
             _ => {
                 return Err(crate::error::optimization_error(
                     "MIR→LIR: index projection requires array or slice type",
@@ -2411,15 +2411,6 @@ impl LirGenerator {
             .collect()
     }
 
-    fn coerce_aggregate_value(
-        &mut self,
-        value: lir::LirValue,
-        target_ty: &lir::LirType,
-        instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
-        self.coerce_aggregate_value_with_source(value, None, target_ty, instructions)
-    }
-
     fn coerce_aggregate_value_with_source(
         &mut self,
         value: lir::LirValue,
@@ -2438,15 +2429,6 @@ impl LirGenerator {
                 instructions,
             ),
         }
-    }
-
-    fn cast_runtime_value_to_lir_type(
-        &mut self,
-        value: lir::LirValue,
-        target_ty: lir::LirType,
-        instructions: &mut Vec<lir::LirInstruction>,
-    ) -> lir::LirValue {
-        self.cast_runtime_value_to_lir_type_with_source(value, None, target_ty, instructions)
     }
 
     fn cast_runtime_value_to_lir_type_with_source(
@@ -3112,10 +3094,10 @@ impl LirGenerator {
                 }
                 mir::PlaceElem::Index(_) => match &ty.kind {
                     TyKind::Array(elem, _) => {
-                        ty = (*elem.clone());
+                        ty = *elem.clone();
                     }
                     TyKind::Slice(elem) => {
-                        ty = (*elem.clone());
+                        ty = *elem.clone();
                     }
                     _ => {
                         return None;

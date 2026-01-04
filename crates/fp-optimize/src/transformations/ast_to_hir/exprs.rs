@@ -53,13 +53,22 @@ impl HirGenerator {
                 hir::ExprKind::Index(Box::new(base), Box::new(index))
             }
             ExprKind::Quote(_quote) => {
-                self.add_warning(
-                    Diagnostic::warning(
-                        "quote expressions should be removed by const-eval; substituting unit"
-                            .to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT),
-                );
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "quote expressions should be removed by const-eval; substituting unit"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                } else {
+                    self.add_error(
+                        Diagnostic::error(
+                            "quote expressions should be removed by const-eval".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                }
                 let block = hir::Block {
                     hir_id: self.next_id(),
                     stmts: Vec::new(),
@@ -68,13 +77,22 @@ impl HirGenerator {
                 hir::ExprKind::Block(block)
             }
             ExprKind::Splice(_splice) => {
-                self.add_warning(
-                    Diagnostic::warning(
-                        "splice expressions should be removed by const-eval; substituting unit"
-                            .to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT),
-                );
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "splice expressions should be removed by const-eval; substituting unit"
+                                .to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                } else {
+                    self.add_error(
+                        Diagnostic::error(
+                            "splice expressions should be removed by const-eval".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                }
                 let block = hir::Block {
                     hir_id: self.next_id(),
                     stmts: Vec::new(),

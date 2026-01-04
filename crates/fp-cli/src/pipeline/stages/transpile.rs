@@ -1,5 +1,6 @@
 use super::super::*;
 use super::super::artifacts::{LirArtifacts, MirArtifacts};
+use fp_core::mir;
 
 impl Pipeline {
     pub(crate) fn stage_hir_to_mir(
@@ -55,7 +56,7 @@ impl Pipeline {
         mir_program: &mir::Program,
         options: &PipelineOptions,
         base_path: &Path,
-        manager: &DiagnosticManager,
+        _manager: &DiagnosticManager,
     ) -> Result<LirArtifacts, CliError> {
         let mut lir_generator = LirGenerator::new();
         let lir_program = lir_generator
