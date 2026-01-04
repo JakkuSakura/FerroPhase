@@ -249,6 +249,35 @@ fn summarize_rvalue(rvalue: &Rvalue) -> String {
                 .join(", ");
             format!("aggregate({}; [{}])", kind_desc, ops)
         }
+        Rvalue::ContainerLiteral { kind, elements } => {
+            let elements = elements
+                .iter()
+                .map(summarize_operand)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("container_literal({:?}; [{}])", kind, elements)
+        }
+        Rvalue::ContainerMapLiteral { kind, entries } => {
+            let entries = entries
+                .iter()
+                .map(|(key, value)| format!("({}, {})", summarize_operand(key), summarize_operand(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("container_map_literal({:?}; [{}])", kind, entries)
+        }
+        Rvalue::ContainerLen { kind, container } => {
+            format!("container_len({:?}; {})", kind, summarize_operand(container))
+        }
+        Rvalue::ContainerGet {
+            kind,
+            container,
+            key,
+        } => format!(
+            "container_get({:?}; {}, {})",
+            kind,
+            summarize_operand(container),
+            summarize_operand(key)
+        ),
         Rvalue::ThreadLocalRef(def_id) => format!("thread_local_ref({:?})", def_id),
         Rvalue::Discriminant(place) => format!("discriminant({})", format_place(place)),
         Rvalue::ShallowInitBox(op, ty) => format!("box({}, {})", summarize_operand(op), ty),

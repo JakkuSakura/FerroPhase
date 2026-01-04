@@ -191,6 +191,23 @@ pub enum Rvalue {
     UnaryOp(UnOp, Operand),
     Discriminant(Place),
     Aggregate(AggregateKind, Vec<Operand>),
+    ContainerLiteral {
+        kind: ContainerKind,
+        elements: Vec<Operand>,
+    },
+    ContainerMapLiteral {
+        kind: ContainerKind,
+        entries: Vec<(Operand, Operand)>,
+    },
+    ContainerLen {
+        kind: ContainerKind,
+        container: Operand,
+    },
+    ContainerGet {
+        kind: ContainerKind,
+        container: Operand,
+        key: Operand,
+    },
     ShallowInitBox(Operand, Ty),
 }
 
@@ -360,6 +377,19 @@ pub enum AggregateKind {
     ),
     Closure(DefId, SubstsRef),
     Generator(DefId, SubstsRef, Movability),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ContainerKind {
+    List {
+        elem_ty: Ty,
+        len: u64,
+    },
+    Map {
+        key_ty: Ty,
+        value_ty: Ty,
+        len: u64,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
