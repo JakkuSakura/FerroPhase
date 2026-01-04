@@ -20,7 +20,7 @@ hir::Program {
     pub fn apply<T>(a: T, b: T, op: fn(T, T) -> T) -> () {
         // params: [a: T, b: T, op: fn(T, T) -> T]
         {
-            std::Println(1 args);
+            std::Println(3 args);
         }
     }
 
@@ -54,18 +54,23 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::Println(0 args);
+            printf("📘 Tutorial: 09_higher_order_functions.fp\n");
+            printf("🧭 Focus: Higher-order functions: passing functions as arguments and closures\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            printf("Generic operations:\n");
             apply(10, 20, add);
             apply(1.5, 2.5, add);
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
+            printf("\nConditional:\n");
+            printf("apply_if(true, 5, 3) = %lld\n", apply_if(true, 5, 3, add__spec0));
+            printf("apply_if(false, 5, 3) = %lld\n", apply_if(false, 5, 3, add__spec0));
+            printf("\nClosure factory:\n");
             pub const add_10: __Closure0 =
                 make_adder(10);
-            std::Println(1 args);
+            printf("add_10(5) = %lld\n", __closure0_call(add_10, 5));
             let double = __Closure1 { __fp_no_capture: 0 };
-            std::Println(1 args);
+            printf("double(7) = %lld\n", __closure1_call(double, 7));
         }
     }
 

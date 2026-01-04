@@ -13,6 +13,13 @@ hir::Program {
                 ((3.14159 * self.radius) * self.radius)
             }
         }
+
+        fn describe(self: &Circle) -> () {
+            // params: [self: &Circle]
+            {
+                std::Println(1 args);
+            }
+        }
     }
 
     pub struct Rectangle {
@@ -27,17 +34,29 @@ hir::Program {
                 (self.width * self.height)
             }
         }
+
+        fn describe(self: &Rectangle) -> () {
+            // params: [self: &Rectangle]
+            {
+                std::Println(1 args);
+            }
+        }
     }
 
     pub fn print_area<T>(shape: &T) -> () {
         // params: [shape: &T]
         {
-            std::Println(1 args);
+            printf("%.2f\n", shape.area());
         }
     }
 
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 16_traits.fp\n");
+            printf("🧭 Focus: Traits: defining shared behavior with default methods\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             let circle = Circle { radius: 5 };
             let rect = Rectangle { width: 4, height: 6 };
             circle.describe();

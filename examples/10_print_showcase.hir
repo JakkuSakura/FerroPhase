@@ -1,31 +1,36 @@
 hir::Program {
     pub fn main() -> () {
         {
-            std::Print(0 args);
-            std::Print(0 args);
-            std::Println(0 args);
-            std::Print(1 args);
-            std::Print(2 args);
-            std::Print(4 args);
-            std::Println(0 args);
-            std::Print(1 args);
-            std::Println(0 args);
+            printf("📘 Tutorial: 10_print_showcase.fp\n");
+            printf("🧭 Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            printf("Hello");
+            printf("World with newlines");
+            printf("\n");
+            printf("Number: %lld", 42);
+            printf("Boolean: %d %d", true, false);
+            printf("Mixed: %lld %f %s %d", 1, 2.5, "text", true);
+            printf("\n");
+            printf("Namespace test %s", "still works");
+            printf("\n");
             let value = 7;
-            std::Println(1 args);
-            std::Println(3 args);
-            std::Println(1 args);
+            printf("value = %lld\n", value);
+            printf("math: %lld + %lld = %lld\n", 2, 3, 5);
+            printf("float: %f\n", 3.14159);
             std::Println(2 args);
-            std::Println(2 args);
-            std::Println(2 args);
-            std::Print(4 args);
-            std::Println(0 args);
-            std::Print(0 args);
-            std::Print(0 args);
-            std::Println(0 args);
+            printf("tuple: (%lld, %lld)\n", 1, 2);
+            printf("bools: %d %d\n", true, false);
+            printf("This %s %s %s %s", "stays", "on", "one", "line");
+            printf("\n");
+            printf("Continuing without newline");
+            printf(" - appended content");
+            printf("\n");
             std::Print(1 args);
             std::Print(1 args);
-            std::Println(0 args);
-            std::Println(2 args);
+            printf("\n");
+            printf("escaped: %s %s\n", "line1\nline2", "tab\tend");
         }
     }
 }

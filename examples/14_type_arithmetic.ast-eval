@@ -49,7 +49,7 @@ ast::File {
       block (1 stmt) : ()
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" value
+            template: "display: {}" value
     pub fn describe_optional(value: Expr(FooMaybe)) -> Expr(Int) : fn(any) -> any : fn(any) -> any
       block (1 stmt) : any
         expr_stmt (value)
@@ -73,7 +73,22 @@ ast::File {
               body:
                 value 0 : i64
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (34 stmts) : ()
+      block (39 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 14_type_arithmetic.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Type arithmetic examples: combining and relating types with operators."
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         let base_foo: Expr(Foo)
           init:
             struct Foo : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}

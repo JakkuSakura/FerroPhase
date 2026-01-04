@@ -3,84 +3,134 @@ source_filename = "07_compile_time_validation"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.07_compile_time_validation.0 = private unnamed_addr constant [32 x i8] c"data: sizeof=%llu, fields=%llu\0A\00", align 1
-@.str.07_compile_time_validation.1 = private unnamed_addr constant [26 x i8] c"data: has_a=%d, has_x=%d\0A\00", align 1
-@.str.07_compile_time_validation.2 = private unnamed_addr constant [50 x i8] c"header: sizeof=%llu, fields=%llu, has_version=%d\0A\00", align 1
-@.str.07_compile_time_validation.3 = private unnamed_addr constant [12 x i8] c"struct Data\00", align 1
-@.str.07_compile_time_validation.4 = private unnamed_addr constant [5 x i8] c"i64\0A\00", align 1
-@.str.07_compile_time_validation.5 = private unnamed_addr constant [4 x i8] c"u8\0A\00", align 1
-@.str.07_compile_time_validation.6 = private unnamed_addr constant [38 x i8] c"types: data='%s' a='%s' version='%s'\0A\00", align 1
-@.str.07_compile_time_validation.7 = private unnamed_addr constant [24 x i8] c"data has to_string: %d\0A\00", align 1
-@.str.07_compile_time_validation.8 = private unnamed_addr constant [64 x i8] c"layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\0A\00", align 1
+@.str.07_compile_time_validation.0 = private unnamed_addr constant [46 x i8] c"\F0\9F\93\98 Tutorial: 07_compile_time_validation.fp\0A\00", align 1
+@.str.07_compile_time_validation.1 = private unnamed_addr constant [79 x i8] c"\F0\9F\A7\AD Focus: Compile-time validation using const expressions and introspection\0A\00", align 1
+@.str.07_compile_time_validation.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
+@.str.07_compile_time_validation.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
+@.str.07_compile_time_validation.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
+@.str.07_compile_time_validation.5 = private unnamed_addr constant [32 x i8] c"data: sizeof=%llu, fields=%llu\0A\00", align 1
+@.str.07_compile_time_validation.6 = private unnamed_addr constant [26 x i8] c"data: has_a=%d, has_x=%d\0A\00", align 1
+@.str.07_compile_time_validation.7 = private unnamed_addr constant [50 x i8] c"header: sizeof=%llu, fields=%llu, has_version=%d\0A\00", align 1
+@.str.07_compile_time_validation.8 = private unnamed_addr constant [12 x i8] c"struct Data\00", align 1
+@.str.07_compile_time_validation.9 = private unnamed_addr constant [5 x i8] c"i64\0A\00", align 1
+@.str.07_compile_time_validation.10 = private unnamed_addr constant [4 x i8] c"u8\0A\00", align 1
+@.str.07_compile_time_validation.11 = private unnamed_addr constant [38 x i8] c"types: data='%s' a='%s' version='%s'\0A\00", align 1
+@.str.07_compile_time_validation.12 = private unnamed_addr constant [24 x i8] c"data has to_string: %d\0A\00", align 1
+@.str.07_compile_time_validation.13 = private unnamed_addr constant [64 x i8] c"layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\0A\00", align 1
 
 define i32 @main() {
 bb0:
-  %alloca_44 = alloca i64, align 8
-  %alloca_count_44 = alloca i64, align 8
+  %alloca_53 = alloca i64, align 8
+  %alloca_count_53 = alloca i64, align 8
+  %alloca_51 = alloca i1, align 1
+  %alloca_count_51 = alloca i1, align 1
+  %alloca_49 = alloca i1, align 1
+  %alloca_count_49 = alloca i1, align 1
+  %alloca_47 = alloca i1, align 1
+  %alloca_count_47 = alloca i1, align 1
   %alloca_42 = alloca i1, align 1
   %alloca_count_42 = alloca i1, align 1
-  %alloca_40 = alloca i1, align 1
-  %alloca_count_40 = alloca i1, align 1
-  %alloca_38 = alloca i1, align 1
-  %alloca_count_38 = alloca i1, align 1
-  %alloca_34 = alloca i1, align 1
-  %alloca_count_34 = alloca i1, align 1
-  %alloca_28 = alloca ptr, align 8
-  %alloca_count_28 = alloca ptr, align 8
-  %alloca_26 = alloca ptr, align 8
-  %alloca_count_26 = alloca ptr, align 8
-  %alloca_24 = alloca ptr, align 8
-  %alloca_count_24 = alloca ptr, align 8
-  %alloca_18 = alloca i1, align 1
-  %alloca_count_18 = alloca i1, align 1
-  %alloca_16 = alloca i64, align 8
-  %alloca_count_16 = alloca i64, align 8
-  %alloca_14 = alloca i64, align 8
-  %alloca_count_14 = alloca i64, align 8
-  %alloca_9 = alloca i1, align 1
-  %alloca_count_9 = alloca i1, align 1
-  %alloca_7 = alloca i1, align 1
-  %alloca_count_7 = alloca i1, align 1
-  %alloca_2 = alloca i64, align 8
-  %alloca_count_2 = alloca i64, align 8
-  %alloca_0 = alloca i64, align 8
-  %alloca_count_0 = alloca i64, align 8
-  store i64 24, ptr %alloca_count_0, align 8
-  store i64 3, ptr %alloca_count_2, align 8
-  %load_4 = load i64, ptr %alloca_count_0, align 8
-  %load_5 = load i64, ptr %alloca_count_2, align 8
-  %call_6 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.0, i64 %load_4, i64 %load_5)
-  store i1 true, ptr %alloca_count_7, align 1
-  store i1 false, ptr %alloca_count_9, align 1
-  %load_11 = load i1, ptr %alloca_count_7, align 1
-  %load_12 = load i1, ptr %alloca_count_9, align 1
-  %call_13 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.1, i1 %load_11, i1 %load_12)
-  store i64 32, ptr %alloca_count_14, align 8
-  store i64 4, ptr %alloca_count_16, align 8
-  store i1 true, ptr %alloca_count_18, align 1
-  %load_20 = load i64, ptr %alloca_count_14, align 8
-  %load_21 = load i64, ptr %alloca_count_16, align 8
-  %load_22 = load i1, ptr %alloca_count_18, align 1
-  %call_23 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.2, i64 %load_20, i64 %load_21, i1 %load_22)
-  store ptr @.str.07_compile_time_validation.3, ptr %alloca_count_24, align 8
-  store ptr @.str.07_compile_time_validation.4, ptr %alloca_count_26, align 8
-  store ptr @.str.07_compile_time_validation.5, ptr %alloca_count_28, align 8
-  %load_30 = load ptr, ptr %alloca_count_24, align 8
-  %load_31 = load ptr, ptr %alloca_count_26, align 8
-  %load_32 = load ptr, ptr %alloca_count_28, align 8
-  %call_33 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.6, ptr %load_30, ptr %load_31, ptr %load_32)
-  store i1 true, ptr %alloca_count_34, align 1
-  %load_36 = load i1, ptr %alloca_count_34, align 1
-  %call_37 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.7, i1 %load_36)
-  store i1 true, ptr %alloca_count_38, align 1
-  store i1 true, ptr %alloca_count_40, align 1
+  %alloca_36 = alloca ptr, align 8
+  %alloca_count_36 = alloca ptr, align 8
+  %alloca_34 = alloca ptr, align 8
+  %alloca_count_34 = alloca ptr, align 8
+  %alloca_32 = alloca ptr, align 8
+  %alloca_count_32 = alloca ptr, align 8
+  %alloca_25 = alloca i1, align 1
+  %alloca_count_25 = alloca i1, align 1
+  %alloca_23 = alloca i64, align 8
+  %alloca_count_23 = alloca i64, align 8
+  %alloca_21 = alloca i64, align 8
+  %alloca_count_21 = alloca i64, align 8
+  %alloca_14 = alloca i1, align 1
+  %alloca_count_14 = alloca i1, align 1
+  %alloca_12 = alloca i1, align 1
+  %alloca_count_12 = alloca i1, align 1
+  %alloca_7 = alloca i64, align 8
+  %alloca_count_7 = alloca i64, align 8
+  %alloca_5 = alloca i64, align 8
+  %alloca_count_5 = alloca i64, align 8
+  %call_0 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.0)
+  br label %bb1
+
+bb1:                                              ; preds = %bb0
+  %call_1 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.1)
+  br label %bb2
+
+bb2:                                              ; preds = %bb1
+  %call_2 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.2)
+  br label %bb3
+
+bb3:                                              ; preds = %bb2
+  %call_3 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.3)
+  br label %bb4
+
+bb4:                                              ; preds = %bb3
+  %call_4 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.4)
+  br label %bb5
+
+bb5:                                              ; preds = %bb4
+  store i64 24, ptr %alloca_count_5, align 8
+  store i64 3, ptr %alloca_count_7, align 8
+  %load_9 = load i64, ptr %alloca_count_5, align 8
+  %load_10 = load i64, ptr %alloca_count_7, align 8
+  %call_11 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.5, i64 %load_9, i64 %load_10)
+  br label %bb6
+
+bb6:                                              ; preds = %bb5
+  store i1 true, ptr %alloca_count_12, align 1
+  store i1 false, ptr %alloca_count_14, align 1
+  %load_16 = load i1, ptr %alloca_count_12, align 1
+  %zext = zext i1 %load_16 to i32
+  %load_18 = load i1, ptr %alloca_count_14, align 1
+  %zext1 = zext i1 %load_18 to i32
+  %call_20 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.6, i32 %zext, i32 %zext1)
+  br label %bb7
+
+bb7:                                              ; preds = %bb6
+  store i64 32, ptr %alloca_count_21, align 8
+  store i64 4, ptr %alloca_count_23, align 8
+  store i1 true, ptr %alloca_count_25, align 1
+  %load_27 = load i64, ptr %alloca_count_21, align 8
+  %load_28 = load i64, ptr %alloca_count_23, align 8
+  %load_29 = load i1, ptr %alloca_count_25, align 1
+  %zext2 = zext i1 %load_29 to i32
+  %call_31 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.7, i64 %load_27, i64 %load_28, i32 %zext2)
+  br label %bb8
+
+bb8:                                              ; preds = %bb7
+  store ptr @.str.07_compile_time_validation.8, ptr %alloca_count_32, align 8
+  store ptr @.str.07_compile_time_validation.9, ptr %alloca_count_34, align 8
+  store ptr @.str.07_compile_time_validation.10, ptr %alloca_count_36, align 8
+  %load_38 = load ptr, ptr %alloca_count_32, align 8
+  %load_39 = load ptr, ptr %alloca_count_34, align 8
+  %load_40 = load ptr, ptr %alloca_count_36, align 8
+  %call_41 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.11, ptr %load_38, ptr %load_39, ptr %load_40)
+  br label %bb9
+
+bb9:                                              ; preds = %bb8
   store i1 true, ptr %alloca_count_42, align 1
-  store i64 56, ptr %alloca_count_44, align 8
-  %load_46 = load i1, ptr %alloca_count_38, align 1
-  %load_47 = load i1, ptr %alloca_count_40, align 1
-  %load_48 = load i1, ptr %alloca_count_42, align 1
-  %load_49 = load i64, ptr %alloca_count_44, align 8
-  %call_50 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.8, i1 %load_46, i1 %load_47, i1 %load_48, i64 %load_49)
+  %load_44 = load i1, ptr %alloca_count_42, align 1
+  %zext3 = zext i1 %load_44 to i32
+  %call_46 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.12, i32 %zext3)
+  br label %bb10
+
+bb10:                                             ; preds = %bb9
+  store i1 true, ptr %alloca_count_47, align 1
+  store i1 true, ptr %alloca_count_49, align 1
+  store i1 true, ptr %alloca_count_51, align 1
+  store i64 56, ptr %alloca_count_53, align 8
+  %load_55 = load i1, ptr %alloca_count_47, align 1
+  %zext4 = zext i1 %load_55 to i32
+  %load_57 = load i1, ptr %alloca_count_49, align 1
+  %zext5 = zext i1 %load_57 to i32
+  %load_59 = load i1, ptr %alloca_count_51, align 1
+  %zext6 = zext i1 %load_59 to i32
+  %load_61 = load i64, ptr %alloca_count_53, align 8
+  %call_62 = call i32 (ptr, ...) @printf(ptr @.str.07_compile_time_validation.13, i32 %zext4, i32 %zext5, i32 %zext6, i64 %load_61)
+  br label %bb11
+
+bb11:                                             ; preds = %bb10
   ret i32 0
 }
 

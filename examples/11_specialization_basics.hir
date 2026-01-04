@@ -45,6 +45,11 @@ hir::Program {
 
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 11_specialization_basics.fp\n");
+            printf("🧭 Focus: Function specialization via generic monomorphization\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             let _ = pipeline(10, 20);
             let _ = pipeline(1.5, 2.5);
             let pair_i = Pair { left: 3, right: 7 };

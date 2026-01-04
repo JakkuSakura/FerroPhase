@@ -1,26 +1,31 @@
 hir::Program {
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 03_control_flow.fp\n");
+            printf("🧭 Focus: Control flow: if/else expressions with const and runtime evaluation\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub const TEMP: i64 =
                 25;
             pub const WEATHER: &str =
                 "warm";
-            std::Println(2 args);
+            printf("%lld°C is %s\n", TEMP, WEATHER);
             pub const IS_SUNNY: bool =
                 true;
             pub const IS_WARM: bool =
                 true;
             pub const ACTIVITY: &str =
                 "outdoor";
-            std::Println(1 args);
+            printf("Suggested: %s\n", ACTIVITY);
             pub const SCORE: i64 =
                 85;
             pub const GRADE: &str =
                 "B";
-            std::Println(2 args);
+            printf("Score %lld = grade %s\n", SCORE, GRADE);
             let value = 42;
             let category = <control-flow>;
-            std::Println(2 args);
+            printf("Value %lld is %s\n", value, category);
         }
     }
 }

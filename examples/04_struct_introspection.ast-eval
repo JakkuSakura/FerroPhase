@@ -1,7 +1,22 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (34 stmts) : ()
+      block (39 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 04_struct_introspection.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Struct introspection demonstration"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         pub struct Point : Point{x: Expr(f64), y: Expr(f64)} {
           x: Expr(f64)
           y: Expr(f64)
@@ -56,12 +71,10 @@ ast::File {
             template: "Color methods: {}" 0
         expr_stmt ;
           intrinsic println : ()
-            template: "
-✓ Introspection completed!"
+            template: "\n✓ Introspection completed!"
         expr_stmt ;
           intrinsic println : ()
-            template: "
-=== Transpilation Demo ==="
+            template: "\n=== Transpilation Demo ==="
         pub const POINT_SIZE_CONST: u64 : u64
           value 16 : u64
         pub const COLOR_SIZE_CONST: u64 : u64
@@ -107,6 +120,5 @@ ast::File {
             template: "  Red: rgb({}, {}, {})" red.r, red.g, red.b
         expr_stmt ;
           intrinsic println : ()
-            template: "
-✓ Introspection enables external code generation!"
+            template: "\n✓ Introspection enables external code generation!"
 }

@@ -11,9 +11,20 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.12_pattern_matching.5 = private unnamed_addr constant [9 x i8] c"negative\00", align 1
 @.str.12_pattern_matching.6 = private unnamed_addr constant [5 x i8] c"even\00", align 1
 @.str.12_pattern_matching.7 = private unnamed_addr constant [4 x i8] c"odd\00", align 1
-@.str.12_pattern_matching.8 = private unnamed_addr constant [4 x i8] c"%s\0A\00", align 1
-@.str.12_pattern_matching.9 = private unnamed_addr constant [6 x i8] c"%lld\0A\00", align 1
-@.str.12_pattern_matching.10 = private unnamed_addr constant [8 x i8] c"0x%06X\0A\00", align 1
+@.str.12_pattern_matching.8 = private unnamed_addr constant [39 x i8] c"\F0\9F\93\98 Tutorial: 12_pattern_matching.fp\0A\00", align 1
+@.str.12_pattern_matching.9 = private unnamed_addr constant [79 x i8] c"\F0\9F\A7\AD Focus: Pattern matching: match expressions with guards and destructuring\0A\00", align 1
+@.str.12_pattern_matching.10 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
+@.str.12_pattern_matching.11 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
+@.str.12_pattern_matching.12 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
+@.str.12_pattern_matching.13 = private unnamed_addr constant [20 x i8] c"describe(red) = %s\0A\00", align 1
+@.str.12_pattern_matching.14 = private unnamed_addr constant [20 x i8] c"describe(rgb) = %s\0A\00", align 1
+@.str.12_pattern_matching.15 = private unnamed_addr constant [19 x i8] c"classify(-5) = %s\0A\00", align 1
+@.str.12_pattern_matching.16 = private unnamed_addr constant [18 x i8] c"classify(0) = %s\0A\00", align 1
+@.str.12_pattern_matching.17 = private unnamed_addr constant [18 x i8] c"classify(4) = %s\0A\00", align 1
+@.str.12_pattern_matching.18 = private unnamed_addr constant [18 x i8] c"classify(7) = %s\0A\00", align 1
+@.str.12_pattern_matching.19 = private unnamed_addr constant [31 x i8] c"unwrap_or(Some(42), 0) = %lld\0A\00", align 1
+@.str.12_pattern_matching.20 = private unnamed_addr constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00", align 1
+@.str.12_pattern_matching.21 = private unnamed_addr constant [8 x i8] c"0x%06X\0A\00", align 1
 
 define internal ptr @describe(ptr %0) {
 bb0:
@@ -231,81 +242,128 @@ bb5:                                              ; preds = %bb3
 
 define i32 @main() {
 bb0:
-  %alloca_155 = alloca i64, align 8
-  %alloca_count_155 = alloca i64, align 8
+  %alloca_160 = alloca i64, align 8
+  %alloca_count_160 = alloca i64, align 8
+  %alloca_155 = alloca { i64, i64 }, align 8
+  %alloca_count_155 = alloca { i64, i64 }, align 8
   %alloca_150 = alloca { i64, i64 }, align 8
   %alloca_count_150 = alloca { i64, i64 }, align 8
-  %alloca_145 = alloca { i64, i64 }, align 8
-  %alloca_count_145 = alloca { i64, i64 }, align 8
-  %alloca_133 = alloca i64, align 8
-  %alloca_count_133 = alloca i64, align 8
+  %alloca_138 = alloca i64, align 8
+  %alloca_count_138 = alloca i64, align 8
+  %alloca_133 = alloca ptr, align 8
+  %alloca_count_133 = alloca ptr, align 8
   %alloca_128 = alloca ptr, align 8
   %alloca_count_128 = alloca ptr, align 8
-  %alloca_123 = alloca ptr, align 8
-  %alloca_count_123 = alloca ptr, align 8
+  %alloca_126 = alloca { i64, i8, i8, i8 }, align 8
+  %alloca_count_126 = alloca { i64, i8, i8, i8 }, align 8
+  %alloca_123 = alloca { i64, i8, i8, i8 }, align 8
+  %alloca_count_123 = alloca { i64, i8, i8, i8 }, align 8
   %alloca_121 = alloca { i64, i8, i8, i8 }, align 8
   %alloca_count_121 = alloca { i64, i8, i8, i8 }, align 8
-  %alloca_118 = alloca { i64, i8, i8, i8 }, align 8
-  %alloca_count_118 = alloca { i64, i8, i8, i8 }, align 8
-  %alloca_116 = alloca { i64, i8, i8, i8 }, align 8
-  %alloca_count_116 = alloca { i64, i8, i8, i8 }, align 8
-  store { i64, i8, i8, i8 } zeroinitializer, ptr %alloca_count_116, align 8
-  %load_119 = load { i64, i8, i8, i8 }, ptr %alloca_count_116, align 8
-  store { i64, i8, i8, i8 } %load_119, ptr %alloca_count_118, align 8
-  store { i64, i8, i8, i8 } { i64 2, i8 -128, i8 64, i8 32 }, ptr %alloca_count_121, align 8
-  store ptr %alloca_count_118, ptr %alloca_count_123, align 8
-  %load_125 = load ptr, ptr %alloca_count_123, align 8
-  %call_126 = call ptr @describe(ptr %load_125)
+  %call_116 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8)
   br label %bb1
 
 bb1:                                              ; preds = %bb0
-  %call_127 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8, ptr %call_126)
-  store ptr %alloca_count_121, ptr %alloca_count_128, align 8
-  %load_130 = load ptr, ptr %alloca_count_128, align 8
-  %call_131 = call ptr @describe(ptr %load_130)
+  %call_117 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.9)
   br label %bb2
 
 bb2:                                              ; preds = %bb1
-  %call_132 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8, ptr %call_131)
-  store i64 -5, ptr %alloca_count_133, align 8
-  %load_136 = load i64, ptr %alloca_count_133, align 8
-  %call_137 = call ptr @classify(i64 %load_136)
+  %call_118 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.10)
   br label %bb3
 
 bb3:                                              ; preds = %bb2
-  %call_138 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8, ptr %call_137)
-  %call_139 = call ptr @classify(i64 0)
+  %call_119 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.11)
   br label %bb4
 
 bb4:                                              ; preds = %bb3
-  %call_140 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8, ptr %call_139)
-  %call_141 = call ptr @classify(i64 4)
+  %call_120 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.12)
   br label %bb5
 
 bb5:                                              ; preds = %bb4
-  %call_142 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8, ptr %call_141)
-  %call_143 = call ptr @classify(i64 7)
+  store { i64, i8, i8, i8 } zeroinitializer, ptr %alloca_count_121, align 8
+  %load_124 = load { i64, i8, i8, i8 }, ptr %alloca_count_121, align 8
+  store { i64, i8, i8, i8 } %load_124, ptr %alloca_count_123, align 8
+  store { i64, i8, i8, i8 } { i64 2, i8 -128, i8 64, i8 32 }, ptr %alloca_count_126, align 8
+  store ptr %alloca_count_123, ptr %alloca_count_128, align 8
+  %load_130 = load ptr, ptr %alloca_count_128, align 8
+  %call_131 = call ptr @describe(ptr %load_130)
   br label %bb6
 
 bb6:                                              ; preds = %bb5
-  %call_144 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.8, ptr %call_143)
-  store { i64, i64 } { i64 0, i64 42 }, ptr %alloca_count_145, align 8
-  %load_147 = load { i64, i64 }, ptr %alloca_count_145, align 8
-  %call_148 = call i64 @unwrap_or({ i64, i64 } %load_147, i64 0)
+  %call_132 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.13, ptr %call_131)
   br label %bb7
 
 bb7:                                              ; preds = %bb6
-  %call_149 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.9, i64 %call_148)
-  store { i64, i64 } { i64 1, i64 0 }, ptr %alloca_count_150, align 8
-  %load_152 = load { i64, i64 }, ptr %alloca_count_150, align 8
-  %call_153 = call i64 @unwrap_or({ i64, i64 } %load_152, i64 99)
+  store ptr %alloca_count_126, ptr %alloca_count_133, align 8
+  %load_135 = load ptr, ptr %alloca_count_133, align 8
+  %call_136 = call ptr @describe(ptr %load_135)
   br label %bb8
 
 bb8:                                              ; preds = %bb7
-  %call_154 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.9, i64 %call_153)
-  store i64 0, ptr %alloca_count_155, align 8
-  %load_157 = load i64, ptr %alloca_count_155, align 8
-  %call_158 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.10, i64 %load_157)
+  %call_137 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.14, ptr %call_136)
+  br label %bb9
+
+bb9:                                              ; preds = %bb8
+  store i64 -5, ptr %alloca_count_138, align 8
+  %load_141 = load i64, ptr %alloca_count_138, align 8
+  %call_142 = call ptr @classify(i64 %load_141)
+  br label %bb10
+
+bb10:                                             ; preds = %bb9
+  %call_143 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.15, ptr %call_142)
+  br label %bb11
+
+bb11:                                             ; preds = %bb10
+  %call_144 = call ptr @classify(i64 0)
+  br label %bb12
+
+bb12:                                             ; preds = %bb11
+  %call_145 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.16, ptr %call_144)
+  br label %bb13
+
+bb13:                                             ; preds = %bb12
+  %call_146 = call ptr @classify(i64 4)
+  br label %bb14
+
+bb14:                                             ; preds = %bb13
+  %call_147 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.17, ptr %call_146)
+  br label %bb15
+
+bb15:                                             ; preds = %bb14
+  %call_148 = call ptr @classify(i64 7)
+  br label %bb16
+
+bb16:                                             ; preds = %bb15
+  %call_149 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.18, ptr %call_148)
+  br label %bb17
+
+bb17:                                             ; preds = %bb16
+  store { i64, i64 } { i64 0, i64 42 }, ptr %alloca_count_150, align 8
+  %load_152 = load { i64, i64 }, ptr %alloca_count_150, align 8
+  %call_153 = call i64 @unwrap_or({ i64, i64 } %load_152, i64 0)
+  br label %bb18
+
+bb18:                                             ; preds = %bb17
+  %call_154 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.19, i64 %call_153)
+  br label %bb19
+
+bb19:                                             ; preds = %bb18
+  store { i64, i64 } { i64 1, i64 0 }, ptr %alloca_count_155, align 8
+  %load_157 = load { i64, i64 }, ptr %alloca_count_155, align 8
+  %call_158 = call i64 @unwrap_or({ i64, i64 } %load_157, i64 99)
+  br label %bb20
+
+bb20:                                             ; preds = %bb19
+  %call_159 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.20, i64 %call_158)
+  br label %bb21
+
+bb21:                                             ; preds = %bb20
+  store i64 0, ptr %alloca_count_160, align 8
+  %load_162 = load i64, ptr %alloca_count_160, align 8
+  %call_163 = call i32 (ptr, ...) @printf(ptr @.str.12_pattern_matching.21, i64 %load_162)
+  br label %bb22
+
+bb22:                                             ; preds = %bb21
   ret i32 0
 }
 

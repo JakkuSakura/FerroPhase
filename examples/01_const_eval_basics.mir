@@ -2,53 +2,65 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 19 }
+        body0 { arg_count: 0, locals: 24 }
             return_local: _0
             locals:
                 _0: ()
-                _1: i64
-                _2: i64
-                _3: i64
-                _4: bool
-                _5: ()
+                _1: i32
+                _2: i32
+                _3: i32
+                _4: i32
+                _5: i32
                 _6: i64
-                _7: (i64, i64)
-                _8: (i64, i64)
-                _9: ()
-                _10: i64
+                _7: i64
+                _8: i64
+                _9: bool
+                _10: i32
                 _11: i64
-                _12: <??>
-                _13: i64
-                _14: i64
+                _12: (i64, i64)
+                _13: (i64, i64)
+                _14: i32
                 _15: i64
                 _16: i64
-                _17: i64
-                _18: ()
+                _17: <??>
+                _18: i64
+                _19: i64
+                _20: i64
+                _21: i64
+                _22: i64
+                _23: i32
             blocks:
                 bb0:
-                    s0: _2 = 4096
-                    s1: _1 = Div(copy _2, 1024)
-                    s2: _3 = 120
-                    s3: _4 = true
-                    s4: intrinsic Println "Buffer: %lldKB, factorial(5)=%lld, large=%d
-" [copy _1, copy _3, copy _4]
-                    s5: _5 = aggregate(tuple; [])
-                    s6: _7 = aggregate(tuple; [4096, 150])
-                    s7: _6 = Div(copy _7[Field(0, Ty { kind: Int(I64) })], 1024)
-                    s8: _8 = aggregate(tuple; [4096, 150])
-                    s9: intrinsic Println "Config: %lldKB buffer, %lld connections
-" [copy _6, copy _8[Field(1, Ty { kind: Int(I64) })]]
-                    s10: _9 = aggregate(tuple; [])
-                    s11: _10 = 3
-                    s12: _11 = 8192
-                    s13: _12 = "large"
-                    s14: _16 = 4096
-                    s15: _17 = 150
-                    s16: _15 = Mul(copy _16, copy _17)
-                    s17: _14 = Mul(copy _10, 0)
-                    s18: _13 = copy _14
-                    s19: intrinsic Println "Const blocks: size=%lld, strategy=%s, memory=%lld
-" [copy _11, copy _12, copy _13]
-                    s20: _18 = aggregate(tuple; [])
+                    terminator: call global printf("📘 Tutorial: 01_const_eval_basics.fp\n") -> _1 then bb1
+                bb1:
+                    terminator: call global printf("🧭 Focus: Basic const evaluation with compile-time arithmetic and const blocks\n") -> _2 then bb2
+                bb2:
+                    terminator: call global printf("🧪 What to look for: labeled outputs below\n") -> _3 then bb3
+                bb3:
+                    terminator: call global printf("✅ Expectation: outputs match labels\n") -> _4 then bb4
+                bb4:
+                    terminator: call global printf("\n") -> _5 then bb5
+                bb5:
+                    s0: _7 = 4096
+                    s1: _6 = Div(copy _7, 1024)
+                    s2: _8 = 120
+                    s3: _9 = true
+                    terminator: call global printf("Buffer: %lldKB, factorial(5)=%lld, large=%d\n", copy _6, copy _8, copy _9) -> _10 then bb6
+                bb6:
+                    s0: _12 = aggregate(tuple; [4096, 150])
+                    s1: _11 = Div(copy _12[Field(0, Ty { kind: Int(I64) })], 1024)
+                    s2: _13 = aggregate(tuple; [4096, 150])
+                    terminator: call global printf("Config: %lldKB buffer, %lld connections\n", copy _11, copy _13[Field(1, Ty { kind: Int(I64) })]) -> _14 then bb7
+                bb7:
+                    s0: _15 = 3
+                    s1: _16 = 8192
+                    s2: _17 = "large"
+                    s3: _21 = 4096
+                    s4: _22 = 150
+                    s5: _20 = Mul(copy _21, copy _22)
+                    s6: _19 = Mul(copy _15, 0)
+                    s7: _18 = copy _19
+                    terminator: call global printf("Const blocks: size=%lld, strategy=%s, memory=%lld\n", copy _16, copy _17, copy _18) -> _23 then bb8
+                bb8:
                     terminator: return
 }

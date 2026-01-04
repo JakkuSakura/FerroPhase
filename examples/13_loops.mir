@@ -146,153 +146,143 @@ mir::Program {
                 bb7:
                     s0: _5 = aggregate(tuple; [])
                     terminator: goto -> bb6
-        body4 { arg_count: 0, locals: 36 }
+        body4 { arg_count: 0, locals: 41 }
             return_local: _0
             locals:
                 _0: ()
-                _1: ()
-                _2: ()
-                _3: i64
-                _4: ()
-                _5: i64
-                _6: ()
-                _7: ()
+                _1: i32
+                _2: i32
+                _3: i32
+                _4: i32
+                _5: i32
+                _6: i32
+                _7: i32
                 _8: i64
-                _9: ()
+                _9: i32
                 _10: i64
-                _11: ()
-                _12: ()
+                _11: i32
+                _12: i32
                 _13: i64
-                _14: ()
+                _14: i32
                 _15: i64
-                _16: ()
-                _17: ()
+                _16: i32
+                _17: i32
                 _18: i64
-                _19: ()
-                _20: ()
-                _21: i64
-                _22: ()
+                _19: i32
+                _20: i64
+                _21: i32
+                _22: i32
                 _23: i64
-                _24: bool
-                _25: ()
+                _24: i32
+                _25: i32
                 _26: i64
-                _27: bool
-                _28: ()
+                _27: ()
+                _28: i64
                 _29: bool
                 _30: ()
-                _31: ()
-                _32: ()
-                _33: i64
-                _34: ()
+                _31: i64
+                _32: bool
+                _33: ()
+                _34: bool
                 _35: ()
+                _36: i32
+                _37: i32
+                _38: i64
+                _39: i32
+                _40: i32
             blocks:
                 bb0:
-                    s0: intrinsic Println "=== Loop Constructs ===
-
-" []
-                    s1: _1 = aggregate(tuple; [])
-                    s2: intrinsic Println "1. While loop - factorial:
-" []
-                    s3: _2 = aggregate(tuple; [])
-                    terminator: call fn factorial(5) -> _3 then bb1
+                    terminator: call global printf("📘 Tutorial: 13_loops.fp\n") -> _1 then bb1
                 bb1:
-                    s0: intrinsic Println "  5! = %lld
-" [copy _3]
-                    s1: _4 = aggregate(tuple; [])
-                    terminator: call fn factorial(7) -> _5 then bb2
+                    terminator: call global printf("🧭 Focus: Loop constructs: while, for, and loop.\n") -> _2 then bb2
                 bb2:
-                    s0: intrinsic Println "  7! = %lld
-" [copy _5]
-                    s1: _6 = aggregate(tuple; [])
-                    s2: intrinsic Println "
-2. For loop - sum range:
-" []
-                    s3: _7 = aggregate(tuple; [])
-                    terminator: call fn sum_range(1, 10) -> _8 then bb3
+                    terminator: call global printf("🧪 What to look for: labeled outputs below\n") -> _3 then bb3
                 bb3:
-                    s0: intrinsic Println "  sum(1..10) = %lld
-" [copy _8]
-                    s1: _9 = aggregate(tuple; [])
-                    terminator: call fn sum_range(5, 15) -> _10 then bb4
+                    terminator: call global printf("✅ Expectation: outputs match labels\n") -> _4 then bb4
                 bb4:
-                    s0: intrinsic Println "  sum(5..15) = %lld
-" [copy _10]
-                    s1: _11 = aggregate(tuple; [])
-                    s2: intrinsic Println "
-3. Loop with break expression:
-" []
-                    s3: _12 = aggregate(tuple; [])
-                    terminator: call fn find_first_divisor(24) -> _13 then bb5
+                    terminator: call global printf("\n") -> _5 then bb5
                 bb5:
-                    s0: intrinsic Println "  First divisor of 24: %lld
-" [copy _13]
-                    s1: _14 = aggregate(tuple; [])
-                    terminator: call fn find_first_divisor(17) -> _15 then bb6
+                    terminator: call global printf("=== Loop Constructs ===\n\n") -> _6 then bb6
                 bb6:
-                    s0: intrinsic Println "  First divisor of 17: %lld
-" [copy _15]
-                    s1: _16 = aggregate(tuple; [])
-                    s2: intrinsic Println "
-4. Loop with continue:
-" []
-                    s3: _17 = aggregate(tuple; [])
-                    terminator: call fn sum_even_numbers(10) -> _18 then bb7
+                    terminator: call global printf("1. While loop - factorial:\n") -> _7 then bb7
                 bb7:
-                    s0: intrinsic Println "  Sum of even numbers < 10: %lld
-" [copy _18]
-                    s1: _19 = aggregate(tuple; [])
-                    s2: intrinsic Println "
-5. Nested loops:
-" []
-                    s3: _20 = aggregate(tuple; [])
-                    s4: _21 = 0
-                    s5: _23 = 1
-                    terminator: goto -> bb8
+                    terminator: call fn factorial(5) -> _8 then bb8
                 bb8:
-                    s0: _24 = Lt(copy _23, 4)
-                    terminator: switch copy _24 [1 -> bb9] otherwise -> bb10
+                    terminator: call global printf("  5! = %lld\n", copy _8) -> _9 then bb9
                 bb9:
-                    s0: _26 = 1
-                    terminator: goto -> bb11
+                    terminator: call fn factorial(7) -> _10 then bb10
                 bb10:
-                    s0: _22 = aggregate(tuple; [])
-                    s1: intrinsic Println "
-  Iterations: %lld
-" [copy _21]
-                    s2: _31 = aggregate(tuple; [])
-                    s3: intrinsic Println "
-6. Compile-time iteration (simulated):
-" []
-                    s4: _32 = aggregate(tuple; [])
-                    s5: _33 = 120
-                    s6: intrinsic Println "  const 5! = %lld
-" [copy _33]
-                    s7: _34 = aggregate(tuple; [])
-                    s8: intrinsic Println "
-✓ Loop constructs demonstrated!
-" []
-                    s9: _35 = aggregate(tuple; [])
-                    terminator: <none>
+                    terminator: call global printf("  7! = %lld\n", copy _10) -> _11 then bb11
                 bb11:
-                    s0: _27 = Lt(copy _26, 4)
-                    terminator: switch copy _27 [1 -> bb12] otherwise -> bb13
+                    terminator: call global printf("\n2. For loop - sum range:\n") -> _12 then bb12
                 bb12:
-                    s0: _21 = Add(copy _21, 1)
-                    s1: _29 = Eq(copy _23, copy _26)
-                    terminator: switch copy _29 [1 -> bb14] otherwise -> bb15
+                    terminator: call fn sum_range(1, 10) -> _13 then bb13
                 bb13:
-                    s0: _25 = aggregate(tuple; [])
-                    s1: _23 = Add(copy _23, 1)
-                    terminator: goto -> bb8
+                    terminator: call global printf("  sum(1..10) = %lld\n", copy _13) -> _14 then bb14
                 bb14:
-                    s0: intrinsic Print "[%lld] " [copy _23]
-                    s1: _30 = aggregate(tuple; [])
-                    s2: _28 = aggregate(tuple; [])
-                    terminator: goto -> bb16
+                    terminator: call fn sum_range(5, 15) -> _15 then bb15
                 bb15:
-                    s0: _28 = aggregate(tuple; [])
-                    terminator: goto -> bb16
+                    terminator: call global printf("  sum(5..15) = %lld\n", copy _15) -> _16 then bb16
                 bb16:
+                    terminator: call global printf("\n3. Loop with break expression:\n") -> _17 then bb17
+                bb17:
+                    terminator: call fn find_first_divisor(24) -> _18 then bb18
+                bb18:
+                    terminator: call global printf("  First divisor of 24: %lld\n", copy _18) -> _19 then bb19
+                bb19:
+                    terminator: call fn find_first_divisor(17) -> _20 then bb20
+                bb20:
+                    terminator: call global printf("  First divisor of 17: %lld\n", copy _20) -> _21 then bb21
+                bb21:
+                    terminator: call global printf("\n4. Loop with continue:\n") -> _22 then bb22
+                bb22:
+                    terminator: call fn sum_even_numbers(10) -> _23 then bb23
+                bb23:
+                    terminator: call global printf("  Sum of even numbers < 10: %lld\n", copy _23) -> _24 then bb24
+                bb24:
+                    terminator: call global printf("\n5. Nested loops:\n") -> _25 then bb25
+                bb25:
+                    s0: _26 = 0
+                    s1: _28 = 1
+                    terminator: goto -> bb26
+                bb26:
+                    s0: _29 = Lt(copy _28, 4)
+                    terminator: switch copy _29 [1 -> bb27] otherwise -> bb28
+                bb27:
+                    s0: _31 = 1
+                    terminator: goto -> bb29
+                bb28:
+                    s0: _27 = aggregate(tuple; [])
+                    terminator: call global printf("\n  Iterations: %lld\n", copy _26) -> _36 then bb35
+                bb29:
+                    s0: _32 = Lt(copy _31, 4)
+                    terminator: switch copy _32 [1 -> bb30] otherwise -> bb31
+                bb30:
                     s0: _26 = Add(copy _26, 1)
-                    terminator: goto -> bb11
+                    s1: _34 = Eq(copy _28, copy _31)
+                    terminator: switch copy _34 [1 -> bb32] otherwise -> bb33
+                bb31:
+                    s0: _30 = aggregate(tuple; [])
+                    s1: _28 = Add(copy _28, 1)
+                    terminator: goto -> bb26
+                bb32:
+                    s0: intrinsic Print "[%lld] " [copy _28]
+                    s1: _35 = aggregate(tuple; [])
+                    s2: _33 = aggregate(tuple; [])
+                    terminator: goto -> bb34
+                bb33:
+                    s0: _33 = aggregate(tuple; [])
+                    terminator: goto -> bb34
+                bb34:
+                    s0: _31 = Add(copy _31, 1)
+                    terminator: goto -> bb29
+                bb35:
+                    terminator: call global printf("\n6. Compile-time iteration (simulated):\n") -> _37 then bb36
+                bb36:
+                    s0: _38 = 120
+                    terminator: call global printf("  const 5! = %lld\n", copy _38) -> _39 then bb37
+                bb37:
+                    terminator: call global printf("\n✓ Loop constructs demonstrated!\n") -> _40 then bb38
+                bb38:
+                    terminator: return
 }

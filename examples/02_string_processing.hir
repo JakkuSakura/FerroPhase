@@ -1,6 +1,11 @@
 hir::Program {
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 02_string_processing.fp\n");
+            printf("🧭 Focus: Compile-time string operations and intrinsics\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub const NAME: &str =
                 "FerroPhase";
             pub const VERSION: &str =
@@ -19,17 +24,17 @@ hir::Program {
                 "Ferro";
             pub const TAIL: &str =
                 "Phase";
-            std::Println(2 args);
-            std::Println(2 args);
-            std::Println(3 args);
-            std::Println(2 args);
+            printf("name='%s' len=%llu\n", NAME, NAME_LEN);
+            printf("version='%s' len=%llu\n", VERSION, VERSION_LEN);
+            printf("prefix_ok=%d, suffix_ok=%d, contains_phase=%d\n", PREFIX_OK, SUFFIX_OK, HAS_PHASE);
+            printf("slices: short='%s' tail='%s'\n", SHORT, TAIL);
             pub const WORDS: [&str; 4] =
                 ["alpha", "beta", "gamma", "delta"];
             pub const WORD_LENGTHS: [usize; 4] =
                 [5, 4, 5, 5];
             pub const TOTAL_WORD_LEN: usize =
                 19;
-            std::Println(0 args);
+            printf("words:\n");
             {
                 let mut i = 0;
                 while ((i < 4))
@@ -38,18 +43,18 @@ hir::Program {
                         i = (i + 1);
                     }
             }
-            std::Println(1 args);
+            printf("total word length=%llu\n", TOTAL_WORD_LEN);
             pub const IS_EMPTY: bool =
                 false;
             pub const IS_LONG: bool =
                 true;
             pub const BANNER: &str =
                 "FerroPhase v0.1.0";
-            std::Println(2 args);
-            std::Println(1 args);
+            printf("empty=%d, long=%d\n", IS_EMPTY, IS_LONG);
+            printf("banner='%s'\n", BANNER);
             pub const BUFFER_SIZE: usize =
                 256;
-            std::Println(1 args);
+            printf("buffer_size=%llu\n", BUFFER_SIZE);
         }
     }
 }

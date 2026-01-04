@@ -68,19 +68,24 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::Println(0 args);
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
-            std::Println(1 args);
-            std::Println(0 args);
+            printf("📘 Tutorial: 13_loops.fp\n");
+            printf("🧭 Focus: Loop constructs: while, for, and loop.\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            printf("=== Loop Constructs ===\n\n");
+            printf("1. While loop - factorial:\n");
+            printf("  5! = %lld\n", factorial(5));
+            printf("  7! = %lld\n", factorial(7));
+            printf("\n2. For loop - sum range:\n");
+            printf("  sum(1..10) = %lld\n", sum_range(1, 10));
+            printf("  sum(5..15) = %lld\n", sum_range(5, 15));
+            printf("\n3. Loop with break expression:\n");
+            printf("  First divisor of 24: %lld\n", find_first_divisor(24));
+            printf("  First divisor of 17: %lld\n", find_first_divisor(17));
+            printf("\n4. Loop with continue:\n");
+            printf("  Sum of even numbers < 10: %lld\n", sum_even_numbers(10));
+            printf("\n5. Nested loops:\n");
             let mut count = 0;
             {
                 let mut i = 1;
@@ -90,12 +95,12 @@ hir::Program {
                         i = (i + 1);
                     }
             }
-            std::Println(1 args);
-            std::Println(0 args);
+            printf("\n  Iterations: %lld\n", count);
+            printf("\n6. Compile-time iteration (simulated):\n");
             pub const FACTORIAL_CONST: i64 =
                 120;
-            std::Println(1 args);
-            std::Println(0 args);
+            printf("  const 5! = %lld\n", FACTORIAL_CONST);
+            printf("\n✓ Loop constructs demonstrated!\n");
         }
     }
 }

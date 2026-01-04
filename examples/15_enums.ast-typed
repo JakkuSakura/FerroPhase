@@ -53,7 +53,22 @@ ast::File {
                   locator default : any
     }
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (14 stmts) : ()
+      block (19 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 15_enums.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Enum variants: unit, tuple, struct variants and discriminants"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         let point
           init:
             locator Shape::Point : Shape [Point: () | Circle: (Expr(i64)) | Rectangle: structural{w: Expr(i64), h: Expr(i64)}]
@@ -72,13 +87,13 @@ ast::File {
                 value 3 : i64
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" point.describe()
+            template: "shape point -> {}" point.describe()
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" circle.describe()
+            template: "shape circle -> {}" circle.describe()
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" rect.describe()
+            template: "shape rectangle -> {}" rect.describe()
         let val
           init:
             locator Value::C : Value [A: () | B: () | C: ()]
@@ -98,10 +113,10 @@ ast::File {
             locator Option::None : Option [Some: (Expr(T)) | None: ()]
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" some.unwrap_or(0)
+            template: "unwrap_or(Some(42), 0) = {}" some.unwrap_or(0)
         expr_stmt ;
           intrinsic println : ()
-            template: "{}" none.unwrap_or(99)
+            template: "unwrap_or(None, 99) = {}" none.unwrap_or(99)
         pub const CODE: i32 : i32
           value 2 : i32
         expr_stmt ;

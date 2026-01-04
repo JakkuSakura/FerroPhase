@@ -1,6 +1,11 @@
 hir::Program {
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 07_compile_time_validation.fp\n");
+            printf("🧭 Focus: Compile-time validation using const expressions and introspection\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub struct Data {
                 pub a: i64,
                 pub b: i64,
@@ -26,21 +31,19 @@ hir::Program {
                 4;
             pub const HEADER_HAS_VERSION: bool =
                 true;
-            std::Println(2 args);
-            std::Println(2 args);
-            std::Println(3 args);
+            printf("data: sizeof=%llu, fields=%llu\n", DATA_SIZE, DATA_FIELDS);
+            printf("data: has_a=%d, has_x=%d\n", DATA_HAS_A, DATA_HAS_X);
+            printf("header: sizeof=%llu, fields=%llu, has_version=%d\n", HEADER_SIZE, HEADER_FIELDS, HEADER_HAS_VERSION);
             pub const DATA_TYPE_NAME: &str =
                 "struct Data";
             pub const DATA_FIELD_A_TYPE: &str =
-                "i64
-";
+                "i64\n";
             pub const HEADER_FIELD_VERSION_TYPE: &str =
-                "u8
-";
+                "u8\n";
             pub const HAS_TO_STRING: bool =
                 true;
-            std::Println(3 args);
-            std::Println(1 args);
+            printf("types: data='%s' a='%s' version='%s'\n", DATA_TYPE_NAME, DATA_FIELD_A_TYPE, HEADER_FIELD_VERSION_TYPE);
+            printf("data has to_string: %d\n", HAS_TO_STRING);
             pub const MAX_SIZE: usize =
                 64;
             pub const DATA_OK: bool =
@@ -51,7 +54,7 @@ hir::Program {
                 56;
             pub const TOTAL_OK: bool =
                 true;
-            std::Println(4 args);
+            printf("layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\n", DATA_OK, HEADER_OK, TOTAL_OK, TOTAL_SIZE);
             pub const _WARN: () =
                 {
                 }

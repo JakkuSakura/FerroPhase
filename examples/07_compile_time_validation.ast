@@ -1,7 +1,22 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> ()
-      block (25 stmts)
+      block (30 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 07_compile_time_validation.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Compile-time validation using const expressions and introspection"
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
         pub struct Data {
           a: Expr(i64)
           b: Expr(i64)
@@ -39,11 +54,9 @@ ast::File {
         pub const DATA_TYPE_NAME: &string
           value "struct Data"
         pub const DATA_FIELD_A_TYPE: &string
-          value "i64
-"
+          value "i64\n"
         pub const HEADER_FIELD_VERSION_TYPE: &string
-          value "u8
-"
+          value "u8\n"
         pub const HAS_TO_STRING: bool
           value true
         expr_stmt ;

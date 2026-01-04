@@ -1,9 +1,4 @@
 hir::Program {
-    struct __structural_value_b201042aa9528497 {
-        pub name: &str,
-        pub type_name: &str,
-    }
-
     pub struct Point3D {
         pub x: i64,
         pub y: i64,
@@ -23,36 +18,37 @@ hir::Program {
 
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 08_metaprogramming_patterns.fp\n");
+            printf("🧭 Focus: Metaprogramming: using const metadata to drive code generation\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             pub const FIELD_COUNT: i64 =
                 3;
             pub const POINT_NAME: &str =
                 "struct Point3D";
             pub const SIZE: i64 =
                 24;
-            pub const FIELDS: [__structural_value_b201042aa9528497; 3] =
-                [__structural_value_b201042aa9528497 { name: "x", type_name: "i64
-" }, __structural_value_b201042aa9528497 { name: "y", type_name: "i64
-" }, __structural_value_b201042aa9528497 { name: "z", type_name: "i64
-" }];
+            pub const FIELDS: [struct { name: &&str, type_name: &&str }] =
+                std::ReflectFields(1 args);
             pub const X_TYPE: &str =
-                "i64
-";
-            std::Println(3 args);
-            std::Println(1 args);
-            std::Println(0 args);
+                "i64\n";
+            printf("%s has %lld fields (size=%lld)\n", POINT_NAME, FIELD_COUNT, SIZE);
+            printf("x type: %s\n", X_TYPE);
+            printf("fields:\n");
             {
-                let mut __fp_idx90 = 0;
-                while ((__fp_idx90 < 3))
+                let mut __fp_idx96 = 0;
+                while ((__fp_idx96 < std::Len(1 args)))
                     {
-                        let field = FIELDS[__fp_idx90];
+                        let field = FIELDS[__fp_idx96];
                         std::Println(2 args);
-                        __fp_idx90 = (__fp_idx90 + 1);
+                        __fp_idx96 = (__fp_idx96 + 1);
                     }
             }
             let p = Point3D { x: 1, y: 2, z: 3 };
-            std::Println(3 args);
+            printf("point=(%lld, %lld, %lld)\n", p.x, p.y, p.z);
             let lp = LabeledPoint { x: 4, y: 5, z: 6, label: "origin" };
-            std::Println(4 args);
+            printf("labeled=(%lld, %lld, %lld, %s)\n", lp.x, lp.y, lp.z, lp.label);
         }
     }
 }

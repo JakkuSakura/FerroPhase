@@ -1,20 +1,28 @@
 hir::Program {
-    pub const PRIME_COUNT: i64 =
-        6;
+    pub const PRIMES: Vec<i64> =
+        [2, 3, 5, 7, 11, 13];
 
-    pub const ZERO_BUFFER_CAPACITY: i64 =
-        16;
+    pub const ZERO_BUFFER: Vec<i64> =
+        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-    pub const HTTP_STATUS_COUNT: i64 =
-        4;
+    pub const HTTP_STATUSES: HashMap<&str, i64> =
+        [["ok", 200], ["created", 201], ["accepted", 202], ["not_found", 404]];
 
     pub fn main() -> () {
         {
-            std::Println(0 args);
-            std::Println(0 args);
+            printf("📘 Tutorial: 18_comptime_collections.fp\n");
+            printf("🧭 Focus: Showcase compile-time Vec and HashMap construction.\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            printf("=== Compile-time Collections ===\n");
+            printf("Vec literals:\n");
+            std::Println(2 args);
+            printf("  zero buffer: %lld elements\n", ZERO_BUFFER.len());
+            printf("  first four zeros: [%lld, %lld, %lld, %lld]\n", ZERO_BUFFER[0], ZERO_BUFFER[1], ZERO_BUFFER[2], ZERO_BUFFER[3]);
+            printf("\nHashMap literal via HashMap::from:\n");
+            printf("  tracked HTTP statuses: %lld entries\n", HTTP_STATUSES.len());
             std::Println(1 args);
-            std::Println(1 args);
-            std::Println(0 args);
             std::Println(1 args);
         }
     }

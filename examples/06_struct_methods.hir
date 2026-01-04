@@ -67,19 +67,24 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::Println(0 args);
+            printf("📘 Tutorial: 06_struct_methods.fp\n");
+            printf("🧭 Focus: Struct methods and field access\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            printf("=== Struct Operations ===\n");
             let mut p1 = Point::new(10, 20);
             let p2 = Point::new(5, 15);
-            std::Println(2 args);
-            std::Println(2 args);
+            printf("p1 = (%lld, %lld)\n", p1.x, p1.y);
+            printf("p2 = (%lld, %lld)\n", p2.x, p2.y);
             p1.translate(3, (-4));
-            std::Println(2 args);
-            std::Println(1 args);
+            printf("p1 after translate = (%lld, %lld)\n", p1.x, p1.y);
+            printf("Distance²(p1, p2) = %lld\n", p1.distance2(p2));
             let rect = Rectangle::new(10, 5);
-            std::Println(2 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
+            printf("Rectangle: %lld×%lld\n", rect.width, rect.height);
+            printf("  area = %lld\n", rect.area());
+            printf("  perimeter = %lld\n", rect.perimeter());
+            printf("  is_square = %d\n", rect.is_square());
         }
     }
 }

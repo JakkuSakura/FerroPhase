@@ -1,14 +1,29 @@
 ast::File {
   items:
     pub import std::collections::HashMap : ()
-    pub const PRIME_COUNT: i64 : i64
-      value 6 : i64
-    pub const ZERO_BUFFER_CAPACITY: i64 : i64
-      value 16 : i64
-    pub const HTTP_STATUS_COUNT: i64 : i64
-      value 4 : i64
+    pub const PRIMES: Vec<i64> : Vec<i64>
+      value [6 values] : Vec<i64>
+    pub const ZERO_BUFFER: Vec<i64> : Vec<i64>
+      value [16 values] : Vec<i64>
+    pub const HTTP_STATUSES: HashMap : HashMap
+      value {4 entries} : HashMap
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (6 stmts) : ()
+      block (14 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 18_comptime_collections.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Showcase compile-time Vec and HashMap construction."
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         expr_stmt ;
           intrinsic println : ()
             template: "=== Compile-time Collections ==="
@@ -17,15 +32,23 @@ ast::File {
             template: "Vec literals:"
         expr_stmt ;
           intrinsic println : ()
-            template: "  primes: {} elements" PRIME_COUNT
+            template: "  primes: {} elements -> {}" PRIMES.len(), PRIMES
         expr_stmt ;
           intrinsic println : ()
-            template: "  zero buffer: {} elements" ZERO_BUFFER_CAPACITY
+            template: "  zero buffer: {} elements" ZERO_BUFFER.len()
         expr_stmt ;
           intrinsic println : ()
-            template: "
-HashMap literal via HashMap::from:"
+            template: "  first four zeros: [{}, {}, {}, {}]" ZERO_BUFFER[0], ZERO_BUFFER[1], ZERO_BUFFER[2], ZERO_BUFFER[3]
         expr_stmt ;
           intrinsic println : ()
-            template: "  tracked HTTP statuses: {} entries" HTTP_STATUS_COUNT
+            template: "\nHashMap literal via HashMap::from:"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "  tracked HTTP statuses: {} entries" HTTP_STATUSES.len()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "  ok => {}" HTTP_STATUSES["ok"]
+        expr_stmt ;
+          intrinsic println : ()
+            template: "  not_found => {}" HTTP_STATUSES["not_found"]
 }

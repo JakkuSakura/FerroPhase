@@ -1,7 +1,22 @@
 ast::File {
   items:
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (16 stmts) : ()
+      block (21 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 05_struct_generation.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Struct generation with compile-time conditionals"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
         pub const FLAG_A: bool : bool
           value true : bool
         pub const FLAG_B: bool : bool

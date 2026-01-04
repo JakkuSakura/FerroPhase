@@ -49,10 +49,15 @@ hir::Program {
 
     pub fn main() -> () {
         {
+            printf("📘 Tutorial: 17_generics.fp\n");
+            printf("🧭 Focus: Generics: type parameters and monomorphization\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
             let pair = Pair::new(42, "hello");
             std::Println(2 args);
-            std::Println(1 args);
-            std::Println(1 args);
+            printf("max(10, 20) = %lld\n", max(10, 20));
+            printf("max(3.5, 2.1) = %f\n", max(3.5, 2.1));
             let some: Option<i64> = Option::Some(100);
             let none: Option<i64> = Option::None;
             std::Println(1 args);
