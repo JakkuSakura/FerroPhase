@@ -1,6 +1,8 @@
 use super::super::*;
+use fp_core::ast;
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicMaterializer;
+use fp_llvm::runtime::LlvmRuntimeIntrinsicMaterializer;
 
 impl Pipeline {
     pub(crate) fn stage_materialize_runtime_intrinsics(
@@ -333,8 +335,8 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
             ast::Expr::with_ty(ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)), ty)
         }
         ast::ExprKind::Value(mut value) => {
-            value = materialize_value(value, strategy)?;
-            ast::Expr::with_ty(ast::ExprKind::Value(value), ty)
+            let value = materialize_value(*value, strategy)?;
+            ast::Expr::with_ty(ast::ExprKind::Value(Box::new(value)), ty)
         }
         ast::ExprKind::IntrinsicCall(mut call) => {
             match &mut call.payload {

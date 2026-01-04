@@ -1,4 +1,4 @@
-use crate::typing::unify::{FunctionTerm, TypeTerm};
+use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
 use crate::typing_error;
 use crate::{AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId};
 use fp_core::ast::*;
@@ -415,12 +415,56 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_index(&mut self, index: &mut ExprIndex) -> Result<TypeVarId> {
         let object_var = self.infer_expr(index.obj.as_mut())?;
         let idx_var = self.infer_expr(index.index.as_mut())?;
-        self.ensure_integer(idx_var, "index expression")?;
+
+        let idx_ty = self.resolve_to_ty(idx_var)?;
+        let idx_root = self.find(idx_var);
+        let idx_bound_reference = match self.type_vars[idx_root].kind.clone() {
+            TypeVarKind::Bound(TypeTerm::Reference(_)) => true,
+            TypeVarKind::Link(next) => {
+                let root = self.find(next);
+                matches!(
+                    self.type_vars[root].kind,
+                    TypeVarKind::Bound(TypeTerm::Reference(_))
+                )
+            }
+            _ => false,
+        };
+        let idx_non_integer = idx_bound_reference
+            || matches!(idx_ty, Ty::Reference(_) | Ty::Primitive(TypePrimitive::String));
+        let idx_is_string_literal = matches!(
+            index.index.kind(),
+            ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))
+        );
+        if idx_non_integer || idx_is_string_literal {
+            let map_var = self.fresh_type_var();
+            let map_ty = self.make_hashmap_struct();
+            self.bind(map_var, TypeTerm::Struct(map_ty));
+            if self.unify(object_var, map_var).is_ok() {
+                let any_var = self.fresh_type_var();
+                self.bind(any_var, TypeTerm::Any);
+                return Ok(any_var);
+            }
+
+            let map_var = self.fresh_type_var();
+            let map_ty = self.make_hashmap_struct();
+            self.bind(map_var, TypeTerm::Struct(map_ty));
+            let ref_var = self.fresh_type_var();
+            self.bind(ref_var, TypeTerm::Reference(map_var));
+            if self.unify(object_var, ref_var).is_ok() {
+                let any_var = self.fresh_type_var();
+                self.bind(any_var, TypeTerm::Any);
+                return Ok(any_var);
+            }
+
+            self.emit_error("indexing with a non-integer key requires a HashMap");
+            return Ok(self.error_type_var());
+        }
 
         let elem_vec_var = self.fresh_type_var();
         let vec_var = self.fresh_type_var();
         self.bind(vec_var, TypeTerm::Vec(elem_vec_var));
         if self.unify(object_var, vec_var).is_ok() {
+            self.ensure_integer(idx_var, "index expression")?;
             return Ok(elem_vec_var);
         }
 
@@ -431,20 +475,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let object_ty = self.resolve_to_ty(object_var)?;
             match object_ty {
                 Ty::Array(array_ty) => {
+                    self.ensure_integer(idx_var, "index expression")?;
                     let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
                     return Ok(elem_var);
                 }
                 Ty::Reference(reference) => {
                     if let Ty::Array(array_ty) = *reference.ty {
+                        self.ensure_integer(idx_var, "index expression")?;
                         let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
                         return Ok(elem_var);
                     }
+                }
+                Ty::Struct(struct_ty) if struct_ty.name.as_str() == "HashMap" => {
+                    let any_var = self.fresh_type_var();
+                    self.bind(any_var, TypeTerm::Any);
+                    return Ok(any_var);
                 }
                 _ => {}
             }
             self.emit_error("indexing is only supported on vector, slice, or array types");
             return Ok(self.error_type_var());
         }
+        self.ensure_integer(idx_var, "index expression")?;
         Ok(elem_slice_var)
     }
 
@@ -622,14 +674,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         arg_vars.len()
                     ));
                 }
+                let string_ref = Ty::Reference(TypeReference {
+                    ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+                    mutability: None,
+                    lifetime: None,
+                });
                 let fields = vec![
                     StructuralField::new(
                         Ident::new("name".to_string()),
-                        Ty::Primitive(TypePrimitive::String),
+                        string_ref.clone(),
                     ),
                     StructuralField::new(
                         Ident::new("type_name".to_string()),
-                        Ty::Primitive(TypePrimitive::String),
+                        string_ref,
                     ),
                 ];
                 let struct_ty = TypeStructural { fields };
@@ -871,8 +928,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.emit_error("HashMap::new does not take arguments");
         }
         let map_var = self.fresh_type_var();
-        let map_ty = self.make_hashmap_ty();
-        self.bind(map_var, TypeTerm::Custom(map_ty));
+        let map_ty = self.make_hashmap_struct();
+        self.bind(map_var, TypeTerm::Struct(map_ty));
         Ok(map_var)
     }
 
@@ -892,8 +949,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.unify(capacity_var, expected)?;
         }
         let map_var = self.fresh_type_var();
-        let map_ty = self.make_hashmap_ty();
-        self.bind(map_var, TypeTerm::Custom(map_ty));
+        let map_ty = self.make_hashmap_struct();
+        self.bind(map_var, TypeTerm::Struct(map_ty));
         Ok(map_var)
     }
 
@@ -907,17 +964,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let _ = self.infer_expr(&mut invoke.args[0])?;
         }
         let map_var = self.fresh_type_var();
-        let map_ty = self.make_hashmap_ty();
-        self.bind(map_var, TypeTerm::Custom(map_ty));
+        let map_ty = self.make_hashmap_struct();
+        self.bind(map_var, TypeTerm::Struct(map_ty));
         Ok(map_var)
     }
 
-    fn make_hashmap_ty(&self) -> Ty {
-        Ty::Struct(TypeStruct {
+    pub(crate) fn make_hashmap_struct(&self) -> TypeStruct {
+        TypeStruct {
             name: Ident::new("HashMap"),
             generics_params: Vec::new(),
             fields: Vec::new(),
-        })
+        }
     }
 
     fn locator_matches_suffix(locator: &Locator, suffix: &[&str]) -> bool {
@@ -1032,8 +1089,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let _ = self.infer_expr(&mut entry.value)?;
                 }
                 let map_var = self.fresh_type_var();
-                let map_ty = self.make_hashmap_ty();
-                self.bind(map_var, TypeTerm::Custom(map_ty));
+                let map_ty = self.make_hashmap_struct();
+                self.bind(map_var, TypeTerm::Struct(map_ty));
                 Ok(map_var)
             }
         }
@@ -1079,11 +1136,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Struct(struct_val.ty.clone()));
             }
             Value::Structural(structural) => {
-                let fields = structural
-                    .fields
-                    .iter()
-                    .map(|field| StructuralField::new(field.name.clone(), Ty::Any(TypeAny)))
-                    .collect();
+                let mut fields = Vec::with_capacity(structural.fields.len());
+                for field in &structural.fields {
+                    let field_var = self.infer_value(&field.value)?;
+                    let field_ty = self.resolve_to_ty(field_var)?;
+                    fields.push(StructuralField::new(field.name.clone(), field_ty));
+                }
                 self.bind(var, TypeTerm::Structural(TypeStructural { fields }));
             }
             Value::Tuple(tuple) => {
@@ -1092,6 +1150,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     vars.push(self.infer_value(elem)?);
                 }
                 self.bind(var, TypeTerm::Tuple(vars));
+            }
+            Value::Map(map) => {
+                for entry in &map.entries {
+                    let _ = self.infer_value(&entry.key)?;
+                    let _ = self.infer_value(&entry.value)?;
+                }
+                let map_ty = self.make_hashmap_struct();
+                self.bind(var, TypeTerm::Struct(map_ty));
             }
             Value::Function(func) => {
                 let fn_ty = self.ty_from_function_signature(&func.sig)?;

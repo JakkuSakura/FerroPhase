@@ -2547,6 +2547,36 @@ impl<'ctx> AstInterpreter<'ctx> {
         None
     }
 
+    fn resolve_type_binding(&mut self, name: &str) -> Option<Ty> {
+        for idx in (0..self.type_env.len()).rev() {
+            if let Some(ty) = self.type_env[idx].get(name).cloned() {
+                let resolved = self.materialize_const_type(ty);
+                self.type_env[idx].insert(name.to_string(), resolved.clone());
+                return Some(resolved);
+            }
+        }
+        if let Some(ty) = self.global_types.get(name).cloned() {
+            let resolved = self.materialize_const_type(ty);
+            self.global_types.insert(name.to_string(), resolved.clone());
+            return Some(resolved);
+        }
+        None
+    }
+
+    fn materialize_const_type(&mut self, ty: Ty) -> Ty {
+        let Ty::Expr(mut expr) = ty else {
+            return ty;
+        };
+        if let ExprKind::IntrinsicCall(call) = expr.kind() {
+            if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
+                if let Value::Type(resolved) = self.eval_expr(expr.as_mut()) {
+                    return resolved;
+                }
+            }
+        }
+        Ty::Expr(expr)
+    }
+
     fn resolve_qualified(&mut self, symbol: String) -> Value {
         if let Some(primitive) = Self::primitive_type_from_name(&symbol) {
             return Value::Type(Ty::Primitive(primitive));
@@ -2555,22 +2585,14 @@ impl<'ctx> AstInterpreter<'ctx> {
             return value.clone();
         }
         if symbol == "Self" {
-            if let Some(context) = self.impl_stack.last() {
-                if let Some(self_ty) = &context.self_ty {
-                    if let Some(ty) = self.lookup_type(self_ty) {
-                        return Value::Type(ty);
-                    }
-                    if let Some(ty) = self.global_types.get(self_ty) {
-                        return Value::Type(ty.clone());
-                    }
+            if let Some(self_ty) = self.impl_stack.last().and_then(|ctx| ctx.self_ty.clone()) {
+                if let Some(ty) = self.resolve_type_binding(&self_ty) {
+                    return Value::Type(ty);
                 }
             }
         }
-        if let Some(ty) = self.lookup_type(&symbol) {
+        if let Some(ty) = self.resolve_type_binding(&symbol) {
             return Value::Type(ty);
-        }
-        if let Some(ty) = self.global_types.get(&symbol) {
-            return Value::Type(ty.clone());
         }
         if symbol == "printf" {
             return Value::unit();

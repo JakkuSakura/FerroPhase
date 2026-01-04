@@ -12,3 +12,4 @@ resolver = "2"
 members = [
     "crates/*",
 ]
+default-members = ["crates/fp-cli"]

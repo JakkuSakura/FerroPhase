@@ -1,6 +1,6 @@
 use crate::ast::{
     BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprIntrinsicContainer,
-    ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Value,
+    ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Ty, Value,
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
@@ -52,14 +52,36 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
             if bootstrap::maybe_rewrite_cli_main(function) {
                 return Ok(());
             }
+            for param in &mut function.sig.params {
+                if let Some(ty) = param.ty_annotation.as_mut() {
+                    normalize_ty(ty, strategy)?;
+                }
+                normalize_ty(&mut param.ty, strategy)?;
+            }
+            if let Some(ret_ty) = function.sig.ret_ty.as_mut() {
+                normalize_ty(ret_ty, strategy)?;
+            }
             normalize_expr(function.body.as_mut(), strategy)?
         }
-        ItemKind::DefConst(def) => normalize_expr(def.value.as_mut(), strategy)?,
-        ItemKind::DefStatic(def) => normalize_expr(def.value.as_mut(), strategy)?,
+        ItemKind::DefConst(def) => {
+            if let Some(ty) = def.ty_annotation.as_mut() {
+                normalize_ty(ty, strategy)?;
+            }
+            if let Some(ty) = def.ty.as_mut() {
+                normalize_ty(ty, strategy)?;
+            }
+            normalize_expr(def.value.as_mut(), strategy)?;
+        }
+        ItemKind::DefStatic(def) => {
+            if let Some(ty) = def.ty_annotation.as_mut() {
+                normalize_ty(ty, strategy)?;
+            }
+            normalize_ty(&mut def.ty, strategy)?;
+            normalize_expr(def.value.as_mut(), strategy)?;
+        }
         ItemKind::DefStruct(_)
         | ItemKind::DefStructural(_)
         | ItemKind::DefEnum(_)
-        | ItemKind::DefType(_)
         | ItemKind::DeclConst(_)
         | ItemKind::DeclStatic(_)
         | ItemKind::DeclFunction(_)
@@ -71,6 +93,7 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
                 normalize_item(child, strategy)?;
             }
         }
+        ItemKind::DefType(def) => normalize_ty(&mut def.value, strategy)?,
         ItemKind::Expr(expr) => normalize_expr(expr, strategy)?,
     }
     Ok(())
@@ -274,6 +297,82 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
         break;
     }
 
+    Ok(())
+}
+
+fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
+    match ty {
+        Ty::Expr(expr) => normalize_expr(expr.as_mut(), strategy)?,
+        Ty::Array(array) => {
+            normalize_ty(array.elem.as_mut(), strategy)?;
+            normalize_expr(array.len.as_mut(), strategy)?;
+        }
+        Ty::Vec(vec) => normalize_ty(vec.ty.as_mut(), strategy)?,
+        Ty::Tuple(tuple) => {
+            for entry in &mut tuple.types {
+                normalize_ty(entry, strategy)?;
+            }
+        }
+        Ty::Struct(struct_ty) => {
+            for field in &mut struct_ty.fields {
+                normalize_ty(&mut field.value, strategy)?;
+            }
+        }
+        Ty::Structural(structural) => {
+            for field in &mut structural.fields {
+                normalize_ty(&mut field.value, strategy)?;
+            }
+        }
+        Ty::Enum(enum_ty) => {
+            for variant in &mut enum_ty.variants {
+                normalize_ty(&mut variant.value, strategy)?;
+                if let Some(discriminant) = variant.discriminant.as_mut() {
+                    normalize_expr(discriminant.as_mut(), strategy)?;
+                }
+            }
+        }
+        Ty::Function(function) => {
+            for param in &mut function.params {
+                normalize_ty(param, strategy)?;
+            }
+            if let Some(ret) = function.ret_ty.as_mut() {
+                normalize_ty(ret.as_mut(), strategy)?;
+            }
+        }
+        Ty::ImplTraits(impl_traits) => {
+            for bound in &mut impl_traits.bounds.bounds {
+                normalize_expr(bound, strategy)?;
+            }
+        }
+        Ty::TypeBounds(bounds) => {
+            for bound in &mut bounds.bounds {
+                normalize_expr(bound, strategy)?;
+            }
+        }
+        Ty::Reference(reference) => normalize_ty(reference.ty.as_mut(), strategy)?,
+        Ty::Slice(slice) => normalize_ty(slice.elem.as_mut(), strategy)?,
+        Ty::Value(value) => {
+            if let Value::Expr(expr) = value.value.as_mut() {
+                normalize_expr(expr.as_mut(), strategy)?;
+            }
+        }
+        Ty::QuoteToken(token) => {
+            if let Some(inner) = token.inner.as_mut() {
+                normalize_ty(inner.as_mut(), strategy)?;
+            }
+        }
+        Ty::TypeBinaryOp(op) => {
+            normalize_ty(op.lhs.as_mut(), strategy)?;
+            normalize_ty(op.rhs.as_mut(), strategy)?;
+        }
+        Ty::Primitive(_)
+        | Ty::Any(_)
+        | Ty::Unit(_)
+        | Ty::Unknown(_)
+        | Ty::Nothing(_)
+        | Ty::Type(_)
+        | Ty::AnyBox(_) => {}
+    }
     Ok(())
 }
 

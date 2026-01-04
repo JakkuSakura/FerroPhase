@@ -25,9 +25,7 @@ use fp_core::{hir, lir};
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome};
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_optimize::orchestrators::{ConstEvalOutcome, ConstEvaluationOrchestrator};
-use fp_optimize::transformations::{
-    HirGenerator, IrTransform, LirGenerator, MirLowering, remove_generic_templates,
-};
+use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
 #[cfg(feature = "bootstrap")]
 use fp_rust::printer::RustPrinter;
 use fp_typescript::frontend::TsParseMode;
@@ -788,8 +786,6 @@ impl Pipeline {
         }
 
         if options.run_const_eval && stage_enabled(&pipeline_options, STAGE_CONST_EVAL) {
-            remove_generic_templates(ast)?;
-
             if options.save_intermediates {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
                     self.save_pretty(ast, base_path, EXT_AST_EVAL, &pipeline_options)?;
@@ -971,11 +967,6 @@ impl Pipeline {
                         )
                     },
                 )?;
-            }
-
-            // Remove generic template functions after type checking completes.
-            if stage_enabled(options, STAGE_CONST_EVAL) {
-                remove_generic_templates(&mut ast)?;
             }
 
         }
@@ -1351,8 +1342,6 @@ impl Pipeline {
             )?;
             self.last_const_eval = Some(outcome);
         }
-
-        remove_generic_templates(&mut ast)?;
 
         if options.save_intermediates && !options.bootstrap_mode {
             self.save_pretty(&ast, &base_path, EXT_AST_EVAL, &options)?;

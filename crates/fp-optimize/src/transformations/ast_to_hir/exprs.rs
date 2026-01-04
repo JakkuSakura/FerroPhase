@@ -500,23 +500,33 @@ impl HirGenerator {
         // Lower `Foo { ..base, field: value }` into a block that binds `base`
         // once and then fills missing fields from it, so later MIR lowering
         // only sees a plain struct literal.
-        let def_id = match path.res {
-            Some(hir::Res::Def(def_id)) => def_id,
+        let struct_fields = match path.res {
+            Some(hir::Res::Def(def_id)) => self
+                .struct_field_defs
+                .get(&def_id)
+                .cloned()
+                .ok_or_else(|| {
+                    crate::error::optimization_error(
+                        "struct update requires a known struct field layout",
+                    )
+                })?,
             _ => {
-                return Err(crate::error::optimization_error(
-                    "struct update requires a resolved struct definition",
-                ))
+                let segments = path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.name.as_str().to_string())
+                    .collect::<Vec<_>>();
+                let alias = self
+                    .lookup_type_alias(&segments)
+                    .cloned()
+                    .ok_or_else(|| {
+                        crate::error::optimization_error(
+                            "struct update requires a resolved struct definition",
+                        )
+                    })?;
+                self.struct_fields_from_type(&alias, Span::new(self.current_file, 0, 0))?
             }
         };
-        let struct_fields = self
-            .struct_field_defs
-            .get(&def_id)
-            .cloned()
-            .ok_or_else(|| {
-                crate::error::optimization_error(
-                    "struct update requires a known struct field layout",
-                )
-            })?;
 
         let base_expr = self.transform_expr_to_hir(update_expr.as_ref())?;
         let base_name = format!("__struct_update_{}", self.next_id());
@@ -1758,5 +1768,115 @@ impl HirGenerator {
         let ty = self.create_unit_type();
 
         Ok(hir::ExprKind::Let(pat, Box::new(ty), Some(Box::new(init))))
+    }
+}
+
+impl HirGenerator {
+    fn struct_fields_from_type(
+        &mut self,
+        ty: &ast::Ty,
+        span: Span,
+    ) -> Result<Vec<ast::StructuralField>> {
+        match ty {
+            ast::Ty::Structural(structural) => Ok(structural.fields.clone()),
+            ast::Ty::Struct(struct_ty) => Ok(struct_ty.fields.clone()),
+            ast::Ty::TypeBinaryOp(op) => {
+                let lhs = self.struct_fields_from_type(&op.lhs, span)?;
+                let rhs = self.struct_fields_from_type(&op.rhs, span)?;
+                match op.kind {
+                    ast::TypeBinaryOpKind::Add => self.merge_struct_fields(lhs, rhs),
+                    ast::TypeBinaryOpKind::Intersect => self.intersect_struct_fields(lhs, rhs),
+                    ast::TypeBinaryOpKind::Subtract => self.subtract_struct_fields(lhs, rhs),
+                    ast::TypeBinaryOpKind::Union => Err(crate::error::optimization_error(
+                        "struct update does not support union type operands",
+                    )),
+                }
+            }
+            ast::Ty::Expr(expr) => {
+                if let ast::ExprKind::Locator(locator) = expr.kind() {
+                    let path = locator.to_path();
+                    let segments = path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.name.clone())
+                        .collect::<Vec<_>>();
+                    if let Some(alias) = self.lookup_type_alias(&segments).cloned() {
+                        return self.struct_fields_from_type(&alias, span);
+                    }
+                }
+                Err(crate::error::optimization_error(
+                    "struct update requires a resolved struct definition",
+                ))
+            }
+            _ => Err(crate::error::optimization_error(
+                "struct update requires a resolved struct definition",
+            )),
+        }
+    }
+
+    fn merge_struct_fields(
+        &mut self,
+        lhs: Vec<ast::StructuralField>,
+        rhs: Vec<ast::StructuralField>,
+    ) -> Result<Vec<ast::StructuralField>> {
+        let mut result = Vec::new();
+        let mut seen = HashMap::new();
+        for field in lhs {
+            seen.insert(field.name.name.clone(), field.value.clone());
+            result.push(field);
+        }
+        for field in rhs {
+            if let Some(existing) = seen.get(&field.name.name) {
+                if existing != &field.value {
+                    return Err(crate::error::optimization_error(format!(
+                        "conflicting field types for `{}` in structural merge",
+                        field.name.name
+                    )));
+                }
+                continue;
+            }
+            seen.insert(field.name.name.clone(), field.value.clone());
+            result.push(field);
+        }
+        Ok(result)
+    }
+
+    fn intersect_struct_fields(
+        &mut self,
+        lhs: Vec<ast::StructuralField>,
+        rhs: Vec<ast::StructuralField>,
+    ) -> Result<Vec<ast::StructuralField>> {
+        let mut rhs_map = HashMap::new();
+        for field in rhs {
+            rhs_map.insert(field.name.name.clone(), field.value);
+        }
+        let mut result = Vec::new();
+        for field in lhs {
+            if let Some(rhs_ty) = rhs_map.get(&field.name.name) {
+                if rhs_ty != &field.value {
+                    return Err(crate::error::optimization_error(format!(
+                        "conflicting field types for `{}` in structural intersect",
+                        field.name.name
+                    )));
+                }
+                result.push(field);
+            }
+        }
+        Ok(result)
+    }
+
+    fn subtract_struct_fields(
+        &mut self,
+        lhs: Vec<ast::StructuralField>,
+        rhs: Vec<ast::StructuralField>,
+    ) -> Result<Vec<ast::StructuralField>> {
+        let rhs_names = rhs
+            .into_iter()
+            .map(|field| field.name.name)
+            .collect::<HashSet<_>>();
+        Ok(lhs
+            .into_iter()
+            .filter(|field| !rhs_names.contains(&field.name.name))
+            .collect())
     }
 }

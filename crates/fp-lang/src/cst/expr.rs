@@ -357,7 +357,9 @@ impl Parser {
                     Some(TokenKind::Keyword(kw))
                         if matches!(
                             kw,
-                            crate::lexer::Keyword::Crate | crate::lexer::Keyword::Super
+                            crate::lexer::Keyword::Crate
+                                | crate::lexer::Keyword::Super
+                                | crate::lexer::Keyword::Emit
                         ) =>
                     {
                         self.parse_name_or_path()
