@@ -13,6 +13,20 @@ hir::Program {
         }
     }
 
+    pub fn const_factorial(n: i64) -> i64 {
+        // params: [n: i64]
+        {
+            if ((n <= 1))
+                {
+                    1
+                }
+            else
+                {
+                    (n * const_factorial((n - 1)))
+                }
+        }
+    }
+
     pub fn sum_range(start: i64, end: i64) -> i64 {
         // params: [start: i64, end: i64]
         {
@@ -96,10 +110,10 @@ hir::Program {
                     }
             }
             printf("\n  Iterations: %lld\n", count);
-            printf("\n6. Compile-time iteration (simulated):\n");
+            printf("\n6. Compile-time recursion:\n");
             pub const FACTORIAL_CONST: i64 =
                 120;
-            printf("  const 5! = %lld\n", FACTORIAL_CONST);
+            printf("  const_factorial(5) = %lld\n", FACTORIAL_CONST);
             printf("\n✓ Loop constructs demonstrated!\n");
         }
     }

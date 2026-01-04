@@ -12,6 +12,14 @@ fn factorial(n: i64) -> i64 {
     result
 }
 
+const fn const_factorial(n: i64) -> i64 {
+    if n <= 1 {
+        1
+    } else {
+        n * const_factorial(n - 1)
+    }
+}
+
 fn sum_range(start: i64, end: i64) -> i64 {
     let mut sum = 0;
     for i in start..end {
@@ -86,10 +94,10 @@ fn main() {
     }
     println!("\n  Iterations: {}", count);
 
-    // Const evaluation with loops (future)
-    println!("\n6. Compile-time iteration (simulated):");
-    const FACTORIAL_CONST: i64 = 5 * 4 * 3 * 2 * 1;
-    println!("  const 5! = {}", FACTORIAL_CONST);
+    // Const evaluation with recursion
+    println!("\n6. Compile-time recursion:");
+    const FACTORIAL_CONST: i64 = const_factorial(5);
+    println!("  const_factorial(5) = {}", FACTORIAL_CONST);
 
     println!("\n✓ Loop constructs demonstrated!");
 }

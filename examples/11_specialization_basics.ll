@@ -200,21 +200,21 @@ bb0:
   br i1 %load_96, label %bb1, label %bb2
 
 bb1:                                              ; preds = %bb0
-  store double %0, ptr %alloca_count_91, align 8
+  store double %0, ptr %alloca_count_92, align 8
   br label %bb3
 
 bb2:                                              ; preds = %bb0
-  store double %1, ptr %alloca_count_91, align 8
+  store double %1, ptr %alloca_count_92, align 8
   br label %bb3
 
 bb3:                                              ; preds = %bb2, %bb1
-  %load_100 = load double, ptr %alloca_count_91, align 8
+  %load_100 = load double, ptr %alloca_count_92, align 8
   store double %load_100, ptr %alloca_count_99, align 8
   %load_102 = load double, ptr %alloca_count_99, align 8
   %call_103 = call i32 (ptr, ...) @printf(ptr @.str.11_specialization_basics.10, double %0, double %1, double %load_102)
   %load_104 = load double, ptr %alloca_count_99, align 8
-  store double %load_104, ptr %alloca_count_92, align 8
-  %load_106 = load double, ptr %alloca_count_92, align 8
+  store double %load_104, ptr %alloca_count_91, align 8
+  %load_106 = load double, ptr %alloca_count_91, align 8
   ret double %load_106
 }
 

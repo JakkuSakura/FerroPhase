@@ -40,6 +40,35 @@ ast::File {
                           value 1 : i64
         expr_stmt (value)
           locator result : i64
+    pub const fn const_factorial(n: Expr(i64)) -> Expr(i64) : fn(i64) -> i64 : fn(i64) -> i64
+      block (1 stmt) : i64
+        expr_stmt (value)
+          if : i64
+            cond:
+              binop <= : bool
+                lhs:
+                  locator n : i64
+                rhs:
+                  value 1 : i64
+            then:
+              block (1 stmt) : i64
+                expr_stmt (value)
+                  value 1 : i64
+            else:
+              block (1 stmt) : i64
+                expr_stmt (value)
+                  binop * : i64
+                    lhs:
+                      locator n : i64
+                    rhs:
+                      invoke : i64
+                        target: const_factorial
+                        args:
+                          binop - : i64
+                            lhs:
+                              locator n : i64
+                            rhs:
+                              value 1 : i64
     pub fn sum_range(start: Expr(i64), end: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
       block (3 stmts) : i64
         let mut sum
@@ -285,12 +314,12 @@ ast::File {
             template: "\n  Iterations: {}" count
         expr_stmt ;
           intrinsic println : ()
-            template: "\n6. Compile-time iteration (simulated):"
+            template: "\n6. Compile-time recursion:"
         pub const FACTORIAL_CONST: i64 : i64
           value 120 : i64
         expr_stmt ;
           intrinsic println : ()
-            template: "  const 5! = {}" FACTORIAL_CONST
+            template: "  const_factorial(5) = {}" FACTORIAL_CONST
         expr_stmt ;
           intrinsic println : ()
             template: "\n✓ Loop constructs demonstrated!"
