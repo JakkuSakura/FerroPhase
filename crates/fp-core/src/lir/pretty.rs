@@ -1,6 +1,6 @@
 use std::fmt::{self, Formatter};
 
-use crate::pretty::{PrettyCtx, PrettyPrintable};
+use crate::pretty::{escape_string, PrettyCtx, PrettyPrintable};
 
 use super::ty::Ty;
 use super::{
@@ -686,7 +686,7 @@ fn format_constant(constant: &LirConstant) -> String {
         UInt(value, ty) => format!("{} {}", format_type(ty), value),
         Float(value, ty) => format!("{} {}", format_type(ty), value),
         Bool(value) => format!("bool {}", value),
-        String(s) => format!("c\"{}\"", s),
+        String(s) => format!("c\"{}\"", escape_string(s)),
         Array(elements, ty) => {
             let elems = elements
                 .iter()

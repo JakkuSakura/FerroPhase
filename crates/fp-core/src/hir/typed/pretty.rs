@@ -1,6 +1,6 @@
 use std::fmt::{self, Formatter};
 
-use crate::pretty::{PrettyCtx, PrettyPrintable};
+use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 
 use super::{
     Body, BodyId, Const, Expr, ExprKind, FormatTemplatePart, Function, Impl, ImplItemKind, Item,
@@ -347,8 +347,8 @@ fn summarize_lit(lit: &Lit) -> String {
         Lit::Int(value, _) => value.to_string(),
         Lit::Uint(value, _) => value.to_string(),
         Lit::Float(value, _) => value.to_string(),
-        Lit::Char(ch) => format!("'{}'", ch),
-        Lit::Str(s) => format!("\"{}\"", s),
+        Lit::Char(ch) => format!("'{}'", escape_char(*ch)),
+        Lit::Str(s) => format!("\"{}\"", escape_string(s)),
         other => format!("{:?}", other),
     }
 }

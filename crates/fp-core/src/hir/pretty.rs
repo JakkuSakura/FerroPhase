@@ -1,6 +1,6 @@
 use std::fmt::{self, Formatter};
 
-use crate::pretty::{PrettyCtx, PrettyPrintable};
+use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 
 use super::{
     BinOp, Block, Body, Const, Enum, Expr, ExprKind, Function, GenericArg, GenericParamKind,
@@ -515,8 +515,8 @@ fn format_lit(lit: &Lit) -> String {
         Lit::Bool(value) => value.to_string(),
         Lit::Integer(value) => value.to_string(),
         Lit::Float(value) => value.to_string(),
-        Lit::Str(value) => format!("\"{}\"", value),
-        Lit::Char(value) => format!("'{}'", value),
+        Lit::Str(value) => format!("\"{}\"", escape_string(value)),
+        Lit::Char(value) => format!("'{}'", escape_char(*value)),
         Lit::Null => "null".to_string(),
     }
 }
