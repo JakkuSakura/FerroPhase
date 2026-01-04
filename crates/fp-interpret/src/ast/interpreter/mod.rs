@@ -2761,12 +2761,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Paren(paren) => self.const_fold_expr_value(paren.expr.as_ref()),
             ExprKind::UnOp(unop) => {
                 let value = self.const_fold_expr_value(unop.val.as_ref())?;
-                self.evaluate_unary(unop.op, value).ok()
+                self.evaluate_unary(unop.op.clone(), value).ok()
             }
             ExprKind::BinOp(binop) => {
                 let lhs = self.const_fold_expr_value(binop.lhs.as_ref())?;
                 let rhs = self.const_fold_expr_value(binop.rhs.as_ref())?;
-                self.evaluate_binop(binop.op, lhs, rhs).ok()
+                self.evaluate_binop(binop.kind, lhs, rhs).ok()
             }
             _ => None,
         }
