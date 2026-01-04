@@ -235,7 +235,8 @@ const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
 const STAGE_TYPE_ENRICH: &str = "ast→typed";
 const STAGE_AST_TO_HIR: &str = "ast→hir";
-const STAGE_BACKEND_LOWERING: &str = "hir→mir→lir";
+const STAGE_HIR_TO_MIR: &str = "hir→mir";
+const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_LINK_BINARY: &str = "link-binary";
@@ -990,13 +991,26 @@ impl Pipeline {
 
             match target {
                 PipelineTarget::Llvm => {
-                    let backend = self.run_stage(
-                        STAGE_BACKEND_LOWERING,
+                    let mir = self.run_stage(
+                        STAGE_HIR_TO_MIR,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_backend_lowering(
+                            pipeline.stage_hir_to_mir(
                                 &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
+                    )?;
+                    let lir = self.run_stage(
+                        STAGE_MIR_TO_LIR,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_mir_to_lir(
+                                &mir.mir_program,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1005,7 +1019,7 @@ impl Pipeline {
                     )?;
 
                     let llvm = self.generate_llvm_artifacts(
-                        &backend.lir_program,
+                        &lir.lir_program,
                         base_path,
                         input_path,
                         false,
@@ -1014,13 +1028,26 @@ impl Pipeline {
                     PipelineOutput::Code(llvm.ir_text)
                 }
                 PipelineTarget::Binary => {
-                    let backend = self.run_stage(
-                        STAGE_BACKEND_LOWERING,
+                    let mir = self.run_stage(
+                        STAGE_HIR_TO_MIR,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_backend_lowering(
+                            pipeline.stage_hir_to_mir(
                                 &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
+                    )?;
+                    let lir = self.run_stage(
+                        STAGE_MIR_TO_LIR,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_mir_to_lir(
+                                &mir.mir_program,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1029,7 +1056,7 @@ impl Pipeline {
                     )?;
 
                     let llvm = self.generate_llvm_artifacts(
-                        &backend.lir_program,
+                        &lir.lir_program,
                         base_path,
                         input_path,
                         true,
@@ -1053,13 +1080,26 @@ impl Pipeline {
                     PipelineOutput::Binary(binary_path)
                 }
                 PipelineTarget::Bytecode => {
-                    let backend = self.run_stage(
-                        STAGE_BACKEND_LOWERING,
+                    let mir = self.run_stage(
+                        STAGE_HIR_TO_MIR,
                         &diagnostic_manager,
                         options,
                         |pipeline| {
-                            pipeline.stage_backend_lowering(
+                            pipeline.stage_hir_to_mir(
                                 &hir_program,
+                                options,
+                                base_path,
+                                &diagnostic_manager,
+                            )
+                        },
+                    )?;
+                    let lir = self.run_stage(
+                        STAGE_MIR_TO_LIR,
+                        &diagnostic_manager,
+                        options,
+                        |pipeline| {
+                            pipeline.stage_mir_to_lir(
+                                &mir.mir_program,
                                 options,
                                 base_path,
                                 &diagnostic_manager,
@@ -1068,7 +1108,7 @@ impl Pipeline {
                     )?;
 
                     let repr =
-                        format!("; MIR\n{}\n\n; LIR\n{}", backend.mir_text, backend.lir_text);
+                        format!("; MIR\n{}\n\n; LIR\n{}", mir.mir_text, lir.lir_text);
                     PipelineOutput::Code(repr)
                 }
                 PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
@@ -1397,19 +1437,38 @@ impl Pipeline {
             },
         )?;
 
-        self.run_stage(
-            STAGE_BACKEND_LOWERING,
+        let mir = self.run_stage(
+            STAGE_HIR_TO_MIR,
             &diagnostic_manager,
             &options,
             |pipeline| {
-                pipeline.stage_backend_lowering(
+                pipeline.stage_hir_to_mir(
                     &hir_program,
                     &options,
                     &base_path,
                     &diagnostic_manager,
                 )
             },
-        )
+        )?;
+        let lir = self.run_stage(
+            STAGE_MIR_TO_LIR,
+            &diagnostic_manager,
+            &options,
+            |pipeline| {
+                pipeline.stage_mir_to_lir(
+                    &mir.mir_program,
+                    &options,
+                    &base_path,
+                    &diagnostic_manager,
+                )
+            },
+        )?;
+
+        Ok(BackendArtifacts {
+            lir_program: lir.lir_program,
+            mir_text: mir.mir_text,
+            lir_text: lir.lir_text,
+        })
     }
 
     fn run_ast_interpreter(
@@ -2542,14 +2601,29 @@ mod tests {
         }
 
         fn backend(&self, hir: &hir::Program) -> BackendArtifacts {
-            match self.pipeline.stage_backend_lowering(
+            let mir = match self.pipeline.stage_hir_to_mir(
                 hir,
                 &self.options,
                 Path::new("unit_test"),
                 &self.diagnostics,
             ) {
                 Ok(artifacts) => artifacts,
-                Err(err) => self.fail_with_diagnostics("HIR→MIR→LIR lowering", err),
+                Err(err) => self.fail_with_diagnostics("HIR→MIR lowering", err),
+            };
+            let lir = match self.pipeline.stage_mir_to_lir(
+                &mir.mir_program,
+                &self.options,
+                Path::new("unit_test"),
+                &self.diagnostics,
+            ) {
+                Ok(artifacts) => artifacts,
+                Err(err) => self.fail_with_diagnostics("MIR→LIR lowering", err),
+            };
+
+            BackendArtifacts {
+                lir_program: lir.lir_program,
+                mir_text: mir.mir_text,
+                lir_text: lir.lir_text,
             }
         }
 
