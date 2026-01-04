@@ -24,6 +24,11 @@ const _GENERATED: () = const {
 };
 
 fn main() {
+    println!("📘 Tutorial: 08_metaprogramming_patterns.fp");
+    println!("🧭 Focus: Metaprogramming: using const metadata to drive code generation");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Const metadata
     const FIELD_COUNT: i64 = field_count!(Point3D);
     const POINT_NAME: &str = type_name!(Point3D);

@@ -47,6 +47,11 @@ impl Rectangle {
 }
 
 fn main() {
+    println!("📘 Tutorial: 06_struct_methods.fp");
+    println!("🧭 Focus: Struct methods and field access");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     println!("=== Struct Operations ===");
 
     let mut p1 = Point::new(10, 20);

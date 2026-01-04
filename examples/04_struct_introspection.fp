@@ -2,6 +2,11 @@
 //! Struct introspection demonstration
 
 fn main() {
+    println!("📘 Tutorial: 04_struct_introspection.fp");
+    println!("🧭 Focus: Struct introspection demonstration");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Define basic structs
     struct Point {
         x: f64,

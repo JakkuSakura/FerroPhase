@@ -2,6 +2,11 @@
 //! Basic const evaluation with compile-time arithmetic and const blocks
 
 fn main() {
+    println!("📘 Tutorial: 01_const_eval_basics.fp");
+    println!("🧭 Focus: Basic const evaluation with compile-time arithmetic and const blocks");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Basic compile-time computation
     const BUFFER_SIZE: i64 = 1024 * 4;
     const MAX_CONNECTIONS: i64 = 150;

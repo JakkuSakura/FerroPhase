@@ -22,6 +22,11 @@ fn apply_ops(const ops: [i32], mut x: i32, limit: i32) -> i32 {
 }
 
 fn main() {
+    println!("📘 Tutorial: 20_quote_splice.fp");
+    println!("🧭 Focus: Quote, splice, and emit: staged code generation with runtime output.");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     let result1 = apply_ops([1, 2, 3, 4], 0, 6);
     println!("result1={}", result1);
 

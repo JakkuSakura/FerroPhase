@@ -2,6 +2,11 @@
 //! Compile-time string operations and intrinsics
 
 fn main() {
+    println!("📘 Tutorial: 02_string_processing.fp");
+    println!("🧭 Focus: Compile-time string operations and intrinsics");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Const strings
     const NAME: &str = "FerroPhase";
     const VERSION: &str = "0.1.0";

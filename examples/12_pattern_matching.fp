@@ -38,21 +38,26 @@ fn unwrap_or(opt: Option<i64>, default: i64) -> i64 {
 }
 
 fn main() {
+    println!("📘 Tutorial: 12_pattern_matching.fp");
+    println!("🧭 Focus: Pattern matching: match expressions with guards and destructuring");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Enum patterns
     let red = Color::Red;
     let rgb = Color::Rgb(128, 64, 32);
-    println!("{}", describe(&red));
-    println!("{}", describe(&rgb));
+    println!("describe(red) = {}", describe(&red));
+    println!("describe(rgb) = {}", describe(&rgb));
 
     // Guards
-    println!("{}", classify(-5));
-    println!("{}", classify(0));
-    println!("{}", classify(4));
-    println!("{}", classify(7));
+    println!("classify(-5) = {}", classify(-5));
+    println!("classify(0) = {}", classify(0));
+    println!("classify(4) = {}", classify(4));
+    println!("classify(7) = {}", classify(7));
 
     // Option matching
-    println!("{}", unwrap_or(Option::Some(42), 0));
-    println!("{}", unwrap_or(Option::None, 99));
+    println!("unwrap_or(Some(42), 0) = {}", unwrap_or(Option::Some(42), 0));
+    println!("unwrap_or(None, 99) = {}", unwrap_or(Option::None, 99));
 
     // Const match
     const CODE: i64 = match 1 {

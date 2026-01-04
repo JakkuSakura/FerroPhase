@@ -73,7 +73,7 @@ type FooMaybe = Foo?;
 
 // Negative bounds: require Display but explicitly forbid Clone.
 fn print_display<T: Display + !Clone>(value: T) {
-    println!("{}", value);
+    println!("display: {}", value);
 }
 
 fn describe_optional(value: FooMaybe) -> Int {
@@ -84,6 +84,11 @@ fn describe_optional(value: FooMaybe) -> Int {
 }
 
 fn main() {
+    println!("📘 Tutorial: 14_type_arithmetic.fp");
+    println!("🧭 Focus: Type arithmetic examples: combining and relating types with operators.");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     let base_foo: Foo = Foo { a: 1, common: 2, foo: 3 };
     println!("Foo a={} common={} foo={}", base_foo.a, base_foo.common, base_foo.foo);
 

@@ -2,6 +2,11 @@
 //! Comprehensive println!/print showcase covering variadic arguments and runtime formatting
 
 const fn main() {
+    println!("📘 Tutorial: 10_print_showcase.fp");
+    println!("🧭 Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     // Basic printing
     print("Hello");
     print("World with newlines");

@@ -35,6 +35,11 @@ fn print_area<T: Shape>(shape: &T) {
 }
 
 fn main() {
+    println!("📘 Tutorial: 16_traits.fp");
+    println!("🧭 Focus: Traits: defining shared behavior with default methods");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     let circle = Circle { radius: 5.0 };
     let rect = Rectangle { width: 4.0, height: 6.0 };
 

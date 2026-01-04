@@ -22,6 +22,11 @@ const HTTP_STATUSES: HashMap<&'static str, i64> = const {
 };
 
 fn main() {
+    println!("📘 Tutorial: 18_comptime_collections.fp");
+    println!("🧭 Focus: Showcase compile-time Vec and HashMap construction.");
+    println!("🧪 What to look for: labeled outputs below");
+    println!("✅ Expectation: outputs match labels");
+    println!("");
     println!("=== Compile-time Collections ===");
 
     println!("Vec literals:");
