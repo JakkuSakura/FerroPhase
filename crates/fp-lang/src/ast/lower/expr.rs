@@ -922,20 +922,6 @@ fn split_match_arm<'a>(
     }
 }
 
-fn is_wildcard_pattern_expr(expr: &Expr) -> bool {
-    match expr.kind() {
-        ExprKind::Locator(loc) => loc.as_ident().map(|id| id.as_str() == "_").unwrap_or(false),
-        _ => false,
-    }
-}
-
-fn is_binding_pattern_expr(expr: &Expr) -> bool {
-    match expr.kind() {
-        ExprKind::Locator(loc) => loc.as_ident().map(|id| id.as_str() != "_").unwrap_or(false),
-        _ => false,
-    }
-}
-
 fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError> {
     // Patterns are currently parsed as expression CST nodes in match arms.
     // We lower a small subset of expressions into `Pattern` so that the typer

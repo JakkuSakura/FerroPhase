@@ -1501,7 +1501,7 @@ impl MirLowering {
         let def_id = self.next_synthetic_def_id();
         let enum_name = format!("__union_{}", def_id);
 
-        let mut lhs_name = self.union_variant_name(lhs, "Left");
+        let lhs_name = self.union_variant_name(lhs, "Left");
         let mut rhs_name = self.union_variant_name(rhs, "Right");
         if lhs_name == rhs_name {
             rhs_name = format!("{}_rhs", rhs_name);
@@ -1509,10 +1509,12 @@ impl MirLowering {
 
         let lhs_payload = match lhs.kind {
             hir::TypeExprKind::Infer | hir::TypeExprKind::Error => None,
+            _ if self.is_null_type_expr(lhs) => None,
             _ => Some(lhs.clone()),
         };
         let rhs_payload = match rhs.kind {
             hir::TypeExprKind::Infer | hir::TypeExprKind::Error => None,
+            _ if self.is_null_type_expr(rhs) => None,
             _ => Some(rhs.clone()),
         };
 
@@ -1573,6 +1575,17 @@ impl MirLowering {
                 matches.pop().unwrap_or_else(|| fallback.to_string())
             }
             _ => fallback.to_string(),
+        }
+    }
+
+    fn is_null_type_expr(&self, ty_expr: &hir::TypeExpr) -> bool {
+        match &ty_expr.kind {
+            hir::TypeExprKind::Path(path) => path
+                .segments
+                .last()
+                .map(|seg| seg.name.as_str() == "null")
+                .unwrap_or(false),
+            _ => false,
         }
     }
 
@@ -1828,6 +1841,9 @@ impl MirLowering {
                             kind: TyKind::Int(IntTy::I8),
                         })),
                     }
+                }
+                "null" => {
+                    return self.raw_string_ptr_ty();
                 }
                 _ => {}
             }
@@ -3661,7 +3677,6 @@ impl<'a> BodyBuilder<'a> {
             let saved_fallback = self.fallback_locals.clone();
             self.bind_match_pattern(&arm.pat, &scrutinee_place, &scrutinee_info.ty, span);
 
-            let mut guard_body_block = body_block;
             if let Some(guard) = &arm.guard {
                 let guard_operand = self.lower_operand(guard, Some(&Ty { kind: TyKind::Bool }))?;
                 let guard_block = self.new_block();
@@ -3678,8 +3693,7 @@ impl<'a> BodyBuilder<'a> {
                     },
                 };
                 self.set_current_terminator(guard_switch);
-                guard_body_block = guard_block;
-                self.current_block = guard_body_block;
+                self.current_block = guard_block;
             }
 
             self.lower_expr_into_place(&arm.body, destination.clone(), expected_ty)?;
@@ -4053,12 +4067,6 @@ impl<'a> BodyBuilder<'a> {
                     self.lowering.lower_function(self.program, item, function)?;
                 self.lowering.extra_items.push(mir_item);
                 self.lowering.extra_bodies.push((body_id, body));
-            }
-            _ => {
-                self.lowering.emit_error(
-                    item.span,
-                    "only const, struct, enum, and impl items are supported inside function bodies",
-                );
             }
         }
         Ok(())
@@ -4569,6 +4577,24 @@ impl<'a> BodyBuilder<'a> {
                 "unable to resolve enum layout for struct-like variant",
             );
             return Ok(());
+        }
+
+        if let Some(expected_ty) = annotated_ty {
+            if let Some(def_id) = self.struct_def_from_ty(expected_ty) {
+                if let Some(info) = self.lowering.struct_defs.get(&def_id).cloned() {
+                    if let Some(layout) = self.lowering.struct_layout_for_ty(expected_ty) {
+                        return self.lower_registered_struct_literal(
+                            local_id,
+                            annotated_ty,
+                            &info,
+                            &layout,
+                            fields,
+                            span,
+                            def_id,
+                        );
+                    }
+                }
+            }
         }
 
         self.lowering.emit_warning(
@@ -6849,8 +6875,8 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 let element_ty = match &base_ty.kind {
-                    TyKind::Array(elem, _) => (*elem.clone()),
-                    TyKind::Slice(elem) => (*elem.clone()),
+                    TyKind::Array(elem, _) => *elem.clone(),
+                    TyKind::Slice(elem) => *elem.clone(),
                     _ => {
                         self.lowering
                             .emit_error(base.span, "index access requires array or slice type");

@@ -1,6 +1,5 @@
 use anyhow::Result;
 use fp_core::span::Span;
-use inkwell::context::Context;
 use inkwell::module::Module;
 use std::collections::HashMap;
 use std::path::Path;

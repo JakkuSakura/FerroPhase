@@ -334,7 +334,7 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
         ast::ExprKind::Item(item) => {
             ast::Expr::with_ty(ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)), ty)
         }
-        ast::ExprKind::Value(mut value) => {
+        ast::ExprKind::Value(value) => {
             let value = materialize_value(*value, strategy)?;
             ast::Expr::with_ty(ast::ExprKind::Value(Box::new(value)), ty)
         }

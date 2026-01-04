@@ -62,7 +62,6 @@ impl Pipeline {
             );
             return Err(Self::stage_failure(STAGE_CONST_EVAL));
         }
-
         Ok(outcome)
     }
 }
@@ -376,6 +375,7 @@ fn rewrite_expr_for_maps(
         }
     }
 }
+
 
 fn rewrite_block_stmt_for_maps(
     stmt: &mut fp_core::ast::BlockStmt,

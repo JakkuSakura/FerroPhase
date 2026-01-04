@@ -1,5 +1,7 @@
 //! Diagnostic and error reporting utilities
 
+#![allow(unused_assignments)] // miette derive generates unused assignments in macro-expanded code.
+
 use crate::Result;
 #[cfg(not(feature = "bootstrap"))]
 use miette::Diagnostic;

@@ -971,11 +971,20 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprInvokeTarget::Function(locator) => {
                 if let Some(info) = self.lookup_enum_variant(locator) {
-                    if let EnumVariantPayload::Tuple(_) = info.payload {
+                    if let EnumVariantPayload::Tuple(arity) = info.payload {
                         let args = match self.evaluate_args_runtime(&mut invoke.args) {
                             Ok(values) => values,
                             Err(flow) => return flow,
                         };
+                        if args.len() != arity {
+                            self.emit_error(format!(
+                                "enum variant {} expects {} argument(s), got {}",
+                                info.variant_name,
+                                arity,
+                                args.len()
+                            ));
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
                         let payload = if args.len() == 1 {
                             args.into_iter().next()
                         } else {
