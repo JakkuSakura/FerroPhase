@@ -443,6 +443,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
+                        if matches!(value, Value::List(_) | Value::Map(_)) {
+                            return value;
+                        }
                         let mut replacement = Expr::value(value.clone());
                         replacement.ty = expr.ty.clone();
                         // Type is already copied from original expr, no need to re-infer

@@ -5,6 +5,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         let expr_ty_snapshot = expr.ty().cloned();
         let mut updated_expr_ty: Option<Ty> = None;
 
+        if self.try_fold_runtime_const_collection_expr(expr) {
+            return;
+        }
+
         match expr.kind_mut() {
             ExprKind::Quote(_quote) => {
                 // Quoted fragments inside function analysis remain as-is until evaluated (e.g., by splice)
