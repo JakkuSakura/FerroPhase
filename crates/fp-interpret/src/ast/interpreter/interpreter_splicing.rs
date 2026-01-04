@@ -81,11 +81,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let Some(kind) = quote.kind {
             return match kind {
                 QuoteFragmentKind::Expr => {
-                    if quote.block.last_expr().is_none() {
-                        self.emit_error("quote<expr> requires a trailing expression");
-                        return QuotedFragment::Stmts(quote.block.stmts.clone());
+                    let mut block = quote.block.clone();
+                    if block.last_expr().is_none() {
+                        // Treat statement-only quote<expr> blocks as unit expressions.
+                        block.push_expr(Expr::value(Value::unit()));
                     }
-                    QuotedFragment::Expr(quote.block.clone().into_expr())
+                    QuotedFragment::Expr(block.into_expr())
                 }
                 QuoteFragmentKind::Stmt => QuotedFragment::Stmts(quote.block.stmts.clone()),
                 QuoteFragmentKind::Item => match self.collect_items_from_block(&quote.block) {

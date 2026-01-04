@@ -621,12 +621,13 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
                 let is_const = n.children.iter().any(
                     |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "const"),
                 );
-                let pname_text = if is_const {
-                    first_ident_token_text_skipping(n, &["const"])
-                        .ok_or(LowerItemsError::MissingToken("param"))?
+                let skip_tokens = if is_const {
+                    &["const", "mut"][..]
                 } else {
-                    first_ident_token_text(n).ok_or(LowerItemsError::MissingToken("param"))?
+                    &["mut"][..]
                 };
+                let pname_text = first_ident_token_text_skipping(n, skip_tokens)
+                    .ok_or(LowerItemsError::MissingToken("param"))?;
                 let pname = Ident::new(pname_text);
                 let ty_node = first_child_by_category(n, CstCategory::Type)
                     .ok_or(LowerItemsError::MissingToken("param type"))?;

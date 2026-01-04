@@ -683,6 +683,36 @@ impl<'a> LirCodegen<'a> {
 
                 self.record_result(instr_id, ty_hint, result_value);
             }
+            lir::LirInstructionKind::ExtractValue { aggregate, indices } => {
+                let aggregate_value = self.convert_lir_value_to_basic_value(aggregate)?;
+                let index = indices
+                    .get(0)
+                    .copied()
+                    .ok_or_else(|| {
+                        report_error_with_context(LOG_AREA, "ExtractValue missing index")
+                    })?;
+
+                let result = match aggregate_value {
+                    BasicValueEnum::ArrayValue(array) => self
+                        .llvm_ctx
+                        .builder
+                        .build_extract_value(array, index, &format!("extractvalue_{}", instr_id))
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+                    BasicValueEnum::StructValue(strct) => self
+                        .llvm_ctx
+                        .builder
+                        .build_extract_value(strct, index, &format!("extractvalue_{}", instr_id))
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+                    _ => {
+                        return Err(report_error_with_context(
+                            LOG_AREA,
+                            "ExtractValue requires aggregate operand",
+                        ))
+                    }
+                };
+
+                self.record_result(instr_id, ty_hint, result);
+            }
             lir::LirInstructionKind::Call {
                 function,
                 args,

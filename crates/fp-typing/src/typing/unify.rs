@@ -859,6 +859,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .unwrap_or_default(),
                         other => other.to_string(),
                     };
+                    if name == "HashMap" {
+                        self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
+                        return Ok(var);
+                    }
                     if name == "Self" {
                         if let Some(ctx) = self.impl_stack.last().and_then(|ctx| ctx.as_ref()) {
                             match &ctx.self_ty {
@@ -896,6 +900,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if let Some(enum_ty) = self.enum_defs.get(&name) {
                         self.bind(var, TypeTerm::Enum(enum_ty.clone()));
                         return Ok(var);
+                    }
+                }
+                if let ExprKind::Invoke(invoke) = expr.kind() {
+                    if let Some(name) = invoke_target_name(invoke) {
+                        if name == "HashMap" {
+                            let struct_ty = TypeStruct {
+                                name: Ident::new("HashMap"),
+                                generics_params: Vec::new(),
+                                fields: Vec::new(),
+                            };
+                            self.bind(var, TypeTerm::Struct(struct_ty));
+                            return Ok(var);
+                        }
                     }
                 }
                 // Fallback: treat as any to allow later constraints to refine.
@@ -950,6 +967,44 @@ fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
         "f32" => Some(TypePrimitive::Decimal(DecimalType::F32)),
         "f64" => Some(TypePrimitive::Decimal(DecimalType::F64)),
         _ => None,
+    }
+}
+
+fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
+    match &invoke.target {
+        ExprInvokeTarget::Function(locator) => locator_tail_name(locator),
+        ExprInvokeTarget::Expr(expr) => {
+            if let ExprKind::Locator(locator) = expr.kind() {
+                locator_tail_name(locator)
+            } else {
+                None
+            }
+        }
+        ExprInvokeTarget::Type(ty) => match ty {
+            Ty::Struct(struct_ty) => Some(struct_ty.name.as_str().to_string()),
+            Ty::Expr(expr) => {
+                if let ExprKind::Locator(locator) = expr.kind() {
+                    locator_tail_name(locator)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        },
+        ExprInvokeTarget::Method(_)
+        | ExprInvokeTarget::Closure(_)
+        | ExprInvokeTarget::BinOp(_) => None,
+    }
+}
+
+fn locator_tail_name(locator: &Locator) -> Option<String> {
+    match locator {
+        Locator::Ident(ident) => Some(ident.as_str().to_string()),
+        Locator::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
+        Locator::ParameterPath(path) => path
+            .segments
+            .last()
+            .map(|seg| seg.ident.as_str().to_string()),
     }
 }
 

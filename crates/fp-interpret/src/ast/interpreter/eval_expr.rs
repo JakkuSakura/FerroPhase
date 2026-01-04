@@ -416,6 +416,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let mut cloned = inner.as_ref().clone();
                     self.eval_expr(&mut cloned)
                 }
+                Value::Type(ty) => Value::Type(self.materialize_const_type(ty.clone())),
                 other => other.clone(),
             },
             ExprKind::Locator(locator) => {

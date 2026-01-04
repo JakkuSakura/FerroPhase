@@ -761,15 +761,26 @@ impl MirLowering {
             hir::TypeExprKind::Path(path) => {
                 let name = path
                     .segments
-                    .first()
+                    .last()
                     .map(|seg| seg.name.as_str())
                     .unwrap_or("");
-                if path.segments.len() == 1
-                    && path.segments[0].args.is_none()
-                    && generics.iter().any(|g| g == name)
-                {
+                let is_generic = path
+                    .segments
+                    .iter()
+                    .all(|seg| seg.args.is_none())
+                    && generics.iter().any(|g| g == name);
+                if is_generic {
+                    let actual_is_opaque = self.is_opaque_ty(actual_ty);
                     if let Some(existing) = substs.get(name) {
                         if existing != actual_ty {
+                            let existing_is_opaque = self.is_opaque_ty(existing);
+                            if existing_is_opaque && !actual_is_opaque {
+                                substs.insert(name.to_string(), actual_ty.clone());
+                                return Ok(());
+                            }
+                            if actual_is_opaque {
+                                return Ok(());
+                            }
                             self.emit_error(
                                 span,
                                 format!(
@@ -782,9 +793,31 @@ impl MirLowering {
                             ));
                         }
                     } else {
+                        if actual_is_opaque {
+                            return Ok(());
+                        }
                         substs.insert(name.to_string(), actual_ty.clone());
                     }
                     return Ok(());
+                }
+
+                if let Some(path_args) = path.segments.last().and_then(|seg| seg.args.as_ref()) {
+                    if let TyKind::Adt(_, adt_substs) = &actual_ty.kind {
+                        for (arg, subst) in path_args.args.iter().zip(adt_substs.iter()) {
+                            let mir::ty::GenericArg::Type(actual_arg_ty) = subst else {
+                                continue;
+                            };
+                            if let hir::GenericArg::Type(type_arg) = arg {
+                                self.infer_generic_from_type_expr(
+                                    type_arg.as_ref(),
+                                    actual_arg_ty,
+                                    generics,
+                                    substs,
+                                    span,
+                                )?;
+                            }
+                        }
+                    }
                 }
 
                 if let Some(hir::Res::Def(def_id)) = path.res.as_ref() {
@@ -814,6 +847,10 @@ impl MirLowering {
                         substs,
                         span,
                     )?;
+                } else {
+                    // HIR does not preserve explicit references, so allow inference from the
+                    // underlying value type when a ref is expected.
+                    self.infer_generic_from_type_expr(inner, actual_ty, generics, substs, span)?;
                 }
             }
             hir::TypeExprKind::Ptr(inner) => {
@@ -826,6 +863,95 @@ impl MirLowering {
                         span,
                     )?;
                 }
+            }
+            hir::TypeExprKind::Tuple(items) => {
+                if let TyKind::Tuple(actual_items) = &actual_ty.kind {
+                    for (item, actual_item) in items.iter().zip(actual_items.iter()) {
+                        self.infer_generic_from_type_expr(
+                            item,
+                            actual_item.as_ref(),
+                            generics,
+                            substs,
+                            span,
+                        )?;
+                    }
+                }
+            }
+            hir::TypeExprKind::Array(inner, _) => {
+                if let TyKind::Array(actual_inner, _) = &actual_ty.kind {
+                    self.infer_generic_from_type_expr(
+                        inner,
+                        actual_inner.as_ref(),
+                        generics,
+                        substs,
+                        span,
+                    )?;
+                }
+            }
+            hir::TypeExprKind::Slice(inner) => {
+                if let TyKind::Slice(actual_inner) = &actual_ty.kind {
+                    self.infer_generic_from_type_expr(
+                        inner,
+                        actual_inner.as_ref(),
+                        generics,
+                        substs,
+                        span,
+                    )?;
+                }
+            }
+            hir::TypeExprKind::FnPtr(fn_ptr) => {
+                match &actual_ty.kind {
+                    TyKind::FnPtr(poly_sig) => {
+                        let sig = &poly_sig.binder.value;
+                        if fn_ptr.inputs.len() != sig.inputs.len() {
+                            return Ok(());
+                        }
+                        for (expected, actual) in fn_ptr.inputs.iter().zip(sig.inputs.iter()) {
+                            self.infer_generic_from_type_expr(
+                                expected,
+                                actual.as_ref(),
+                                generics,
+                                substs,
+                                span,
+                            )?;
+                        }
+                        self.infer_generic_from_type_expr(
+                            &fn_ptr.output,
+                            sig.output.as_ref(),
+                            generics,
+                            substs,
+                            span,
+                        )?;
+                        return Ok(());
+                    }
+                    TyKind::FnDef(def_id, _) => {
+                        let sig = match self.function_sigs.get(def_id).cloned() {
+                            Some(sig) => sig,
+                            None => return Ok(()),
+                        };
+                        if fn_ptr.inputs.len() != sig.inputs.len() {
+                            return Ok(());
+                        }
+                        for (expected, actual) in fn_ptr.inputs.iter().zip(sig.inputs.iter()) {
+                            self.infer_generic_from_type_expr(
+                                expected,
+                                actual,
+                                generics,
+                                substs,
+                                span,
+                            )?;
+                        }
+                        self.infer_generic_from_type_expr(
+                            &fn_ptr.output,
+                            &sig.output,
+                            generics,
+                            substs,
+                            span,
+                        )?;
+                        return Ok(());
+                    }
+                    _ => {}
+                };
             }
             _ => {}
         }
@@ -1221,7 +1347,7 @@ impl MirLowering {
     ) -> Vec<StructFieldDef> {
         for rhs_field in rhs {
             if let Some(existing) = lhs.iter().find(|field| field.name == rhs_field.name) {
-                if existing.ty != rhs_field.ty {
+                if !self.type_exprs_equivalent(&existing.ty, &rhs_field.ty) {
                     self.emit_error(
                         span,
                         format!(
@@ -1246,7 +1372,7 @@ impl MirLowering {
         lhs.into_iter()
             .filter_map(|field| {
                 rhs.iter().find(|rhs_field| rhs_field.name == field.name).map(|rhs_field| {
-                    if rhs_field.ty != field.ty {
+                    if !self.type_exprs_equivalent(&rhs_field.ty, &field.ty) {
                         self.emit_error(
                             span,
                             format!(
@@ -1272,6 +1398,100 @@ impl MirLowering {
             .collect()
     }
 
+    fn type_exprs_equivalent(&self, lhs: &hir::TypeExpr, rhs: &hir::TypeExpr) -> bool {
+        match (&lhs.kind, &rhs.kind) {
+            (hir::TypeExprKind::Primitive(a), hir::TypeExprKind::Primitive(b)) => a == b,
+            (hir::TypeExprKind::Path(a), hir::TypeExprKind::Path(b)) => {
+                if a.segments.len() != b.segments.len() {
+                    return false;
+                }
+                for (a_seg, b_seg) in a.segments.iter().zip(b.segments.iter()) {
+                    if a_seg.name != b_seg.name {
+                        return false;
+                    }
+                    match (&a_seg.args, &b_seg.args) {
+                        (None, None) => {}
+                        (Some(a_args), Some(b_args)) => {
+                            if a_args.args.len() != b_args.args.len() {
+                                return false;
+                            }
+                            for (a_arg, b_arg) in a_args.args.iter().zip(b_args.args.iter()) {
+                                match (a_arg, b_arg) {
+                                    (hir::GenericArg::Type(a_ty), hir::GenericArg::Type(b_ty)) => {
+                                        if !self.type_exprs_equivalent(a_ty, b_ty) {
+                                            return false;
+                                        }
+                                    }
+                                    (hir::GenericArg::Const(_), hir::GenericArg::Const(_)) => {}
+                                    _ => return false,
+                                }
+                            }
+                        }
+                        _ => return false,
+                    }
+                }
+                true
+            }
+            (hir::TypeExprKind::Structural(a), hir::TypeExprKind::Structural(b)) => {
+                if a.fields.len() != b.fields.len() {
+                    return false;
+                }
+                for (a_field, b_field) in a.fields.iter().zip(b.fields.iter()) {
+                    if a_field.name != b_field.name {
+                        return false;
+                    }
+                    if !self.type_exprs_equivalent(&a_field.ty, &b_field.ty) {
+                        return false;
+                    }
+                }
+                true
+            }
+            (hir::TypeExprKind::TypeBinaryOp(a), hir::TypeExprKind::TypeBinaryOp(b)) => {
+                a.kind == b.kind
+                    && self.type_exprs_equivalent(&a.lhs, &b.lhs)
+                    && self.type_exprs_equivalent(&a.rhs, &b.rhs)
+            }
+            (hir::TypeExprKind::Tuple(a), hir::TypeExprKind::Tuple(b)) => {
+                if a.len() != b.len() {
+                    return false;
+                }
+                a.iter()
+                    .zip(b.iter())
+                    .all(|(a_ty, b_ty)| self.type_exprs_equivalent(a_ty, b_ty))
+            }
+            (hir::TypeExprKind::Array(a_elem, _), hir::TypeExprKind::Array(b_elem, _)) => {
+                self.type_exprs_equivalent(a_elem, b_elem)
+            }
+            (hir::TypeExprKind::Slice(a_elem), hir::TypeExprKind::Slice(b_elem)) => {
+                self.type_exprs_equivalent(a_elem, b_elem)
+            }
+            (hir::TypeExprKind::Ptr(a), hir::TypeExprKind::Ptr(b)) => {
+                self.type_exprs_equivalent(a, b)
+            }
+            (hir::TypeExprKind::Ref(a), hir::TypeExprKind::Ref(b)) => {
+                self.type_exprs_equivalent(a, b)
+            }
+            (hir::TypeExprKind::FnPtr(a), hir::TypeExprKind::FnPtr(b)) => {
+                if a.inputs.len() != b.inputs.len() {
+                    return false;
+                }
+                if !a
+                    .inputs
+                    .iter()
+                    .zip(b.inputs.iter())
+                    .all(|(a_ty, b_ty)| self.type_exprs_equivalent(a_ty, b_ty))
+                {
+                    return false;
+                }
+                self.type_exprs_equivalent(&a.output, &b.output)
+            }
+            (hir::TypeExprKind::Never, hir::TypeExprKind::Never) => true,
+            (hir::TypeExprKind::Infer, hir::TypeExprKind::Infer) => true,
+            (hir::TypeExprKind::Error, hir::TypeExprKind::Error) => true,
+            _ => false,
+        }
+    }
+
     fn lower_union_type_expr(
         &mut self,
         lhs: &hir::TypeExpr,
@@ -1287,18 +1507,27 @@ impl MirLowering {
             rhs_name = format!("{}_rhs", rhs_name);
         }
 
+        let lhs_payload = match lhs.kind {
+            hir::TypeExprKind::Infer | hir::TypeExprKind::Error => None,
+            _ => Some(lhs.clone()),
+        };
+        let rhs_payload = match rhs.kind {
+            hir::TypeExprKind::Infer | hir::TypeExprKind::Error => None,
+            _ => Some(rhs.clone()),
+        };
+
         let variants = vec![
             EnumVariantDef {
                 def_id: self.next_synthetic_def_id(),
                 name: lhs_name,
                 discriminant: 0,
-                payload: Some(lhs.clone()),
+                payload: lhs_payload,
             },
             EnumVariantDef {
                 def_id: self.next_synthetic_def_id(),
                 name: rhs_name,
                 discriminant: 1,
-                payload: Some(rhs.clone()),
+                payload: rhs_payload,
             },
         ];
 
@@ -1317,6 +1546,32 @@ impl MirLowering {
                 .map(|seg| seg.name.as_str().to_string())
                 .filter(|name| !name.is_empty())
                 .unwrap_or_else(|| fallback.to_string()),
+            hir::TypeExprKind::Structural(structural) => {
+                let mut matches = self
+                    .struct_defs
+                    .values()
+                    .filter(|def| def.fields.len() == structural.fields.len())
+                    .filter(|def| {
+                        def.fields.iter().zip(structural.fields.iter()).all(
+                            |(def_field, struct_field)| {
+                                def_field.name == struct_field.name.as_str()
+                                    && self.type_exprs_equivalent(
+                                        &def_field.ty,
+                                        &struct_field.ty,
+                                    )
+                            },
+                        )
+                    })
+                    .map(|def| def.name.clone())
+                    .collect::<Vec<_>>();
+                if let Some(name) = matches
+                    .iter()
+                    .find(|name| !name.starts_with("__structural_"))
+                {
+                    return name.clone();
+                }
+                matches.pop().unwrap_or_else(|| fallback.to_string())
+            }
             _ => fallback.to_string(),
         }
     }
@@ -1575,6 +1830,39 @@ impl MirLowering {
                     }
                 }
                 _ => {}
+            }
+
+            if let Some(def) = self
+                .struct_defs
+                .values()
+                .find(|def| def.name.as_str() == name.as_str())
+                .cloned()
+            {
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(layout) = self.struct_layout_for_instance(def.def_id, &args, span) {
+                    return layout.ty.clone();
+                }
+                return self.error_ty();
+            }
+            if let Some(def) = self
+                .enum_defs
+                .values()
+                .find(|def| def.name.as_str() == name.as_str())
+                .cloned()
+            {
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(layout) = self.enum_layout_for_instance(def.def_id, &args, span) {
+                    return layout.enum_ty.clone();
+                }
+                return self.error_ty();
             }
         }
 
@@ -1849,9 +2137,26 @@ impl MirLowering {
         let mut payload_layout: Vec<Ty> = Vec::new();
         let mut variant_payloads = HashMap::new();
         let mut has_payload = false;
+        let is_union_enum = enum_def.name.starts_with("__union_");
 
         for variant in &enum_def.variants {
-            let payload_tys = self.enum_payload_types(&variant.payload, &substs);
+            let payload_tys = if is_union_enum {
+                if let Some(payload) = variant.payload.as_ref() {
+                    let payload_ty = self.lower_type_expr_with_substs(payload, &substs);
+                    if let TyKind::Adt(adt, _) = &payload_ty.kind {
+                        let _ = self.struct_layout_for_instance(adt.did, &[], span);
+                    }
+                    if let Some(layout) = self.struct_layout_for_ty(&payload_ty) {
+                        layout.field_tys.clone()
+                    } else {
+                        self.enum_payload_types_from_ty(&payload_ty)
+                    }
+                } else {
+                    Vec::new()
+                }
+            } else {
+                self.enum_payload_types(&variant.payload, &substs)
+            };
             if !payload_tys.is_empty() {
                 has_payload = true;
             }
@@ -2655,6 +2960,12 @@ impl MirLowering {
         }
     }
 
+    fn is_opaque_ty(&self, ty: &Ty) -> bool {
+        self.display_type_name(ty)
+            .map(|name| self.opaque_types.contains_key(&name))
+            .unwrap_or(false)
+    }
+
     fn ensure_runtime_stub(&mut self, name: &str, sig: &mir::FunctionSig) {
         let sanitized = self.sanitize_function_sig(sig);
         self.runtime_functions.insert(name.to_string(), sanitized);
@@ -3245,6 +3556,28 @@ impl<'a> BodyBuilder<'a> {
         Ok(())
     }
 
+    fn lower_return(&mut self, span: Span, value: Option<&hir::Expr>) -> Result<()> {
+        let return_ty = self.locals[0].ty.clone();
+        let return_place = mir::Place::from_local(0);
+
+        if let Some(value_expr) = value {
+            self.lower_expr_into_place(value_expr, return_place.clone(), &return_ty)?;
+        } else {
+            if !matches!(return_ty.kind, TyKind::Tuple(ref elems) if elems.is_empty()) {
+                self.lowering
+                    .emit_error(span, "`return` without a value requires unit return type");
+            }
+        }
+
+        let terminator = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Return,
+        };
+        self.set_current_terminator(terminator);
+        self.current_block = self.new_block();
+        Ok(())
+    }
+
     fn lower_stmt(&mut self, stmt: &hir::Stmt) -> Result<()> {
         match &stmt.kind {
             hir::StmtKind::Local(local) => self.lower_local(local),
@@ -3770,6 +4103,9 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Break(value) => {
                 self.lower_break(expr.span, value.as_deref())?;
+            }
+            hir::ExprKind::Return(value) => {
+                self.lower_return(expr.span, value.as_deref())?;
             }
             hir::ExprKind::Continue => {
                 self.lower_continue(expr.span)?;
@@ -4622,7 +4958,48 @@ impl<'a> BodyBuilder<'a> {
         for (idx, arg) in args.iter().enumerate() {
             let expected_ty = sig.inputs.get(idx);
             let operand = self.lower_operand(arg, expected_ty)?;
-            arg_types.push(operand.ty.clone());
+            let inferred_ty = if let Some(expected_ty) = expected_ty {
+                if let TyKind::Ref(region, _inner, mutability) = &expected_ty.kind {
+                    let local_id = match &arg.kind {
+                        hir::ExprKind::Path(path) => {
+                            if let Some(hir::Res::Local(hir_id)) = &path.res {
+                                self.local_map.get(hir_id).copied()
+                            } else {
+                                path.segments
+                                    .first()
+                                    .filter(|_| path.segments.len() == 1)
+                                    .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied())
+                            }
+                        }
+                        _ => None,
+                    };
+                    if let Some(local_id) = local_id {
+                        let local_ty = self.locals[local_id as usize].ty.clone();
+                        if !self.lowering.is_opaque_ty(&local_ty) {
+                            if matches!(local_ty.kind, TyKind::Ref(_, _, _)) {
+                                local_ty
+                            } else {
+                                Ty {
+                                    kind: TyKind::Ref(
+                                        region.clone(),
+                                        Box::new(local_ty),
+                                        *mutability,
+                                    ),
+                                }
+                            }
+                        } else {
+                            operand.ty.clone()
+                        }
+                    } else {
+                        operand.ty.clone()
+                    }
+                } else {
+                    operand.ty.clone()
+                }
+            } else {
+                operand.ty.clone()
+            };
+            arg_types.push(inferred_ty);
             lowered_args.push(operand.operand);
         }
 
@@ -4646,6 +5023,18 @@ impl<'a> BodyBuilder<'a> {
                 });
                 sig = info.sig.clone();
                 callee_name = Some(info.name.clone());
+
+                for (idx, arg) in args.iter().enumerate() {
+                    let Some(expected_ty) = sig.inputs.get(idx) else {
+                        continue;
+                    };
+                    if !matches!(expected_ty.kind, TyKind::FnPtr(_)) {
+                        continue;
+                    }
+                    let operand = self.lower_operand(arg, Some(expected_ty))?;
+                    arg_types[idx] = operand.ty.clone();
+                    lowered_args[idx] = operand.operand;
+                }
             }
         }
 
@@ -5021,27 +5410,47 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             if let Some(expected_ty) = expected {
-                if let TyKind::Ref(_, _, mutability) = &expected_ty.kind {
-                    let region = ();
+                if let TyKind::Ref(region, inner, mutability) = &expected_ty.kind {
+                    if matches!(place.ty.kind, TyKind::Ref(_, _, _)) {
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::copy(place.place.clone()),
+                            ty: place.ty,
+                        });
+                    }
+
+                    let resolved_inner = if self.lowering.is_opaque_ty(inner.as_ref())
+                        && !self.lowering.is_opaque_ty(&place.ty)
+                    {
+                        place.ty.clone()
+                    } else {
+                        inner.as_ref().clone()
+                    };
+                    let ref_ty = if resolved_inner == *inner.as_ref() {
+                        expected_ty.clone()
+                    } else {
+                        Ty {
+                            kind: TyKind::Ref(region.clone(), Box::new(resolved_inner), *mutability),
+                        }
+                    };
                     let borrow_kind = match mutability {
                         Mutability::Mut => mir::BorrowKind::Mut {
                             allow_two_phase_borrow: false,
                         },
                         Mutability::Not => mir::BorrowKind::Shared,
                     };
-                    let temp_local = self.allocate_temp(expected_ty.clone(), expr.span);
+                    let temp_local = self.allocate_temp(ref_ty.clone(), expr.span);
                     let temp_place = mir::Place::from_local(temp_local);
                     let assign = mir::Statement {
                         source_info: expr.span,
                         kind: mir::StatementKind::Assign(
                             temp_place.clone(),
-                            mir::Rvalue::Ref(region, borrow_kind, place.place.clone()),
+                            mir::Rvalue::Ref((), borrow_kind, place.place.clone()),
                         ),
                     };
                     self.push_statement(assign);
                     return Ok(OperandInfo {
                         operand: mir::Operand::copy(temp_place),
-                        ty: expected_ty.clone(),
+                        ty: ref_ty,
                     });
                 }
             }
@@ -5087,6 +5496,27 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(function) =
                             self.lowering.generic_function_defs.get(def_id).cloned()
                         {
+                            let expected_has_opaque = expected_sig
+                                .inputs
+                                .iter()
+                                .any(|ty| self.lowering.is_opaque_ty(ty))
+                                || self.lowering.is_opaque_ty(&expected_sig.output);
+                            if expected_has_opaque {
+                                let fn_ty = self.lowering.function_pointer_ty(expected_sig);
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::Constant(mir::Constant {
+                                        span: expr.span,
+                                        user_ty: None,
+                                        literal: mir::ConstantKind::Fn(
+                                            mir::Symbol::new(
+                                                function.sig.name.as_str().to_string(),
+                                            ),
+                                            fn_ty.clone(),
+                                        ),
+                                    }),
+                                    ty: fn_ty,
+                                });
+                            }
                             let info = self.lowering.ensure_function_specialization(
                                 self.program,
                                 *def_id,
@@ -5302,6 +5732,72 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo {
                         operand: mir::Operand::copy(local_place),
                         ty: unit_ty,
+                    });
+                }
+                if call.kind == IntrinsicCallKind::Len {
+                    let args = match &call.payload {
+                        IntrinsicCallPayload::Args { args } => args,
+                        IntrinsicCallPayload::Format { .. } => {
+                            self.lowering.emit_error(
+                                expr.span,
+                                "len intrinsic does not accept formatted payloads",
+                            );
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::UInt(0),
+                                }),
+                                ty: Ty {
+                                    kind: TyKind::Uint(UintTy::U64),
+                                },
+                            });
+                        }
+                    };
+
+                    let Some(arg) = args.first() else {
+                        self.lowering
+                            .emit_error(expr.span, "len intrinsic expects one argument");
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::UInt(0),
+                            }),
+                            ty: Ty {
+                                kind: TyKind::Uint(UintTy::U64),
+                            },
+                        });
+                    };
+
+                    let place = if let Some(place_info) = self.lower_place(arg)? {
+                        place_info.place
+                    } else {
+                        let arg_ty = expected.cloned().unwrap_or_else(|| Ty {
+                            kind: TyKind::Tuple(Vec::new()),
+                        });
+                        let local_id = self.allocate_temp(arg_ty.clone(), arg.span);
+                        let temp_place = mir::Place::from_local(local_id);
+                        self.lower_expr_into_place(arg, temp_place.clone(), &arg_ty)?;
+                        temp_place
+                    };
+
+                    let len_ty = Ty {
+                        kind: TyKind::Uint(UintTy::U64),
+                    };
+                    let local_id = self.allocate_temp(len_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::Len(place),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: len_ty,
                     });
                 }
                 if call.kind == IntrinsicCallKind::ConstBlock {
@@ -5730,6 +6226,9 @@ impl<'a> BodyBuilder<'a> {
                         } else {
                             format.push('%');
                             format.push_str(trimmed);
+                            if !trimmed.chars().any(|c| c.is_ascii_alphabetic()) {
+                                format.push_str(spec.trim_start_matches('%'));
+                            }
                         }
                     } else {
                         format.push_str(spec);
@@ -6430,6 +6929,9 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Break(value) => {
                 self.lower_break(expr.span, value.as_deref())?;
             }
+            hir::ExprKind::Return(value) => {
+                self.lower_return(expr.span, value.as_deref())?;
+            }
             hir::ExprKind::Continue => {
                 self.lower_continue(expr.span)?;
             }
@@ -7007,7 +7509,23 @@ impl<'a> BodyBuilder<'a> {
                     lowered_args.push(lowered.operand);
                 }
 
-                let result_ty = expected_ty.clone();
+                let mut result_ty = expected_ty.clone();
+                let mut inferred_output: Option<Ty> = None;
+                for methods in self.lowering.struct_methods.values() {
+                    if let Some(info) = methods.get(method_name.as_str()) {
+                        if let Some(existing) = inferred_output.as_ref() {
+                            if existing != &info.sig.output {
+                                inferred_output = None;
+                                break;
+                            }
+                        } else {
+                            inferred_output = Some(info.sig.output.clone());
+                        }
+                    }
+                }
+                if let Some(output) = inferred_output {
+                    result_ty = output;
+                }
                 let type_name = self
                     .lowering
                     .display_type_name(&receiver_operand.ty)
@@ -7106,6 +7624,27 @@ impl<'a> BodyBuilder<'a> {
                             .emit_error(expr.span, "array expression expected array type");
                         self.lowering.error_ty()
                     });
+
+                let expected_is_slice = matches!(&expected_ty.kind, TyKind::Slice(_))
+                    || matches!(
+                        &expected_ty.kind,
+                        TyKind::Ref(_, inner, _)
+                            if matches!(inner.kind, TyKind::Slice(_))
+                    );
+                if expected_is_slice && place.projection.is_empty() {
+                    let array_ty = Ty {
+                        kind: TyKind::Array(
+                            Box::new(element_ty.clone()),
+                            ConstKind::Value(ConstValue::Scalar(Scalar::Int(ScalarInt {
+                                data: elements.len() as u128,
+                                size: 8,
+                            }))),
+                        ),
+                    };
+                    if let Some(local) = self.locals.get_mut(place.local as usize) {
+                        local.ty = array_ty;
+                    }
+                }
 
                 let mut operands = Vec::with_capacity(elements.len());
                 for element in elements {

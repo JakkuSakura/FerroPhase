@@ -34,7 +34,22 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
             call.kind,
             IntrinsicCallKind::Print | IntrinsicCallKind::Println
         ) {
-            Ok(Some(build_printf_invoke(expr_ty.clone(), call.clone())?))
+            if let IntrinsicCallPayload::Format { template } = &call.payload {
+                if template.args.iter().any(|arg| arg.ty().is_none()) {
+                    return Ok(None);
+                }
+                if template
+                    .args
+                    .iter()
+                    .any(|arg| is_missing_printf_type_info(arg))
+                {
+                    return Ok(None);
+                }
+            }
+            match build_printf_invoke(expr_ty.clone(), call.clone()) {
+                Ok(expr) => Ok(Some(expr)),
+                Err(_) => Ok(None),
+            }
         } else {
             Ok(None)
         }
@@ -81,6 +96,52 @@ fn make_string_literal_expr(literal: String) -> Expr {
     expr
 }
 
+fn is_missing_printf_type_info(expr: &Expr) -> bool {
+    if let Some(ty) = expr.ty() {
+        match ty {
+            Ty::Primitive(_) | Ty::Value(_) => return false,
+            Ty::Reference(reference) => {
+                return !is_string_like_ty(reference.ty.as_ref());
+            }
+            Ty::Expr(expr_ty) => {
+                if let ExprKind::Locator(locator) = expr_ty.kind() {
+                    if let Locator::Ident(ident) = locator {
+                        let known = matches!(
+                            ident.as_str(),
+                            "Int" | "Bool" | "String" | "Str" | "Char"
+                        );
+                        return !known;
+                    }
+                }
+                return true;
+            }
+            Ty::Any(_) | Ty::Unknown(_) => {}
+            _ => return true,
+        }
+    }
+
+    match expr.kind() {
+        ExprKind::Value(value) => !matches!(
+            value.as_ref(),
+            Value::Int(_)
+                | Value::Decimal(_)
+                | Value::Bool(_)
+                | Value::Char(_)
+                | Value::String(_)
+        ),
+        ExprKind::Cast(_) => false,
+        ExprKind::Select(select) => select
+            .obj
+            .ty()
+            .map_or(true, |ty| matches!(ty, Ty::Any(_) | Ty::Unknown(_))),
+        ExprKind::Reference(reference) => reference
+            .referee
+            .ty()
+            .map_or(true, |ty| matches!(ty, Ty::Any(_) | Ty::Unknown(_))),
+        _ => true,
+    }
+}
+
 fn build_printf_format(
     parts: &[FormatTemplatePart],
     args: &mut [Expr],
@@ -114,13 +175,17 @@ fn build_printf_format(
                     ))
                 })?;
 
-                let (spec, replacement) = if let Some(explicit) = placeholder.format_spec.clone()
-                {
+                let (spec, replacement) = if let Some(explicit) = placeholder.format_spec.clone() {
                     let trimmed = explicit.trim();
                     if trimmed.starts_with('%') {
                         (explicit, None)
+                    } else if trimmed.chars().any(|c| c.is_ascii_alphabetic()) {
+                        (format!("%{}", trimmed), None)
                     } else {
-                        (format!("%{}", explicit), None)
+                        let (inferred, replacement) =
+                            infer_printf_spec_with_replacement_from_expr(arg)?;
+                        let suffix = inferred.trim_start_matches('%');
+                        (format!("%{}{}", trimmed, suffix), replacement)
                     }
                 } else {
                     infer_printf_spec_with_replacement_from_expr(arg)?

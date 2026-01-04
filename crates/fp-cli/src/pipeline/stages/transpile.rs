@@ -1,32 +1,6 @@
 use super::super::*;
 
 impl Pipeline {
-    pub(crate) fn stage_materialize_runtime_intrinsics(
-        &self,
-        ast: &mut Node,
-        target: &PipelineTarget,
-        options: &PipelineOptions,
-        manager: &DiagnosticManager,
-    ) -> Result<(), CliError> {
-        if options.bootstrap_mode {
-            return Ok(());
-        }
-
-        let materializer = IntrinsicsMaterializer::for_target(target);
-        let result = materializer.materialize(ast);
-
-        match result {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                manager.add_diagnostic(
-                    Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
-                        .with_source_context(STAGE_RUNTIME_MATERIALIZE),
-                );
-                Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE))
-            }
-        }
-    }
-
     pub(crate) fn stage_backend_lowering(
         &self,
         hir_program: &hir::Program,

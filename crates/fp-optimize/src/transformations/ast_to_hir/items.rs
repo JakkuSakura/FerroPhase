@@ -39,11 +39,36 @@ impl HirGenerator {
                 self.register_pattern_bindings(&self_param.pat);
                 params.insert(0, self_param);
             }
-            let output = if let Some(ret_ty) = &func.sig.ret_ty {
+            let mut output = if let Some(ret_ty) = &func.sig.ret_ty {
                 self.transform_type_to_hir(ret_ty)?
             } else {
                 self.create_unit_type()
             };
+            if let hir::TypeExprKind::FnPtr(_) | hir::TypeExprKind::Infer = output.kind {
+                if let ast::ExprKind::Block(block) = func.body.kind() {
+                    if let Some(last_expr) = block.last_expr() {
+                        if let ast::ExprKind::Struct(struct_expr) = last_expr.kind() {
+                            if let Ok(path) = self.ast_expr_to_hir_path(
+                                struct_expr.name.as_ref(),
+                                PathResolutionScope::Type,
+                            ) {
+                                if path
+                                    .segments
+                                    .last()
+                                    .map(|seg| seg.name.as_str().starts_with("__Closure"))
+                                    .unwrap_or(false)
+                                {
+                                    output = hir::TypeExpr::new(
+                                        self.next_id(),
+                                        hir::TypeExprKind::Path(path),
+                                        Span::new(self.current_file, 0, 0),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             let sig = hir::FunctionSig {
                 name: hir::Symbol::new(self.qualify_name(&func.name.name)),
@@ -172,10 +197,12 @@ impl HirGenerator {
             };
 
             let mut items = Vec::new();
+            let mut method_names = HashSet::new();
             for item in &impl_block.items {
                 match item.kind() {
                     ast::ItemKind::DefFunction(func) => {
                         let method = self.transform_function(func, Some(self_ty.clone()))?;
+                        method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
                             hir_id: self.next_id(),
                             name: method.sig.name.clone(),
@@ -191,6 +218,41 @@ impl HirGenerator {
                         });
                     }
                     _ => {}
+                }
+            }
+
+            if let Some(trait_locator) = &impl_block.trait_ty {
+                let trait_name = match trait_locator {
+                    ast::Locator::Ident(ident) => ident.name.clone(),
+                    ast::Locator::Path(path) => path
+                        .segments
+                        .last()
+                        .map(|seg| seg.name.clone())
+                        .unwrap_or_default(),
+                    ast::Locator::ParameterPath(path) => path
+                        .segments
+                        .last()
+                        .map(|seg| seg.ident.name.clone())
+                        .unwrap_or_default(),
+                };
+                if let Some(trait_def) = self.trait_defs.get(&trait_name) {
+                    let trait_items = trait_def.items.clone();
+                    // Synthesize default trait methods into the impl if they are missing.
+                    for trait_item in &trait_items {
+                        let ast::ItemKind::DefFunction(func) = trait_item.kind() else {
+                            continue;
+                        };
+                        if method_names.contains(&func.name.name) {
+                            continue;
+                        }
+                        let method = self.transform_function(func, Some(self_ty.clone()))?;
+                        method_names.insert(method.sig.name.as_str().to_string());
+                        items.push(hir::ImplItem {
+                            hir_id: self.next_id(),
+                            name: method.sig.name.clone(),
+                            kind: hir::ImplItemKind::Method(method),
+                        });
+                    }
                 }
             }
 

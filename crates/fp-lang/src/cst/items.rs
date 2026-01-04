@@ -507,6 +507,13 @@ fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
             span: fp_core::span::Span::new(0, 0, 0),
         }));
     }
+    if match_keyword(input, Keyword::Mut) {
+        children.push(SyntaxElement::Token(SyntaxToken {
+            kind: SyntaxTokenKind::Token,
+            text: "mut".to_string(),
+            span: fp_core::span::Span::new(0, 0, 0),
+        }));
+    }
     let name = expect_ident_token(input)?;
     children.push(SyntaxElement::Token(name));
     expect_symbol(input, ":")?;
