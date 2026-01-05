@@ -1,4 +1,4 @@
-use crate::ast::lower::items::LowerItemsError;
+use crate::ast::items::LowerItemsError;
 use crate::lexer::tokenizer::strip_number_suffix;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
@@ -939,7 +939,7 @@ fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
                         _ => None,
                     })
                     .ok_or(LowerError::UnexpectedNode(SyntaxKind::BlockStmtItem))?;
-                let item = crate::ast::lower::items::lower_item_from_cst(item_node)?;
+                let item = crate::ast::items::lower_item_from_cst(item_node)?;
                 stmts.push(BlockStmt::item(item));
             }
             SyntaxKind::BlockStmtLet => stmts.push(lower_let_stmt(stmt)?),
