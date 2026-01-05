@@ -1,77 +1,95 @@
 ast::File {
   items:
-    pub fn apply_ops(const ops: [Expr(i32)], x: Expr(i32), limit: Expr(i32)) -> Expr(i32) : fn([i32], i32, i32) -> i32
-      block (2 stmts)
-        expr_stmt (value)
-          for
-            iter:
-              invoke
-                target: ops.iter().enumerate
-            body:
-              block (3 stmts)
-                expr_stmt (value)
-                  if
-                    cond:
-                      binop ==
-                        lhs:
-                          binop %
-                            lhs:
-                              locator op
-                            rhs:
-                              value 2
-                        rhs:
-                          value 0
-                    then:
-                      block (1 stmt)
-                        expr_stmt ;
-                          block (2 stmts)
-                            expr_stmt ;
-                              assign
-                                target:
-                                  locator x
-                                value:
-                                  binop +
-                                    lhs:
-                                      locator x
-                                    rhs:
-                                      locator op
-                            expr_stmt ;
-                              value ()
-                    else:
-                      block (1 stmt)
-                        expr_stmt ;
-                          assign
-                            target:
-                              locator x
+    pub module std {
+      pub module collections {
+        pub struct HashMapEntry {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap {
+          entries: Vec<Expr(HashMapEntry<K
+, V
+>)>
+        }
+        impl HashMap<K
+, V
+> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<K
+, V
+>)>) -> Expr(HashMap<K
+, V
+>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+            block (1 stmt)
+              expr_stmt (value)
+                struct HashMap
+                  entries:
+                    locator entries
+          pub fn len(&self) -> Expr(i64) : fn() -> i64
+            block (1 stmt)
+              expr_stmt (value)
+                invoke
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any
+            block (3 stmts)
+              let mut idx
+                init:
+                  value 0
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        invoke
+                          target: self.entries.len
+                  body:
+                    block (3 stmts)
+                      let entry
+                        init:
+                          index
                             value:
-                              binop +
-                                lhs:
-                                  locator x
-                                rhs:
-                                  locator op
-                expr_stmt ;
-                  block (2 stmts)
-                    expr_stmt ;
-                      intrinsic println
-                        template: "step {}: {}" i, x
-                    expr_stmt ;
-                      value ()
-                expr_stmt ;
-                  if
-                    cond:
-                      binop >=
-                        lhs:
-                          locator x
-                        rhs:
-                          locator limit
-                    then:
-                      block (1 stmt)
-                        expr_stmt ;
-                          intrinsic return
-                            args:
-                              locator x
-        expr_stmt (value)
-          locator x
+                              select .entries [unknown]
+                                object:
+                                  locator self
+                            index:
+                              locator idx
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                select .key [unknown]
+                                  object:
+                                    locator entry
+                              rhs:
+                                locator key
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                intrinsic return
+                                  args:
+                                    select .value [unknown]
+                                      object:
+                                        locator entry
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                loop
+                  block (0 stmts)
+        }
+      }
+    }
     pub fn main() -> () : fn() -> ()
       block (9 stmts)
         expr_stmt ;
@@ -92,13 +110,8 @@ ast::File {
         let result1
           init:
             invoke
-              target: apply_ops
+              target: apply_ops__const_1
               args:
-                array (4 values)
-                  value 1
-                  value 2
-                  value 3
-                  value 4
                 value 0
                 value 6
         expr_stmt ;
@@ -107,17 +120,248 @@ ast::File {
         let result2
           init:
             invoke
-              target: apply_ops
+              target: apply_ops__const_2
               args:
-                array (3 values)
-                  value 5
-                  unop -
-                    value:
-                      value 2
-                  value 7
                 value 10
                 value 30
         expr_stmt ;
           intrinsic println
             template: "result2={}" result2
+    pub fn apply_ops(x: Expr(i32), limit: Expr(i32)) -> Expr(i32) : fn(i32, i32) -> i32
+      block (13 stmts)
+        expr_stmt ;
+          assign
+            target:
+              locator x
+            value:
+              binop +
+                lhs:
+                  locator x
+                rhs:
+                  value 1
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 0, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              assign
+                target:
+                  locator x
+                value:
+                  binop +
+                    lhs:
+                      locator x
+                    rhs:
+                      value 2
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 1, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt ;
+          assign
+            target:
+              locator x
+            value:
+              binop +
+                lhs:
+                  locator x
+                rhs:
+                  value 3
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 2, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              assign
+                target:
+                  locator x
+                value:
+                  binop +
+                    lhs:
+                      locator x
+                    rhs:
+                      value 4
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 3, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt (value)
+          locator x
+    pub fn apply_ops(x: Expr(i32), limit: Expr(i32)) -> Expr(i32) : fn(i32, i32) -> i32
+      block (10 stmts)
+        expr_stmt ;
+          assign
+            target:
+              locator x
+            value:
+              binop +
+                lhs:
+                  locator x
+                rhs:
+                  value 5
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 0, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              assign
+                target:
+                  locator x
+                value:
+                  binop +
+                    lhs:
+                      locator x
+                    rhs:
+                      value -2
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 1, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt ;
+          assign
+            target:
+              locator x
+            value:
+              binop +
+                lhs:
+                  locator x
+                rhs:
+                  value 7
+        expr_stmt ;
+          block (2 stmts)
+            expr_stmt ;
+              intrinsic println
+                template: "step {}: {}" 2, x
+            expr_stmt ;
+              value ()
+        expr_stmt ;
+          if
+            cond:
+              binop >=
+                lhs:
+                  locator x
+                rhs:
+                  locator limit
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic return
+                    args:
+                      locator x
+        expr_stmt (value)
+          locator x
 }

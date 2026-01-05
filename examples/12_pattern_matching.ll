@@ -3,28 +3,28 @@ source_filename = "12_pattern_matching"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.12_pattern_matching.0 = private unnamed_addr constant [4 x i8] c"red\00", align 1
-@.str.12_pattern_matching.1 = private unnamed_addr constant [6 x i8] c"green\00", align 1
-@.str.12_pattern_matching.2 = private unnamed_addr constant [8 x i8] c"red rgb\00", align 1
-@.str.12_pattern_matching.3 = private unnamed_addr constant [11 x i8] c"custom rgb\00", align 1
-@.str.12_pattern_matching.4 = private unnamed_addr constant [5 x i8] c"zero\00", align 1
-@.str.12_pattern_matching.5 = private unnamed_addr constant [9 x i8] c"negative\00", align 1
-@.str.12_pattern_matching.6 = private unnamed_addr constant [5 x i8] c"even\00", align 1
-@.str.12_pattern_matching.7 = private unnamed_addr constant [4 x i8] c"odd\00", align 1
-@.str.12_pattern_matching.8 = private unnamed_addr constant [39 x i8] c"\F0\9F\93\98 Tutorial: 12_pattern_matching.fp\0A\00", align 1
-@.str.12_pattern_matching.9 = private unnamed_addr constant [79 x i8] c"\F0\9F\A7\AD Focus: Pattern matching: match expressions with guards and destructuring\0A\00", align 1
-@.str.12_pattern_matching.10 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.12_pattern_matching.11 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.12_pattern_matching.12 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.12_pattern_matching.13 = private unnamed_addr constant [20 x i8] c"describe(red) = %s\0A\00", align 1
-@.str.12_pattern_matching.14 = private unnamed_addr constant [20 x i8] c"describe(rgb) = %s\0A\00", align 1
-@.str.12_pattern_matching.15 = private unnamed_addr constant [19 x i8] c"classify(-5) = %s\0A\00", align 1
-@.str.12_pattern_matching.16 = private unnamed_addr constant [18 x i8] c"classify(0) = %s\0A\00", align 1
-@.str.12_pattern_matching.17 = private unnamed_addr constant [18 x i8] c"classify(4) = %s\0A\00", align 1
-@.str.12_pattern_matching.18 = private unnamed_addr constant [18 x i8] c"classify(7) = %s\0A\00", align 1
-@.str.12_pattern_matching.19 = private unnamed_addr constant [31 x i8] c"unwrap_or(Some(42), 0) = %lld\0A\00", align 1
-@.str.12_pattern_matching.20 = private unnamed_addr constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00", align 1
-@.str.12_pattern_matching.21 = private unnamed_addr constant [8 x i8] c"0x%06X\0A\00", align 1
+@.str.12_pattern_matching.0 = constant [4 x i8] c"red\00"
+@.str.12_pattern_matching.1 = constant [6 x i8] c"green\00"
+@.str.12_pattern_matching.2 = constant [8 x i8] c"red rgb\00"
+@.str.12_pattern_matching.3 = constant [11 x i8] c"custom rgb\00"
+@.str.12_pattern_matching.4 = constant [5 x i8] c"zero\00"
+@.str.12_pattern_matching.5 = constant [9 x i8] c"negative\00"
+@.str.12_pattern_matching.6 = constant [5 x i8] c"even\00"
+@.str.12_pattern_matching.7 = constant [4 x i8] c"odd\00"
+@.str.12_pattern_matching.8 = constant [39 x i8] c"\F0\9F\93\98 Tutorial: 12_pattern_matching.fp\0A\00"
+@.str.12_pattern_matching.9 = constant [79 x i8] c"\F0\9F\A7\AD Focus: Pattern matching: match expressions with guards and destructuring\0A\00"
+@.str.12_pattern_matching.10 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.12_pattern_matching.11 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.12_pattern_matching.12 = constant [2 x i8] c"\0A\00"
+@.str.12_pattern_matching.13 = constant [20 x i8] c"describe(red) = %s\0A\00"
+@.str.12_pattern_matching.14 = constant [20 x i8] c"describe(rgb) = %s\0A\00"
+@.str.12_pattern_matching.15 = constant [19 x i8] c"classify(-5) = %s\0A\00"
+@.str.12_pattern_matching.16 = constant [18 x i8] c"classify(0) = %s\0A\00"
+@.str.12_pattern_matching.17 = constant [18 x i8] c"classify(4) = %s\0A\00"
+@.str.12_pattern_matching.18 = constant [18 x i8] c"classify(7) = %s\0A\00"
+@.str.12_pattern_matching.19 = constant [31 x i8] c"unwrap_or(Some(42), 0) = %lld\0A\00"
+@.str.12_pattern_matching.20 = constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00"
+@.str.12_pattern_matching.21 = constant [8 x i8] c"0x%06X\0A\00"
 
 define internal ptr @describe(ptr %0) {
 bb0:

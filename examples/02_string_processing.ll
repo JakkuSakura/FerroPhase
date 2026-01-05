@@ -3,30 +3,30 @@ source_filename = "02_string_processing"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.02_string_processing.0 = private unnamed_addr constant [40 x i8] c"\F0\9F\93\98 Tutorial: 02_string_processing.fp\0A\00", align 1
-@.str.02_string_processing.1 = private unnamed_addr constant [59 x i8] c"\F0\9F\A7\AD Focus: Compile-time string operations and intrinsics\0A\00", align 1
-@.str.02_string_processing.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.02_string_processing.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.02_string_processing.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.02_string_processing.5 = private unnamed_addr constant [11 x i8] c"FerroPhase\00", align 1
-@.str.02_string_processing.6 = private unnamed_addr constant [20 x i8] c"name='%s' len=%llu\0A\00", align 1
-@.str.02_string_processing.7 = private unnamed_addr constant [6 x i8] c"0.1.0\00", align 1
-@.str.02_string_processing.8 = private unnamed_addr constant [23 x i8] c"version='%s' len=%llu\0A\00", align 1
-@.str.02_string_processing.9 = private unnamed_addr constant [47 x i8] c"prefix_ok=%d, suffix_ok=%d, contains_phase=%d\0A\00", align 1
-@.str.02_string_processing.10 = private unnamed_addr constant [6 x i8] c"Ferro\00", align 1
-@.str.02_string_processing.11 = private unnamed_addr constant [6 x i8] c"Phase\00", align 1
-@.str.02_string_processing.12 = private unnamed_addr constant [30 x i8] c"slices: short='%s' tail='%s'\0A\00", align 1
-@.str.02_string_processing.13 = private unnamed_addr constant [8 x i8] c"words:\0A\00", align 1
-@.str.02_string_processing.14 = private unnamed_addr constant [6 x i8] c"alpha\00", align 1
-@.str.02_string_processing.15 = private unnamed_addr constant [5 x i8] c"beta\00", align 1
-@.str.02_string_processing.16 = private unnamed_addr constant [6 x i8] c"gamma\00", align 1
-@.str.02_string_processing.17 = private unnamed_addr constant [6 x i8] c"delta\00", align 1
-@.str.02_string_processing.18 = private unnamed_addr constant [18 x i8] c"  %s -> len=%llu\0A\00", align 1
-@.str.02_string_processing.19 = private unnamed_addr constant [24 x i8] c"total word length=%llu\0A\00", align 1
-@.str.02_string_processing.20 = private unnamed_addr constant [19 x i8] c"empty=%d, long=%d\0A\00", align 1
-@.str.02_string_processing.21 = private unnamed_addr constant [18 x i8] c"FerroPhase v0.1.0\00", align 1
-@.str.02_string_processing.22 = private unnamed_addr constant [13 x i8] c"banner='%s'\0A\00", align 1
-@.str.02_string_processing.23 = private unnamed_addr constant [18 x i8] c"buffer_size=%llu\0A\00", align 1
+@.str.02_string_processing.0 = constant [40 x i8] c"\F0\9F\93\98 Tutorial: 02_string_processing.fp\0A\00"
+@.str.02_string_processing.1 = constant [59 x i8] c"\F0\9F\A7\AD Focus: Compile-time string operations and intrinsics\0A\00"
+@.str.02_string_processing.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.02_string_processing.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.02_string_processing.4 = constant [2 x i8] c"\0A\00"
+@.str.02_string_processing.5 = constant [11 x i8] c"FerroPhase\00"
+@.str.02_string_processing.6 = constant [20 x i8] c"name='%s' len=%llu\0A\00"
+@.str.02_string_processing.7 = constant [6 x i8] c"0.1.0\00"
+@.str.02_string_processing.8 = constant [23 x i8] c"version='%s' len=%llu\0A\00"
+@.str.02_string_processing.9 = constant [47 x i8] c"prefix_ok=%d, suffix_ok=%d, contains_phase=%d\0A\00"
+@.str.02_string_processing.10 = constant [6 x i8] c"Ferro\00"
+@.str.02_string_processing.11 = constant [6 x i8] c"Phase\00"
+@.str.02_string_processing.12 = constant [30 x i8] c"slices: short='%s' tail='%s'\0A\00"
+@.str.02_string_processing.13 = constant [8 x i8] c"words:\0A\00"
+@.str.02_string_processing.14 = constant [6 x i8] c"alpha\00"
+@.str.02_string_processing.15 = constant [5 x i8] c"beta\00"
+@.str.02_string_processing.16 = constant [6 x i8] c"gamma\00"
+@.str.02_string_processing.17 = constant [6 x i8] c"delta\00"
+@.str.02_string_processing.18 = constant [18 x i8] c"  %s -> len=%llu\0A\00"
+@.str.02_string_processing.19 = constant [24 x i8] c"total word length=%llu\0A\00"
+@.str.02_string_processing.20 = constant [19 x i8] c"empty=%d, long=%d\0A\00"
+@.str.02_string_processing.21 = constant [18 x i8] c"FerroPhase v0.1.0\00"
+@.str.02_string_processing.22 = constant [13 x i8] c"banner='%s'\0A\00"
+@.str.02_string_processing.23 = constant [18 x i8] c"buffer_size=%llu\0A\00"
 
 define i32 @main() {
 bb0:

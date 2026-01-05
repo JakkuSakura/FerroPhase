@@ -2,25 +2,25 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
 
-        fn add__mono_a7af9f593fdc4675_1(arg0: i64, arg1: i64) -> i64 [body: body2]
+        fn add__mono_a7af9f593fdc4675_6(arg0: i64, arg1: i64) -> i64 [body: body2]
 
-        fn double__mono_a7af9f593fdc4675_2(arg0: i64) -> i64 [body: body3]
+        fn double__mono_a7af9f593fdc4675_7(arg0: i64) -> i64 [body: body3]
 
-        fn pipeline__mono_a7af9f593fdc4675_3(arg0: i64, arg1: i64) -> i64 [body: body1]
+        fn pipeline__mono_a7af9f593fdc4675_8(arg0: i64, arg1: i64) -> i64 [body: body1]
 
-        fn add__mono_d7ad91e83a08a980_1(arg0: f64, arg1: f64) -> f64 [body: body5]
+        fn add__mono_d7ad91e83a08a980_6(arg0: f64, arg1: f64) -> f64 [body: body5]
 
-        fn double__mono_d7ad91e83a08a980_2(arg0: f64) -> f64 [body: body6]
+        fn double__mono_d7ad91e83a08a980_7(arg0: f64) -> f64 [body: body6]
 
-        fn pipeline__mono_d7ad91e83a08a980_3(arg0: f64, arg1: f64) -> f64 [body: body4]
+        fn pipeline__mono_d7ad91e83a08a980_8(arg0: f64, arg1: f64) -> f64 [body: body4]
 
-        fn sum_pair__mono_a7af9f593fdc4675_4(arg0: (i64, i64)) -> i64 [body: body7]
+        fn sum_pair__mono_a7af9f593fdc4675_9(arg0: (i64, i64)) -> i64 [body: body7]
 
-        fn sum_pair__mono_d7ad91e83a08a980_4(arg0: (f64, f64)) -> f64 [body: body8]
+        fn sum_pair__mono_d7ad91e83a08a980_9(arg0: (f64, f64)) -> f64 [body: body8]
 
-        fn max__mono_a7af9f593fdc4675_5(arg0: i64, arg1: i64) -> i64 [body: body9]
+        fn max__mono_a7af9f593fdc4675_10(arg0: i64, arg1: i64) -> i64 [body: body9]
 
-        fn max__mono_d7ad91e83a08a980_5(arg0: f64, arg1: f64) -> f64 [body: body10]
+        fn max__mono_d7ad91e83a08a980_10(arg0: f64, arg1: f64) -> f64 [body: body10]
     bodies:
         body0 { arg_count: 0, locals: 16 }
             return_local: _0
@@ -53,25 +53,25 @@ mir::Program {
                 bb4:
                     terminator: call global printf("\n") -> _5 then bb5
                 bb5:
-                    terminator: call fn pipeline__mono_a7af9f593fdc4675_3(10, 20) -> _6 then bb6
+                    terminator: call fn pipeline__mono_a7af9f593fdc4675_8(10, 20) -> _6 then bb6
                 bb6:
-                    terminator: call fn pipeline__mono_d7ad91e83a08a980_3(1.5, 2.5) -> _7 then bb7
+                    terminator: call fn pipeline__mono_d7ad91e83a08a980_8(1.5, 2.5) -> _7 then bb7
                 bb7:
                     s0: _8 = aggregate(tuple; [3, 7])
                     s1: _9 = aggregate(tuple; [1.25, 2.75])
-                    terminator: call fn sum_pair__mono_a7af9f593fdc4675_4(copy _8) -> _10 then bb8
+                    terminator: call fn sum_pair__mono_a7af9f593fdc4675_9(copy _8) -> _10 then bb8
                 bb8:
                     s0: intrinsic Println "sum_pair i64 = %lld
 " [copy _10]
                     s1: _11 = aggregate(tuple; [])
-                    terminator: call fn sum_pair__mono_d7ad91e83a08a980_4(copy _9) -> _12 then bb9
+                    terminator: call fn sum_pair__mono_d7ad91e83a08a980_9(copy _9) -> _12 then bb9
                 bb9:
                     s0: intrinsic Println "sum_pair f64 = %f
 " [copy _12]
                     s1: _13 = aggregate(tuple; [])
-                    terminator: call fn max__mono_a7af9f593fdc4675_5(10, 3) -> _14 then bb10
+                    terminator: call fn max__mono_a7af9f593fdc4675_10(10, 3) -> _14 then bb10
                 bb10:
-                    terminator: call fn max__mono_d7ad91e83a08a980_5(2.5, 9) -> _15 then bb11
+                    terminator: call fn max__mono_d7ad91e83a08a980_10(2.5, 9) -> _15 then bb11
                 bb11:
                     terminator: return
         body1 { arg_count: 2, locals: 6 }
@@ -85,9 +85,9 @@ mir::Program {
                 _5: ()
             blocks:
                 bb0:
-                    terminator: call fn add__mono_a7af9f593fdc4675_1(copy _1, copy _2) -> _4 then bb1
+                    terminator: call fn add__mono_a7af9f593fdc4675_6(copy _1, copy _2) -> _4 then bb1
                 bb1:
-                    terminator: call fn double__mono_a7af9f593fdc4675_2(copy _4) -> _3 then bb2
+                    terminator: call fn double__mono_a7af9f593fdc4675_7(copy _4) -> _3 then bb2
                 bb2:
                     s0: intrinsic Println "specialized result: %lld
 " [copy _3]
@@ -124,9 +124,9 @@ mir::Program {
                 _5: ()
             blocks:
                 bb0:
-                    terminator: call fn add__mono_d7ad91e83a08a980_1(copy _1, copy _2) -> _4 then bb1
+                    terminator: call fn add__mono_d7ad91e83a08a980_6(copy _1, copy _2) -> _4 then bb1
                 bb1:
-                    terminator: call fn double__mono_d7ad91e83a08a980_2(copy _4) -> _3 then bb2
+                    terminator: call fn double__mono_d7ad91e83a08a980_7(copy _4) -> _3 then bb2
                 bb2:
                     s0: intrinsic Println "specialized result: %f
 " [copy _3]

@@ -3,30 +3,30 @@ source_filename = "14_type_arithmetic"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.14_type_arithmetic.0 = private unnamed_addr constant [38 x i8] c"\F0\9F\93\98 Tutorial: 14_type_arithmetic.fp\0A\00", align 1
-@.str.14_type_arithmetic.1 = private unnamed_addr constant [84 x i8] c"\F0\9F\A7\AD Focus: Type arithmetic examples: combining and relating types with operators.\0A\00", align 1
-@.str.14_type_arithmetic.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.14_type_arithmetic.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.14_type_arithmetic.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.14_type_arithmetic.5 = private unnamed_addr constant [33 x i8] c"Foo a=%lld common=%lld foo=%lld\0A\00", align 1
-@.str.14_type_arithmetic.6 = private unnamed_addr constant [26 x i8] c"Bar common=%lld bar=%lld\0A\00", align 1
-@.str.14_type_arithmetic.7 = private unnamed_addr constant [49 x i8] c"FooPlusBar a=%lld common=%lld foo=%lld bar=%lld\0A\00", align 1
-@.str.14_type_arithmetic.8 = private unnamed_addr constant [29 x i8] c"FooMinusBar a=%lld foo=%lld\0A\00", align 1
-@.str.14_type_arithmetic.9 = private unnamed_addr constant [23 x i8] c"FooAndBar common=%lld\0A\00", align 1
-@.str.14_type_arithmetic.10 = private unnamed_addr constant [34 x i8] c"InlineRecord tag=%lld value=%lld\0A\00", align 1
-@.str.14_type_arithmetic.11 = private unnamed_addr constant [24 x i8] c"FooOrBar left sum=%lld\0A\00", align 1
-@.str.14_type_arithmetic.12 = private unnamed_addr constant [25 x i8] c"FooOrBar right sum=%lld\0A\00", align 1
-@.str.14_type_arithmetic.13 = private unnamed_addr constant [53 x i8] c"Int4[0]=%lld Int4[1]=%lld Int4[2]=%lld Int4[3]=%lld\0A\00", align 1
-@.str.14_type_arithmetic.14 = private unnamed_addr constant [6 x i8] c"hello\00", align 1
-@.str.14_type_arithmetic.15 = private unnamed_addr constant [6 x i8] c"green\00", align 1
-@.str.14_type_arithmetic.16 = private unnamed_addr constant [17 x i8] c"LiteralInt %lld\0A\00", align 1
-@.str.14_type_arithmetic.17 = private unnamed_addr constant [16 x i8] c"LiteralBool %d\0A\00", align 1
-@.str.14_type_arithmetic.18 = private unnamed_addr constant [15 x i8] c"LiteralStr %s\0A\00", align 1
-@.str.14_type_arithmetic.19 = private unnamed_addr constant [16 x i8] c"LiteralUnit %s\0A\00", align 1
-@.str.14_type_arithmetic.20 = private unnamed_addr constant [3 x i8] c"()\00", align 1
-@.str.14_type_arithmetic.21 = private unnamed_addr constant [16 x i8] c"LiteralNull %s\0A\00", align 1
-@.str.14_type_arithmetic.22 = private unnamed_addr constant [19 x i8] c"LiteralStrEnum %s\0A\00", align 1
-@.str.14_type_arithmetic.23 = private unnamed_addr constant [19 x i8] c"FooMaybe sum=%lld\0A\00", align 1
+@.str.14_type_arithmetic.0 = constant [38 x i8] c"\F0\9F\93\98 Tutorial: 14_type_arithmetic.fp\0A\00"
+@.str.14_type_arithmetic.1 = constant [84 x i8] c"\F0\9F\A7\AD Focus: Type arithmetic examples: combining and relating types with operators.\0A\00"
+@.str.14_type_arithmetic.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.14_type_arithmetic.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.14_type_arithmetic.4 = constant [2 x i8] c"\0A\00"
+@.str.14_type_arithmetic.5 = constant [33 x i8] c"Foo a=%lld common=%lld foo=%lld\0A\00"
+@.str.14_type_arithmetic.6 = constant [26 x i8] c"Bar common=%lld bar=%lld\0A\00"
+@.str.14_type_arithmetic.7 = constant [49 x i8] c"FooPlusBar a=%lld common=%lld foo=%lld bar=%lld\0A\00"
+@.str.14_type_arithmetic.8 = constant [29 x i8] c"FooMinusBar a=%lld foo=%lld\0A\00"
+@.str.14_type_arithmetic.9 = constant [23 x i8] c"FooAndBar common=%lld\0A\00"
+@.str.14_type_arithmetic.10 = constant [34 x i8] c"InlineRecord tag=%lld value=%lld\0A\00"
+@.str.14_type_arithmetic.11 = constant [24 x i8] c"FooOrBar left sum=%lld\0A\00"
+@.str.14_type_arithmetic.12 = constant [25 x i8] c"FooOrBar right sum=%lld\0A\00"
+@.str.14_type_arithmetic.13 = constant [53 x i8] c"Int4[0]=%lld Int4[1]=%lld Int4[2]=%lld Int4[3]=%lld\0A\00"
+@.str.14_type_arithmetic.14 = constant [6 x i8] c"hello\00"
+@.str.14_type_arithmetic.15 = constant [6 x i8] c"green\00"
+@.str.14_type_arithmetic.16 = constant [17 x i8] c"LiteralInt %lld\0A\00"
+@.str.14_type_arithmetic.17 = constant [16 x i8] c"LiteralBool %d\0A\00"
+@.str.14_type_arithmetic.18 = constant [15 x i8] c"LiteralStr %s\0A\00"
+@.str.14_type_arithmetic.19 = constant [16 x i8] c"LiteralUnit %s\0A\00"
+@.str.14_type_arithmetic.20 = constant [3 x i8] c"()\00"
+@.str.14_type_arithmetic.21 = constant [16 x i8] c"LiteralNull %s\0A\00"
+@.str.14_type_arithmetic.22 = constant [19 x i8] c"LiteralStrEnum %s\0A\00"
+@.str.14_type_arithmetic.23 = constant [19 x i8] c"FooMaybe sum=%lld\0A\00"
 
 define internal i64 @describe_union({ i64, i64, i64, i64 } %0) {
 bb0:

@@ -3,21 +3,21 @@ source_filename = "15_enums"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.15_enums.0 = private unnamed_addr constant [6 x i8] c"point\00", align 1
-@.str.15_enums.1 = private unnamed_addr constant [7 x i8] c"circle\00", align 1
-@.str.15_enums.2 = private unnamed_addr constant [10 x i8] c"rectangle\00", align 1
-@.str.15_enums.3 = private unnamed_addr constant [28 x i8] c"\F0\9F\93\98 Tutorial: 15_enums.fp\0A\00", align 1
-@.str.15_enums.4 = private unnamed_addr constant [75 x i8] c"\F0\9F\A7\AD Focus: Enum variants: unit, tuple, struct variants and discriminants\0A\00", align 1
-@.str.15_enums.5 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.15_enums.6 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.15_enums.7 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.15_enums.8 = private unnamed_addr constant [19 x i8] c"shape point -> %s\0A\00", align 1
-@.str.15_enums.9 = private unnamed_addr constant [20 x i8] c"shape circle -> %s\0A\00", align 1
-@.str.15_enums.10 = private unnamed_addr constant [23 x i8] c"shape rectangle -> %s\0A\00", align 1
-@.str.15_enums.11 = private unnamed_addr constant [18 x i8] c"discriminant: %d\0A\00", align 1
-@.str.15_enums.12 = private unnamed_addr constant [31 x i8] c"unwrap_or(Some(42), 0) = %lld\0A\00", align 1
-@.str.15_enums.13 = private unnamed_addr constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00", align 1
-@.str.15_enums.14 = private unnamed_addr constant [11 x i8] c"const: %d\0A\00", align 1
+@.str.15_enums.0 = constant [6 x i8] c"point\00"
+@.str.15_enums.1 = constant [7 x i8] c"circle\00"
+@.str.15_enums.2 = constant [10 x i8] c"rectangle\00"
+@.str.15_enums.3 = constant [28 x i8] c"\F0\9F\93\98 Tutorial: 15_enums.fp\0A\00"
+@.str.15_enums.4 = constant [75 x i8] c"\F0\9F\A7\AD Focus: Enum variants: unit, tuple, struct variants and discriminants\0A\00"
+@.str.15_enums.5 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.15_enums.6 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.15_enums.7 = constant [2 x i8] c"\0A\00"
+@.str.15_enums.8 = constant [19 x i8] c"shape point -> %s\0A\00"
+@.str.15_enums.9 = constant [20 x i8] c"shape circle -> %s\0A\00"
+@.str.15_enums.10 = constant [23 x i8] c"shape rectangle -> %s\0A\00"
+@.str.15_enums.11 = constant [18 x i8] c"discriminant: %d\0A\00"
+@.str.15_enums.12 = constant [31 x i8] c"unwrap_or(Some(42), 0) = %lld\0A\00"
+@.str.15_enums.13 = constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00"
+@.str.15_enums.14 = constant [11 x i8] c"const: %d\0A\00"
 
 define internal ptr @Shape__describe(ptr %0) {
 bb0:

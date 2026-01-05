@@ -3,39 +3,39 @@ source_filename = "10_print_showcase"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.10_print_showcase.0 = private unnamed_addr constant [37 x i8] c"\F0\9F\93\98 Tutorial: 10_print_showcase.fp\0A\00", align 1
-@.str.10_print_showcase.1 = private unnamed_addr constant [102 x i8] c"\F0\9F\A7\AD Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting\0A\00", align 1
-@.str.10_print_showcase.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.10_print_showcase.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.10_print_showcase.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.10_print_showcase.5 = private unnamed_addr constant [6 x i8] c"Hello\00", align 1
-@.str.10_print_showcase.6 = private unnamed_addr constant [20 x i8] c"World with newlines\00", align 1
-@.str.10_print_showcase.7 = private unnamed_addr constant [13 x i8] c"Number: %lld\00", align 1
-@.str.10_print_showcase.8 = private unnamed_addr constant [15 x i8] c"Boolean: %d %d\00", align 1
-@.str.10_print_showcase.9 = private unnamed_addr constant [21 x i8] c"Mixed: %lld %f %s %d\00", align 1
-@.str.10_print_showcase.10 = private unnamed_addr constant [5 x i8] c"text\00", align 1
-@.str.10_print_showcase.11 = private unnamed_addr constant [18 x i8] c"Namespace test %s\00", align 1
-@.str.10_print_showcase.12 = private unnamed_addr constant [12 x i8] c"still works\00", align 1
-@.str.10_print_showcase.13 = private unnamed_addr constant [14 x i8] c"value = %lld\0A\00", align 1
-@.str.10_print_showcase.14 = private unnamed_addr constant [26 x i8] c"math: %lld + %lld = %lld\0A\00", align 1
-@.str.10_print_showcase.15 = private unnamed_addr constant [11 x i8] c"float: %f\0A\00", align 1
-@.str.10_print_showcase.16 = private unnamed_addr constant [14 x i8] c"chars: %s %s\0A\00", align 1
-@.str.10_print_showcase.17 = private unnamed_addr constant [3 x i8] c"()\00", align 1
-@.str.10_print_showcase.18 = private unnamed_addr constant [21 x i8] c"tuple: (%lld, %lld)\0A\00", align 1
-@.str.10_print_showcase.19 = private unnamed_addr constant [14 x i8] c"bools: %d %d\0A\00", align 1
-@.str.10_print_showcase.20 = private unnamed_addr constant [17 x i8] c"This %s %s %s %s\00", align 1
-@.str.10_print_showcase.21 = private unnamed_addr constant [6 x i8] c"stays\00", align 1
-@.str.10_print_showcase.22 = private unnamed_addr constant [3 x i8] c"on\00", align 1
-@.str.10_print_showcase.23 = private unnamed_addr constant [4 x i8] c"one\00", align 1
-@.str.10_print_showcase.24 = private unnamed_addr constant [5 x i8] c"line\00", align 1
-@.str.10_print_showcase.25 = private unnamed_addr constant [27 x i8] c"Continuing without newline\00", align 1
-@.str.10_print_showcase.26 = private unnamed_addr constant [20 x i8] c" - appended content\00", align 1
-@.str.10_print_showcase.27 = private unnamed_addr constant [9 x i8] c"Unit: %s\00", align 1
-@.str.10_print_showcase.28 = private unnamed_addr constant [9 x i8] c"Null: %s\00", align 1
-@.str.10_print_showcase.29 = private unnamed_addr constant [5 x i8] c"null\00", align 1
-@.str.10_print_showcase.30 = private unnamed_addr constant [16 x i8] c"escaped: %s %s\0A\00", align 1
-@.str.10_print_showcase.31 = private unnamed_addr constant [12 x i8] c"line1\0Aline2\00", align 1
-@.str.10_print_showcase.32 = private unnamed_addr constant [8 x i8] c"tab\09end\00", align 1
+@.str.10_print_showcase.0 = constant [37 x i8] c"\F0\9F\93\98 Tutorial: 10_print_showcase.fp\0A\00"
+@.str.10_print_showcase.1 = constant [102 x i8] c"\F0\9F\A7\AD Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting\0A\00"
+@.str.10_print_showcase.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.10_print_showcase.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.10_print_showcase.4 = constant [2 x i8] c"\0A\00"
+@.str.10_print_showcase.5 = constant [6 x i8] c"Hello\00"
+@.str.10_print_showcase.6 = constant [20 x i8] c"World with newlines\00"
+@.str.10_print_showcase.7 = constant [13 x i8] c"Number: %lld\00"
+@.str.10_print_showcase.8 = constant [15 x i8] c"Boolean: %d %d\00"
+@.str.10_print_showcase.9 = constant [21 x i8] c"Mixed: %lld %f %s %d\00"
+@.str.10_print_showcase.10 = constant [5 x i8] c"text\00"
+@.str.10_print_showcase.11 = constant [18 x i8] c"Namespace test %s\00"
+@.str.10_print_showcase.12 = constant [12 x i8] c"still works\00"
+@.str.10_print_showcase.13 = constant [14 x i8] c"value = %lld\0A\00"
+@.str.10_print_showcase.14 = constant [26 x i8] c"math: %lld + %lld = %lld\0A\00"
+@.str.10_print_showcase.15 = constant [11 x i8] c"float: %f\0A\00"
+@.str.10_print_showcase.16 = constant [14 x i8] c"chars: %s %s\0A\00"
+@.str.10_print_showcase.17 = constant [3 x i8] c"()\00"
+@.str.10_print_showcase.18 = constant [21 x i8] c"tuple: (%lld, %lld)\0A\00"
+@.str.10_print_showcase.19 = constant [14 x i8] c"bools: %d %d\0A\00"
+@.str.10_print_showcase.20 = constant [17 x i8] c"This %s %s %s %s\00"
+@.str.10_print_showcase.21 = constant [6 x i8] c"stays\00"
+@.str.10_print_showcase.22 = constant [3 x i8] c"on\00"
+@.str.10_print_showcase.23 = constant [4 x i8] c"one\00"
+@.str.10_print_showcase.24 = constant [5 x i8] c"line\00"
+@.str.10_print_showcase.25 = constant [27 x i8] c"Continuing without newline\00"
+@.str.10_print_showcase.26 = constant [20 x i8] c" - appended content\00"
+@.str.10_print_showcase.27 = constant [9 x i8] c"Unit: %s\00"
+@.str.10_print_showcase.28 = constant [9 x i8] c"Null: %s\00"
+@.str.10_print_showcase.29 = constant [5 x i8] c"null\00"
+@.str.10_print_showcase.30 = constant [16 x i8] c"escaped: %s %s\0A\00"
+@.str.10_print_showcase.31 = constant [12 x i8] c"line1\0Aline2\00"
+@.str.10_print_showcase.32 = constant [8 x i8] c"tab\09end\00"
 
 define i32 @main() {
 bb0:

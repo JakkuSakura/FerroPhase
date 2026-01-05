@@ -3,15 +3,15 @@ source_filename = "01_const_eval_basics"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.01_const_eval_basics.0 = private unnamed_addr constant [40 x i8] c"\F0\9F\93\98 Tutorial: 01_const_eval_basics.fp\0A\00", align 1
-@.str.01_const_eval_basics.1 = private unnamed_addr constant [82 x i8] c"\F0\9F\A7\AD Focus: Basic const evaluation with compile-time arithmetic and const blocks\0A\00", align 1
-@.str.01_const_eval_basics.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.01_const_eval_basics.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.01_const_eval_basics.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.01_const_eval_basics.5 = private unnamed_addr constant [45 x i8] c"Buffer: %lldKB, factorial(5)=%lld, large=%d\0A\00", align 1
-@.str.01_const_eval_basics.6 = private unnamed_addr constant [41 x i8] c"Config: %lldKB buffer, %lld connections\0A\00", align 1
-@.str.01_const_eval_basics.7 = private unnamed_addr constant [6 x i8] c"large\00", align 1
-@.str.01_const_eval_basics.8 = private unnamed_addr constant [51 x i8] c"Const blocks: size=%lld, strategy=%s, memory=%lld\0A\00", align 1
+@.str.01_const_eval_basics.0 = constant [40 x i8] c"\F0\9F\93\98 Tutorial: 01_const_eval_basics.fp\0A\00"
+@.str.01_const_eval_basics.1 = constant [82 x i8] c"\F0\9F\A7\AD Focus: Basic const evaluation with compile-time arithmetic and const blocks\0A\00"
+@.str.01_const_eval_basics.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.01_const_eval_basics.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.01_const_eval_basics.4 = constant [2 x i8] c"\0A\00"
+@.str.01_const_eval_basics.5 = constant [45 x i8] c"Buffer: %lldKB, factorial(5)=%lld, large=%d\0A\00"
+@.str.01_const_eval_basics.6 = constant [41 x i8] c"Config: %lldKB buffer, %lld connections\0A\00"
+@.str.01_const_eval_basics.7 = constant [6 x i8] c"large\00"
+@.str.01_const_eval_basics.8 = constant [51 x i8] c"Const blocks: size=%lld, strategy=%s, memory=%lld\0A\00"
 
 define i32 @main() {
 bb0:

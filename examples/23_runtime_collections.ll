@@ -14,24 +14,19 @@ target triple = "arm64-apple-darwin25.0.0"
 @.str.23_runtime_collections.8 = constant [3 x i8] c"ok\00"
 @.str.23_runtime_collections.9 = constant [9 x i8] c"accepted\00"
 @.str.23_runtime_collections.10 = constant [5 x i8] c"nope\00"
-@.str.23_runtime_collections.11 = constant [19 x i8] c"statuses[%s] = %s\0A\00"
-@.str.23_runtime_collections.12 = constant [3 x i8] c"()\00"
-@.str.23_runtime_collections.13 = constant [21 x i8] c"statuses.len = %lld\0A\00"
+@.str.23_runtime_collections.11 = constant [21 x i8] c"statuses[%s] = %lld\0A\00"
+@.str.23_runtime_collections.12 = constant [21 x i8] c"statuses.len = %lld\0A\00"
 
 define i32 @main() {
 bb0:
-  %alloca_89 = alloca i64, align 8
-  %alloca_count_89 = alloca i64, align 8
-  %alloca_82 = alloca ptr, align 8
-  %alloca_count_82 = alloca ptr, align 8
-  %alloca_60 = alloca { ptr, i64 }, align 8
-  %alloca_count_60 = alloca { ptr, i64 }, i32 3, align 8
-  %alloca_59 = alloca ptr, align 8
-  %alloca_count_59 = alloca ptr, align 8
-  %alloca_57 = alloca { ptr, i64 }, align 8
-  %alloca_count_57 = alloca { ptr, i64 }, align 8
-  %alloca_55 = alloca { ptr, i64 }, align 8
-  %alloca_count_55 = alloca { ptr, i64 }, align 8
+  %alloca_116 = alloca i64, align 8
+  %alloca_count_116 = alloca i64, align 8
+  %alloca_81 = alloca i64, align 8
+  %alloca_count_81 = alloca i64, align 8
+  %alloca_79 = alloca ptr, align 8
+  %alloca_count_79 = alloca ptr, align 8
+  %alloca_54 = alloca { ptr, i64 }, align 8
+  %alloca_count_54 = alloca { ptr, i64 }, i32 3, align 8
   %alloca_53 = alloca { ptr, i64 }, align 8
   %alloca_count_53 = alloca { ptr, i64 }, align 8
   %alloca_49 = alloca i64, align 8
@@ -103,42 +98,54 @@ bb7:                                              ; preds = %bb6
   br label %bb8
 
 bb8:                                              ; preds = %bb7
-  store { ptr, i64 } { ptr @.str.23_runtime_collections.8, i64 200 }, ptr %alloca_count_53, align 8
-  store { ptr, i64 } { ptr @.str.23_runtime_collections.9, i64 202 }, ptr %alloca_count_55, align 8
-  store { ptr, i64 } { ptr @.str.23_runtime_collections.10, i64 404 }, ptr %alloca_count_57, align 8
-  %load_61 = load { ptr, i64 }, ptr %alloca_count_53, align 8
-  %gep_64 = getelementptr inbounds i8, ptr %alloca_count_60, i64 0
-  store { ptr, i64 } %load_61, ptr %gep_64, align 8
-  %load_67 = load { ptr, i64 }, ptr %alloca_count_55, align 8
-  %gep_70 = getelementptr inbounds i8, ptr %alloca_count_60, i64 16
-  store { ptr, i64 } %load_67, ptr %gep_70, align 8
-  %load_73 = load { ptr, i64 }, ptr %alloca_count_57, align 8
-  %gep_76 = getelementptr inbounds i8, ptr %alloca_count_60, i64 32
-  store { ptr, i64 } %load_73, ptr %gep_76, align 8
-  %insertvalue_79 = insertvalue { ptr, i64 } undef, ptr %alloca_count_60, 0
-  %insertvalue_80 = insertvalue { ptr, i64 } %insertvalue_79, i64 3, 1
-  store { ptr, i64 } %insertvalue_80, ptr %alloca_count_59, align 8
-  store ptr @.str.23_runtime_collections.9, ptr %alloca_count_82, align 8
-  %load_84 = load ptr, ptr %alloca_count_59, align 8
-  %load_85 = load ptr, ptr %alloca_count_82, align 8
-  call void @opaque__get_unchecked(ptr %load_84, ptr %load_85)
+  %gep_59 = getelementptr inbounds i8, ptr %alloca_count_54, i64 0
+  store { ptr, i64 } { ptr @.str.23_runtime_collections.8, i64 200 }, ptr %gep_59, align 8
+  %gep_66 = getelementptr inbounds i8, ptr %alloca_count_54, i64 16
+  store { ptr, i64 } { ptr @.str.23_runtime_collections.9, i64 202 }, ptr %gep_66, align 8
+  %gep_73 = getelementptr inbounds i8, ptr %alloca_count_54, i64 32
+  store { ptr, i64 } { ptr @.str.23_runtime_collections.10, i64 404 }, ptr %gep_73, align 8
+  %insertvalue_76 = insertvalue { ptr, i64 } undef, ptr %alloca_count_54, 0
+  %insertvalue_77 = insertvalue { ptr, i64 } %insertvalue_76, i64 3, 1
+  store { ptr, i64 } %insertvalue_77, ptr %alloca_count_53, align 8
+  store ptr @.str.23_runtime_collections.9, ptr %alloca_count_79, align 8
+  %load_82 = load { ptr, i64 }, ptr %alloca_count_53, align 8
+  %extractvalue_83 = extractvalue { ptr, i64 } %load_82, 0
+  %load_84 = load ptr, ptr %alloca_count_79, align 8
+  %gep_87 = getelementptr inbounds i8, ptr %extractvalue_83, i64 0
+  %load_89 = load { ptr, i64 }, ptr %gep_87, align 8
+  %extractvalue_90 = extractvalue { ptr, i64 } %load_89, 0
+  %extractvalue_91 = extractvalue { ptr, i64 } %load_89, 1
+  %ptrtoint = ptrtoint ptr %extractvalue_90 to i64
+  %ptrtoint1 = ptrtoint ptr %load_84 to i64
+  %icmp_92 = icmp eq i64 %ptrtoint, %ptrtoint1
+  %select_93 = select i1 %icmp_92, i64 %extractvalue_91, i64 undef
+  %gep_96 = getelementptr inbounds i8, ptr %extractvalue_83, i64 16
+  %load_98 = load { ptr, i64 }, ptr %gep_96, align 8
+  %extractvalue_99 = extractvalue { ptr, i64 } %load_98, 0
+  %extractvalue_100 = extractvalue { ptr, i64 } %load_98, 1
+  %ptrtoint2 = ptrtoint ptr %extractvalue_99 to i64
+  %ptrtoint3 = ptrtoint ptr %load_84 to i64
+  %icmp_101 = icmp eq i64 %ptrtoint2, %ptrtoint3
+  %select_102 = select i1 %icmp_101, i64 %extractvalue_100, i64 %select_93
+  %gep_105 = getelementptr inbounds i8, ptr %extractvalue_83, i64 32
+  %load_107 = load { ptr, i64 }, ptr %gep_105, align 8
+  %extractvalue_108 = extractvalue { ptr, i64 } %load_107, 0
+  %extractvalue_109 = extractvalue { ptr, i64 } %load_107, 1
+  %ptrtoint4 = ptrtoint ptr %extractvalue_108 to i64
+  %ptrtoint5 = ptrtoint ptr %load_84 to i64
+  %icmp_110 = icmp eq i64 %ptrtoint4, %ptrtoint5
+  %select_111 = select i1 %icmp_110, i64 %extractvalue_109, i64 %select_102
+  store i64 %select_111, ptr %alloca_count_81, align 8
+  %load_113 = load ptr, ptr %alloca_count_79, align 8
+  %load_114 = load i64, ptr %alloca_count_81, align 8
+  %call_115 = call i32 (ptr, ...) @printf(ptr @.str.23_runtime_collections.11, ptr %load_113, i64 %load_114)
+  store i64 3, ptr %alloca_count_116, align 8
+  %load_118 = load i64, ptr %alloca_count_116, align 8
+  %call_119 = call i32 (ptr, ...) @printf(ptr @.str.23_runtime_collections.12, i64 %load_118)
   br label %bb9
 
 bb9:                                              ; preds = %bb8
-  %load_87 = load ptr, ptr %alloca_count_82, align 8
-  %call_88 = call i32 (ptr, ...) @printf(ptr @.str.23_runtime_collections.11, ptr %load_87, ptr @.str.23_runtime_collections.12)
-  store i64 3, ptr %alloca_count_89, align 8
-  %load_91 = load i64, ptr %alloca_count_89, align 8
-  %call_92 = call i32 (ptr, ...) @printf(ptr @.str.23_runtime_collections.13, i64 %load_91)
-  br label %bb10
-
-bb10:                                             ; preds = %bb9
   ret i32 0
 }
 
 declare i32 @printf(ptr, ...)
-
-define internal void @opaque__get_unchecked(ptr %0, ptr %1) {
-bb0:
-  ret void
-}

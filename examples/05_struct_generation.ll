@@ -3,25 +3,25 @@ source_filename = "05_struct_generation"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.05_struct_generation.0 = private unnamed_addr constant [40 x i8] c"\F0\9F\93\98 Tutorial: 05_struct_generation.fp\0A\00", align 1
-@.str.05_struct_generation.1 = private unnamed_addr constant [62 x i8] c"\F0\9F\A7\AD Focus: Struct generation with compile-time conditionals\0A\00", align 1
-@.str.05_struct_generation.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.05_struct_generation.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.05_struct_generation.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.05_struct_generation.5 = private unnamed_addr constant [5 x i8] c"core\00", align 1
-@.str.05_struct_generation.6 = private unnamed_addr constant [23 x i8] c"base: id=%lld name=%s\0A\00", align 1
-@.str.05_struct_generation.7 = private unnamed_addr constant [8 x i8] c"primary\00", align 1
-@.str.05_struct_generation.8 = private unnamed_addr constant [7 x i8] c"strict\00", align 1
-@.str.05_struct_generation.9 = private unnamed_addr constant [33 x i8] c"config: id=%lld name=%s mode=%s\0A\00", align 1
-@.str.05_struct_generation.10 = private unnamed_addr constant [7 x i8] c"shadow\00", align 1
-@.str.05_struct_generation.11 = private unnamed_addr constant [8 x i8] c"relaxed\00", align 1
-@.str.05_struct_generation.12 = private unnamed_addr constant [39 x i8] c"config clone: id=%lld name=%s mode=%s\0A\00", align 1
-@.str.05_struct_generation.13 = private unnamed_addr constant [21 x i8] c"config fields: %lld\0A\00", align 1
-@.str.05_struct_generation.14 = private unnamed_addr constant [21 x i8] c"config has mode: %d\0A\00", align 1
-@.str.05_struct_generation.15 = private unnamed_addr constant [28 x i8] c"config has max_retries: %d\0A\00", align 1
-@.str.05_struct_generation.16 = private unnamed_addr constant [19 x i8] c"config size: %lld\0A\00", align 1
-@.str.05_struct_generation.17 = private unnamed_addr constant [17 x i8] c"config type: %s\0A\00", align 1
-@.str.05_struct_generation.18 = private unnamed_addr constant [14 x i8] c"struct Config\00", align 1
+@.str.05_struct_generation.0 = constant [40 x i8] c"\F0\9F\93\98 Tutorial: 05_struct_generation.fp\0A\00"
+@.str.05_struct_generation.1 = constant [62 x i8] c"\F0\9F\A7\AD Focus: Struct generation with compile-time conditionals\0A\00"
+@.str.05_struct_generation.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.05_struct_generation.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.05_struct_generation.4 = constant [2 x i8] c"\0A\00"
+@.str.05_struct_generation.5 = constant [5 x i8] c"core\00"
+@.str.05_struct_generation.6 = constant [23 x i8] c"base: id=%lld name=%s\0A\00"
+@.str.05_struct_generation.7 = constant [8 x i8] c"primary\00"
+@.str.05_struct_generation.8 = constant [7 x i8] c"strict\00"
+@.str.05_struct_generation.9 = constant [33 x i8] c"config: id=%lld name=%s mode=%s\0A\00"
+@.str.05_struct_generation.10 = constant [7 x i8] c"shadow\00"
+@.str.05_struct_generation.11 = constant [8 x i8] c"relaxed\00"
+@.str.05_struct_generation.12 = constant [39 x i8] c"config clone: id=%lld name=%s mode=%s\0A\00"
+@.str.05_struct_generation.13 = constant [21 x i8] c"config fields: %lld\0A\00"
+@.str.05_struct_generation.14 = constant [21 x i8] c"config has mode: %d\0A\00"
+@.str.05_struct_generation.15 = constant [28 x i8] c"config has max_retries: %d\0A\00"
+@.str.05_struct_generation.16 = constant [19 x i8] c"config size: %lld\0A\00"
+@.str.05_struct_generation.17 = constant [17 x i8] c"config type: %s\0A\00"
+@.str.05_struct_generation.18 = constant [14 x i8] c"struct Config\00"
 
 define i32 @main() {
 bb0:

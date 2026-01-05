@@ -52,13 +52,13 @@ lir::Program {
                 i15: %r15 = load %r14 align 8 : ptr i8
                 i16: %r16 = intrinsic Println "pair = (%lld, %s)
 " (%r9, %r15)
-                i17: %r17 = call c @max__mono_a7af9f593fdc4675_6(i64 10, i64 20) : i64
+                i17: %r17 = call c @max__mono_a7af9f593fdc4675_11(i64 10, i64 20) : i64
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
                 i18: %r18 = call c @printf(c"max(10, 20) = %lld\n", %r17) : i32
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
-                i19: %r19 = call c @max__mono_d7ad91e83a08a980_6(f64 3.5, f64 2.1) : f64
+                i19: %r19 = call c @max__mono_d7ad91e83a08a980_11(f64 3.5, f64 2.1) : f64
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
                 i20: %r20 = call c @printf(c"max(3.5, 2.1) = %f\n", %r19) : i32
@@ -100,7 +100,7 @@ lir::Program {
                 terminator: ret %r38
         }
 
-        fn max__mono_a7af9f593fdc4675_6(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
+        fn max__mono_a7af9f593fdc4675_11(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: i64 // arg
@@ -124,7 +124,7 @@ lir::Program {
                 terminator: ret %r46
         }
 
-        fn max__mono_d7ad91e83a08a980_6(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
+        fn max__mono_d7ad91e83a08a980_11(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: f64 // arg

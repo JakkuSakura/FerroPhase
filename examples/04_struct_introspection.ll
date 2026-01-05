@@ -3,30 +3,30 @@ source_filename = "04_struct_introspection"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.04_struct_introspection.0 = private unnamed_addr constant [43 x i8] c"\F0\9F\93\98 Tutorial: 04_struct_introspection.fp\0A\00", align 1
-@.str.04_struct_introspection.1 = private unnamed_addr constant [48 x i8] c"\F0\9F\A7\AD Focus: Struct introspection demonstration\0A\00", align 1
-@.str.04_struct_introspection.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.04_struct_introspection.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.04_struct_introspection.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.04_struct_introspection.5 = private unnamed_addr constant [30 x i8] c"=== Struct Introspection ===\0A\00", align 1
-@.str.04_struct_introspection.6 = private unnamed_addr constant [24 x i8] c"Point size: %lld bytes\0A\00", align 1
-@.str.04_struct_introspection.7 = private unnamed_addr constant [24 x i8] c"Color size: %lld bytes\0A\00", align 1
-@.str.04_struct_introspection.8 = private unnamed_addr constant [20 x i8] c"Point fields: %lld\0A\00", align 1
-@.str.04_struct_introspection.9 = private unnamed_addr constant [20 x i8] c"Color fields: %lld\0A\00", align 1
-@.str.04_struct_introspection.10 = private unnamed_addr constant [17 x i8] c"Point has x: %d\0A\00", align 1
-@.str.04_struct_introspection.11 = private unnamed_addr constant [17 x i8] c"Point has z: %d\0A\00", align 1
-@.str.04_struct_introspection.12 = private unnamed_addr constant [21 x i8] c"Point methods: %lld\0A\00", align 1
-@.str.04_struct_introspection.13 = private unnamed_addr constant [21 x i8] c"Color methods: %lld\0A\00", align 1
-@.str.04_struct_introspection.14 = private unnamed_addr constant [31 x i8] c"\0A\E2\9C\93 Introspection completed!\0A\00", align 1
-@.str.04_struct_introspection.15 = private unnamed_addr constant [29 x i8] c"\0A=== Transpilation Demo ===\0A\00", align 1
-@.str.04_struct_introspection.16 = private unnamed_addr constant [29 x i8] c"Transpilation target sizes:\0A\00", align 1
-@.str.04_struct_introspection.17 = private unnamed_addr constant [29 x i8] c"  Point: %llu bytes (const)\0A\00", align 1
-@.str.04_struct_introspection.18 = private unnamed_addr constant [29 x i8] c"  Color: %llu bytes (const)\0A\00", align 1
-@.str.04_struct_introspection.19 = private unnamed_addr constant [24 x i8] c"  Combined: %llu bytes\0A\00", align 1
-@.str.04_struct_introspection.20 = private unnamed_addr constant [20 x i8] c"Runtime instances:\0A\00", align 1
-@.str.04_struct_introspection.21 = private unnamed_addr constant [20 x i8] c"  Origin: (%f, %f)\0A\00", align 1
-@.str.04_struct_introspection.22 = private unnamed_addr constant [30 x i8] c"  Red: rgb(%hhu, %hhu, %hhu)\0A\00", align 1
-@.str.04_struct_introspection.23 = private unnamed_addr constant [54 x i8] c"\0A\E2\9C\93 Introspection enables external code generation!\0A\00", align 1
+@.str.04_struct_introspection.0 = constant [43 x i8] c"\F0\9F\93\98 Tutorial: 04_struct_introspection.fp\0A\00"
+@.str.04_struct_introspection.1 = constant [48 x i8] c"\F0\9F\A7\AD Focus: Struct introspection demonstration\0A\00"
+@.str.04_struct_introspection.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.04_struct_introspection.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.04_struct_introspection.4 = constant [2 x i8] c"\0A\00"
+@.str.04_struct_introspection.5 = constant [30 x i8] c"=== Struct Introspection ===\0A\00"
+@.str.04_struct_introspection.6 = constant [24 x i8] c"Point size: %lld bytes\0A\00"
+@.str.04_struct_introspection.7 = constant [24 x i8] c"Color size: %lld bytes\0A\00"
+@.str.04_struct_introspection.8 = constant [20 x i8] c"Point fields: %lld\0A\00"
+@.str.04_struct_introspection.9 = constant [20 x i8] c"Color fields: %lld\0A\00"
+@.str.04_struct_introspection.10 = constant [17 x i8] c"Point has x: %d\0A\00"
+@.str.04_struct_introspection.11 = constant [17 x i8] c"Point has z: %d\0A\00"
+@.str.04_struct_introspection.12 = constant [21 x i8] c"Point methods: %lld\0A\00"
+@.str.04_struct_introspection.13 = constant [21 x i8] c"Color methods: %lld\0A\00"
+@.str.04_struct_introspection.14 = constant [31 x i8] c"\0A\E2\9C\93 Introspection completed!\0A\00"
+@.str.04_struct_introspection.15 = constant [29 x i8] c"\0A=== Transpilation Demo ===\0A\00"
+@.str.04_struct_introspection.16 = constant [29 x i8] c"Transpilation target sizes:\0A\00"
+@.str.04_struct_introspection.17 = constant [29 x i8] c"  Point: %llu bytes (const)\0A\00"
+@.str.04_struct_introspection.18 = constant [29 x i8] c"  Color: %llu bytes (const)\0A\00"
+@.str.04_struct_introspection.19 = constant [24 x i8] c"  Combined: %llu bytes\0A\00"
+@.str.04_struct_introspection.20 = constant [20 x i8] c"Runtime instances:\0A\00"
+@.str.04_struct_introspection.21 = constant [20 x i8] c"  Origin: (%f, %f)\0A\00"
+@.str.04_struct_introspection.22 = constant [30 x i8] c"  Red: rgb(%hhu, %hhu, %hhu)\0A\00"
+@.str.04_struct_introspection.23 = constant [54 x i8] c"\0A\E2\9C\93 Introspection enables external code generation!\0A\00"
 
 define i32 @main() {
 bb0:

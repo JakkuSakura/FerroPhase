@@ -12,9 +12,9 @@ mir::Program {
 
         fn main() -> () [body: body4]
 
-        fn print_area__mono_85382269fdc78777_5(arg0: <??>) -> () [body: body5]
+        fn print_area__mono_85382269fdc78777_10(arg0: <??>) -> () [body: body5]
 
-        fn print_area__mono_93ff406d3b2fff38_5(arg0: <??>) -> () [body: body6]
+        fn print_area__mono_93ff406d3b2fff38_10(arg0: <??>) -> () [body: body6]
     bodies:
         body0 { arg_count: 1, locals: 3 }
             return_local: _0
@@ -106,10 +106,10 @@ mir::Program {
                     terminator: call fn Rectangle::describe(copy _11) -> _10 then bb7
                 bb7:
                     s0: _12 = ref(Shared, _6)
-                    terminator: call fn print_area__mono_85382269fdc78777_5(copy _12) -> _13 then bb8
+                    terminator: call fn print_area__mono_85382269fdc78777_10(copy _12) -> _13 then bb8
                 bb8:
                     s0: _14 = ref(Shared, _7)
-                    terminator: call fn print_area__mono_93ff406d3b2fff38_5(copy _14) -> _15 then bb9
+                    terminator: call fn print_area__mono_93ff406d3b2fff38_10(copy _14) -> _15 then bb9
                 bb9:
                     terminator: return
         body5 { arg_count: 1, locals: 4 }

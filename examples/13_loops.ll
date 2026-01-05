@@ -3,29 +3,29 @@ source_filename = "13_loops"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.13_loops.0 = private unnamed_addr constant [28 x i8] c"\F0\9F\93\98 Tutorial: 13_loops.fp\0A\00", align 1
-@.str.13_loops.1 = private unnamed_addr constant [52 x i8] c"\F0\9F\A7\AD Focus: Loop constructs: while, for, and loop.\0A\00", align 1
-@.str.13_loops.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.13_loops.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.13_loops.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.13_loops.5 = private unnamed_addr constant [26 x i8] c"=== Loop Constructs ===\0A\0A\00", align 1
-@.str.13_loops.6 = private unnamed_addr constant [28 x i8] c"1. While loop - factorial:\0A\00", align 1
-@.str.13_loops.7 = private unnamed_addr constant [13 x i8] c"  5! = %lld\0A\00", align 1
-@.str.13_loops.8 = private unnamed_addr constant [13 x i8] c"  7! = %lld\0A\00", align 1
-@.str.13_loops.9 = private unnamed_addr constant [27 x i8] c"\0A2. For loop - sum range:\0A\00", align 1
-@.str.13_loops.10 = private unnamed_addr constant [21 x i8] c"  sum(1..10) = %lld\0A\00", align 1
-@.str.13_loops.11 = private unnamed_addr constant [21 x i8] c"  sum(5..15) = %lld\0A\00", align 1
-@.str.13_loops.12 = private unnamed_addr constant [33 x i8] c"\0A3. Loop with break expression:\0A\00", align 1
-@.str.13_loops.13 = private unnamed_addr constant [29 x i8] c"  First divisor of 24: %lld\0A\00", align 1
-@.str.13_loops.14 = private unnamed_addr constant [29 x i8] c"  First divisor of 17: %lld\0A\00", align 1
-@.str.13_loops.15 = private unnamed_addr constant [25 x i8] c"\0A4. Loop with continue:\0A\00", align 1
-@.str.13_loops.16 = private unnamed_addr constant [34 x i8] c"  Sum of even numbers < 10: %lld\0A\00", align 1
-@.str.13_loops.17 = private unnamed_addr constant [19 x i8] c"\0A5. Nested loops:\0A\00", align 1
-@.str.13_loops.18 = private unnamed_addr constant [21 x i8] c"\0A  Iterations: %lld\0A\00", align 1
-@.str.13_loops.19 = private unnamed_addr constant [29 x i8] c"\0A6. Compile-time recursion:\0A\00", align 1
-@.str.13_loops.20 = private unnamed_addr constant [29 x i8] c"  const_factorial(5) = %lld\0A\00", align 1
-@.str.13_loops.21 = private unnamed_addr constant [8 x i8] c"[%lld] \00", align 1
-@.str.13_loops.22 = private unnamed_addr constant [36 x i8] c"\0A\E2\9C\93 Loop constructs demonstrated!\0A\00", align 1
+@.str.13_loops.0 = constant [28 x i8] c"\F0\9F\93\98 Tutorial: 13_loops.fp\0A\00"
+@.str.13_loops.1 = constant [52 x i8] c"\F0\9F\A7\AD Focus: Loop constructs: while, for, and loop.\0A\00"
+@.str.13_loops.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.13_loops.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.13_loops.4 = constant [2 x i8] c"\0A\00"
+@.str.13_loops.5 = constant [26 x i8] c"=== Loop Constructs ===\0A\0A\00"
+@.str.13_loops.6 = constant [28 x i8] c"1. While loop - factorial:\0A\00"
+@.str.13_loops.7 = constant [13 x i8] c"  5! = %lld\0A\00"
+@.str.13_loops.8 = constant [13 x i8] c"  7! = %lld\0A\00"
+@.str.13_loops.9 = constant [27 x i8] c"\0A2. For loop - sum range:\0A\00"
+@.str.13_loops.10 = constant [21 x i8] c"  sum(1..10) = %lld\0A\00"
+@.str.13_loops.11 = constant [21 x i8] c"  sum(5..15) = %lld\0A\00"
+@.str.13_loops.12 = constant [33 x i8] c"\0A3. Loop with break expression:\0A\00"
+@.str.13_loops.13 = constant [29 x i8] c"  First divisor of 24: %lld\0A\00"
+@.str.13_loops.14 = constant [29 x i8] c"  First divisor of 17: %lld\0A\00"
+@.str.13_loops.15 = constant [25 x i8] c"\0A4. Loop with continue:\0A\00"
+@.str.13_loops.16 = constant [34 x i8] c"  Sum of even numbers < 10: %lld\0A\00"
+@.str.13_loops.17 = constant [19 x i8] c"\0A5. Nested loops:\0A\00"
+@.str.13_loops.18 = constant [21 x i8] c"\0A  Iterations: %lld\0A\00"
+@.str.13_loops.19 = constant [29 x i8] c"\0A6. Compile-time recursion:\0A\00"
+@.str.13_loops.20 = constant [29 x i8] c"  const_factorial(5) = %lld\0A\00"
+@.str.13_loops.21 = constant [8 x i8] c"[%lld] \00"
+@.str.13_loops.22 = constant [36 x i8] c"\0A\E2\9C\93 Loop constructs demonstrated!\0A\00"
 
 define internal i64 @factorial(i64 %0) {
 bb0:
@@ -37,31 +37,31 @@ bb0:
   %alloca_count_1 = alloca i64, align 8
   %alloca_0 = alloca i64, align 8
   %alloca_count_0 = alloca i64, align 8
+  store i64 1, ptr %alloca_count_0, align 8
   store i64 1, ptr %alloca_count_1, align 8
-  store i64 1, ptr %alloca_count_2, align 8
   br label %bb1
 
 bb1:                                              ; preds = %bb2, %bb0
-  %load_6 = load i64, ptr %alloca_count_2, align 8
+  %load_6 = load i64, ptr %alloca_count_1, align 8
   %icmp_7 = icmp sle i64 %load_6, %0
   store i1 %icmp_7, ptr %alloca_count_5, align 1
   %load_9 = load i1, ptr %alloca_count_5, align 1
   br i1 %load_9, label %bb2, label %bb3
 
 bb2:                                              ; preds = %bb1
-  %load_10 = load i64, ptr %alloca_count_1, align 8
-  %load_11 = load i64, ptr %alloca_count_2, align 8
+  %load_10 = load i64, ptr %alloca_count_0, align 8
+  %load_11 = load i64, ptr %alloca_count_1, align 8
   %iop_12 = mul i64 %load_10, %load_11
-  store i64 %iop_12, ptr %alloca_count_1, align 8
-  %load_14 = load i64, ptr %alloca_count_2, align 8
+  store i64 %iop_12, ptr %alloca_count_0, align 8
+  %load_14 = load i64, ptr %alloca_count_1, align 8
   %iop_15 = add i64 %load_14, 1
-  store i64 %iop_15, ptr %alloca_count_2, align 8
+  store i64 %iop_15, ptr %alloca_count_1, align 8
   br label %bb1
 
 bb3:                                              ; preds = %bb1
-  %load_17 = load i64, ptr %alloca_count_1, align 8
-  store i64 %load_17, ptr %alloca_count_0, align 8
-  %load_19 = load i64, ptr %alloca_count_0, align 8
+  %load_17 = load i64, ptr %alloca_count_0, align 8
+  store i64 %load_17, ptr %alloca_count_2, align 8
+  %load_19 = load i64, ptr %alloca_count_2, align 8
   ret i64 %load_19
 }
 
@@ -109,31 +109,31 @@ bb0:
   %alloca_count_35 = alloca i64, align 8
   %alloca_34 = alloca i64, align 8
   %alloca_count_34 = alloca i64, align 8
-  store i64 0, ptr %alloca_count_34, align 8
-  store i64 %0, ptr %alloca_count_36, align 8
+  store i64 0, ptr %alloca_count_35, align 8
+  store i64 %0, ptr %alloca_count_34, align 8
   br label %bb1
 
 bb1:                                              ; preds = %bb2, %bb0
-  %load_40 = load i64, ptr %alloca_count_36, align 8
+  %load_40 = load i64, ptr %alloca_count_34, align 8
   %icmp_41 = icmp slt i64 %load_40, %1
   store i1 %icmp_41, ptr %alloca_count_39, align 1
   %load_43 = load i1, ptr %alloca_count_39, align 1
   br i1 %load_43, label %bb2, label %bb3
 
 bb2:                                              ; preds = %bb1
-  %load_44 = load i64, ptr %alloca_count_34, align 8
-  %load_45 = load i64, ptr %alloca_count_36, align 8
+  %load_44 = load i64, ptr %alloca_count_35, align 8
+  %load_45 = load i64, ptr %alloca_count_34, align 8
   %iop_46 = add i64 %load_44, %load_45
-  store i64 %iop_46, ptr %alloca_count_34, align 8
-  %load_48 = load i64, ptr %alloca_count_36, align 8
+  store i64 %iop_46, ptr %alloca_count_35, align 8
+  %load_48 = load i64, ptr %alloca_count_34, align 8
   %iop_49 = add i64 %load_48, 1
-  store i64 %iop_49, ptr %alloca_count_36, align 8
+  store i64 %iop_49, ptr %alloca_count_34, align 8
   br label %bb1
 
 bb3:                                              ; preds = %bb1
-  %load_51 = load i64, ptr %alloca_count_34, align 8
-  store i64 %load_51, ptr %alloca_count_35, align 8
-  %load_53 = load i64, ptr %alloca_count_35, align 8
+  %load_51 = load i64, ptr %alloca_count_35, align 8
+  store i64 %load_51, ptr %alloca_count_36, align 8
+  %load_53 = load i64, ptr %alloca_count_36, align 8
   ret i64 %load_53
 }
 
@@ -224,22 +224,22 @@ bb0:
   %alloca_count_84 = alloca i64, align 8
   %alloca_83 = alloca i64, align 8
   %alloca_count_83 = alloca i64, align 8
-  store i64 0, ptr %alloca_count_85, align 8
   store i64 0, ptr %alloca_count_84, align 8
+  store i64 0, ptr %alloca_count_83, align 8
   br label %bb1
 
 bb1:                                              ; preds = %bb6, %bb4, %bb0
-  %load_89 = load i64, ptr %alloca_count_84, align 8
+  %load_89 = load i64, ptr %alloca_count_83, align 8
   %icmp_90 = icmp slt i64 %load_89, %0
   store i1 %icmp_90, ptr %alloca_count_88, align 1
   %load_92 = load i1, ptr %alloca_count_88, align 1
   br i1 %load_92, label %bb2, label %bb3
 
 bb2:                                              ; preds = %bb1
-  %load_93 = load i64, ptr %alloca_count_84, align 8
+  %load_93 = load i64, ptr %alloca_count_83, align 8
   %iop_94 = add i64 %load_93, 1
-  store i64 %iop_94, ptr %alloca_count_84, align 8
-  %load_97 = load i64, ptr %alloca_count_84, align 8
+  store i64 %iop_94, ptr %alloca_count_83, align 8
+  %load_97 = load i64, ptr %alloca_count_83, align 8
   %iop_98 = srem i64 %load_97, 2
   store i64 %iop_98, ptr %alloca_count_96, align 8
   %load_101 = load i64, ptr %alloca_count_96, align 8
@@ -249,9 +249,9 @@ bb2:                                              ; preds = %bb1
   br i1 %load_104, label %bb4, label %bb5
 
 bb3:                                              ; preds = %bb1
-  %load_105 = load i64, ptr %alloca_count_85, align 8
-  store i64 %load_105, ptr %alloca_count_83, align 8
-  %load_107 = load i64, ptr %alloca_count_83, align 8
+  %load_105 = load i64, ptr %alloca_count_84, align 8
+  store i64 %load_105, ptr %alloca_count_85, align 8
+  %load_107 = load i64, ptr %alloca_count_85, align 8
   ret i64 %load_107
 
 bb4:                                              ; preds = %bb2
@@ -261,10 +261,10 @@ bb5:                                              ; preds = %bb2
   br label %bb6
 
 bb6:                                              ; preds = %bb7, %bb5
-  %load_108 = load i64, ptr %alloca_count_85, align 8
-  %load_109 = load i64, ptr %alloca_count_84, align 8
+  %load_108 = load i64, ptr %alloca_count_84, align 8
+  %load_109 = load i64, ptr %alloca_count_83, align 8
   %iop_110 = add i64 %load_108, %load_109
-  store i64 %iop_110, ptr %alloca_count_85, align 8
+  store i64 %iop_110, ptr %alloca_count_84, align 8
   br label %bb1
 
 bb7:                                              ; No predecessors!
@@ -387,7 +387,7 @@ bb24:                                             ; preds = %bb23
   br label %bb25
 
 bb25:                                             ; preds = %bb24
-  store i64 0, ptr %alloca_count_114, align 8
+  store i64 0, ptr %alloca_count_112, align 8
   store i64 1, ptr %alloca_count_113, align 8
   br label %bb26
 
@@ -399,16 +399,16 @@ bb26:                                             ; preds = %bb31, %bb25
   br i1 %load_146, label %bb27, label %bb28
 
 bb27:                                             ; preds = %bb26
-  store i64 1, ptr %alloca_count_112, align 8
+  store i64 1, ptr %alloca_count_114, align 8
   br label %bb29
 
 bb28:                                             ; preds = %bb26
-  %load_148 = load i64, ptr %alloca_count_114, align 8
+  %load_148 = load i64, ptr %alloca_count_112, align 8
   %call_149 = call i32 (ptr, ...) @printf(ptr @.str.13_loops.18, i64 %load_148)
   br label %bb35
 
 bb29:                                             ; preds = %bb34, %bb27
-  %load_151 = load i64, ptr %alloca_count_112, align 8
+  %load_151 = load i64, ptr %alloca_count_114, align 8
   %icmp_152 = icmp slt i64 %load_151, 4
   store i1 %icmp_152, ptr %alloca_count_150, align 1
   %load_154 = load i1, ptr %alloca_count_150, align 1
@@ -419,11 +419,11 @@ bb35:                                             ; preds = %bb28
   br label %bb36
 
 bb30:                                             ; preds = %bb29
-  %load_156 = load i64, ptr %alloca_count_114, align 8
+  %load_156 = load i64, ptr %alloca_count_112, align 8
   %iop_157 = add i64 %load_156, 1
-  store i64 %iop_157, ptr %alloca_count_114, align 8
+  store i64 %iop_157, ptr %alloca_count_112, align 8
   %load_160 = load i64, ptr %alloca_count_113, align 8
-  %load_161 = load i64, ptr %alloca_count_112, align 8
+  %load_161 = load i64, ptr %alloca_count_114, align 8
   %icmp_162 = icmp eq i64 %load_160, %load_161
   store i1 %icmp_162, ptr %alloca_count_159, align 1
   %load_164 = load i1, ptr %alloca_count_159, align 1
@@ -454,9 +454,9 @@ bb37:                                             ; preds = %bb36
   br label %bb38
 
 bb34:                                             ; preds = %bb33, %bb32
-  %load_175 = load i64, ptr %alloca_count_112, align 8
+  %load_175 = load i64, ptr %alloca_count_114, align 8
   %iop_176 = add i64 %load_175, 1
-  store i64 %iop_176, ptr %alloca_count_112, align 8
+  store i64 %iop_176, ptr %alloca_count_114, align 8
   br label %bb29
 
 bb38:                                             ; preds = %bb37

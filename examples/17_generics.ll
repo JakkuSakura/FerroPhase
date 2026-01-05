@@ -3,17 +3,17 @@ source_filename = "17_generics"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.17_generics.0 = private unnamed_addr constant [31 x i8] c"\F0\9F\93\98 Tutorial: 17_generics.fp\0A\00", align 1
-@.str.17_generics.1 = private unnamed_addr constant [60 x i8] c"\F0\9F\A7\AD Focus: Generics: type parameters and monomorphization\0A\00", align 1
-@.str.17_generics.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.17_generics.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.17_generics.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.17_generics.5 = private unnamed_addr constant [6 x i8] c"hello\00", align 1
-@.str.17_generics.6 = private unnamed_addr constant [19 x i8] c"pair = (%lld, %s)\0A\00", align 1
-@.str.17_generics.7 = private unnamed_addr constant [20 x i8] c"max(10, 20) = %lld\0A\00", align 1
-@.str.17_generics.8 = private unnamed_addr constant [20 x i8] c"max(3.5, 2.1) = %f\0A\00", align 1
-@.str.17_generics.9 = private unnamed_addr constant [32 x i8] c"unwrap_or(Some(100), 0) = %lld\0A\00", align 1
-@.str.17_generics.10 = private unnamed_addr constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00", align 1
+@.str.17_generics.0 = constant [31 x i8] c"\F0\9F\93\98 Tutorial: 17_generics.fp\0A\00"
+@.str.17_generics.1 = constant [60 x i8] c"\F0\9F\A7\AD Focus: Generics: type parameters and monomorphization\0A\00"
+@.str.17_generics.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.17_generics.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.17_generics.4 = constant [2 x i8] c"\0A\00"
+@.str.17_generics.5 = constant [6 x i8] c"hello\00"
+@.str.17_generics.6 = constant [19 x i8] c"pair = (%lld, %s)\0A\00"
+@.str.17_generics.7 = constant [20 x i8] c"max(10, 20) = %lld\0A\00"
+@.str.17_generics.8 = constant [20 x i8] c"max(3.5, 2.1) = %f\0A\00"
+@.str.17_generics.9 = constant [32 x i8] c"unwrap_or(Some(100), 0) = %lld\0A\00"
+@.str.17_generics.10 = constant [28 x i8] c"unwrap_or(None, 99) = %lld\0A\00"
 
 define i32 @main() {
 bb0:
@@ -57,7 +57,7 @@ bb6:                                              ; preds = %bb5
   %gep_13 = getelementptr inbounds i8, ptr %alloca_count_10, i64 8
   %load_15 = load ptr, ptr %gep_13, align 8
   %call_16 = call i32 (ptr, ...) @printf(ptr @.str.17_generics.6, i64 %load_9, ptr %load_15)
-  %call_17 = call i64 @max__mono_a7af9f593fdc4675_6(i64 10, i64 20)
+  %call_17 = call i64 @max__mono_a7af9f593fdc4675_11(i64 10, i64 20)
   br label %bb7
 
 bb7:                                              ; preds = %bb6
@@ -65,7 +65,7 @@ bb7:                                              ; preds = %bb6
   br label %bb8
 
 bb8:                                              ; preds = %bb7
-  %call_19 = call double @max__mono_d7ad91e83a08a980_6(double 3.500000e+00, double 2.100000e+00)
+  %call_19 = call double @max__mono_d7ad91e83a08a980_11(double 3.500000e+00, double 2.100000e+00)
   br label %bb9
 
 bb9:                                              ; preds = %bb8
@@ -105,7 +105,7 @@ bb0:
   ret { i64, ptr } %load_38
 }
 
-define internal i64 @max__mono_a7af9f593fdc4675_6(i64 %0, i64 %1) {
+define internal i64 @max__mono_a7af9f593fdc4675_11(i64 %0, i64 %1) {
 bb0:
   %alloca_40 = alloca i1, align 1
   %alloca_count_40 = alloca i1, align 1
@@ -129,7 +129,7 @@ bb3:                                              ; preds = %bb2, %bb1
   ret i64 %load_46
 }
 
-define internal double @max__mono_d7ad91e83a08a980_6(double %0, double %1) {
+define internal double @max__mono_d7ad91e83a08a980_11(double %0, double %1) {
 bb0:
   %alloca_48 = alloca i1, align 1
   %alloca_count_48 = alloca i1, align 1
