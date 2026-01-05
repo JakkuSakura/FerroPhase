@@ -6,7 +6,7 @@ use fp_llvm::runtime::LlvmRuntimeIntrinsicMaterializer;
 
 impl Pipeline {
     pub(crate) fn stage_materialize_runtime_intrinsics(
-        &self,
+        &mut self,
         ast: &mut Node,
         target: &PipelineTarget,
         options: &PipelineOptions,
@@ -31,6 +31,7 @@ impl Pipeline {
         }
     }
 }
+
 
 struct IntrinsicsMaterializer {
     strategy: Box<dyn IntrinsicMaterializer>,
@@ -290,7 +291,11 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
         ast::ExprKind::Index(mut expr_index) => {
             expr_index.obj = Box::new(materialize_expr(*expr_index.obj, strategy)?);
             expr_index.index = Box::new(materialize_expr(*expr_index.index, strategy)?);
-            ast::Expr::with_ty(ast::ExprKind::Index(expr_index), ty)
+            if is_hashmap_expr(expr_index.obj.as_ref()) {
+                build_hashmap_get_expr(expr_index, expr_ty)
+            } else {
+                ast::Expr::with_ty(ast::ExprKind::Index(expr_index), ty)
+            }
         }
         ast::ExprKind::Splat(mut expr_splat) => {
             expr_splat.iter = Box::new(materialize_expr(*expr_splat.iter, strategy)?);
@@ -406,6 +411,11 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
                 }
             }
 
+            if let ast::ExprIntrinsicContainer::HashMapEntries { entries } = &collection {
+                if is_hashmap_ty_slot(&expr_ty) {
+                    return Ok(build_hashmap_from_entries(entries, expr_ty));
+                }
+            }
             if let Some(new_expr) = strategy.materialize_container(&mut collection, &expr_ty)? {
                 new_expr
             } else {
@@ -415,6 +425,87 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
         other => ast::Expr::with_ty(other, ty),
     };
     Ok(new_expr)
+}
+
+fn is_hashmap_expr(expr: &ast::Expr) -> bool {
+    expr.ty().map(is_hashmap_ty).unwrap_or(false)
+}
+
+fn is_hashmap_ty_slot(ty: &ast::TySlot) -> bool {
+    ty.as_ref().map(is_hashmap_ty).unwrap_or(false)
+}
+
+fn is_hashmap_ty(ty: &ast::Ty) -> bool {
+    match ty {
+        ast::Ty::Struct(struct_ty) => struct_ty.name.as_str() == "HashMap",
+        ast::Ty::Expr(expr) => match expr.kind() {
+            ast::ExprKind::Locator(locator) => match locator {
+                ast::Locator::Ident(ident) => ident.as_str() == "HashMap",
+                ast::Locator::Path(path) => path
+                    .segments
+                    .last()
+                    .map(|seg| seg.as_str() == "HashMap")
+                    .unwrap_or(false),
+                ast::Locator::ParameterPath(path) => path
+                    .segments
+                    .last()
+                    .map(|seg| seg.ident.as_str() == "HashMap")
+                    .unwrap_or(false),
+            },
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> ast::Expr {
+    let select = ast::ExprSelect {
+        obj: expr_index.obj,
+        field: ast::Ident::new("get_unchecked"),
+        select: ast::ExprSelectType::Method,
+    };
+    let invoke = ast::ExprInvoke {
+        target: ast::ExprInvokeTarget::Method(select),
+        args: vec![*expr_index.index],
+    };
+    ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
+}
+
+fn build_hashmap_from_entries(
+    entries: &[ast::ExprIntrinsicContainerEntry],
+    expr_ty: ast::TySlot,
+) -> ast::Expr {
+    let mut elements = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let name = ast::Expr::path(ast::Path::new(vec![
+            ast::Ident::new("std"),
+            ast::Ident::new("collections"),
+            ast::Ident::new("HashMapEntry"),
+        ]));
+        let fields = vec![
+            ast::ExprField::new(ast::Ident::new("key"), entry.key.clone()),
+            ast::ExprField::new(ast::Ident::new("value"), entry.value.clone()),
+        ];
+        let pair = ast::ExprStruct::new(name.into(), fields);
+        elements.push(ast::Expr::new(ast::ExprKind::Struct(pair)));
+    }
+
+    let vec_entries = ast::Expr::new(ast::ExprKind::IntrinsicContainer(
+        ast::ExprIntrinsicContainer::VecElements { elements },
+    ));
+
+    let locator = ast::Locator::path(ast::Path::new(vec![
+        ast::Ident::new("std"),
+        ast::Ident::new("collections"),
+        ast::Ident::new("HashMap"),
+        ast::Ident::new("from"),
+    ]));
+    let invoke = ast::ExprInvoke {
+        target: ast::ExprInvokeTarget::Function(locator),
+        args: vec![vec_entries],
+    };
+
+    ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
 }
 
 fn materialize_value(value: ast::Value, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::Value> {

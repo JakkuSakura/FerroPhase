@@ -113,6 +113,7 @@ pub struct AstTypeInferencer<'ctx> {
     literal_ints: HashSet<TypeVarId>,
     loop_stack: Vec<LoopContext>,
     lossy_mode: bool,
+    hashmap_args: HashMap<TypeVarId, (TypeVarId, TypeVarId)>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -136,12 +137,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             literal_ints: HashSet::new(),
             loop_stack: Vec::new(),
             lossy_mode: detect_lossy_mode(),
+            hashmap_args: HashMap::new(),
         }
     }
 
     pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
         self.ctx = Some(ctx);
         self
+    }
+
+    fn record_hashmap_args(
+        &mut self,
+        map_var: TypeVarId,
+        key_var: TypeVarId,
+        value_var: TypeVarId,
+    ) {
+        self.hashmap_args.insert(map_var, (key_var, value_var));
+    }
+
+    fn lookup_hashmap_args(&mut self, map_var: TypeVarId) -> Option<(TypeVarId, TypeVarId)> {
+        let mut current = map_var;
+        loop {
+            if let Some(args) = self.hashmap_args.get(&current).copied() {
+                return Some(args);
+            }
+            match self.type_vars.get(current).map(|var| var.kind.clone()) {
+                Some(TypeVarKind::Link(next)) => current = next,
+                Some(TypeVarKind::Bound(TypeTerm::Reference(inner))) => current = inner,
+                _ => return None,
+            }
+        }
     }
 
     pub fn infer(&mut self, node: &mut Node) -> Result<TypingOutcome> {
@@ -1380,7 +1405,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         .segments
                         .last()
                         .map(|seg| seg.ident.as_str().to_string())?,
-                    other => other.to_string(),
+                    Locator::Path(path) => {
+                        path.segments.last().map(|seg| seg.as_str().to_string())?
+                    }
+                    Locator::Ident(ident) => ident.as_str().to_string(),
                 };
                 if name == "Self" {
                     self.impl_stack

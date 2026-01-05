@@ -440,6 +440,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let object_var = self.infer_expr(index.obj.as_mut())?;
         let idx_var = self.infer_expr(index.index.as_mut())?;
 
+        if let Some((key_var, value_var)) = self.lookup_hashmap_args(object_var) {
+            self.unify(key_var, idx_var)?;
+            return Ok(value_var);
+        }
+
         let idx_ty = self.resolve_to_ty(idx_var)?;
         let idx_root = self.find(idx_var);
         let idx_bound_reference = match self.type_vars[idx_root].kind.clone() {
@@ -459,6 +464,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             index.index.kind(),
             ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))
         );
+        if matches!(self.resolve_to_ty(object_var), Ok(Ty::Struct(struct_ty)) if struct_ty.name.as_str() == "HashMap")
+        {
+            let any_var = self.fresh_type_var();
+            self.bind(any_var, TypeTerm::Any);
+            return Ok(any_var);
+        }
         if idx_non_integer || idx_is_string_literal {
             let map_var = self.fresh_type_var();
             let map_ty = self.make_hashmap_struct();
@@ -951,9 +962,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             self.emit_error("HashMap::new does not take arguments");
         }
+        let key_var = self.fresh_type_var();
+        let value_var = self.fresh_type_var();
         let map_var = self.fresh_type_var();
         let map_ty = self.make_hashmap_struct();
         self.bind(map_var, TypeTerm::Struct(map_ty));
+        self.record_hashmap_args(map_var, key_var, value_var);
         Ok(map_var)
     }
 
@@ -972,28 +986,83 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             );
             self.unify(capacity_var, expected)?;
         }
+        let key_var = self.fresh_type_var();
+        let value_var = self.fresh_type_var();
         let map_var = self.fresh_type_var();
         let map_ty = self.make_hashmap_struct();
         self.bind(map_var, TypeTerm::Struct(map_ty));
+        self.record_hashmap_args(map_var, key_var, value_var);
         Ok(map_var)
     }
 
     fn infer_hashmap_from(&mut self, invoke: &mut ExprInvoke) -> Result<TypeVarId> {
+        let mut key_var = self.fresh_type_var();
+        let mut value_var = self.fresh_type_var();
         if invoke.args.len() != 1 {
             for arg in &mut invoke.args {
                 let _ = self.infer_expr(arg);
             }
             self.emit_error("HashMap::from expects a single iterable argument");
         } else {
-            let _ = self.infer_expr(&mut invoke.args[0])?;
+            let arg = &mut invoke.args[0];
+            if let ExprKind::Array(entries) = arg.kind_mut() {
+                for (idx, entry) in entries.iter_mut().enumerate() {
+                    match entry.kind_mut() {
+                        ExprKind::Array(pair) if pair.len() == 2 => {
+                            let key = self.infer_expr(&mut pair[0])?;
+                            let value = self.infer_expr(&mut pair[1])?;
+                            if idx == 0 {
+                                key_var = key;
+                                value_var = value;
+                            } else {
+                                let _ = self.unify(key_var, key);
+                                let _ = self.unify(value_var, value);
+                            }
+                        }
+                        ExprKind::Struct(struct_expr) => {
+                            let mut key_expr = None;
+                            let mut value_expr = None;
+                            for field in struct_expr.fields.iter_mut() {
+                                match field.name.as_str() {
+                                    "key" => key_expr = field.value.as_mut(),
+                                    "value" => value_expr = field.value.as_mut(),
+                                    _ => {}
+                                }
+                            }
+                            if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
+                                let key = self.infer_expr(key_expr)?;
+                                let value = self.infer_expr(value_expr)?;
+                                if idx == 0 {
+                                    key_var = key;
+                                    value_var = value;
+                                } else {
+                                    let _ = self.unify(key_var, key);
+                                    let _ = self.unify(value_var, value);
+                                }
+                            } else {
+                                let _ = self.infer_expr(entry)?;
+                            }
+                        }
+                        _ => {
+                            let _ = self.infer_expr(entry)?;
+                        }
+                    }
+                }
+            } else {
+                let _ = self.infer_expr(arg)?;
+            }
         }
         let map_var = self.fresh_type_var();
         let map_ty = self.make_hashmap_struct();
         self.bind(map_var, TypeTerm::Struct(map_ty));
+        self.record_hashmap_args(map_var, key_var, value_var);
         Ok(map_var)
     }
 
     pub(crate) fn make_hashmap_struct(&self) -> TypeStruct {
+        if let Some(existing) = self.struct_defs.get("HashMap") {
+            return existing.clone();
+        }
         TypeStruct {
             name: Ident::new("HashMap"),
             generics_params: Vec::new(),
