@@ -558,10 +558,15 @@ impl Parser {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
         }
-        let block = self.parse_block_expr()?;
-        children.push(SyntaxElement::Node(Box::new(block)));
-        let span = span_for_children(&children).unwrap_or(start);
-        Ok(SyntaxNode::new(SyntaxKind::ExprQuote, children, span))
+        if self.peek_non_trivia_raw() == Some("{") {
+            let block = self.parse_block_expr()?;
+            children.push(SyntaxElement::Node(Box::new(block)));
+            let span = span_for_children(&children).unwrap_or(start);
+            Ok(SyntaxNode::new(SyntaxKind::ExprQuote, children, span))
+        } else {
+            let span = span_for_children(&children).unwrap_or(start);
+            Ok(SyntaxNode::new(SyntaxKind::ExprQuoteToken, children, span))
+        }
     }
 
     fn parse_splice_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
@@ -2036,6 +2041,7 @@ fn infix_binding_power(op: &str) -> Option<(u8, u8, SyntaxKind)> {
         "|" => (20, 21, SyntaxKind::ExprBinary),
         "&&" => (15, 16, SyntaxKind::ExprBinary),
         "||" => (10, 11, SyntaxKind::ExprBinary),
+        "@" => (12, 13, SyntaxKind::ExprBinary),
         "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^=" => {
             (5, 5, SyntaxKind::ExprBinary)
         } // right-associative

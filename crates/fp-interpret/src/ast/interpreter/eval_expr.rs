@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::{ExprQuote, Locator, QuoteFragmentKind};
+use fp_core::ast::Locator;
 
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
@@ -16,8 +16,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("quote is only supported in const regions");
                     return RuntimeFlow::Value(Value::undefined());
                 }
-                let expr = Expr::new(ExprKind::Quote(quote.clone()));
-                RuntimeFlow::Value(Value::Expr(expr.into()))
+                let fragment = self.build_quoted_fragment(quote);
+                RuntimeFlow::Value(self.quote_token_from_fragment(fragment))
             }
             ExprKind::Splice(_splice) => {
                 if !self.in_const_region() {
@@ -27,20 +27,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let ExprKind::Splice(splice) = expr.kind_mut() else {
                     return RuntimeFlow::Value(Value::undefined());
                 };
-                match splice.token.kind() {
-                    ExprKind::Quote(quote) => match self.build_quoted_fragment(quote) {
-                        QuotedFragment::Expr(mut quoted) => self.eval_expr_runtime(&mut quoted),
-                        QuotedFragment::Stmts(stmts) => {
-                            let mut block = ExprBlock::new_stmts(stmts);
-                            self.eval_block_runtime(&mut block)
-                        }
-                        QuotedFragment::Items(_) | QuotedFragment::Type(_) => {
-                            self.emit_error("cannot splice non-expression token in expression position");
-                            RuntimeFlow::Value(Value::undefined())
-                        }
-                    },
-                    _ => {
-                        self.emit_error("splice expects a quote token expression");
+                let Some(mut fragments) = self.resolve_splice_fragments(splice.token.as_mut())
+                else {
+                    return RuntimeFlow::Value(Value::undefined());
+                };
+                if fragments.len() != 1 {
+                    self.emit_error("splice in expression position expects a single quote token");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                match fragments.remove(0) {
+                    QuotedFragment::Expr(mut quoted) => self.eval_expr_runtime(&mut quoted),
+                    QuotedFragment::Stmts(stmts) => {
+                        let mut block = ExprBlock::new_stmts(stmts);
+                        self.eval_block_runtime(&mut block)
+                    }
+                    QuotedFragment::Items(_) | QuotedFragment::Type(_) => {
+                        self.emit_error("cannot splice non-expression token in expression position");
                         RuntimeFlow::Value(Value::undefined())
                     }
                 }
@@ -381,26 +383,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Quote(_quote) => {
                 if matches!(self.mode, InterpreterMode::CompileTime) {
                     if let ExprKind::Quote(quote) = expr.kind() {
-                        if matches!(quote.kind, Some(QuoteFragmentKind::Item)) {
-                            match self.build_quoted_fragment(quote) {
-                                QuotedFragment::Items(items) => {
-                                    let stmts = items
-                                        .into_iter()
-                                        .map(BlockStmt::item)
-                                        .collect();
-                                    let block = ExprBlock::new_stmts(stmts);
-                                    let normalized = ExprKind::Quote(ExprQuote {
-                                        block,
-                                        kind: quote.kind,
-                                    })
-                                    .into();
-                                    return Value::Expr(Box::new(normalized));
-                                }
-                                _ => {}
-                            }
-                        }
+                        let fragment = self.build_quoted_fragment(quote);
+                        return self.quote_token_from_fragment(fragment);
                     }
-                    return Value::Expr(Box::new(expr.clone()));
+                    return Value::undefined();
                 }
                 self.emit_error("quote cannot be evaluated at runtime");
                 return Value::undefined();

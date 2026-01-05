@@ -18,7 +18,26 @@ impl HirGenerator {
                 };
                 Ok((hir_pat, None, mutable))
             }
+            PatternKind::Bind(bind) => {
+                let mutable = bind.ident.mutability.unwrap_or(false);
+                let hir_pat = hir::Pat {
+                    hir_id: self.next_id(),
+                    kind: hir::PatKind::Binding {
+                        name: bind.ident.ident.clone().into(),
+                        mutable,
+                    },
+                };
+                Ok((hir_pat, None, mutable))
+            }
             PatternKind::Wildcard(_) => Ok((
+                hir::Pat {
+                    hir_id: self.next_id(),
+                    kind: hir::PatKind::Wild,
+                },
+                None,
+                false,
+            )),
+            PatternKind::Quote(_) => Ok((
                 hir::Pat {
                     hir_id: self.next_id(),
                     kind: hir::PatKind::Wild,

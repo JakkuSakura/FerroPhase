@@ -12,6 +12,7 @@ use fp_core::ast::{
     StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
     TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit,
     TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    QuoteFragmentKind, QuoteTokenValue,
 };
 use fp_core::ast::DecimalType;
 use fp_core::ast::{Ident, Locator};
@@ -2767,6 +2768,52 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error(format!("field '{}' not found", field));
                     Value::undefined()
                 }),
+            Value::QuoteToken(token) => {
+                if token.kind != QuoteFragmentKind::Item {
+                    let kind = match token.kind {
+                        QuoteFragmentKind::Expr => "expr",
+                        QuoteFragmentKind::Stmt => "stmt",
+                        QuoteFragmentKind::Item => "item",
+                        QuoteFragmentKind::Type => "type",
+                    };
+                    self.emit_error(format!(
+                        "cannot access field '{}' on quote<{}> token",
+                        field, kind
+                    ));
+                    return Value::undefined();
+                }
+                let QuoteTokenValue::Items(items) = token.value else {
+                    self.emit_error(format!(
+                        "quote<item> token did not contain items for field '{}'",
+                        field
+                    ));
+                    return Value::undefined();
+                };
+                if items.len() != 1 {
+                    self.emit_error(format!(
+                        "quote<item> field access requires a single item, found {}",
+                        items.len()
+                    ));
+                    return Value::undefined();
+                }
+                let item = &items[0];
+                match field {
+                    "name" => item
+                        .get_ident()
+                        .map(|ident| Value::string(ident.name.clone()))
+                        .unwrap_or_else(|| {
+                            self.emit_error("quote<item> item has no name");
+                            Value::undefined()
+                        }),
+                    _ => {
+                        self.emit_error(format!(
+                            "field '{}' not available on quote<item> values",
+                            field
+                        ));
+                        Value::undefined()
+                    }
+                }
+            }
             other => {
                 self.emit_error(format!(
                     "cannot access field '{}' on value {} in const context",
