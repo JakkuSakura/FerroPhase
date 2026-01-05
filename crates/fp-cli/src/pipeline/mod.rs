@@ -805,6 +805,10 @@ impl Pipeline {
         };
         self.last_const_eval = Some(outcome.clone());
 
+        if matches!(target, PipelineTarget::Llvm | PipelineTarget::Binary) {
+            self.inject_runtime_std(&mut ast, &diagnostic_manager)?;
+        }
+
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
             self.run_stage(
                 STAGE_TYPE_ENRICH,
@@ -1017,6 +1021,29 @@ impl Pipeline {
         diag::emit(&diagnostics, None, options);
 
         Ok(output)
+    }
+
+    fn inject_runtime_std(
+        &mut self,
+        ast: &mut Node,
+        manager: &DiagnosticManager,
+    ) -> Result<(), CliError> {
+        let std_path = runtime_std_hashmap_path();
+        let source = fs::read_to_string(&std_path).map_err(|err| {
+            manager.add_diagnostic(
+                Diagnostic::error(format!(
+                    "Failed to read runtime std HashMap at {}: {}",
+                    std_path.display(),
+                    err
+                ))
+                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+            );
+            Self::stage_failure(STAGE_RUNTIME_MATERIALIZE)
+        })?;
+        let std_node = self.parse_source_public(&source, Some(&std_path))?;
+        let merged = merge_runtime_std(ast.clone(), std_node, manager)?;
+        *ast = merged;
+        Ok(())
     }
 
     fn execute_workspace_target(
@@ -2284,6 +2311,53 @@ fn workspace_comment_prefix(target: &PipelineTarget) -> &'static str {
         PipelineTarget::Rust => "//",
         _ => ";",
     }
+}
+
+fn runtime_std_hashmap_path() -> PathBuf {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    root.join("../../src/std/collection/hashmap.fp")
+}
+
+fn merge_runtime_std(
+    ast: Node,
+    std_node: Node,
+    manager: &DiagnosticManager,
+) -> Result<Node, CliError> {
+    let Node { ty, kind } = ast;
+    let Node { kind: std_kind, .. } = std_node;
+    let NodeKind::File(mut file) = kind else {
+        manager.add_diagnostic(
+            Diagnostic::error("Runtime std injection expects a file AST".to_string())
+                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+        );
+        return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
+    };
+    let NodeKind::File(std_file) = std_kind else {
+        manager.add_diagnostic(
+            Diagnostic::error("Runtime std module must be a file".to_string())
+                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+        );
+        return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
+    };
+    if file.items.iter().any(|item| {
+        matches!(
+            item.kind(),
+            fp_core::ast::ItemKind::Module(module) if module.name.as_str() == "std"
+        )
+    }) {
+        return Ok(Node {
+            ty,
+            kind: NodeKind::File(file),
+        });
+    }
+    let mut items = Vec::with_capacity(std_file.items.len() + file.items.len());
+    items.extend(std_file.items);
+    items.append(&mut file.items);
+    file.items = items;
+    Ok(Node {
+        ty,
+        kind: NodeKind::File(file),
+    })
 }
 
 #[allow(dead_code)]

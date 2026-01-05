@@ -851,6 +851,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Expr(expr) => {
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {
+                    if let Some((key_var, value_var)) = self.hashmap_args_from_locator(loc)? {
+                        let map_var = self.fresh_type_var();
+                        let map_ty = self.make_hashmap_struct();
+                        self.bind(map_var, TypeTerm::Struct(map_ty));
+                        self.record_hashmap_args(map_var, key_var, value_var);
+                        return Ok(map_var);
+                    }
                     if let Locator::ParameterPath(path) = loc {
                         if let Some(segment) = path.segments.last() {
                             if segment.ident.as_str() == "Vec" && segment.args.len() == 1 {
@@ -954,6 +961,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
         Ok(var)
+    }
+
+    fn hashmap_args_from_locator(
+        &mut self,
+        locator: &Locator,
+    ) -> Result<Option<(TypeVarId, TypeVarId)>> {
+        let Locator::ParameterPath(path) = locator else {
+            return Ok(None);
+        };
+        let Some(segment) = path.segments.last() else {
+            return Ok(None);
+        };
+        if segment.ident.as_str() != "HashMap" || segment.args.len() != 2 {
+            return Ok(None);
+        }
+        let key_var = self.type_from_ast_ty(&segment.args[0])?;
+        let value_var = self.type_from_ast_ty(&segment.args[1])?;
+        Ok(Some((key_var, value_var)))
     }
 }
 

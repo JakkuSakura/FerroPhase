@@ -2629,6 +2629,16 @@ impl MirLowering {
         for impl_item in &impl_block.items {
             match &impl_item.kind {
                 hir::ImplItemKind::Method(function) => {
+                    let method_name = function.sig.name.as_str();
+                    let is_hashmap_impl = struct_name.ends_with("HashMap");
+                    let is_hashmap_method = matches!(method_name, "from" | "len" | "get_unchecked")
+                        || method_name.ends_with("::from")
+                        || method_name.ends_with("::len")
+                        || method_name.ends_with("::get_unchecked");
+                    if is_hashmap_impl && is_hashmap_method
+                    {
+                        continue;
+                    }
                     if impl_is_generic || !function.sig.generics.params.is_empty() {
                         let qualified_name = format!("{}::{}", struct_name, function.sig.name);
                         let def = MethodDefinition {
@@ -5214,6 +5224,128 @@ impl<'a> BodyBuilder<'a> {
         args: &[hir::Expr],
         destination: Option<(mir::Place, Ty)>,
     ) -> Result<Option<PlaceInfo>> {
+        if let hir::ExprKind::Path(path) = &callee.kind {
+            let segments = &path.segments;
+            if segments.len() >= 2
+                && segments[segments.len() - 2].name.as_str() == "HashMap"
+                && segments[segments.len() - 1].name.as_str() == "from"
+            {
+                if let Some((place, expected_ty)) = destination {
+                    if args.len() != 1 {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "HashMap::from expects a single entries argument",
+                        );
+                        return Ok(Some(PlaceInfo {
+                            place,
+                            ty: expected_ty,
+                            struct_def: None,
+                        }));
+                    }
+
+                    let hir::ExprKind::Array(elements) = &args[0].kind else {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "HashMap::from expects an array literal of entries",
+                        );
+                        return Ok(Some(PlaceInfo {
+                            place,
+                            ty: expected_ty,
+                            struct_def: None,
+                        }));
+                    };
+
+                    let mut entries = Vec::with_capacity(elements.len());
+                    let mut key_ty: Option<Ty> = None;
+                    let mut value_ty: Option<Ty> = None;
+
+                    for element in elements {
+                        match &element.kind {
+                            hir::ExprKind::Array(values) if values.len() == 2 => {
+                                let key_operand = self.lower_operand(&values[0], None)?;
+                                let value_operand = self.lower_operand(&values[1], None)?;
+                                if key_ty.is_none() {
+                                    key_ty = Some(key_operand.ty.clone());
+                                }
+                                if value_ty.is_none() {
+                                    value_ty = Some(value_operand.ty.clone());
+                                }
+                                entries.push((key_operand.operand, value_operand.operand));
+                            }
+                            hir::ExprKind::Struct(path, fields) => {
+                                let tail = path.segments.last().map(|seg| seg.name.as_str());
+                                if tail == Some("HashMapEntry") {
+                                    let mut key_expr = None;
+                                    let mut value_expr = None;
+                                    for field in fields {
+                                        match field.name.as_str() {
+                                            "key" => key_expr = Some(&field.expr),
+                                            "value" => value_expr = Some(&field.expr),
+                                            _ => {}
+                                        }
+                                    }
+                                    if let (Some(key_expr), Some(value_expr)) =
+                                        (key_expr, value_expr)
+                                    {
+                                        let key_operand = self.lower_operand(key_expr, None)?;
+                                        let value_operand = self.lower_operand(value_expr, None)?;
+                                        if key_ty.is_none() {
+                                            key_ty = Some(key_operand.ty.clone());
+                                        }
+                                        if value_ty.is_none() {
+                                            value_ty = Some(value_operand.ty.clone());
+                                        }
+                                        entries.push((key_operand.operand, value_operand.operand));
+                                        continue;
+                                    }
+                                }
+                                self.lowering.emit_error(
+                                    element.span,
+                                    "HashMap::from expects entries as HashMapEntry { key, value }",
+                                );
+                            }
+                            _ => {
+                                self.lowering.emit_error(
+                                    element.span,
+                                    "HashMap::from expects entries as [key, value]",
+                                );
+                            }
+                        }
+                    }
+
+                    let key_ty = key_ty.unwrap_or_else(|| self.lowering.error_ty());
+                    let value_ty = value_ty.unwrap_or_else(|| self.lowering.error_ty());
+                    let kind = mir::ContainerKind::Map {
+                        key_ty: key_ty.clone(),
+                        value_ty: value_ty.clone(),
+                        len: entries.len() as u64,
+                    };
+
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::ContainerMapLiteral {
+                                kind: kind.clone(),
+                                entries,
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    if place.projection.is_empty() {
+                        if (place.local as usize) < self.locals.len() {
+                            self.locals[place.local as usize].ty = expected_ty.clone();
+                        }
+                        self.container_locals.insert(place.local, kind);
+                    }
+                    return Ok(Some(PlaceInfo {
+                        place,
+                        ty: expected_ty,
+                        struct_def: None,
+                    }));
+                }
+            }
+        }
         if let hir::ExprKind::Path(path) = &callee.kind {
             if let Some(variant) = self.enum_variant_info_from_path(path) {
                 let mut layout = destination
@@ -7903,6 +8035,44 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::MethodCall(receiver, method_name, args) => {
                 let method_key = method_name.clone();
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
+
+                if method_name.as_str() == "get_unchecked" && args.len() == 1 {
+                    if let Some(local_id) = self.local_id_from_expr(receiver) {
+                        if let Some(mir::ContainerKind::Map { key_ty, value_ty, len }) =
+                            self.container_locals.get(&local_id).cloned()
+                        {
+                            if len == 0 {
+                                self.lowering.emit_error(
+                                    expr.span,
+                                    "HashMap::get_unchecked requires a literal HashMap for now",
+                                );
+                            }
+
+                            let key_operand = self.lower_operand(&args[0], Some(&key_ty))?;
+                            let local_place = mir::Place::from_local(local_id);
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    place.clone(),
+                                    mir::Rvalue::ContainerGet {
+                                        kind: mir::ContainerKind::Map {
+                                            key_ty: key_ty.clone(),
+                                            value_ty: value_ty.clone(),
+                                            len,
+                                        },
+                                        container: mir::Operand::copy(local_place),
+                                        key: key_operand.operand,
+                                    },
+                                ),
+                            });
+
+                            if (place.local as usize) < self.locals.len() {
+                                self.locals[place.local as usize].ty = value_ty.clone();
+                            }
+                            return Ok(());
+                        }
+                    }
+                }
 
                 if let Ok(Some(place_info)) = self.lower_place(receiver) {
                     if let Some(def_id) = place_info
