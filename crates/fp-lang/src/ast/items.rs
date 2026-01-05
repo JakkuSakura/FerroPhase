@@ -1,4 +1,4 @@
-use crate::ast::lower::expr::{lower_expr_from_cst, lower_type_from_cst};
+use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, FunctionParam,
@@ -395,7 +395,7 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
     let body_node = first_child_by_category(node, CstCategory::Expr)
         .ok_or(LowerItemsError::MissingToken("fn body"))?;
     let body = lower_expr_from_cst(body_node).map_err(|err| match err {
-        crate::ast::lower::expr::LowerError::UnexpectedNode(kind) => {
+        crate::ast::expr::LowerError::UnexpectedNode(kind) => {
             LowerItemsError::UnexpectedNode(kind)
         }
         _ => LowerItemsError::UnexpectedNode(node.kind),

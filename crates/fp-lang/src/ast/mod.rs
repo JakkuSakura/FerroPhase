@@ -59,7 +59,7 @@ impl FerroPhaseParser {
             self.record_error(format!("failed to parse expression CST: {err}"));
             eyre::eyre!(err)
         })?;
-        crate::ast::lower::lower_expr_from_cst(&cst).map_err(|err| {
+        crate::ast::lower_expr_from_cst(&cst).map_err(|err| {
             self.record_error(format!("failed to lower expression CST: {err}"));
             eyre::eyre!(err)
         })
@@ -91,19 +91,18 @@ impl FerroPhaseParser {
             self.record_error(format!("failed to parse items CST: {err}"));
             eyre::eyre!(err)
         })?;
-        crate::ast::lower::items::lower_items_from_cst(&cst).map_err(|err| {
+        crate::ast::lower_items_from_cst(&cst).map_err(|err| {
             self.record_error(format!("failed to lower items CST: {err}"));
             eyre::eyre!(err)
         })
     }
 }
 
-pub(crate) mod lower {
-    pub(crate) mod expr;
-    pub(crate) mod items;
+pub(crate) mod expr;
+pub(crate) mod items;
 
-    pub(crate) use expr::lower_expr_from_cst;
-}
+pub(crate) use expr::lower_expr_from_cst;
+pub(crate) use items::lower_items_from_cst;
 
 #[cfg(test)]
 mod tests;
