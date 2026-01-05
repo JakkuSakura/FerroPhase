@@ -59,16 +59,24 @@ fn main() {
     let score = splice(quote<expr> { (2 + 3) * 4 });
     println!("expr splice => {}", score);
 
-    let fn_token = quote<fn> {
+    const fn_token: fn = quote<fn> {
         fn inspected() {
             // placeholder body for inspection
         }
+
     };
-    let fn_name = match fn_token {
-        f @ quote<fn> => f.name,
+    const fn_name = match fn_token {
+        fn { name, .. } => name,
         _ => "<unknown>",
     };
     println!("quote<fn> inspect => name={}", fn_name);
+
+    const fn_group: [item] = quote<[item]> {
+        fn alpha() {}
+        fn beta(x: i64) -> i64 { x + 1 }
+    };
+    const fn_count = fn_group.len();
+    println!("quote<[item]> count => {}", fn_count);
 
     splice(quote<stmt> {
         let step = 7 * 3;
