@@ -433,6 +433,28 @@ impl<'a> LirCodegen<'a> {
             lir::LirInstructionKind::Ge(lhs, rhs) => {
                 self.lower_cmp(instr_id, lhs, rhs, IntPredicate::SGE, FloatPredicate::OGE)?;
             }
+            lir::LirInstructionKind::Select {
+                condition,
+                if_true,
+                if_false,
+            } => {
+                let cond_value = self.convert_lir_value_to_basic_value(condition)?;
+                let cond_int = self.coerce_to_int(cond_value, self.llvm_ctx.i1_type())?;
+                let true_value = self.convert_lir_value_to_basic_value(if_true)?;
+                let false_value = self.convert_lir_value_to_basic_value(if_false)?;
+                if true_value.get_type() != false_value.get_type() {
+                    return Err(report_error_with_context(
+                        LOG_AREA,
+                        "Select operands must have identical types",
+                    ));
+                }
+                let result = self
+                    .llvm_ctx
+                    .builder
+                    .build_select(cond_int, true_value, false_value, &format!("select_{}", instr_id))
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                self.record_result(instr_id, ty_hint, result);
+            }
             lir::LirInstructionKind::Load {
                 address,
                 alignment,

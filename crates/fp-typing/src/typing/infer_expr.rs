@@ -1006,11 +1006,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         } else {
             let arg = &mut invoke.args[0];
             if let ExprKind::Array(entries) = arg.kind_mut() {
-                for (idx, entry) in entries.iter_mut().enumerate() {
-                    match entry.kind_mut() {
-                        ExprKind::Array(pair) if pair.len() == 2 => {
-                            let key = self.infer_expr(&mut pair[0])?;
-                            let value = self.infer_expr(&mut pair[1])?;
+                for (idx, entry) in entries.values.iter_mut().enumerate() {
+                    if let ExprKind::Struct(struct_expr) = entry.kind_mut() {
+                        let mut key_expr = None;
+                        let mut value_expr = None;
+                        for field in struct_expr.fields.iter_mut() {
+                            match field.name.as_str() {
+                                "key" => key_expr = field.value.as_mut(),
+                                "value" => value_expr = field.value.as_mut(),
+                                _ => {}
+                            }
+                        }
+                        if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
+                            let key = self.infer_expr(key_expr)?;
+                            let value = self.infer_expr(value_expr)?;
                             if idx == 0 {
                                 key_var = key;
                                 value_var = value;
@@ -1018,38 +1027,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 let _ = self.unify(key_var, key);
                                 let _ = self.unify(value_var, value);
                             }
-                        }
-                        ExprKind::Struct(struct_expr) => {
-                            let mut key_expr = None;
-                            let mut value_expr = None;
-                            for field in struct_expr.fields.iter_mut() {
-                                match field.name.as_str() {
-                                    "key" => key_expr = field.value.as_mut(),
-                                    "value" => value_expr = field.value.as_mut(),
-                                    _ => {}
-                                }
-                            }
-                            if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
-                                let key = self.infer_expr(key_expr)?;
-                                let value = self.infer_expr(value_expr)?;
-                                if idx == 0 {
-                                    key_var = key;
-                                    value_var = value;
-                                } else {
-                                    let _ = self.unify(key_var, key);
-                                    let _ = self.unify(value_var, value);
-                                }
-                            } else {
-                                let _ = self.infer_expr(entry)?;
-                            }
-                        }
-                        _ => {
-                            let _ = self.infer_expr(entry)?;
+                            continue;
                         }
                     }
+                    let _ = self.infer_expr(entry)?;
+                    self.emit_error("HashMap::from expects HashMapEntry { key, value } entries");
                 }
             } else {
                 let _ = self.infer_expr(arg)?;
+                self.emit_error("HashMap::from expects an array literal of entries");
             }
         }
         let map_var = self.fresh_type_var();
