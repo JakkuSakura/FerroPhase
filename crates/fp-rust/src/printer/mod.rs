@@ -334,7 +334,7 @@ impl RustPrinter {
                 let ty_tokens = self.print_type(&pattern_type.ty)?;
                 Ok(quote!(#pat_tokens: #ty_tokens))
             }
-            PatternKind::Quote(_) => Ok(quote!(_)),
+            PatternKind::Quote(_) | PatternKind::QuotePlural(_) => Ok(quote!(_)),
             PatternKind::Wildcard(_) => Ok(quote!(_)),
         }
     }

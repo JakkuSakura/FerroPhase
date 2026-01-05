@@ -8,10 +8,11 @@ use fp_core::ast::{
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
     ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
     Path, Pattern, PatternBind, PatternIdent, PatternKind, PatternQuote, PatternStruct,
-    PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
-    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
-    Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuoteToken,
-    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
+    PatternQuotePlural, PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct,
+    PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet,
+    StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
+    TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone,
+    ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -55,9 +56,23 @@ fn quote_kind_from_cst(node: &SyntaxNode) -> Result<Option<QuoteFragmentKind>, L
         }
         let kind = match kind_tok.text.as_str() {
             "expr" => QuoteFragmentKind::Expr,
+            "exprs" => QuoteFragmentKind::Exprs,
             "stmt" => QuoteFragmentKind::Stmt,
+            "stmts" => QuoteFragmentKind::Stmts,
             "item" => QuoteFragmentKind::Item,
+            "items" => QuoteFragmentKind::Items,
             "type" => QuoteFragmentKind::Type,
+            "types" => QuoteFragmentKind::Types,
+            "fns" => QuoteFragmentKind::Fns,
+            "structs" => QuoteFragmentKind::Structs,
+            "enums" => QuoteFragmentKind::Enums,
+            "traits" => QuoteFragmentKind::Traits,
+            "impls" => QuoteFragmentKind::Impls,
+            "consts" => QuoteFragmentKind::Consts,
+            "statics" => QuoteFragmentKind::Statics,
+            "mods" => QuoteFragmentKind::Mods,
+            "uses" => QuoteFragmentKind::Uses,
+            "macros" => QuoteFragmentKind::Macros,
             "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static" | "mod" | "use"
             | "macro" => QuoteFragmentKind::Item,
             _ => return Err(LowerError::UnexpectedNode(node.kind)),
@@ -81,12 +96,16 @@ fn quote_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError>
             return Ok(PatternQuote {
                 fragment: QuoteFragmentKind::Item,
                 item: None,
+                fields: Vec::new(),
+                has_rest: false,
             });
         };
         if next.text != "<" {
             return Ok(PatternQuote {
                 fragment: QuoteFragmentKind::Item,
                 item: None,
+                fields: Vec::new(),
+                has_rest: false,
             });
         }
         let Some(kind_tok) = iter.next() else {
@@ -100,22 +119,104 @@ fn quote_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError>
         }
         let (fragment, item) = match kind_tok.text.as_str() {
             "expr" => (QuoteFragmentKind::Expr, None),
+            "exprs" => (QuoteFragmentKind::Exprs, None),
             "stmt" => (QuoteFragmentKind::Stmt, None),
+            "stmts" => (QuoteFragmentKind::Stmts, None),
             "item" => (QuoteFragmentKind::Item, None),
+            "items" => (QuoteFragmentKind::Items, None),
             "type" => (QuoteFragmentKind::Type, None),
+            "types" => (QuoteFragmentKind::Types, None),
             "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function)),
+            "fns" => (QuoteFragmentKind::Fns, None),
             "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct)),
+            "structs" => (QuoteFragmentKind::Structs, None),
             "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum)),
+            "enums" => (QuoteFragmentKind::Enums, None),
             "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait)),
+            "traits" => (QuoteFragmentKind::Traits, None),
             "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl)),
+            "impls" => (QuoteFragmentKind::Impls, None),
             "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const)),
+            "consts" => (QuoteFragmentKind::Consts, None),
             "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static)),
+            "statics" => (QuoteFragmentKind::Statics, None),
             "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module)),
+            "mods" => (QuoteFragmentKind::Mods, None),
             "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use)),
+            "uses" => (QuoteFragmentKind::Uses, None),
             "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro)),
+            "macros" => (QuoteFragmentKind::Macros, None),
             _ => return Err(LowerError::UnexpectedNode(node.kind)),
         };
-        return Ok(PatternQuote { fragment, item });
+        return Ok(PatternQuote {
+            fragment,
+            item,
+            fields: Vec::new(),
+            has_rest: false,
+        });
+    }
+
+    Err(LowerError::UnexpectedNode(node.kind))
+}
+
+fn quote_pattern_kind_from_cst(
+    node: &SyntaxNode,
+) -> Result<(QuoteFragmentKind, Option<QuoteItemKind>, bool), LowerError> {
+    let mut tokens = Vec::new();
+    crate::syntax::collect_tokens(node, &mut tokens);
+    let mut iter = tokens.iter().filter(|t| !t.is_trivia());
+
+    while let Some(tok) = iter.next() {
+        if tok.text != "quote" {
+            continue;
+        }
+        let Some(next) = iter.next() else {
+            return Ok((QuoteFragmentKind::Item, None, false));
+        };
+        if next.text != "<" {
+            return Ok((QuoteFragmentKind::Item, None, false));
+        }
+        let Some(kind_tok) = iter.next() else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        let Some(close_tok) = iter.next() else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        if close_tok.text != ">" {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        }
+        let (fragment, item, plural) = match kind_tok.text.as_str() {
+            "expr" => (QuoteFragmentKind::Expr, None, false),
+            "exprs" => (QuoteFragmentKind::Exprs, None, true),
+            "stmt" => (QuoteFragmentKind::Stmt, None, false),
+            "stmts" => (QuoteFragmentKind::Stmts, None, true),
+            "item" => (QuoteFragmentKind::Item, None, false),
+            "items" => (QuoteFragmentKind::Items, None, true),
+            "type" => (QuoteFragmentKind::Type, None, false),
+            "types" => (QuoteFragmentKind::Types, None, true),
+            "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function), false),
+            "fns" => (QuoteFragmentKind::Fns, None, true),
+            "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct), false),
+            "structs" => (QuoteFragmentKind::Structs, None, true),
+            "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum), false),
+            "enums" => (QuoteFragmentKind::Enums, None, true),
+            "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait), false),
+            "traits" => (QuoteFragmentKind::Traits, None, true),
+            "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl), false),
+            "impls" => (QuoteFragmentKind::Impls, None, true),
+            "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const), false),
+            "consts" => (QuoteFragmentKind::Consts, None, true),
+            "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static), false),
+            "statics" => (QuoteFragmentKind::Statics, None, true),
+            "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module), false),
+            "mods" => (QuoteFragmentKind::Mods, None, true),
+            "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use), false),
+            "uses" => (QuoteFragmentKind::Uses, None, true),
+            "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro), false),
+            "macros" => (QuoteFragmentKind::Macros, None, true),
+            _ => return Err(LowerError::UnexpectedNode(node.kind)),
+        };
+        return Ok((fragment, item, plural));
     }
 
     Err(LowerError::UnexpectedNode(node.kind))
@@ -1012,6 +1113,18 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
             let callee = exprs
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCall))?;
+            if callee.kind == SyntaxKind::ExprQuoteToken {
+                let (fragment, _item, plural) = quote_pattern_kind_from_cst(callee)?;
+                if !plural {
+                    return Err(LowerError::UnexpectedNode(SyntaxKind::ExprCall));
+                }
+                let patterns = exprs
+                    .map(lower_match_pattern_from_cst)
+                    .collect::<Result<Vec<_>, _>>()?;
+                return Ok(Pattern::new(PatternKind::QuotePlural(
+                    PatternQuotePlural { fragment, patterns },
+                )));
+            }
             let callee_expr = lower_expr_from_cst(callee)?;
             let locator = match callee_expr.kind() {
                 ExprKind::Locator(locator) => locator.clone(),
@@ -1040,7 +1153,6 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
             let name_node = exprs
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprStruct))?;
-            let name_expr = lower_expr_from_cst(name_node)?;
 
             let mut fields = Vec::new();
             for child in &node.children {
@@ -1057,6 +1169,24 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                     rename: None,
                 });
             }
+
+            if name_node.kind == SyntaxKind::ExprQuoteToken {
+                let (fragment, item, plural) = quote_pattern_kind_from_cst(name_node)?;
+                if plural {
+                    return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStruct));
+                }
+                let mut quote = PatternQuote {
+                    fragment,
+                    item,
+                    fields: Vec::new(),
+                    has_rest: false,
+                };
+                quote.fields = fields;
+                quote.has_rest = has_rest;
+                return Ok(Pattern::new(PatternKind::Quote(quote)));
+            }
+
+            let name_expr = lower_expr_from_cst(name_node)?;
 
             if let ExprKind::Locator(locator) = name_expr.kind() {
                 let ident = match locator {
@@ -1343,9 +1473,23 @@ fn quote_kind_from_type_arg(arg: &Ty) -> Option<QuoteFragmentKind> {
     };
     match ident.as_deref() {
         Some("expr") => Some(QuoteFragmentKind::Expr),
+        Some("exprs") => Some(QuoteFragmentKind::Exprs),
         Some("stmt") => Some(QuoteFragmentKind::Stmt),
+        Some("stmts") => Some(QuoteFragmentKind::Stmts),
         Some("item") => Some(QuoteFragmentKind::Item),
+        Some("items") => Some(QuoteFragmentKind::Items),
         Some("type") => Some(QuoteFragmentKind::Type),
+        Some("types") => Some(QuoteFragmentKind::Types),
+        Some("fns") => Some(QuoteFragmentKind::Fns),
+        Some("structs") => Some(QuoteFragmentKind::Structs),
+        Some("enums") => Some(QuoteFragmentKind::Enums),
+        Some("traits") => Some(QuoteFragmentKind::Traits),
+        Some("impls") => Some(QuoteFragmentKind::Impls),
+        Some("consts") => Some(QuoteFragmentKind::Consts),
+        Some("statics") => Some(QuoteFragmentKind::Statics),
+        Some("mods") => Some(QuoteFragmentKind::Mods),
+        Some("uses") => Some(QuoteFragmentKind::Uses),
+        Some("macros") => Some(QuoteFragmentKind::Macros),
         Some("fn")
         | Some("struct")
         | Some("enum")

@@ -14,8 +14,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 // Quoted fragments inside function analysis remain as-is until evaluated (e.g., by splice)
             }
             ExprKind::Splice(splice) => {
-                if !self.in_const_region() {
-                    self.emit_error("splice is only valid inside const { ... } regions");
+                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+                    self.emit_error("splice is only supported during const evaluation");
                     return;
                 }
                 let Some(mut fragments) = self.resolve_splice_fragments(splice.token.as_mut())
@@ -330,8 +330,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 BlockStmt::Expr(expr_stmt) => {
                     // Handle statement-position splice expansion
                     if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                        if !self.in_const_region() {
-                            self.emit_error("splice is only valid inside const { ... } regions");
+                        if !self.in_const_region()
+                            && !matches!(self.mode, InterpreterMode::CompileTime)
+                        {
+                            self.emit_error("splice is only supported during const evaluation");
                             // Keep original statement to avoid dropping code
                             new_stmts.push(stmt);
                         } else {
@@ -341,15 +343,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 new_stmts.push(stmt);
                                 continue;
                             };
-                            if fragments.iter().any(|fragment| {
-                                matches!(fragment, QuotedFragment::Items(_) | QuotedFragment::Type(_))
-                            }) {
-                                self.emit_error(
-                                    "item/type splicing is not allowed inside function bodies; move item emission to a module-level const block",
-                                );
-                                new_stmts.push(stmt);
-                                continue;
-                            }
                             for fragment in fragments {
                                 match fragment {
                                     QuotedFragment::Stmts(stmts) => {
@@ -365,7 +358,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                                         new_stmts.push(BlockStmt::Expr(es));
                                         self.mark_mutated();
                                     }
-                                    QuotedFragment::Items(_) | QuotedFragment::Type(_) => {}
+                                    QuotedFragment::Items(items) => {
+                                        for item in items {
+                                            new_stmts.push(BlockStmt::Item(Box::new(item)));
+                                        }
+                                        self.mark_mutated();
+                                    }
+                                    QuotedFragment::Type(_) => {
+                                        self.emit_error(
+                                            "splice<type> is not valid in statement position",
+                                        );
+                                    }
                                 }
                             }
                         }

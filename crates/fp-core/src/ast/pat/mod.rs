@@ -12,6 +12,7 @@ common_enum! {
         Box(PatternBox),
         Variant(PatternVariant),
         Quote(PatternQuote),
+        QuotePlural(PatternQuotePlural),
         Type(PatternType),
         Wildcard(PatternWildcard),
     }
@@ -188,5 +189,16 @@ common_struct! {
         pub fragment: QuoteFragmentKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub item: Option<QuoteItemKind>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub fields: Vec<PatternStructField>,
+        #[serde(default, skip_serializing_if = "bool_is_false")]
+        pub has_rest: bool,
+    }
+}
+
+common_struct! {
+    pub struct PatternQuotePlural {
+        pub fragment: QuoteFragmentKind,
+        pub patterns: Vec<Pattern>,
     }
 }

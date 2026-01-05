@@ -16,8 +16,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("quote is only supported in const regions");
                     return RuntimeFlow::Value(Value::undefined());
                 }
+                let kind = quote.kind;
                 let fragment = self.build_quoted_fragment(quote);
-                RuntimeFlow::Value(self.quote_token_from_fragment(fragment))
+                RuntimeFlow::Value(self.quote_token_from_fragment_kind(fragment, kind))
             }
             ExprKind::Splice(_splice) => {
                 if !self.in_const_region() {
@@ -383,8 +384,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Quote(_quote) => {
                 if matches!(self.mode, InterpreterMode::CompileTime) {
                     if let ExprKind::Quote(quote) = expr.kind() {
+                        let kind = quote.kind;
                         let fragment = self.build_quoted_fragment(quote);
-                        return self.quote_token_from_fragment(fragment);
+                        return self.quote_token_from_fragment_kind(fragment, kind);
                     }
                     return Value::undefined();
                 }
@@ -392,10 +394,32 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return Value::undefined();
             }
             ExprKind::Splice(_splice) => {
-                self.emit_error(
-                    "splice cannot be evaluated to a value; it is only valid inside const regions to insert code",
-                );
-                return Value::undefined();
+                if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+                    self.emit_error("splice is only supported during const evaluation");
+                    return Value::undefined();
+                }
+                let ExprKind::Splice(splice) = expr.kind_mut() else {
+                    return Value::undefined();
+                };
+                let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut()) else {
+                    return Value::undefined();
+                };
+                if fragments.len() != 1 {
+                    self.emit_error("splice in expression position expects a single fragment");
+                    return Value::undefined();
+                }
+                match fragments.into_iter().next().unwrap() {
+                    QuotedFragment::Expr(mut quoted) => self.eval_expr(&mut quoted),
+                    QuotedFragment::Stmts(stmts) => {
+                        let mut block = ExprBlock::new_stmts(stmts);
+                        self.eval_block(&mut block)
+                    }
+                    QuotedFragment::Type(ty) => Value::Type(ty),
+                    QuotedFragment::Items(_) => {
+                        self.emit_error("splice<item> is not valid in expression position");
+                        Value::undefined()
+                    }
+                }
             }
             ExprKind::Value(value) => match value.as_ref() {
                 Value::Expr(inner) => {

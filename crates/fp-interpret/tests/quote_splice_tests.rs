@@ -4,6 +4,7 @@ use std::sync::Arc;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::ops::BinOpKind;
 use fp_core::Result;
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use fp_rust::printer::RustPrinter;
@@ -17,6 +18,92 @@ fn quote_item_expr(item: Item) -> Expr {
         block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(item))]),
         kind: Some(QuoteFragmentKind::Item),
     }))
+}
+
+#[test]
+fn quote_fn_structural_pattern_binds_name() -> Result<()> {
+    let func = ItemDefFunction::new_simple(
+        Ident::new("inspected"),
+        Expr::value(Value::unit()).into(),
+    );
+    let token = Value::QuoteToken(ValueQuoteToken {
+        kind: QuoteFragmentKind::Item,
+        value: QuoteTokenValue::Items(vec![Item::from(ItemKind::DefFunction(func))]),
+    });
+
+    let mut quote = PatternQuote {
+        fragment: QuoteFragmentKind::Item,
+        item: Some(QuoteItemKind::Function),
+        fields: vec![PatternStructField {
+            name: Ident::new("name"),
+            rename: Some(Box::new(Pattern::new(PatternKind::Ident(
+                PatternIdent::new(Ident::new("fn_name")),
+            )))),
+        }],
+        has_rest: true,
+    };
+
+    let pattern = Pattern::new(PatternKind::Quote(quote.clone()));
+
+    let ctx = SharedScopedContext::new();
+    let options = InterpreterOptions {
+        mode: InterpreterMode::CompileTime,
+        debug_assertions: false,
+        diagnostics: None,
+        diagnostic_context: "ast-interpreter",
+    };
+    let mut interpreter = AstInterpreter::new(&ctx, options);
+
+    assert!(interpreter.pattern_matches(&pattern, &token));
+    let bound = interpreter.lookup_value("fn_name");
+    assert!(matches!(bound, Some(Value::String(s)) if s.value == "inspected"));
+
+    quote.fields[0].rename = None;
+    let pattern_no_bind = Pattern::new(PatternKind::Quote(quote));
+    assert!(interpreter.pattern_matches(&pattern_no_bind, &token));
+
+    Ok(())
+}
+
+#[test]
+fn quote_items_plural_pattern_binds_list() -> Result<()> {
+    let func_a = ItemDefFunction::new_simple(
+        Ident::new("a"),
+        Expr::value(Value::unit()).into(),
+    );
+    let func_b = ItemDefFunction::new_simple(
+        Ident::new("b"),
+        Expr::value(Value::unit()).into(),
+    );
+    let token = Value::QuoteToken(ValueQuoteToken {
+        kind: QuoteFragmentKind::Items,
+        value: QuoteTokenValue::Items(vec![
+            Item::from(ItemKind::DefFunction(func_a)),
+            Item::from(ItemKind::DefFunction(func_b)),
+        ]),
+    });
+
+    let pattern = Pattern::new(PatternKind::QuotePlural(PatternQuotePlural {
+        fragment: QuoteFragmentKind::Items,
+        patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(
+            Ident::new("items"),
+        )))],
+    }));
+
+    let ctx = SharedScopedContext::new();
+    let options = InterpreterOptions {
+        mode: InterpreterMode::CompileTime,
+        debug_assertions: false,
+        diagnostics: None,
+        diagnostic_context: "ast-interpreter",
+    };
+    let mut interpreter = AstInterpreter::new(&ctx, options);
+
+    assert!(interpreter.pattern_matches(&pattern, &token));
+    let bound = interpreter.lookup_value("items");
+    assert!(matches!(bound, Some(Value::List(list)) if list.values.len() == 2));
+
+    Ok(())
 }
 
 #[test]
@@ -270,7 +357,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
     })
     .into();
 
-    let if_expr = ExprKind::If(ExprIf {
+    let if_expr: Expr = ExprKind::If(ExprIf {
         cond: Box::new(Expr::value(Value::bool(true))),
         then: Box::new(then_items),
         elze: Some(Box::new(else_items)),
@@ -284,7 +371,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         args: vec![],
     })
     .into();
-    let splice_expr = ExprKind::Splice(ExprSplice {
+    let splice_expr: Expr = ExprKind::Splice(ExprSplice {
         token: Box::new(invoke),
     })
     .into();
@@ -331,6 +418,156 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
     });
 
     assert!(has_generated_a, "expected GeneratedA to be spliced");
+
+    Ok(())
+}
+
+#[test]
+fn splice_executes_expr_outside_const_block() -> Result<()> {
+    let quoted_expr = Expr::from(ExprKind::Quote(ExprQuote {
+        block: ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(
+            Expr::from(ExprKind::BinOp(ExprBinOp {
+                kind: BinOpKind::Add,
+                lhs: Box::new(Expr::value(Value::int(7))),
+                rhs: Box::new(Expr::value(Value::int(5))),
+            })),
+        ))]),
+        kind: Some(QuoteFragmentKind::Expr),
+    }));
+    let splice_expr = Expr::from(ExprKind::Splice(ExprSplice {
+        token: quoted_expr.into(),
+    }));
+
+    let let_stmt = BlockStmt::Let(StmtLet::new_simple(Ident::new("result"), splice_expr));
+
+    let fn_body = ExprBlock::new_stmts(vec![
+        let_stmt,
+        BlockStmt::Expr(BlockStmtExpr::new(Expr::value(Value::int(0)))),
+    ]);
+
+    let mut func =
+        ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body).into());
+    func.sig.ret_ty = Some(i32_ty());
+
+    let file = File {
+        path: PathBuf::from("quote_splice_exec.fp"),
+        items: vec![Item::from(ItemKind::DefFunction(func))],
+    };
+
+    let mut ast = Node::file(file);
+    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
+    fp_core::ast::register_threadlocal_serializer(serializer.clone());
+
+    let ctx = SharedScopedContext::new();
+    let options = InterpreterOptions {
+        mode: InterpreterMode::CompileTime,
+        debug_assertions: false,
+        diagnostics: None,
+        diagnostic_context: "ast-interpreter",
+    };
+    let mut interpreter = AstInterpreter::new(&ctx, options);
+    interpreter.interpret(&mut ast);
+
+    let file_ref = match ast.kind() {
+        NodeKind::File(f) => f,
+        _ => panic!("expected file node"),
+    };
+    let func_ref = match &file_ref.items[0].kind() {
+        ItemKind::DefFunction(f) => f,
+        _ => panic!("expected function item"),
+    };
+    let body = func_ref.body.as_ref();
+    let block = match body.kind() {
+        ExprKind::Block(b) => b,
+        other => panic!("expected block body, got {:?}", other),
+    };
+    let mut saw_splice = false;
+    let mut saw_binop = false;
+    let mut saw_literal = false;
+    for stmt in &block.stmts {
+        if let BlockStmt::Let(stmt_let) = stmt {
+            if let Some(init) = &stmt_let.init {
+                match init.kind() {
+                    ExprKind::Splice(_) => saw_splice = true,
+                    ExprKind::BinOp(_) => saw_binop = true,
+                    ExprKind::Value(v) => {
+                        if matches!(v.as_ref(), Value::Int(i) if i.value == 12) {
+                            saw_literal = true;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    assert!(!saw_splice, "splice should be evaluated in const eval");
+    assert!(
+        saw_binop || saw_literal,
+        "expected splice to expand to a binop or a folded literal"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn splice_allows_items_inside_function_bodies() -> Result<()> {
+    let struct_item = Item::from(ItemKind::DefStruct(ItemDefStruct::new(
+        Ident::new("Inner"),
+        vec![StructuralField::new(Ident::new("value"), i32_ty())],
+    )));
+    let quoted_items = quote_item_expr(struct_item);
+    let splice_expr = Expr::from(ExprKind::Splice(ExprSplice {
+        token: quoted_items.into(),
+    }));
+
+    let fn_body = ExprBlock::new_stmts(vec![
+        BlockStmt::Expr(BlockStmtExpr::new(splice_expr).with_semicolon(true)),
+        BlockStmt::Expr(BlockStmtExpr::new(Expr::value(Value::int(0)))),
+    ]);
+    let mut func =
+        ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body).into());
+    func.sig.ret_ty = Some(i32_ty());
+
+    let file = File {
+        path: PathBuf::from("quote_splice_items_fn.fp"),
+        items: vec![Item::from(ItemKind::DefFunction(func))],
+    };
+
+    let mut ast = Node::file(file);
+    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
+    fp_core::ast::register_threadlocal_serializer(serializer.clone());
+
+    let ctx = SharedScopedContext::new();
+    let options = InterpreterOptions {
+        mode: InterpreterMode::CompileTime,
+        debug_assertions: false,
+        diagnostics: None,
+        diagnostic_context: "ast-interpreter",
+    };
+    let mut interpreter = AstInterpreter::new(&ctx, options);
+    interpreter.interpret(&mut ast);
+
+    let file_ref = match ast.kind() {
+        NodeKind::File(f) => f,
+        _ => panic!("expected file node"),
+    };
+    let func_ref = match &file_ref.items[0].kind() {
+        ItemKind::DefFunction(f) => f,
+        _ => panic!("expected function item"),
+    };
+    let body = func_ref.body.as_ref();
+    let block = match body.kind() {
+        ExprKind::Block(b) => b,
+        other => panic!("expected block body, got {:?}", other),
+    };
+    let has_inner_struct = block.stmts.iter().any(|stmt| match stmt {
+        BlockStmt::Item(item) => matches!(
+            item.kind(),
+            ItemKind::DefStruct(def) if def.name.as_str() == "Inner"
+        ),
+        _ => false,
+    });
+    assert!(has_inner_struct, "expected Inner struct spliced into body");
 
     Ok(())
 }

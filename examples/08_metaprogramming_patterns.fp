@@ -1,5 +1,5 @@
 #!/usr/bin/env fp run
-//! Metaprogramming: using const metadata to drive code generation
+//! Metaprogramming: const metadata + quote/splice execution
 
 struct Point3D {
     x: i64,
@@ -25,11 +25,11 @@ const _GENERATED: () = const {
 
 fn main() {
     println!("📘 Tutorial: 08_metaprogramming_patterns.fp");
-    println!("🧭 Focus: Metaprogramming: using const metadata to drive code generation");
+    println!("🧭 Focus: Metaprogramming: const metadata + quote/splice execution");
     println!("🧪 What to look for: labeled outputs below");
     println!("✅ Expectation: outputs match labels");
     println!("");
-    // Const metadata
+    println!("=== Part 1: Const Metadata ===");
     const FIELD_COUNT: i64 = field_count!(Point3D);
     const POINT_NAME: &str = type_name!(Point3D);
     const SIZE: i64 = struct_size!(Point3D);
@@ -52,8 +52,35 @@ fn main() {
         z: 6,
         label: "origin",
     };
-    println!(
-        "labeled=({}, {}, {}, {})",
-        lp.x, lp.y, lp.z, lp.label
-    );
+    println!("labeled=({}, {}, {}, {})", lp.x, lp.y, lp.z, lp.label);
+
+    println!("");
+    println!("=== Part 2: Execute Quoted Code ===");
+    let score = splice(quote<expr> { (2 + 3) * 4 });
+    println!("expr splice => {}", score);
+
+    let fn_token = quote<fn> {
+        fn inspected() {
+            // placeholder body for inspection
+        }
+    };
+    let fn_name = match fn_token {
+        f @ quote<fn> => f.name,
+        _ => "<unknown>",
+    };
+    println!("quote<fn> inspect => name={}", fn_name);
+
+    splice(quote<stmt> {
+        let step = 7 * 3;
+        println!("stmt splice => step={}", step);
+    });
+
+    splice(quote<item> {
+        struct Banner {
+            title: &'static str,
+            rank: i64,
+        }
+    });
+    let banner = Banner { title: "metaprogramming", rank: score };
+    println!("item splice => {} #{}", banner.title, banner.rank);
 }

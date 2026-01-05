@@ -1,5 +1,8 @@
 use super::*;
-use fp_core::ast::{ItemKind, PatternKind, PatternQuote, QuoteItemKind, QuoteTokenValue};
+use fp_core::ast::{
+    AttrMeta, ItemKind, PatternKind, PatternQuote, PatternQuotePlural, QuoteItemKind,
+    QuoteTokenValue, ValueField, ValueList, ValueQuoteToken, ValueStructural,
+};
 use std::sync::{Arc, Mutex};
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -96,6 +99,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             PatternKind::Quote(quote) => self.quote_pattern_matches(quote, value),
+            PatternKind::QuotePlural(quote) => self.quote_plural_pattern_matches(quote, value),
             PatternKind::Type(inner) => self.pattern_matches(&inner.pat, value),
             PatternKind::Tuple(tuple) => match value {
                 Value::Tuple(items) if items.values.len() == tuple.patterns.len() => tuple
@@ -212,6 +216,168 @@ impl<'ctx> AstInterpreter<'ctx> {
         if token.kind != quote.fragment {
             return false;
         }
+        if !quote.fields.is_empty() {
+            let QuoteTokenValue::Items(items) = &token.value else {
+                return false;
+            };
+            if items.len() != 1 {
+                return false;
+            }
+            let item = &items[0];
+            let allow_any_item = quote.item.is_none() && token.kind == QuoteFragmentKind::Item;
+
+            let mut field_values = |name: &str| -> Option<Value> {
+                match name {
+                    "name" => item
+                        .get_ident()
+                        .map(|ident| Value::string(ident.name.clone())),
+                    _ => None,
+                }
+            };
+
+            if allow_any_item || matches!(quote.item, Some(QuoteItemKind::Function)) {
+                if let Some(func) = item.as_function() {
+                    field_values = |name: &str| match name {
+                        "name" => Some(Value::string(func.name.name.clone())),
+                        "params" => {
+                            let mut params = Vec::new();
+                            for param in &func.sig.params {
+                                let fields = vec![
+                                    ValueField::new(
+                                        Ident::new("name"),
+                                        Value::string(param.name.name.clone()),
+                                    ),
+                                    ValueField::new(
+                                        Ident::new("ty"),
+                                        Value::Type(param.ty.clone()),
+                                    ),
+                                ];
+                                params.push(Value::Structural(ValueStructural::new(fields)));
+                            }
+                            Some(Value::List(ValueList::new(params)))
+                        }
+                        "ret" => Some(Value::Type(
+                            func.sig.ret_ty.clone().unwrap_or_else(Ty::unit),
+                        )),
+                        "body" => Some(Value::expr(func.body.as_ref().clone())),
+                        "attrs" => {
+                            let attrs = func
+                                .attrs
+                                .iter()
+                                .map(|attr| {
+                                    let name = match &attr.meta {
+                                        AttrMeta::Path(path) => path.last().as_str().to_string(),
+                                        AttrMeta::List(list) => list.name.last().as_str().to_string(),
+                                        AttrMeta::NameValue(nv) => {
+                                            nv.name.last().as_str().to_string()
+                                        }
+                                    };
+                                    Value::string(name)
+                                })
+                                .collect();
+                            Some(Value::List(ValueList::new(attrs)))
+                        }
+                        other => field_values(other),
+                    };
+                }
+            }
+
+            if allow_any_item || matches!(quote.item, Some(QuoteItemKind::Struct)) {
+                if let Some(def) = item.as_struct() {
+                    let struct_fields = def
+                        .value
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let fields = vec![
+                                ValueField::new(
+                                    Ident::new("name"),
+                                    Value::string(field.name.name.clone()),
+                                ),
+                                ValueField::new(
+                                    Ident::new("ty"),
+                                    Value::Type(field.value.clone()),
+                                ),
+                            ];
+                            Value::Structural(ValueStructural::new(fields))
+                        })
+                        .collect();
+                    field_values = |name: &str| match name {
+                        "name" => Some(Value::string(def.name.name.clone())),
+                        "fields" => Some(Value::List(ValueList::new(struct_fields))),
+                        other => field_values(other),
+                    };
+                }
+            }
+
+            if allow_any_item || matches!(quote.item, Some(QuoteItemKind::Struct)) {
+                if let Some(def) = item.as_structural() {
+                    let struct_fields = def
+                        .value
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            let fields = vec![
+                                ValueField::new(
+                                    Ident::new("name"),
+                                    Value::string(field.name.name.clone()),
+                                ),
+                                ValueField::new(
+                                    Ident::new("ty"),
+                                    Value::Type(field.value.clone()),
+                                ),
+                            ];
+                            Value::Structural(ValueStructural::new(fields))
+                        })
+                        .collect();
+                    field_values = |name: &str| match name {
+                        "name" => Some(Value::string(def.name.name.clone())),
+                        "fields" => Some(Value::List(ValueList::new(struct_fields))),
+                        other => field_values(other),
+                    };
+                }
+            }
+
+            if allow_any_item || matches!(quote.item, Some(QuoteItemKind::Enum)) {
+                if let Some(def) = item.as_enum() {
+                    let variants = def
+                        .value
+                        .variants
+                        .iter()
+                        .map(|variant| {
+                            let fields = vec![
+                                ValueField::new(
+                                    Ident::new("name"),
+                                    Value::string(variant.name.name.clone()),
+                                ),
+                                ValueField::new(
+                                    Ident::new("ty"),
+                                    Value::Type(variant.value.clone()),
+                                ),
+                            ];
+                            Value::Structural(ValueStructural::new(fields))
+                        })
+                        .collect();
+                    field_values = |name: &str| match name {
+                        "name" => Some(Value::string(def.name.name.clone())),
+                        "variants" => Some(Value::List(ValueList::new(variants))),
+                        other => field_values(other),
+                    };
+                }
+            }
+
+            for field in &quote.fields {
+                let Some(field_value) = field_values(field.name.as_str()) else {
+                    return false;
+                };
+                if let Some(rename) = field.rename.as_ref() {
+                    if !self.pattern_matches(rename, &field_value) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
         let Some(expected_item) = quote.item else {
             return true;
         };
@@ -238,6 +404,69 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Module(_) => matches!(expected_item, QuoteItemKind::Module),
             ItemKind::Import(_) => matches!(expected_item, QuoteItemKind::Use),
             ItemKind::Macro(_) => matches!(expected_item, QuoteItemKind::Macro),
+            _ => false,
+        }
+    }
+
+    fn quote_plural_pattern_matches(&mut self, quote: &PatternQuotePlural, value: &Value) -> bool {
+        let Value::QuoteToken(token) = value else {
+            return false;
+        };
+        if token.kind != quote.fragment {
+            return false;
+        }
+        let QuoteTokenValue::Items(items) = &token.value else {
+            return false;
+        };
+        if !items.iter().all(|item| self.item_matches_quote_plural(item, quote.fragment)) {
+            return false;
+        }
+        let values = items
+            .iter()
+            .cloned()
+            .map(|item| {
+                Value::QuoteToken(ValueQuoteToken {
+                    kind: QuoteFragmentKind::Item,
+                    value: QuoteTokenValue::Items(vec![item]),
+                })
+            })
+            .collect::<Vec<_>>();
+        if quote.patterns.len() == 1 {
+            let list = Value::List(ValueList::new(values));
+            return self.pattern_matches(&quote.patterns[0], &list);
+        }
+        if quote.patterns.len() != values.len() {
+            return false;
+        }
+        quote
+            .patterns
+            .iter()
+            .zip(values.iter())
+            .all(|(pat, val)| self.pattern_matches(pat, val))
+    }
+
+    fn item_matches_quote_plural(&self, item: &Item, kind: QuoteFragmentKind) -> bool {
+        match kind {
+            QuoteFragmentKind::Items => true,
+            QuoteFragmentKind::Fns => matches!(item.kind(), ItemKind::DefFunction(_)),
+            QuoteFragmentKind::Structs => matches!(
+                item.kind(),
+                ItemKind::DefStruct(_) | ItemKind::DefStructural(_)
+            ),
+            QuoteFragmentKind::Enums => matches!(item.kind(), ItemKind::DefEnum(_)),
+            QuoteFragmentKind::Traits => matches!(item.kind(), ItemKind::DefTrait(_)),
+            QuoteFragmentKind::Impls => matches!(item.kind(), ItemKind::Impl(_)),
+            QuoteFragmentKind::Consts => matches!(
+                item.kind(),
+                ItemKind::DefConst(_) | ItemKind::DeclConst(_)
+            ),
+            QuoteFragmentKind::Statics => matches!(
+                item.kind(),
+                ItemKind::DefStatic(_) | ItemKind::DeclStatic(_)
+            ),
+            QuoteFragmentKind::Mods => matches!(item.kind(), ItemKind::Module(_)),
+            QuoteFragmentKind::Uses => matches!(item.kind(), ItemKind::Import(_)),
+            QuoteFragmentKind::Macros => matches!(item.kind(), ItemKind::Macro(_)),
             _ => false,
         }
     }

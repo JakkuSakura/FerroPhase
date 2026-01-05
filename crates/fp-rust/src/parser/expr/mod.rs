@@ -1245,9 +1245,23 @@ impl<'a> ExprParser<'a> {
                 };
                 kind = match kind_ident.to_string().as_str() {
                     "expr" => Some(QuoteFragmentKind::Expr),
+                    "exprs" => Some(QuoteFragmentKind::Exprs),
                     "stmt" => Some(QuoteFragmentKind::Stmt),
+                    "stmts" => Some(QuoteFragmentKind::Stmts),
                     "item" => Some(QuoteFragmentKind::Item),
+                    "items" => Some(QuoteFragmentKind::Items),
                     "type" => Some(QuoteFragmentKind::Type),
+                    "types" => Some(QuoteFragmentKind::Types),
+                    "fns" => Some(QuoteFragmentKind::Fns),
+                    "structs" => Some(QuoteFragmentKind::Structs),
+                    "enums" => Some(QuoteFragmentKind::Enums),
+                    "traits" => Some(QuoteFragmentKind::Traits),
+                    "impls" => Some(QuoteFragmentKind::Impls),
+                    "consts" => Some(QuoteFragmentKind::Consts),
+                    "statics" => Some(QuoteFragmentKind::Statics),
+                    "mods" => Some(QuoteFragmentKind::Mods),
+                    "uses" => Some(QuoteFragmentKind::Uses),
+                    "macros" => Some(QuoteFragmentKind::Macros),
                     _ => return None,
                 };
                 let TokenTree::Punct(close) = iter.next()? else {
