@@ -1,0 +1,77 @@
+hir::Program {
+    pub fn solve(row: i64, cols: &[i64; 8], diag1: &[i64; 15], diag2: &[i64; 15], positions: &[i64; 8], first_solution: &[i64; 8], found_first: &bool) -> i64 {
+        // params: [row: i64, cols: &[i64; 8], diag1: &[i64; 15], diag2: &[i64; 15], positions: &[i64; 8], first_solution: &[i64; 8], found_first: &bool]
+        {
+            if ((row == 8))
+                {
+                    if ((!(*found_first)))
+                        {
+                            {
+                                let mut r = 0;
+                                while ((r < 8))
+                                    {
+                                        first_solution[r] = positions[r];
+                                        r = (r + 1);
+                                    }
+                            }
+                            (*found_first) = true;
+                        }
+                    return 1;
+                }
+            let mut count = 0;
+            {
+                let mut col = 0;
+                while ((col < 8))
+                    {
+                        let d1 = (row + col);
+                        let d2 = ((row - col) + 7);
+                        <control-flow>;
+                        col = (col + 1);
+                    }
+            }
+            count
+        }
+    }
+
+    pub fn print_board(positions: &[i64; 8]) -> () {
+        // params: [positions: &[i64; 8]]
+        {
+            printf("First solution:\n");
+            {
+                let mut r = 0;
+                while ((r < 8))
+                    {
+                        {
+                            let mut c = 0;
+                            while ((c < 8))
+                                {
+                                    <control-flow>;
+                                    c = (c + 1);
+                                }
+                        }
+                        std::Println(0 args);
+                        r = (r + 1);
+                    }
+            }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            printf("📘 Tutorial: 22_eight_queens.fp\n");
+            printf("🧭 Focus: Classic 8-queens solver using recursive backtracking.\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            let cols: [i64; 8] = [0; 8];
+            let diag1: [i64; 15] = [0; 15];
+            let diag2: [i64; 15] = [0; 15];
+            let positions: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
+            let first_solution: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
+            let mut found_first = false;
+            let total = solve(0, cols, diag1, diag2, positions, first_solution, found_first);
+            print_board(first_solution);
+            printf("Total solutions: %lld\n", total);
+        }
+    }
+}
