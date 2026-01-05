@@ -1611,6 +1611,11 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
     while let Some(ch) = chars.next() {
         if ch == '{' {
             if let Some(&next_ch) = chars.peek() {
+                if next_ch == '{' {
+                    chars.next();
+                    current_literal.push('{');
+                    continue;
+                }
                 if next_ch == '}' {
                     chars.next();
                     if !current_literal.is_empty() {
@@ -1647,6 +1652,15 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
             } else {
                 current_literal.push(ch);
             }
+        } else if ch == '}' {
+            if let Some(&next_ch) = chars.peek() {
+                if next_ch == '}' {
+                    chars.next();
+                    current_literal.push('}');
+                    continue;
+                }
+            }
+            current_literal.push('}');
         } else if ch == '%' {
             if let Some(&next_ch) = chars.peek() {
                 if next_ch == '%' {

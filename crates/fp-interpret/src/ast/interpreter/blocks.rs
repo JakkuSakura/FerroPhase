@@ -93,7 +93,115 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
-                    let _ = self.resolve_function_call(locator, &mut invoke.args);
+                    if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
+                        let const_params: Vec<_> = function
+                            .sig
+                            .params
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, param)| param.is_const)
+                            .collect();
+                        if !const_params.is_empty() {
+                            let mut const_values = Vec::new();
+                            let mut runtime_args = Vec::new();
+                            let mut args = std::mem::take(&mut invoke.args);
+                            for (idx, param) in function.sig.params.iter().enumerate() {
+                                let Some(arg) = args.get_mut(idx) else {
+                                    break;
+                                };
+                                if param.is_const {
+                                    let value = self.eval_expr(arg);
+                                    if matches!(value, Value::Undefined(_) | Value::Any(_)) {
+                                        self.emit_error(format!(
+                                            "const argument `{}` must be a compile-time value",
+                                            param.name.as_str()
+                                        ));
+                                        continue;
+                                    }
+                                    const_values.push((param.clone(), value));
+                                } else {
+                                    runtime_args.push(args[idx].clone());
+                                }
+                            }
+
+                            if const_values.len() == const_params.len() {
+                                let base_name = function.name.as_str().to_string();
+                                let const_key = const_values
+                                    .iter()
+                                    .map(|(_, value)| format!("{:?}", value))
+                                    .collect::<Vec<_>>()
+                                    .join("|");
+                                let specialization_name = if let Some(cache) =
+                                    self.specialization_cache.get(&base_name)
+                                {
+                                    cache.get(&const_key).cloned()
+                                } else {
+                                    None
+                                };
+                                let specialization_name = if let Some(name) = specialization_name {
+                                    name
+                                } else {
+                                    let counter =
+                                        self.specialization_counter.entry(base_name.clone()).or_default();
+                                    *counter += 1;
+                                    let name = format!("{}__const_{}", base_name, *counter);
+                                    self.specialization_cache
+                                        .entry(base_name.clone())
+                                        .or_default()
+                                        .insert(const_key.clone(), name.clone());
+
+                                    let mut specialized = function.clone();
+                                    specialized.name = Ident::new(name.clone());
+                                    specialized.sig.params = specialized
+                                        .sig
+                                        .params
+                                        .into_iter()
+                                        .filter(|param| !param.is_const)
+                                        .collect();
+
+                                    self.push_scope();
+                                    for (param, value) in &const_values {
+                                        if let Some(scope) = self.type_env.last_mut() {
+                                            scope.insert(
+                                                param.name.as_str().to_string(),
+                                                param.ty.clone(),
+                                            );
+                                        }
+                                        self.insert_value(param.name.as_str(), value.clone());
+                                    }
+                                    self.evaluate_function_body(specialized.body.as_mut());
+                                    self.pop_scope();
+
+                                    self.functions.insert(name.clone(), specialized.clone());
+                                    self.append_pending_items(vec![Item::new(
+                                        ItemKind::DefFunction(specialized),
+                                    )]);
+                                    name
+                                };
+
+                                match locator {
+                                    Locator::Ident(ident) => {
+                                        *ident = Ident::new(specialization_name.clone());
+                                    }
+                                    Locator::Path(path) => {
+                                        if let Some(last) = path.segments.last_mut() {
+                                            *last = Ident::new(specialization_name.clone());
+                                        }
+                                    }
+                                    Locator::ParameterPath(path) => {
+                                        if let Some(last) = path.segments.last_mut() {
+                                            last.ident = Ident::new(specialization_name.clone());
+                                            last.args.clear();
+                                        }
+                                    }
+                                }
+
+                                invoke.args = runtime_args;
+                            } else {
+                                invoke.args = args;
+                            }
+                        }
+                    }
                 }
 
                 match &mut invoke.target {
@@ -263,15 +371,30 @@ impl<'ctx> AstInterpreter<'ctx> {
                         }
                     } else if let ExprKind::IntrinsicCall(call) = expr_stmt.expr.kind_mut() {
                         if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
-                            // Inline const { ... } statements into surrounding block
+                            // Evaluate const { ... } and splice generated statements into the block.
                             if let IntrinsicCallPayload::Args { args } = &mut call.payload {
                                 if let Some(body_expr) = args.first_mut() {
                                     if let ExprKind::Block(inner_block) = body_expr.kind_mut() {
+                                        self.pending_stmt_splices.push(Vec::new());
                                         self.enter_const_region();
-                                        self.evaluate_function_block(inner_block);
+                                        let flow = self.eval_block_runtime(inner_block);
                                         self.exit_const_region();
-                                        for s in inner_block.stmts.clone() {
-                                            new_stmts.push(s);
+                                        let pending = self
+                                            .pending_stmt_splices
+                                            .pop()
+                                            .unwrap_or_default();
+                                        match flow {
+                                            RuntimeFlow::Value(_) => {}
+                                            RuntimeFlow::Break(_)
+                                            | RuntimeFlow::Continue
+                                            | RuntimeFlow::Return(_) => {
+                                                self.emit_error(
+                                                    "control flow is not allowed at top-level of const blocks",
+                                                );
+                                            }
+                                        }
+                                        if !pending.is_empty() {
+                                            new_stmts.extend(pending);
                                         }
                                         self.mark_mutated();
                                         continue;

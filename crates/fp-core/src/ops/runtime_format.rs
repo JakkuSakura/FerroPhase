@@ -308,6 +308,30 @@ fn default_value_string(value: &Value) -> String {
         Value::Unit(_) => "()".to_string(),
         Value::None(_) => "None".to_string(),
         Value::Null(_) => "null".to_string(),
+        Value::List(list) => {
+            let items = list
+                .values
+                .iter()
+                .map(default_value_string)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("[{}]", items)
+        }
+        Value::Map(map) => {
+            let items = map
+                .entries
+                .iter()
+                .map(|entry| {
+                    format!(
+                        "{}: {}",
+                        default_value_string(&entry.key),
+                        default_value_string(&entry.value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("{{{}}}", items)
+        }
         other => format!("{:?}", other),
     }
 }

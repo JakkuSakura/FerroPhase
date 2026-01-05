@@ -82,13 +82,18 @@ impl<'ctx> AstInterpreter<'ctx> {
             return match kind {
                 QuoteFragmentKind::Expr => {
                     let mut block = quote.block.clone();
+                    self.materialize_quote_block(&mut block);
                     if block.last_expr().is_none() {
                         // Treat statement-only quote<expr> blocks as unit expressions.
                         block.push_expr(Expr::value(Value::unit()));
                     }
                     QuotedFragment::Expr(block.into_expr())
                 }
-                QuoteFragmentKind::Stmt => QuotedFragment::Stmts(quote.block.stmts.clone()),
+                QuoteFragmentKind::Stmt => {
+                    let mut block = quote.block.clone();
+                    self.materialize_quote_block(&mut block);
+                    QuotedFragment::Stmts(block.stmts)
+                }
                 QuoteFragmentKind::Item => match self.collect_items_from_block(&quote.block) {
                     Some(items) => QuotedFragment::Items(items),
                     None => QuotedFragment::Items(Vec::new()),
@@ -120,7 +125,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         // If kind is explicitly provided, we still infer from block shape to build fragment
-        let block = quote.block.clone();
+        let mut block = quote.block.clone();
+        self.materialize_quote_block(&mut block);
         // If only a single expression without preceding statements ⇒ Expr fragment
         let is_only_expr = block.first_stmts().is_empty() && block.last_expr().is_some();
         if is_only_expr {
@@ -145,6 +151,203 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         // Fallback ⇒ Stmts fragment (keep entire statement list)
         QuotedFragment::Stmts(block.stmts.clone())
+    }
+
+    fn materialize_quote_block(&mut self, block: &mut ExprBlock) {
+        for stmt in &mut block.stmts {
+            match stmt {
+                BlockStmt::Expr(expr_stmt) => {
+                    self.materialize_quote_expr(expr_stmt.expr.as_mut());
+                }
+                BlockStmt::Let(stmt_let) => {
+                    if let Some(init) = stmt_let.init.as_mut() {
+                        self.materialize_quote_expr(init);
+                    }
+                    if let Some(diverge) = stmt_let.diverge.as_mut() {
+                        self.materialize_quote_expr(diverge);
+                    }
+                }
+                BlockStmt::Item(_) | BlockStmt::Noop | BlockStmt::Any(_) => {}
+            }
+        }
+        if let Some(last) = block.last_expr_mut() {
+            self.materialize_quote_expr(last);
+        }
+    }
+
+    fn materialize_quote_expr(&mut self, expr: &mut Expr) {
+        if let Some(value) = self.const_fold_expr_value(expr) {
+            if let Some(literal) = self.literal_value_from_value(&value) {
+                self.replace_expr_with_value(expr, literal);
+                return;
+            }
+        }
+
+        match expr.kind_mut() {
+            ExprKind::Value(value) => {
+                if let Value::Expr(inner) = value.as_mut() {
+                    self.materialize_quote_expr(inner.as_mut());
+                }
+            }
+            ExprKind::Block(block) => self.materialize_quote_block(block),
+            ExprKind::If(if_expr) => {
+                self.materialize_quote_expr(if_expr.cond.as_mut());
+                self.materialize_quote_expr(if_expr.then.as_mut());
+                if let Some(elze) = if_expr.elze.as_mut() {
+                    self.materialize_quote_expr(elze);
+                }
+            }
+            ExprKind::While(while_expr) => {
+                self.materialize_quote_expr(while_expr.cond.as_mut());
+                self.materialize_quote_expr(while_expr.body.as_mut());
+            }
+            ExprKind::For(for_expr) => {
+                self.materialize_quote_expr(for_expr.iter.as_mut());
+                self.materialize_quote_expr(for_expr.body.as_mut());
+            }
+            ExprKind::Loop(loop_expr) => self.materialize_quote_expr(loop_expr.body.as_mut()),
+            ExprKind::Match(match_expr) => {
+                for case in match_expr.cases.iter_mut() {
+                    self.materialize_quote_expr(case.cond.as_mut());
+                    self.materialize_quote_expr(case.body.as_mut());
+                }
+            }
+            ExprKind::Let(expr_let) => self.materialize_quote_expr(expr_let.expr.as_mut()),
+            ExprKind::Invoke(invoke) => {
+                match &mut invoke.target {
+                    ExprInvokeTarget::Expr(target) => self.materialize_quote_expr(target.as_mut()),
+                    ExprInvokeTarget::Method(select) => {
+                        self.materialize_quote_expr(select.obj.as_mut())
+                    }
+                    ExprInvokeTarget::Closure(closure) => {
+                        self.materialize_quote_expr(closure.body.as_mut())
+                    }
+                    ExprInvokeTarget::Function(_)
+                    | ExprInvokeTarget::Type(_)
+                    | ExprInvokeTarget::BinOp(_) => {}
+                }
+                for arg in invoke.args.iter_mut() {
+                    self.materialize_quote_expr(arg);
+                }
+            }
+            ExprKind::Assign(assign) => {
+                self.materialize_quote_expr(assign.target.as_mut());
+                self.materialize_quote_expr(assign.value.as_mut());
+            }
+            ExprKind::Select(select) => self.materialize_quote_expr(select.obj.as_mut()),
+            ExprKind::Index(index) => {
+                self.materialize_quote_expr(index.obj.as_mut());
+                self.materialize_quote_expr(index.index.as_mut());
+            }
+            ExprKind::BinOp(binop) => {
+                self.materialize_quote_expr(binop.lhs.as_mut());
+                self.materialize_quote_expr(binop.rhs.as_mut());
+            }
+            ExprKind::UnOp(unop) => self.materialize_quote_expr(unop.val.as_mut()),
+            ExprKind::Paren(paren) => self.materialize_quote_expr(paren.expr.as_mut()),
+            ExprKind::Tuple(tuple) => {
+                for value in tuple.values.iter_mut() {
+                    self.materialize_quote_expr(value);
+                }
+            }
+            ExprKind::Array(array) => {
+                for value in array.values.iter_mut() {
+                    self.materialize_quote_expr(value);
+                }
+            }
+            ExprKind::Structural(structural) => {
+                for field in structural.fields.iter_mut() {
+                    if let Some(value) = field.value.as_mut() {
+                        self.materialize_quote_expr(value);
+                    }
+                }
+            }
+            ExprKind::Struct(strukt) => {
+                for field in strukt.fields.iter_mut() {
+                    if let Some(value) = field.value.as_mut() {
+                        self.materialize_quote_expr(value);
+                    }
+                }
+            }
+            ExprKind::FormatString(template) => {
+                for arg in template.args.iter_mut() {
+                    self.materialize_quote_expr(arg);
+                }
+                for kwarg in template.kwargs.iter_mut() {
+                    self.materialize_quote_expr(&mut kwarg.value);
+                }
+            }
+            ExprKind::IntrinsicCall(call) => match &mut call.payload {
+                IntrinsicCallPayload::Args { args } => {
+                    for arg in args.iter_mut() {
+                        self.materialize_quote_expr(arg);
+                    }
+                }
+                IntrinsicCallPayload::Format { template } => {
+                    for arg in template.args.iter_mut() {
+                        self.materialize_quote_expr(arg);
+                    }
+                    for kwarg in template.kwargs.iter_mut() {
+                        self.materialize_quote_expr(&mut kwarg.value);
+                    }
+                }
+            },
+            ExprKind::Range(range) => {
+                if let Some(start) = range.start.as_mut() {
+                    self.materialize_quote_expr(start.as_mut());
+                }
+                if let Some(end) = range.end.as_mut() {
+                    self.materialize_quote_expr(end.as_mut());
+                }
+                if let Some(step) = range.step.as_mut() {
+                    self.materialize_quote_expr(step.as_mut());
+                }
+            }
+            ExprKind::ArrayRepeat(repeat) => {
+                self.materialize_quote_expr(repeat.elem.as_mut());
+                self.materialize_quote_expr(repeat.len.as_mut());
+            }
+            ExprKind::Reference(reference) => {
+                self.materialize_quote_expr(reference.referee.as_mut());
+            }
+            ExprKind::Dereference(deref) => {
+                self.materialize_quote_expr(deref.referee.as_mut());
+            }
+            ExprKind::Cast(cast) => {
+                self.materialize_quote_expr(cast.expr.as_mut());
+            }
+            ExprKind::IntrinsicContainer(container) => {
+                container.for_each_expr_mut(|expr| self.materialize_quote_expr(expr));
+            }
+            ExprKind::Closured(closured) => {
+                self.materialize_quote_expr(closured.expr.as_mut());
+            }
+            ExprKind::Closure(closure) => {
+                self.materialize_quote_expr(closure.body.as_mut());
+            }
+            ExprKind::Await(await_expr) => {
+                self.materialize_quote_expr(await_expr.base.as_mut());
+            }
+            ExprKind::Async(async_expr) => {
+                self.materialize_quote_expr(async_expr.expr.as_mut());
+            }
+            ExprKind::Try(expr_try) => {
+                self.materialize_quote_expr(expr_try.expr.as_mut());
+            }
+            ExprKind::Splat(splat) => {
+                self.materialize_quote_expr(splat.iter.as_mut());
+            }
+            ExprKind::SplatDict(splat) => {
+                self.materialize_quote_expr(splat.dict.as_mut());
+            }
+            ExprKind::Item(_) => {}
+            ExprKind::Quote(_)
+            | ExprKind::Splice(_)
+            | ExprKind::Locator(_)
+            | ExprKind::Macro(_)
+            | ExprKind::Any(_)
+            | ExprKind::Id(_) => {}
+        }
     }
 
     fn collect_items_from_block(&mut self, block: &ExprBlock) -> Option<Vec<Item>> {

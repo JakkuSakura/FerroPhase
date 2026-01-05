@@ -428,7 +428,6 @@ pub type UserTypeAnnotationIndex = u32;
 pub type SourceInfo = Span;
 pub type AdtDef = (); // Placeholder
 pub type SubstsRef = (); // Placeholder
-pub type ConstValue = (); // Placeholder
 pub type ConstTy = (); // Placeholder
 pub type Region = (); // Placeholder
 pub type UserTypeProjection = (); // Placeholder
@@ -440,6 +439,29 @@ pub type BindingForm = (); // Placeholder
 pub type InlineAsmTemplatePiece = String; // Placeholder
 pub type InlineAsmOperand = (); // Placeholder
 pub type InlineAsmOptions = u32; // Placeholder
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ConstValue {
+    Unit,
+    Bool(bool),
+    Int(i64),
+    UInt(u64),
+    Float(f64),
+    Str(String),
+    Null,
+    Tuple(Vec<ConstValue>),
+    Array(Vec<ConstValue>),
+    Struct(Vec<ConstValue>),
+    List {
+        elements: Vec<ConstValue>,
+        elem_ty: ty::Ty,
+    },
+    Map {
+        entries: Vec<(ConstValue, ConstValue)>,
+        key_ty: ty::Ty,
+        value_ty: ty::Ty,
+    },
+}
 
 // Implementation helpers
 impl Program {

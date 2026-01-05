@@ -703,6 +703,18 @@ fn format_constant(constant: &LirConstant) -> String {
                 .join(", ");
             format!("struct {} {{ {} }}", format_type(ty), elems)
         }
+        GlobalRef(name, ty, indices) => {
+            if indices.is_empty() {
+                format!("global {} as {}", name, format_type(ty))
+            } else {
+                let index_list = indices
+                    .iter()
+                    .map(|idx| idx.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("global {}[{}] as {}", name, index_list, format_type(ty))
+            }
+        }
         Null(ty) => format!("null {}", format_type(ty)),
         Undef(ty) => format!("undef {}", format_type(ty)),
     }

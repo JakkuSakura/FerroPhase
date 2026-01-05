@@ -220,6 +220,7 @@ pub struct AstInterpreter<'ctx> {
     specialization_cache: HashMap<String, HashMap<String, String>>,
     specialization_counter: HashMap<String, usize>,
     pending_items: Vec<Vec<Item>>,
+    pending_stmt_splices: Vec<Vec<BlockStmt>>,
     mutations_applied: bool,
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
@@ -262,6 +263,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             specialization_cache: HashMap::new(),
             specialization_counter: HashMap::new(),
             pending_items: Vec::new(),
+            pending_stmt_splices: Vec::new(),
             mutations_applied: false,
             pending_closure: None,
             pending_expr_ty: None,
@@ -286,21 +288,41 @@ impl<'ctx> AstInterpreter<'ctx> {
         match node.kind_mut() {
             NodeKind::File(file) => {
                 self.pending_items.push(Vec::new());
-                for item in &mut file.items {
-                    self.evaluate_item(item);
-                }
-                if let Some(mut pending) = self.pending_items.pop() {
-                    if !pending.is_empty() {
-                        file.items.append(&mut pending);
+                let mut idx = 0;
+                while idx < file.items.len() {
+                    self.evaluate_item(&mut file.items[idx]);
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && matches!(
+                            file.items.get(idx).map(|item| item.kind()),
+                            Some(ItemKind::DefFunction(func))
+                                if func.sig.params.iter().any(|param| param.is_const)
+                        )
+                    {
+                        file.items.remove(idx);
                         self.mark_mutated();
+                        continue;
                     }
-                }
-                if matches!(self.mode, InterpreterMode::CompileTime) {
-                    // Quote-only functions are compile-time artifacts; drop them before HIR lowering.
-                    if strip_quote_only_items(&mut file.items) {
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && is_quote_only_item(&file.items[idx])
+                    {
+                        file.items.remove(idx);
                         self.mark_mutated();
+                        continue;
                     }
+                    let pending = self
+                        .pending_items
+                        .last_mut()
+                        .and_then(|items| if items.is_empty() { None } else { Some(std::mem::take(items)) });
+                    if let Some(pending) = pending {
+                        let insert_at = idx + 1;
+                        let count = pending.len();
+                        file.items.splice(insert_at..insert_at, pending);
+                        self.mark_mutated();
+                        idx += count;
+                    }
+                    idx += 1;
                 }
+                self.pending_items.pop();
             }
             NodeKind::Item(item) => self.evaluate_item(item),
             NodeKind::Expr(expr) => {
@@ -534,15 +556,41 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.module_stack.push(module.name.as_str().to_string());
                 self.push_scope();
                 self.pending_items.push(Vec::new());
-                for child in &mut module.items {
-                    self.evaluate_item(child);
-                }
-                if let Some(mut pending) = self.pending_items.pop() {
-                    if !pending.is_empty() {
-                        module.items.append(&mut pending);
+                let mut idx = 0;
+                while idx < module.items.len() {
+                    self.evaluate_item(&mut module.items[idx]);
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && matches!(
+                            module.items.get(idx).map(|item| item.kind()),
+                            Some(ItemKind::DefFunction(func))
+                                if func.sig.params.iter().any(|param| param.is_const)
+                        )
+                    {
+                        module.items.remove(idx);
                         self.mark_mutated();
+                        continue;
                     }
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && is_quote_only_item(&module.items[idx])
+                    {
+                        module.items.remove(idx);
+                        self.mark_mutated();
+                        continue;
+                    }
+                    let pending = self
+                        .pending_items
+                        .last_mut()
+                        .and_then(|items| if items.is_empty() { None } else { Some(std::mem::take(items)) });
+                    if let Some(pending) = pending {
+                        let insert_at = idx + 1;
+                        let count = pending.len();
+                        module.items.splice(insert_at..insert_at, pending);
+                        self.mark_mutated();
+                        idx += count;
+                    }
+                    idx += 1;
                 }
+                self.pending_items.pop();
                 self.pop_scope();
                 self.module_stack.pop();
             }
@@ -563,9 +611,42 @@ impl<'ctx> AstInterpreter<'ctx> {
                     trait_ty: None,
                 }));
                 self.push_scope();
-                for child in &mut impl_block.items {
-                    self.evaluate_item(child);
+                self.pending_items.push(Vec::new());
+                let mut idx = 0;
+                while idx < impl_block.items.len() {
+                    self.evaluate_item(&mut impl_block.items[idx]);
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && matches!(
+                            impl_block.items.get(idx).map(|item| item.kind()),
+                            Some(ItemKind::DefFunction(func))
+                                if func.sig.params.iter().any(|param| param.is_const)
+                        )
+                    {
+                        impl_block.items.remove(idx);
+                        self.mark_mutated();
+                        continue;
+                    }
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && is_quote_only_item(&impl_block.items[idx])
+                    {
+                        impl_block.items.remove(idx);
+                        self.mark_mutated();
+                        continue;
+                    }
+                    let pending = self
+                        .pending_items
+                        .last_mut()
+                        .and_then(|items| if items.is_empty() { None } else { Some(std::mem::take(items)) });
+                    if let Some(pending) = pending {
+                        let insert_at = idx + 1;
+                        let count = pending.len();
+                        impl_block.items.splice(insert_at..insert_at, pending);
+                        self.mark_mutated();
+                        idx += count;
+                    }
+                    idx += 1;
                 }
+                self.pending_items.pop();
                 self.pop_scope();
                 self.impl_stack.pop();
             }
@@ -605,7 +686,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if func.sig.generics_params.is_empty() {
                     self.functions.insert(base_name, func.clone());
                     self.functions.insert(qualified_name, func.clone());
-                    self.evaluate_function_body(func.body.as_mut());
+                    let has_const_params = func.sig.params.iter().any(|param| param.is_const);
+                    if !has_const_params {
+                        self.evaluate_function_body(func.body.as_mut());
+                    }
                 } else {
                     let generics = func
                         .sig
@@ -1747,6 +1831,48 @@ impl<'ctx> AstInterpreter<'ctx> {
         for stmt in &mut block.stmts {
             match stmt {
                 BlockStmt::Expr(expr_stmt) => {
+                    if self.in_const_region() {
+                        if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
+                            if !self.pending_stmt_splices.is_empty() {
+                                let Some(fragments) =
+                                    self.resolve_splice_fragments(splice.token.as_mut())
+                                else {
+                                    continue;
+                                };
+                                if fragments.iter().any(|fragment| {
+                                    matches!(
+                                        fragment,
+                                        QuotedFragment::Items(_) | QuotedFragment::Type(_)
+                                    )
+                                }) {
+                                    self.emit_error(
+                                        "item/type splicing is not allowed inside function bodies; move item emission to a module-level const block",
+                                    );
+                                    continue;
+                                }
+                                let mut to_append = Vec::new();
+                                for fragment in fragments {
+                                    match fragment {
+                                        QuotedFragment::Stmts(stmts) => to_append.extend(stmts),
+                                        QuotedFragment::Expr(e) => {
+                                            let mut es = expr_stmt.clone();
+                                            es.expr = e.into();
+                                            es.semicolon = Some(true);
+                                            to_append.push(BlockStmt::Expr(es));
+                                        }
+                                        QuotedFragment::Items(_) | QuotedFragment::Type(_) => {}
+                                    }
+                                }
+                                if !to_append.is_empty() {
+                                    if let Some(pending) = self.pending_stmt_splices.last_mut() {
+                                        pending.extend(to_append);
+                                    }
+                                    self.mark_mutated();
+                                }
+                                continue;
+                            }
+                        }
+                    }
                     let flow = self.eval_expr_runtime(expr_stmt.expr.as_mut());
                     match flow {
                         RuntimeFlow::Value(value) => {
@@ -2997,35 +3123,6 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     // build_quoted_fragment moved to interpreter_splicing.rs
-}
-
-fn strip_quote_only_items(items: &mut Vec<Item>) -> bool {
-    let mut changed = false;
-    items.retain(|item| {
-        let keep = !is_quote_only_item(item);
-        if !keep {
-            changed = true;
-        }
-        keep
-    });
-
-    for item in items.iter_mut() {
-        match item.kind_mut() {
-            ItemKind::Module(module) => {
-                if strip_quote_only_items(&mut module.items) {
-                    changed = true;
-                }
-            }
-            ItemKind::Impl(impl_block) => {
-                if strip_quote_only_items(&mut impl_block.items) {
-                    changed = true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    changed
 }
 
 fn is_quote_only_item(item: &Item) -> bool {

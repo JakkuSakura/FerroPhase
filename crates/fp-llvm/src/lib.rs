@@ -162,10 +162,12 @@ impl LlvmCompiler {
             self.config.allow_unresolved_globals,
         );
 
-        codegen
-            .generate_program(lir_program)
-            .with_context(|| "Failed to generate LLVM IR from LIR")
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        if let Err(err) = codegen.generate_program(lir_program) {
+            return Err(fp_core::error::Error::from(format!(
+                "LIR→LLVM codegen failed: {}",
+                err
+            )));
+        }
 
         tracing::debug!(
             "LLVM module contains {} functions and {} globals",
@@ -181,7 +183,10 @@ impl LlvmCompiler {
         // Verify the module
         llvm_ctx.verify_module().map_err(|e| {
             tracing::error!("[fp-llvm] module verification failed: {}", e);
-            fp_core::error::Error::from(e.to_string())
+            fp_core::error::Error::from(format!(
+                "LLVM module verification failed: {}",
+                e
+            ))
         })?;
 
         // Persist LLVM IR to file for downstream tools (llc/clang)

@@ -517,7 +517,13 @@ impl Parser {
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
-        let expr = self.parse_expr_bp(0)?;
+        let expr = match self.peek_non_trivia_normalized() {
+            Some("if" | "for" | "while" | "loop" | "match" | "const") => {
+                let expr = self.parse_prefix(true)?;
+                self.parse_postfix(expr, true)?
+            }
+            _ => self.parse_expr_bp(0)?,
+        };
         children.push(SyntaxElement::Node(Box::new(expr)));
         self.bump_trivia_into(&mut children);
 
@@ -996,6 +1002,9 @@ impl Parser {
                 if self.peek_non_trivia_raw() == Some(",") {
                     self.bump_token_into(&mut children);
                     self.bump_trivia_into(&mut children);
+                    if self.peek_non_trivia_raw() == Some(")") {
+                        break;
+                    }
                     continue;
                 }
                 break;

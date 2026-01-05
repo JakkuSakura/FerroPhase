@@ -1267,9 +1267,16 @@ impl HirGenerator {
             }
             ast::Ty::Vec(vec_ty) => {
                 let elem = Box::new(self.transform_type_to_hir(&vec_ty.ty)?);
+                let args = hir::GenericArgs {
+                    args: vec![hir::GenericArg::Type(elem)],
+                };
+                let path = hir::Path {
+                    segments: vec![self.make_path_segment("Vec", Some(args))],
+                    res: None,
+                };
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
-                    hir::TypeExprKind::Slice(elem),
+                    hir::TypeExprKind::Path(path),
                     Span::new(self.current_file, 0, 0),
                 ))
             }
@@ -1334,22 +1341,12 @@ impl HirGenerator {
                 Ok(expr)
             }
             ast::Ty::QuoteToken(_) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "quote token types should be removed by const-eval; substituting error type"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                } else {
-                    self.add_error(
-                        Diagnostic::error(
-                            "quote token types should be removed by const-eval".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                }
+                self.add_error(
+                    Diagnostic::error(
+                        "quote token types should be removed by const-eval".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT),
+                );
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,

@@ -851,6 +851,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Expr(expr) => {
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {
+                    if let Locator::ParameterPath(path) = loc {
+                        if let Some(segment) = path.segments.last() {
+                            if segment.ident.as_str() == "Vec" && segment.args.len() == 1 {
+                                let elem_var = self.type_from_ast_ty(&segment.args[0])?;
+                                self.bind(var, TypeTerm::Vec(elem_var));
+                                return Ok(var);
+                            }
+                        }
+                    }
                     let name = match loc {
                         Locator::ParameterPath(path) => path
                             .segments
