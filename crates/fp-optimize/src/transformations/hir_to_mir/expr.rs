@@ -3,7 +3,9 @@
 // gradually split into stmt/control_flow/types/borrow submodules.
 
 // BEGIN ORIGINAL CONTENT
-use fp_core::ast::{DecimalType, TypeBinaryOpKind, TypeInt, TypePrimitive};
+use fp_core::ast::{
+    DecimalType, TypeBinaryOpKind, TypeInt, TypePrimitive, Value, ValueList, ValueMap, ValueTuple,
+};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
@@ -14,6 +16,7 @@ use fp_core::mir::ty::{
     VariantDiscr,
 };
 use fp_core::mir::{self, Symbol};
+use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
@@ -163,6 +166,12 @@ struct ConstInfo {
     value: mir::Constant,
 }
 
+#[derive(Clone)]
+enum ConstContainerArgs {
+    List { elem_ty: Ty },
+    Map { key_ty: Ty, value_ty: Ty },
+}
+
 pub struct MirLowering {
     next_mir_id: mir::MirId,
     next_body_id: u32,
@@ -257,6 +266,24 @@ impl MirLowering {
             .max()
             .unwrap_or(0)
             .saturating_add(1);
+
+        for item in &program.items {
+            match &item.kind {
+                hir::ItemKind::Struct(def) => {
+                    self.register_struct(item.def_id, def, item.span);
+                }
+                hir::ItemKind::Enum(def) => {
+                    self.register_enum(item.def_id, def, item.span);
+                }
+                _ => {}
+            }
+        }
+
+        for item in &program.items {
+            if let hir::ItemKind::Const(const_item) = &item.kind {
+                self.register_const_value(item.def_id, const_item);
+            }
+        }
 
         for item in &program.items {
             match &item.kind {
@@ -1047,8 +1074,9 @@ impl MirLowering {
 
     fn lower_const(&mut self, def_id: hir::DefId, konst: &hir::Const) -> Result<mir::Item> {
         let ty = self.lower_type_expr(&konst.ty);
+        let container_args = self.container_args_from_type_expr(&konst.ty);
         let init_constant = self
-            .lower_literal_expr(&konst.body.value)
+            .lower_const_expr(&konst.body.value, Some(&ty), container_args.as_ref())
             .unwrap_or_else(|| self.error_constant(konst.body.value.span));
         let init = mir::Operand::Constant(init_constant.clone());
 
@@ -1710,6 +1738,44 @@ impl MirLowering {
     }
 
     fn lower_path_type(&mut self, path: &hir::Path, span: Span) -> Ty {
+        if let Some(segment) = path.segments.last() {
+            let name = segment.name.as_str();
+            if name == "Vec" || name == "List" {
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(elem_ty) = args.first().cloned() {
+                    return Ty {
+                        kind: TyKind::Slice(Box::new(elem_ty)),
+                    };
+                }
+                self.emit_error(span, "Vec/List requires a single type argument");
+                return self.error_ty();
+            }
+            if name == "HashMap" {
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if args.len() == 2 {
+                    let entry_ty = Ty {
+                        kind: TyKind::Tuple(vec![
+                            Box::new(args[0].clone()),
+                            Box::new(args[1].clone()),
+                        ]),
+                    };
+                    return Ty {
+                        kind: TyKind::Slice(Box::new(entry_ty)),
+                    };
+                }
+                self.emit_error(span, "HashMap requires two type arguments");
+                return self.error_ty();
+            }
+        }
+
         if let Some(res) = &path.res {
             if let hir::Res::Def(def_id) = res {
                 if self.struct_defs.contains_key(def_id) {
@@ -2499,7 +2565,10 @@ impl MirLowering {
         }
 
         let ty = self.lower_type_expr(&konst.ty);
-        if let Some(constant) = self.lower_literal_expr(&konst.body.value) {
+        let container_args = self.container_args_from_type_expr(&konst.ty);
+        if let Some(constant) =
+            self.lower_const_expr(&konst.body.value, Some(&ty), container_args.as_ref())
+        {
             self.const_values.insert(
                 def_id,
                 ConstInfo {
@@ -2761,7 +2830,12 @@ impl MirLowering {
         }
     }
 
-    fn lower_literal_expr(&mut self, expr: &hir::Expr) -> Option<mir::Constant> {
+    fn lower_const_expr(
+        &mut self,
+        expr: &hir::Expr,
+        expected_ty: Option<&Ty>,
+        container_args: Option<&ConstContainerArgs>,
+    ) -> Option<mir::Constant> {
         match &expr.kind {
             hir::ExprKind::Literal(lit) => Some(mir::Constant {
                 span: expr.span,
@@ -2770,18 +2844,314 @@ impl MirLowering {
             }),
             hir::ExprKind::Block(block) if block.stmts.is_empty() => {
                 if let Some(inner) = &block.expr {
-                    return self.lower_literal_expr(inner);
+                    return self.lower_const_expr(inner, expected_ty, container_args);
                 }
-                let ty = Ty {
-                    kind: TyKind::Tuple(Vec::new()),
-                };
+                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
                 Some(mir::Constant {
                     span: expr.span,
                     user_ty: None,
-                    literal: mir::ConstantKind::Val((), ty),
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Unit, ty),
+                })
+            }
+            hir::ExprKind::Array(elements) => {
+                if let Some(container_args) = container_args {
+                    return self.lower_container_const(expr.span, elements, container_args);
+                }
+                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
+                    return None;
+                };
+                let mut lowered = Vec::with_capacity(elements.len());
+                for element in elements {
+                    lowered.push(self.lower_const_value(element, Some(elem_ty.as_ref()))?);
+                }
+                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                Some(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered), ty),
+                })
+            }
+            hir::ExprKind::ArrayRepeat { elem, len } => {
+                if let Some(container_args) = container_args {
+                    return self.lower_container_repeat_const(expr.span, elem, len, container_args);
+                }
+                let repeat_len = self.eval_type_length(len)?;
+                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
+                    return None;
+                };
+                let value = self.lower_const_value(elem, Some(elem_ty.as_ref()))?;
+                let mut lowered = Vec::with_capacity(repeat_len as usize);
+                lowered.resize(repeat_len as usize, value);
+                let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
+                Some(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Val(mir::ConstValue::Array(lowered), ty),
                 })
             }
             _ => None,
+        }
+    }
+
+    fn lower_const_value(
+        &mut self,
+        expr: &hir::Expr,
+        expected_ty: Option<&Ty>,
+    ) -> Option<mir::ConstValue> {
+        match &expr.kind {
+            hir::ExprKind::Literal(lit) => Some(self.const_value_from_lit(lit)),
+            hir::ExprKind::Block(block) if block.stmts.is_empty() => {
+                if let Some(inner) = &block.expr {
+                    return self.lower_const_value(inner, expected_ty);
+                }
+                Some(mir::ConstValue::Unit)
+            }
+            hir::ExprKind::Array(elements) => {
+                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
+                    return None;
+                };
+                let mut lowered = Vec::with_capacity(elements.len());
+                for element in elements {
+                    lowered.push(self.lower_const_value(element, Some(elem_ty.as_ref()))?);
+                }
+                Some(mir::ConstValue::Array(lowered))
+            }
+            hir::ExprKind::ArrayRepeat { elem, len } => {
+                let repeat_len = self.eval_type_length(len)?;
+                let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
+                    return None;
+                };
+                let value = self.lower_const_value(elem, Some(elem_ty.as_ref()))?;
+                let mut lowered = Vec::with_capacity(repeat_len as usize);
+                lowered.resize(repeat_len as usize, value);
+                Some(mir::ConstValue::Array(lowered))
+            }
+            _ => None,
+        }
+    }
+
+    fn const_value_from_lit(&self, lit: &hir::Lit) -> mir::ConstValue {
+        match lit {
+            hir::Lit::Bool(value) => mir::ConstValue::Bool(*value),
+            hir::Lit::Integer(value) => mir::ConstValue::Int(*value),
+            hir::Lit::Float(value) => mir::ConstValue::Float(*value),
+            hir::Lit::Str(value) => mir::ConstValue::Str(value.clone()),
+            hir::Lit::Char(value) => mir::ConstValue::Int(*value as i64),
+            hir::Lit::Null => mir::ConstValue::Null,
+        }
+    }
+
+    fn lower_container_const(
+        &mut self,
+        span: Span,
+        elements: &[hir::Expr],
+        container_args: &ConstContainerArgs,
+    ) -> Option<mir::Constant> {
+        match container_args {
+            ConstContainerArgs::List { elem_ty } => {
+                let mut lowered = Vec::with_capacity(elements.len());
+                for element in elements {
+                    lowered.push(self.lower_const_value(element, Some(elem_ty))?);
+                }
+                let ty = Ty {
+                    kind: TyKind::Slice(Box::new(elem_ty.clone())),
+                };
+                Some(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Val(
+                        mir::ConstValue::List {
+                            elements: lowered,
+                            elem_ty: elem_ty.clone(),
+                        },
+                        ty,
+                    ),
+                })
+            }
+            ConstContainerArgs::Map { key_ty, value_ty } => {
+                let mut entries = Vec::with_capacity(elements.len());
+                for element in elements {
+                    let (key_expr, value_expr) = match &element.kind {
+                        hir::ExprKind::Array(pair) if pair.len() == 2 => {
+                            (&pair[0], &pair[1])
+                        }
+                        _ => {
+                            self.emit_error(
+                                span,
+                                "HashMap literal expects entries as [key, value]",
+                            );
+                            return None;
+                        }
+                    };
+                    let key = self.lower_const_value(key_expr, Some(key_ty))?;
+                    let value = self.lower_const_value(value_expr, Some(value_ty))?;
+                    entries.push((key, value));
+                }
+                let entry_ty = Ty {
+                    kind: TyKind::Tuple(vec![Box::new(key_ty.clone()), Box::new(value_ty.clone())]),
+                };
+                let ty = Ty {
+                    kind: TyKind::Slice(Box::new(entry_ty)),
+                };
+                Some(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Val(
+                        mir::ConstValue::Map {
+                            entries,
+                            key_ty: key_ty.clone(),
+                            value_ty: value_ty.clone(),
+                        },
+                        ty,
+                    ),
+                })
+            }
+        }
+    }
+
+    fn lower_container_repeat_const(
+        &mut self,
+        span: Span,
+        elem: &hir::Expr,
+        len: &hir::Expr,
+        container_args: &ConstContainerArgs,
+    ) -> Option<mir::Constant> {
+        match container_args {
+            ConstContainerArgs::List { elem_ty } => {
+                let repeat_len = self.eval_type_length(len)?;
+                let value = self.lower_const_value(elem, Some(elem_ty))?;
+                let mut elements = Vec::with_capacity(repeat_len as usize);
+                elements.resize(repeat_len as usize, value);
+                let ty = Ty {
+                    kind: TyKind::Slice(Box::new(elem_ty.clone())),
+                };
+                Some(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Val(
+                        mir::ConstValue::List {
+                            elements,
+                            elem_ty: elem_ty.clone(),
+                        },
+                        ty,
+                    ),
+                })
+            }
+            ConstContainerArgs::Map { .. } => None,
+        }
+    }
+
+    fn container_args_from_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Option<ConstContainerArgs> {
+        match &ty_expr.kind {
+            hir::TypeExprKind::Path(path) => {
+                let tail = path.segments.last()?;
+                let args = tail.args.as_ref()?;
+                match tail.name.as_str() {
+                    "Vec" if args.args.len() == 1 => {
+                        let hir::GenericArg::Type(elem) = &args.args[0] else {
+                            return None;
+                        };
+                        let elem_ty = self.lower_type_expr(elem.as_ref());
+                        Some(ConstContainerArgs::List { elem_ty })
+                    }
+                    "HashMap" if args.args.len() == 2 => {
+                        let (hir::GenericArg::Type(key), hir::GenericArg::Type(value)) =
+                            (&args.args[0], &args.args[1])
+                        else {
+                            return None;
+                        };
+                        let key_ty = self.lower_type_expr(key.as_ref());
+                        let value_ty = self.lower_type_expr(value.as_ref());
+                        Some(ConstContainerArgs::Map { key_ty, value_ty })
+                    }
+                    _ => None,
+                }
+            }
+            hir::TypeExprKind::Slice(elem) => {
+                let elem_ty = self.lower_type_expr(elem.as_ref());
+                Some(ConstContainerArgs::List { elem_ty })
+            }
+            hir::TypeExprKind::Ref(inner) => self.container_args_from_type_expr(inner.as_ref()),
+            _ => None,
+        }
+    }
+
+    fn const_len_from_constant(&self, constant: &mir::Constant) -> Option<u64> {
+        match &constant.literal {
+            mir::ConstantKind::Val(mir::ConstValue::List { elements, .. }, _) => {
+                Some(elements.len() as u64)
+            }
+            mir::ConstantKind::Val(mir::ConstValue::Map { entries, .. }, _) => {
+                Some(entries.len() as u64)
+            }
+            _ => None,
+        }
+    }
+
+    fn const_index_value(
+        &mut self,
+        span: Span,
+        constant: &mir::Constant,
+        index: &hir::Expr,
+    ) -> Option<(mir::Constant, Ty)> {
+        let key = self.lower_const_value(index, None)?;
+        match &constant.literal {
+            mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, _) => {
+                let idx = match key {
+                    mir::ConstValue::Int(value) if value >= 0 => value as usize,
+                    mir::ConstValue::UInt(value) => value as usize,
+                    _ => {
+                        self.emit_error(span, "list index must be a non-negative integer");
+                        return None;
+                    }
+                };
+                let value = elements.get(idx)?;
+                let constant = self.const_value_to_constant(span, value, elem_ty);
+                Some((constant, elem_ty.clone()))
+            }
+            mir::ConstantKind::Val(mir::ConstValue::Map { entries, key_ty: _, value_ty }, _) => {
+                let (_, value) = entries
+                    .iter()
+                    .find(|(entry_key, _)| self.const_value_matches(entry_key, &key))?;
+                let constant = self.const_value_to_constant(span, value, value_ty);
+                Some((constant, value_ty.clone()))
+            }
+            _ => None,
+        }
+    }
+
+    fn const_value_matches(&self, lhs: &mir::ConstValue, rhs: &mir::ConstValue) -> bool {
+        match (lhs, rhs) {
+            (mir::ConstValue::Int(a), mir::ConstValue::Int(b)) => a == b,
+            (mir::ConstValue::UInt(a), mir::ConstValue::UInt(b)) => a == b,
+            (mir::ConstValue::Int(a), mir::ConstValue::UInt(b)) => *a >= 0 && *a as u64 == *b,
+            (mir::ConstValue::UInt(a), mir::ConstValue::Int(b)) => *b >= 0 && *a == *b as u64,
+            (mir::ConstValue::Bool(a), mir::ConstValue::Bool(b)) => a == b,
+            (mir::ConstValue::Str(a), mir::ConstValue::Str(b)) => a == b,
+            (mir::ConstValue::Null, mir::ConstValue::Null) => true,
+            _ => lhs == rhs,
+        }
+    }
+
+    fn const_value_to_constant(
+        &self,
+        span: Span,
+        value: &mir::ConstValue,
+        ty: &Ty,
+    ) -> mir::Constant {
+        let literal = match value {
+            mir::ConstValue::Bool(value) => mir::ConstantKind::Bool(*value),
+            mir::ConstValue::Int(value) => mir::ConstantKind::Int(*value),
+            mir::ConstValue::UInt(value) => mir::ConstantKind::UInt(*value),
+            mir::ConstValue::Float(value) => mir::ConstantKind::Float(*value),
+            mir::ConstValue::Str(value) => mir::ConstantKind::Str(value.clone()),
+            mir::ConstValue::Null => mir::ConstantKind::Null,
+            _ => mir::ConstantKind::Val(value.clone(), ty.clone()),
+        };
+        mir::Constant {
+            span,
+            user_ty: None,
+            literal,
         }
     }
 
@@ -4189,6 +4559,18 @@ impl<'a> BodyBuilder<'a> {
             }
             Ok(())
         } else {
+            let expected_ty = annotated_ty
+                .cloned()
+                .or_else(|| Some(self.locals[local_id as usize].ty.clone()));
+            if let (Some(expected_ty), hir::ExprKind::Array(_) | hir::ExprKind::ArrayRepeat { .. }) =
+                (expected_ty.as_ref(), &expr.kind)
+            {
+                if self.is_list_container(expected_ty) || self.is_map_container(expected_ty) {
+                    let place = mir::Place::from_local(local_id);
+                    self.lower_expr_into_place(expr, place, expected_ty)?;
+                    return Ok(());
+                }
+            }
             let expected_ty = annotated_ty
                 .cloned()
                 .or_else(|| Some(self.locals[local_id as usize].ty.clone()));
@@ -5608,6 +5990,13 @@ impl<'a> BodyBuilder<'a> {
 
                     if let Some(const_item) = self.program.def_map.get(def_id) {
                         if let hir::ItemKind::Const(konst) = &const_item.kind {
+                            self.lowering.register_const_value(*def_id, konst);
+                            if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::Constant(const_info.value.clone()),
+                                    ty: const_info.ty.clone(),
+                                });
+                            }
                             let ty = self.lower_type_expr(&konst.ty);
                             let local_id = self.allocate_temp(ty.clone(), expr.span);
                             let place = mir::Place::from_local(local_id);
@@ -5741,6 +6130,39 @@ impl<'a> BodyBuilder<'a> {
                 })
             }
             hir::ExprKind::Index(base, index) => {
+                if let hir::ExprKind::Path(path) = &base.kind {
+                    if let Some(hir::Res::Def(def_id)) = &path.res {
+                        if let Some(const_info) =
+                            self.lowering.const_values.get(def_id).cloned()
+                        {
+                            if let Some((constant, ty)) = self
+                                .lowering
+                                .const_index_value(expr.span, &const_info.value, index)
+                            {
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::Constant(constant),
+                                    ty,
+                                });
+                            }
+                        }
+                        if let Some(konst) = self.const_items.get(def_id).cloned() {
+                            let ty = self.lowering.lower_type_expr(&konst.ty);
+                            if let Some(constant) =
+                                self.lowering.lower_const_expr(&konst.body.value, Some(&ty), None)
+                            {
+                                if let Some((constant, ty)) = self
+                                    .lowering
+                                    .const_index_value(expr.span, &constant, index)
+                                {
+                                    return Ok(OperandInfo {
+                                        operand: mir::Operand::Constant(constant),
+                                        ty,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 let base_info = self.lower_operand(base, None)?;
                 if self.is_list_container(&base_info.ty) {
                     let index_ty = Ty {
@@ -5749,6 +6171,7 @@ impl<'a> BodyBuilder<'a> {
                     let index_operand = self.lower_operand(index, Some(&index_ty))?;
                     let element_ty = expected
                         .cloned()
+                        .or_else(|| self.expect_array_element_ty(&base_info.ty))
                         .unwrap_or_else(|| self.lowering.error_ty());
                     let kind = mir::ContainerKind::List {
                         elem_ty: element_ty.clone(),
@@ -5781,7 +6204,7 @@ impl<'a> BodyBuilder<'a> {
                 }
                 if self.is_map_container(&base_info.ty) {
                     let index_operand = self.lower_operand(index, None)?;
-                    let value_ty = expected
+                    let mut value_ty = expected
                         .cloned()
                         .unwrap_or_else(|| self.lowering.error_ty());
                     let mut kind = mir::ContainerKind::Map {
@@ -5793,15 +6216,16 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(container_kind) = self.container_locals.get(&local_id) {
                             if let mir::ContainerKind::Map {
                                 key_ty,
-                                value_ty,
+                                value_ty: entry_value_ty,
                                 len,
                             } = container_kind
                             {
                                 kind = mir::ContainerKind::Map {
                                     key_ty: key_ty.clone(),
-                                    value_ty: value_ty.clone(),
+                                    value_ty: entry_value_ty.clone(),
                                     len: *len,
                                 };
+                                value_ty = entry_value_ty.clone();
                             }
                         }
                     }
@@ -6337,7 +6761,11 @@ impl<'a> BodyBuilder<'a> {
 
         let mut lowered_args = Vec::with_capacity(template.args.len());
         for arg in &template.args {
-            lowered_args.push(self.lower_operand(arg, None)?);
+            if let Some(formatted) = self.try_format_const_expr_for_printf(arg, span) {
+                lowered_args.push(formatted);
+            } else {
+                lowered_args.push(self.lower_operand(arg, None)?);
+            }
         }
 
         let mut prepared_args = Vec::with_capacity(lowered_args.len());
@@ -6561,9 +6989,152 @@ impl<'a> BodyBuilder<'a> {
                 Ok((mir::Operand::Copy(deref_place), deref_ty, spec))
             }
             _ => {
-                self.lowering
-                    .emit_error(span, "printf argument type is not supported");
+                if let Some((string_operand, string_ty)) =
+                    self.format_const_operand_for_printf(&operand, span)
+                {
+                    return Ok((string_operand, string_ty, "%s".to_string()));
+                }
+                let ty_name = self
+                    .lowering
+                    .display_type_name(&ty)
+                    .unwrap_or_else(|| format!("{:?}", ty.kind));
+                self.lowering.emit_error(
+                    span,
+                    format!("printf argument type is not supported: {}", ty_name),
+                );
                 Ok((operand, ty.clone(), "%s".to_string()))
+            }
+        }
+    }
+
+    fn format_const_operand_for_printf(
+        &mut self,
+        operand: &mir::Operand,
+        span: Span,
+    ) -> Option<(mir::Operand, Ty)> {
+        let mir::Operand::Constant(constant) = operand else {
+            return None;
+        };
+        let mir::ConstantKind::Val(value, _) = &constant.literal else {
+            return None;
+        };
+        let ast_value = self.const_value_to_ast_value(value)?;
+        let formatted = match format_value_with_spec(&ast_value, None) {
+            Ok(text) => text,
+            Err(err) => {
+                self.lowering.emit_error(
+                    span,
+                    format!("failed to format const value for printf: {}", err),
+                );
+                return None;
+            }
+        };
+        let ty = Ty {
+            kind: TyKind::RawPtr(TypeAndMut {
+                ty: Box::new(Ty {
+                    kind: TyKind::Int(IntTy::I8),
+                }),
+                mutbl: Mutability::Not,
+            }),
+        };
+        let constant = mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Str(formatted),
+        };
+        Some((mir::Operand::Constant(constant), ty))
+    }
+
+    fn try_format_const_expr_for_printf(
+        &mut self,
+        expr: &hir::Expr,
+        span: Span,
+    ) -> Option<OperandInfo> {
+        let hir::ExprKind::Path(path) = &expr.kind else {
+            return None;
+        };
+        let Some(hir::Res::Def(def_id)) = &path.res else {
+            return None;
+        };
+        let const_info = self.lowering.const_values.get(def_id)?;
+        let mir::ConstantKind::Val(value, _) = &const_info.value.literal else {
+            return None;
+        };
+        let value = value.clone();
+        if !matches!(
+            value,
+            mir::ConstValue::Array(_)
+                | mir::ConstValue::List { .. }
+                | mir::ConstValue::Map { .. }
+                | mir::ConstValue::Tuple(_)
+                | mir::ConstValue::Struct(_)
+        ) {
+            return None;
+        }
+        let ast_value = self.const_value_to_ast_value(&value)?;
+        let formatted = match format_value_with_spec(&ast_value, None) {
+            Ok(text) => text,
+            Err(err) => {
+                self.lowering.emit_error(
+                    span,
+                    format!("failed to format const value for printf: {}", err),
+                );
+                return None;
+            }
+        };
+        let ty = Ty {
+            kind: TyKind::RawPtr(TypeAndMut {
+                ty: Box::new(Ty {
+                    kind: TyKind::Int(IntTy::I8),
+                }),
+                mutbl: Mutability::Not,
+            }),
+        };
+        Some(OperandInfo::constant(
+            span,
+            ty,
+            mir::ConstantKind::Str(formatted),
+        ))
+    }
+
+    fn const_value_to_ast_value(&mut self, value: &mir::ConstValue) -> Option<Value> {
+        match value {
+            mir::ConstValue::Unit => Some(Value::unit()),
+            mir::ConstValue::Bool(value) => Some(Value::bool(*value)),
+            mir::ConstValue::Int(value) => Some(Value::int(*value)),
+            mir::ConstValue::UInt(value) => Some(Value::int(*value as i64)),
+            mir::ConstValue::Float(value) => Some(Value::decimal(*value)),
+            mir::ConstValue::Str(value) => Some(Value::string(value.clone())),
+            mir::ConstValue::Null => Some(Value::null()),
+            mir::ConstValue::Tuple(values) | mir::ConstValue::Struct(values) => {
+                let mut elements = Vec::with_capacity(values.len());
+                for element in values {
+                    elements.push(self.const_value_to_ast_value(element)?);
+                }
+                Some(Value::Tuple(ValueTuple::new(elements)))
+            }
+            mir::ConstValue::Array(values) => {
+                let mut elements = Vec::with_capacity(values.len());
+                for element in values {
+                    elements.push(self.const_value_to_ast_value(element)?);
+                }
+                Some(Value::List(ValueList::new(elements)))
+            }
+            mir::ConstValue::List { elements, .. } => {
+                let mut items = Vec::with_capacity(elements.len());
+                for element in elements {
+                    items.push(self.const_value_to_ast_value(element)?);
+                }
+                Some(Value::List(ValueList::new(items)))
+            }
+            mir::ConstValue::Map { entries, .. } => {
+                let mut items = Vec::with_capacity(entries.len());
+                for (key, value) in entries {
+                    let key_value = self.const_value_to_ast_value(key)?;
+                    let value_value = self.const_value_to_ast_value(value)?;
+                    items.push((key_value, value_value));
+                }
+                Some(Value::Map(ValueMap::from_pairs(items)))
             }
         }
     }
@@ -7605,6 +8176,31 @@ impl<'a> BodyBuilder<'a> {
                     if let hir::ExprKind::Path(path) = &receiver.kind {
                         if let Some(hir::Res::Def(def_id)) = &path.res {
                             if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                                if let Some(len) =
+                                    self.lowering.const_len_from_constant(&const_info.value)
+                                {
+                                    let len_ty = Ty {
+                                        kind: TyKind::Uint(UintTy::Usize),
+                                    };
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty = len_ty.clone();
+                                    }
+                                    let statement = mir::Statement {
+                                        source_info: expr.span,
+                                        kind: mir::StatementKind::Assign(
+                                            place,
+                                            mir::Rvalue::Use(mir::Operand::Constant(
+                                                mir::Constant {
+                                                    span: expr.span,
+                                                    user_ty: None,
+                                                    literal: mir::ConstantKind::UInt(len),
+                                                },
+                                            )),
+                                        ),
+                                    };
+                                    self.push_statement(statement);
+                                    return Ok(());
+                                }
                                 if let TyKind::Array(
                                     _,
                                     ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),
@@ -7637,6 +8233,36 @@ impl<'a> BodyBuilder<'a> {
                             }
                             if let Some(konst) = self.const_items.get(def_id).cloned() {
                                 let ty = self.lower_type_expr(&konst.ty);
+                                if let Some(constant) = self
+                                    .lowering
+                                    .lower_const_expr(&konst.body.value, Some(&ty), None)
+                                {
+                                    if let Some(len) =
+                                        self.lowering.const_len_from_constant(&constant)
+                                    {
+                                        let len_ty = Ty {
+                                            kind: TyKind::Uint(UintTy::Usize),
+                                        };
+                                        if (place.local as usize) < self.locals.len() {
+                                            self.locals[place.local as usize].ty = len_ty.clone();
+                                        }
+                                        let statement = mir::Statement {
+                                            source_info: expr.span,
+                                            kind: mir::StatementKind::Assign(
+                                                place,
+                                                mir::Rvalue::Use(mir::Operand::Constant(
+                                                    mir::Constant {
+                                                        span: expr.span,
+                                                        user_ty: None,
+                                                        literal: mir::ConstantKind::UInt(len),
+                                                    },
+                                                )),
+                                            ),
+                                        };
+                                        self.push_statement(statement);
+                                        return Ok(());
+                                    }
+                                }
                                 if let TyKind::Array(
                                     _,
                                     ConstKind::Value(ConstValue::Scalar(Scalar::Int(len))),
@@ -7897,13 +8523,51 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
 
-                let element_ty = self
-                    .expect_array_element_ty(expected_ty)
-                    .unwrap_or_else(|| {
-                        self.lowering
-                            .emit_error(expr.span, "array expression expected array type");
-                        self.lowering.error_ty()
-                    });
+                let mut element_ty = self.expect_array_element_ty(expected_ty);
+                let mut operands = Vec::with_capacity(elements.len());
+                let mut element_types = Vec::with_capacity(elements.len());
+                let mut heterogeneous = false;
+                if let Some(elem_ty) = element_ty.clone() {
+                    for element in elements {
+                        let lowered = self.lower_operand(element, Some(&elem_ty))?;
+                        if lowered.ty != elem_ty {
+                            heterogeneous = true;
+                        }
+                        element_types.push(lowered.ty.clone());
+                        operands.push(lowered.operand);
+                    }
+                } else {
+                    for element in elements {
+                        let lowered = self.lower_operand(element, None)?;
+                        if element_ty.is_none() {
+                            element_ty = Some(lowered.ty.clone());
+                        } else if let Some(existing) = element_ty.as_ref() {
+                            if &lowered.ty != existing {
+                                heterogeneous = true;
+                            }
+                        }
+                        element_types.push(lowered.ty.clone());
+                        operands.push(lowered.operand);
+                    }
+                }
+
+                let expected_is_array = matches!(&expected_ty.kind, TyKind::Array(_, _))
+                    || matches!(
+                        &expected_ty.kind,
+                        TyKind::Ref(_, inner, _) if matches!(inner.kind, TyKind::Array(_, _))
+                    );
+                if heterogeneous && expected_is_array {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "array literal elements have mismatched types",
+                    );
+                }
+
+                let element_ty = element_ty.unwrap_or_else(|| {
+                    self.lowering
+                        .emit_error(expr.span, "array expression expected array type");
+                    self.lowering.error_ty()
+                });
 
                 let expected_is_slice = matches!(&expected_ty.kind, TyKind::Slice(_))
                     || matches!(
@@ -7911,7 +8575,9 @@ impl<'a> BodyBuilder<'a> {
                         TyKind::Ref(_, inner, _)
                             if matches!(inner.kind, TyKind::Slice(_))
                     );
-                if expected_is_slice && place.projection.is_empty() {
+                if (expected_is_slice || matches!(expected_ty.kind, TyKind::Error(_)))
+                    && place.projection.is_empty()
+                {
                     let array_ty = Ty {
                         kind: TyKind::Array(
                             Box::new(element_ty.clone()),
@@ -7926,20 +8592,27 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                let mut operands = Vec::with_capacity(elements.len());
-                for element in elements {
-                    let lowered = self.lower_operand(element, Some(&element_ty))?;
-                    operands.push(lowered.operand);
-                }
+                let aggregate_kind = if heterogeneous && !expected_is_array {
+                    if place.projection.is_empty() {
+                        let tuple_ty = Ty {
+                            kind: TyKind::Tuple(
+                                element_types.into_iter().map(Box::new).collect(),
+                            ),
+                        };
+                        if let Some(local) = self.locals.get_mut(place.local as usize) {
+                            local.ty = tuple_ty;
+                        }
+                    }
+                    mir::AggregateKind::Tuple
+                } else {
+                    mir::AggregateKind::Array(element_ty.clone())
+                };
 
                 let statement = mir::Statement {
                     source_info: expr.span,
                     kind: mir::StatementKind::Assign(
                         place.clone(),
-                        mir::Rvalue::Aggregate(
-                            mir::AggregateKind::Array(element_ty.clone()),
-                            operands,
-                        ),
+                        mir::Rvalue::Aggregate(aggregate_kind, operands),
                     ),
                 };
                 self.push_statement(statement);
@@ -8066,6 +8739,9 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn is_list_container(&self, ty: &Ty) -> bool {
+        if matches!(ty.kind, TyKind::Slice(_)) {
+            return true;
+        }
         self.container_type_name(ty)
             .map(|name| {
                 let tail = name.split("::").last().unwrap_or(name.as_str());

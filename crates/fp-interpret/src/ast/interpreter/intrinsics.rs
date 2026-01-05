@@ -95,6 +95,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 | IntrinsicCallKind::HasField
                 | IntrinsicCallKind::HasMethod
                 | IntrinsicCallKind::MethodCount
+                | IntrinsicCallKind::ReflectFields
                 | IntrinsicCallKind::ConstBlock
         )
     }

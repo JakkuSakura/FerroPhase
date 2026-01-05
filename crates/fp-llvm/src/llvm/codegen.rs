@@ -9,7 +9,9 @@ use fp_core::tracing::debug;
 use inkwell::builder::BuilderError;
 use inkwell::llvm_sys::core::LLVMConstArray2;
 use inkwell::llvm_sys::LLVMCallConv;
-use inkwell::types::{AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType};
+use inkwell::types::{
+    AnyTypeEnum, AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType,
+};
 use inkwell::values::{
     AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum,
     FloatValue, FunctionValue, IntValue, PointerValue, ValueKind,
@@ -125,7 +127,17 @@ impl<'a> LirCodegen<'a> {
             );
         }
 
-        // Generate globals first.
+        // Predeclare globals so constant initializers can reference later globals.
+        for global in &globals {
+            self.declare_global(global).map_err(|err| {
+                self.attach_context(
+                    err,
+                    format!("while declaring global '{}'", global.name),
+                )
+            })?;
+        }
+
+        // Populate global initializers.
         for (i, global) in globals.into_iter().enumerate() {
             debug!(
                 "LLVM: Processing global {} of {}: {:?}",
@@ -134,7 +146,7 @@ impl<'a> LirCodegen<'a> {
                 global.name
             );
             let global_name = global.name.clone();
-            self.generate_global(global).map_err(|err| {
+            self.define_global_initializer(global).map_err(|err| {
                 self.attach_context(
                     err,
                     format!("while generating global '{}' (index {})", global_name, i),
@@ -166,25 +178,44 @@ impl<'a> LirCodegen<'a> {
         Ok(())
     }
 
-    fn generate_global(&mut self, global: lir::LirGlobal) -> Result<()> {
+    fn declare_global(&mut self, global: &lir::LirGlobal) -> Result<()> {
         let llvm_name = self.llvm_symbol_for(&global.name);
+        if self.llvm_ctx.module.get_global(&llvm_name).is_some() {
+            return Ok(());
+        }
         let global_ty = self.llvm_basic_type(&global.ty)?;
         let gvar = self
             .llvm_ctx
             .module
             .add_global(global_ty, Some(AddressSpace::default()), &llvm_name);
 
-        let linkage = self.convert_linkage(global.linkage);
+        let linkage = self.convert_linkage(global.linkage.clone());
         gvar.set_linkage(linkage);
         let visibility = if matches!(linkage, inkwell::module::Linkage::Internal) {
             GlobalVisibility::Default
         } else {
-            self.convert_visibility(global.visibility)
+            self.convert_visibility(global.visibility.clone())
         };
         gvar.set_visibility(visibility);
         gvar.set_constant(global.is_constant);
         gvar.set_alignment(global.alignment.unwrap_or(0));
         gvar.set_section(global.section.as_deref());
+
+        Ok(())
+    }
+
+    fn define_global_initializer(&mut self, global: lir::LirGlobal) -> Result<()> {
+        let llvm_name = self.llvm_symbol_for(&global.name);
+        let gvar = self
+            .llvm_ctx
+            .module
+            .get_global(&llvm_name)
+            .ok_or_else(|| {
+                report_error_with_context(
+                    LOG_AREA,
+                    format!("Global '{}' was not declared", llvm_name),
+                )
+            })?;
 
         if let Some(init) = global.initializer {
             let value = self.convert_lir_constant_to_value(init)?;
@@ -262,17 +293,21 @@ impl<'a> LirCodegen<'a> {
     }
 
     fn generate_basic_block(&mut self, lir_block: lir::LirBasicBlock) -> Result<()> {
-        let bb = self.block_map.get(&lir_block.id).ok_or_else(|| {
+        let bb = *self.block_map.get(&lir_block.id).ok_or_else(|| {
             report_error_with_context(
                 LOG_AREA,
                 format!("Missing basic block for id {}", lir_block.id),
             )
         })?;
 
-        self.llvm_ctx.builder.position_at_end(*bb);
+        self.llvm_ctx.builder.position_at_end(bb);
 
         for instruction in lir_block.instructions.into_iter() {
+            let is_unreachable = matches!(instruction.kind, lir::LirInstructionKind::Unreachable);
             self.generate_instruction(instruction)?;
+            if is_unreachable {
+                return Ok(());
+            }
         }
 
         self.generate_terminator(lir_block.terminator)?;
@@ -1316,6 +1351,49 @@ impl<'a> LirCodegen<'a> {
                 };
                 Ok(array_value.into())
             }
+            lir::LirConstant::GlobalRef(name, ty, indices) => {
+                let llvm_name = self.llvm_symbol_for(&name);
+                let global = self
+                    .llvm_ctx
+                    .module
+                    .get_global(&llvm_name)
+                    .ok_or_else(|| {
+                        report_error_with_context(
+                            LOG_AREA,
+                            format!("Unknown global referenced in constant: {}", name),
+                        )
+                    })?;
+                let mut ptr = global.as_pointer_value();
+                if !indices.is_empty() {
+                    let mut idx_values: Vec<_> = Vec::with_capacity(indices.len());
+                    for idx in indices {
+                        let idx_val = self.llvm_ctx.i32_type().const_int(idx as u64, false);
+                        idx_values.push(idx_val);
+                    }
+                    let elem_ty = match global.get_value_type() {
+                        AnyTypeEnum::ArrayType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::FloatType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::IntType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::PointerType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::StructType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::VectorType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::ScalableVectorType(ty) => ty.as_basic_type_enum(),
+                        AnyTypeEnum::FunctionType(_) | AnyTypeEnum::VoidType(_) => {
+                            return Err(report_error_with_context(
+                                LOG_AREA,
+                                "global reference GEP expects a basic value type".to_string(),
+                            ))
+                        }
+                    };
+                    let gep = unsafe { ptr.const_gep(elem_ty, &idx_values) };
+                    ptr = gep;
+                }
+                let target_ptr_ty = match self.llvm_basic_type(&ty)? {
+                    BasicTypeEnum::PointerType(ptr_ty) => ptr_ty,
+                    _other => self.llvm_ctx.context.ptr_type(inkwell::AddressSpace::default()),
+                };
+                Ok(ptr.const_cast(target_ptr_ty).into())
+            }
             lir::LirConstant::Null(ty) => {
                 let llvm_ty = self.llvm_basic_type(&ty)?;
                 Ok(llvm_ty.const_zero())
@@ -1339,11 +1417,13 @@ impl<'a> LirCodegen<'a> {
         let name = format!(".str.{}.{}", self.symbol_prefix, self.next_string_id);
         self.next_string_id += 1;
 
+        let const_str = self.llvm_ctx.context.const_string(value.as_bytes(), true);
         let global = self
             .llvm_ctx
-            .builder
-            .build_global_string_ptr(value, &name)
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            .module
+            .add_global(const_str.get_type(), Some(AddressSpace::default()), &name);
+        global.set_initializer(&const_str);
+        global.set_constant(true);
         let ptr = global.as_pointer_value();
         self.string_globals.insert(value.to_string(), ptr);
         Ok(ptr)
@@ -1383,6 +1463,7 @@ impl<'a> LirCodegen<'a> {
                 lir::LirType::Array(Box::new(elem_ty.clone()), elements.len() as u64)
             }
             lir::LirConstant::Struct(_, ty) => ty.clone(),
+            lir::LirConstant::GlobalRef(_, ty, _) => ty.clone(),
             lir::LirConstant::Null(ty) => ty.clone(),
             lir::LirConstant::Undef(ty) => ty.clone(),
         }

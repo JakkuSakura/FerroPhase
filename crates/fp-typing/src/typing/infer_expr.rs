@@ -237,40 +237,64 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 tuple_var
             }
             ExprKind::Array(array) => {
-                let mut iter = array.values.iter_mut();
-                let elem_var = if let Some(first) = iter.next() {
-                    let first_var = self.infer_expr(first)?;
-                    for value in iter {
+                if let Some(Ty::Vec(vec_ty)) = existing_ty.as_ref() {
+                    let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
+                    for value in &mut array.values {
                         let next = self.infer_expr(value)?;
-                        self.unify(first_var, next)?;
+                        self.unify(elem_var, next)?;
                     }
-                    first_var
+                    let vec_var = self.fresh_type_var();
+                    self.bind(vec_var, TypeTerm::Vec(elem_var));
+                    let vec_ty = self.resolve_to_ty(vec_var)?;
+                    expr.set_ty(vec_ty);
+                    vec_var
                 } else {
-                    self.fresh_type_var()
-                };
-                let len_expr = Expr::value(Value::int(array.values.len() as i64)).into();
-                let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Array(elem_var, Some(len_expr)));
-                let array_ty = self.resolve_to_ty(array_var)?;
-                expr.set_ty(array_ty);
-                array_var
+                    let mut iter = array.values.iter_mut();
+                    let elem_var = if let Some(first) = iter.next() {
+                        let first_var = self.infer_expr(first)?;
+                        for value in iter {
+                            let next = self.infer_expr(value)?;
+                            self.unify(first_var, next)?;
+                        }
+                        first_var
+                    } else {
+                        self.fresh_type_var()
+                    };
+                    let len_expr = Expr::value(Value::int(array.values.len() as i64)).into();
+                    let array_var = self.fresh_type_var();
+                    self.bind(array_var, TypeTerm::Array(elem_var, Some(len_expr)));
+                    let array_ty = self.resolve_to_ty(array_var)?;
+                    expr.set_ty(array_ty);
+                    array_var
+                }
             }
             ExprKind::ArrayRepeat(array_repeat) => {
-                let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
-                let len_var = self.infer_expr(array_repeat.len.as_mut())?;
-                let expected_len = self.fresh_type_var();
-                self.bind(
-                    expected_len,
-                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
-                );
-                self.unify(len_var, expected_len)?;
+                if let Some(Ty::Vec(vec_ty)) = existing_ty.as_ref() {
+                    let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
+                    let value_var = self.infer_expr(array_repeat.elem.as_mut())?;
+                    self.unify(elem_var, value_var)?;
+                    let vec_var = self.fresh_type_var();
+                    self.bind(vec_var, TypeTerm::Vec(elem_var));
+                    let vec_ty = self.resolve_to_ty(vec_var)?;
+                    expr.set_ty(vec_ty);
+                    vec_var
+                } else {
+                    let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
+                    let len_var = self.infer_expr(array_repeat.len.as_mut())?;
+                    let expected_len = self.fresh_type_var();
+                    self.bind(
+                        expected_len,
+                        TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                    );
+                    self.unify(len_var, expected_len)?;
 
-                let length_expr = array_repeat.len.as_ref().get();
-                let array_var = self.fresh_type_var();
-                self.bind(array_var, TypeTerm::Array(elem_var, Some(length_expr.into())));
-                let array_ty = self.resolve_to_ty(array_var)?;
-                expr.set_ty(array_ty);
-                array_var
+                    let length_expr = array_repeat.len.as_ref().get();
+                    let array_var = self.fresh_type_var();
+                    self.bind(array_var, TypeTerm::Array(elem_var, Some(length_expr.into())));
+                    let array_ty = self.resolve_to_ty(array_var)?;
+                    expr.set_ty(array_ty);
+                    array_var
+                }
             }
             ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
             ExprKind::FormatString(_) => {

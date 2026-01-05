@@ -11,7 +11,7 @@ use fp_core::ast::{
     PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
     QuoteFragmentKind, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind,
     TypeBounds, TypeFunction, TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple,
-    Value, ValueNone,
+    TypeVec, Value, ValueNone,
     ValueString,
 };
 use fp_core::cst::CstCategory;
@@ -1316,6 +1316,12 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
             kind,
             inner: None,
         })));
+    }
+
+    if segments.last().map(|seg| seg.as_str()) == Some("Vec") && args.len() == 1 {
+        return Ok(Ty::Vec(TypeVec {
+            ty: Box::new(args[0].clone()),
+        }));
     }
 
     if !saw_generic_start || args.is_empty() {
