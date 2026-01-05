@@ -2877,6 +2877,10 @@ impl CaptureCollector {
 fn collect_pattern_idents(pat: &ast::Pattern, out: &mut Vec<String>) {
     match pat.kind() {
         ast::PatternKind::Ident(ident) => out.push(ident.ident.name.as_str().to_string()),
+        ast::PatternKind::Bind(bind) => {
+            out.push(bind.ident.ident.name.as_str().to_string());
+            collect_pattern_idents(&bind.pattern, out);
+        }
         ast::PatternKind::Tuple(pat_tuple) => {
             for pat in &pat_tuple.patterns {
                 collect_pattern_idents(pat, out);

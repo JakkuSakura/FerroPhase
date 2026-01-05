@@ -233,6 +233,11 @@ impl RustPrinter {
     pub fn print_pattern(&self, pat: &Pattern) -> Result<TokenStream> {
         match pat.kind() {
             PatternKind::Ident(ident) => self.print_pat_ident(ident),
+            PatternKind::Bind(bind) => {
+                let name = self.print_pat_ident(&bind.ident)?;
+                let inner = self.print_pattern(&bind.pattern)?;
+                Ok(quote!(#name @ #inner))
+            }
             PatternKind::Tuple(tuple) => {
                 let elems: Vec<_> = tuple
                     .patterns
@@ -329,6 +334,7 @@ impl RustPrinter {
                 let ty_tokens = self.print_type(&pattern_type.ty)?;
                 Ok(quote!(#pat_tokens: #ty_tokens))
             }
+            PatternKind::Quote(_) => Ok(quote!(_)),
             PatternKind::Wildcard(_) => Ok(quote!(_)),
         }
     }

@@ -7,12 +7,11 @@ use fp_core::ast::{
     ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect,
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
     ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
-    Path, Pattern, PatternIdent, PatternKind, PatternStruct, PatternStructField, PatternStructural,
-    PatternTuple, PatternTupleStruct, PatternType, PatternVariant, PatternWildcard,
-    QuoteFragmentKind, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind,
-    TypeBounds, TypeFunction, TypeQuoteToken, TypeReference, TypeSlice, TypeStructural, TypeTuple,
-    TypeVec, Value, ValueNone,
-    ValueString,
+    Path, Pattern, PatternBind, PatternIdent, PatternKind, PatternQuote, PatternStruct,
+    PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
+    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
+    Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuoteToken,
+    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -59,12 +58,67 @@ fn quote_kind_from_cst(node: &SyntaxNode) -> Result<Option<QuoteFragmentKind>, L
             "stmt" => QuoteFragmentKind::Stmt,
             "item" => QuoteFragmentKind::Item,
             "type" => QuoteFragmentKind::Type,
+            "fn" | "struct" | "enum" | "trait" | "impl" | "const" | "static" | "mod" | "use"
+            | "macro" => QuoteFragmentKind::Item,
             _ => return Err(LowerError::UnexpectedNode(node.kind)),
         };
         return Ok(Some(kind));
     }
 
     Ok(None)
+}
+
+fn quote_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError> {
+    let mut tokens = Vec::new();
+    crate::syntax::collect_tokens(node, &mut tokens);
+    let mut iter = tokens.iter().filter(|t| !t.is_trivia());
+
+    while let Some(tok) = iter.next() {
+        if tok.text != "quote" {
+            continue;
+        }
+        let Some(next) = iter.next() else {
+            return Ok(PatternQuote {
+                fragment: QuoteFragmentKind::Item,
+                item: None,
+            });
+        };
+        if next.text != "<" {
+            return Ok(PatternQuote {
+                fragment: QuoteFragmentKind::Item,
+                item: None,
+            });
+        }
+        let Some(kind_tok) = iter.next() else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        let Some(close_tok) = iter.next() else {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        };
+        if close_tok.text != ">" {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        }
+        let (fragment, item) = match kind_tok.text.as_str() {
+            "expr" => (QuoteFragmentKind::Expr, None),
+            "stmt" => (QuoteFragmentKind::Stmt, None),
+            "item" => (QuoteFragmentKind::Item, None),
+            "type" => (QuoteFragmentKind::Type, None),
+            "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function)),
+            "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct)),
+            "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum)),
+            "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait)),
+            "impl" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Impl)),
+            "const" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Const)),
+            "static" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Static)),
+            "mod" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Module)),
+            "use" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Use)),
+            "macro" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Macro)),
+            _ => return Err(LowerError::UnexpectedNode(node.kind)),
+        };
+        return Ok(PatternQuote { fragment, item });
+    }
+
+    Err(LowerError::UnexpectedNode(node.kind))
 }
 
 pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
@@ -163,6 +217,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let kind = quote_kind_from_cst(node)?;
             Ok(ExprKind::Quote(ExprQuote { block, kind }).into())
         }
+        SyntaxKind::ExprQuoteToken => Err(LowerError::UnexpectedNode(SyntaxKind::ExprQuoteToken)),
         SyntaxKind::ExprSplice => {
             let token_expr = last_child_expr(node)?;
             let expr = lower_expr_from_cst(token_expr)?;
@@ -1033,6 +1088,28 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::new(PatternKind::Tuple(PatternTuple { patterns })))
         }
+        SyntaxKind::ExprBinary => {
+            let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
+            if op == "@" {
+                let lhs = first_child_expr(node)?;
+                let rhs = last_child_expr(node)?;
+                let name = match lhs.kind {
+                    SyntaxKind::ExprName => direct_first_non_trivia_token_text(lhs)
+                        .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?,
+                    _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprBinary)),
+                };
+                let pattern = lower_match_pattern_from_cst(rhs)?;
+                return Ok(Pattern::new(PatternKind::Bind(PatternBind {
+                    ident: PatternIdent::new(Ident::new(name)),
+                    pattern: Box::new(pattern),
+                })));
+            }
+            Err(LowerError::UnexpectedNode(SyntaxKind::ExprBinary))
+        }
+        SyntaxKind::ExprQuoteToken => {
+            let quote = quote_pattern_from_cst(node)?;
+            Ok(Pattern::new(PatternKind::Quote(quote)))
+        }
         other => Err(LowerError::UnexpectedNode(other)),
     }
 }
@@ -1269,6 +1346,16 @@ fn quote_kind_from_type_arg(arg: &Ty) -> Option<QuoteFragmentKind> {
         Some("stmt") => Some(QuoteFragmentKind::Stmt),
         Some("item") => Some(QuoteFragmentKind::Item),
         Some("type") => Some(QuoteFragmentKind::Type),
+        Some("fn")
+        | Some("struct")
+        | Some("enum")
+        | Some("trait")
+        | Some("impl")
+        | Some("const")
+        | Some("static")
+        | Some("mod")
+        | Some("use")
+        | Some("macro") => Some(QuoteFragmentKind::Item),
         _ => None,
     }
 }

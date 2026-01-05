@@ -1132,6 +1132,15 @@ fn summarize_value(value: &ast::Value) -> String {
                 .join(", ");
             format!("({})", inner)
         }
+        ast::Value::QuoteToken(token) => {
+            let kind = match token.kind {
+                ast::QuoteFragmentKind::Expr => "expr",
+                ast::QuoteFragmentKind::Stmt => "stmt",
+                ast::QuoteFragmentKind::Item => "item",
+                ast::QuoteFragmentKind::Type => "type",
+            };
+            format!("quote<{}>", kind)
+        }
         ast::Value::Expr(expr) => format!("expr({})", render_expr_inline(expr)),
         ast::Value::BinOpKind(kind) => format!("operator {}", kind),
         ast::Value::UnOpKind(kind) => format!("operator {}", kind),
@@ -1345,6 +1354,35 @@ fn render_pattern(pattern: &Pattern) -> String {
                 out.push(')');
             }
             out
+        }
+        PatternKind::Bind(bind) => {
+            format!(
+                "{} @ {}",
+                render_pattern(&Pattern::from(PatternKind::Ident(bind.ident.clone()))),
+                render_pattern(&bind.pattern)
+            )
+        }
+        PatternKind::Quote(quote) => {
+            let kind = match quote.fragment {
+                ast::QuoteFragmentKind::Expr => "expr",
+                ast::QuoteFragmentKind::Stmt => "stmt",
+                ast::QuoteFragmentKind::Item => match quote.item {
+                    Some(ast::QuoteItemKind::Function) => "fn",
+                    Some(ast::QuoteItemKind::Struct) => "struct",
+                    Some(ast::QuoteItemKind::Enum) => "enum",
+                    Some(ast::QuoteItemKind::Trait) => "trait",
+                    Some(ast::QuoteItemKind::Impl) => "impl",
+                    Some(ast::QuoteItemKind::Type) => "type",
+                    Some(ast::QuoteItemKind::Const) => "const",
+                    Some(ast::QuoteItemKind::Static) => "static",
+                    Some(ast::QuoteItemKind::Module) => "mod",
+                    Some(ast::QuoteItemKind::Use) => "use",
+                    Some(ast::QuoteItemKind::Macro) => "macro",
+                    None => "item",
+                },
+                ast::QuoteFragmentKind::Type => "type",
+            };
+            format!("quote<{}>", kind)
         }
         PatternKind::Type(typed) => {
             format!(

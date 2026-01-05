@@ -130,6 +130,23 @@ common_enum! {
     }
 }
 
+common_enum! {
+    #[derive(Copy)]
+    pub enum QuoteItemKind {
+        Function,
+        Struct,
+        Enum,
+        Trait,
+        Impl,
+        Type,
+        Const,
+        Static,
+        Module,
+        Use,
+        Macro,
+    }
+}
+
 common_struct! {
     /// Quote expression: captures a block of code as a compile-time token.
     ///

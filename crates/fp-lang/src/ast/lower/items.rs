@@ -1,13 +1,13 @@
 use crate::ast::lower::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    EnumTypeVariant, Expr, ExprKind, FunctionParam, FunctionParamReceiver,
-    FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
-    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
-    ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
-    QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuoteToken, TypeStruct,
-    Value, Visibility, ExprUnOp,
+    AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, FunctionParam,
+    FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item, ItemDeclConst,
+    ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic,
+    ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
+    ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter,
+    MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum,
+    TypeQuoteToken, TypeStruct, Value, Visibility, ExprUnOp,
 };
 use fp_core::ops::UnOpKind;
 use fp_core::cst::CstCategory;
@@ -402,9 +402,55 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
             .unwrap_or_else(|| Ident::new("<anon>".to_string())),
         body.into(),
     );
+    def.attrs = lower_outer_attrs(node);
     def.visibility = visibility;
     def.sig = sig;
     Ok(def)
+}
+
+fn lower_outer_attrs(node: &SyntaxNode) -> Vec<Attribute> {
+    node.children
+        .iter()
+        .filter_map(|child| match child {
+            SyntaxElement::Node(attr) if attr.kind == SyntaxKind::AttrOuter => {
+                lower_attr(attr.as_ref())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
+    let mut tokens = Vec::new();
+    crate::syntax::collect_tokens(node, &mut tokens);
+    let mut in_brackets = false;
+    let mut segments = Vec::new();
+    for tok in tokens.iter().filter(|t| !t.is_trivia()) {
+        match tok.text.as_str() {
+            "[" => {
+                in_brackets = true;
+            }
+            "]" => break,
+            _ if !in_brackets => continue,
+            "::" => continue,
+            text => {
+                if text
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+                {
+                    segments.push(Ident::new(text.to_string()));
+                }
+            }
+        }
+    }
+    if segments.is_empty() {
+        return None;
+    }
+    Some(Attribute {
+        style: AttrStyle::Outer,
+        meta: AttrMeta::Path(Path::new(segments)),
+    })
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {

@@ -1,38 +1,25 @@
 use super::*;
-use fp_core::ast::{ExprQuote, QuoteFragmentKind};
+use fp_core::ast::{QuoteFragmentKind, QuoteTokenValue, ValueQuoteToken};
 
 impl<'ctx> AstInterpreter<'ctx> {
-    fn quote_token_from_fragment(&mut self, fragment: QuotedFragment) -> Value {
+    pub(super) fn quote_token_from_fragment(&mut self, fragment: QuotedFragment) -> Value {
         match fragment {
-            QuotedFragment::Expr(expr) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
-                ExprQuote {
-                    block: expr.into_block(),
-                    kind: Some(QuoteFragmentKind::Expr),
-                },
-            )))),
-            QuotedFragment::Stmts(stmts) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
-                ExprQuote {
-                    block: ExprBlock::new_stmts(stmts),
-                    kind: Some(QuoteFragmentKind::Stmt),
-                },
-            )))),
-            QuotedFragment::Items(items) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
-                ExprQuote {
-                    block: ExprBlock::new_stmts(
-                        items
-                            .into_iter()
-                            .map(|item| BlockStmt::Item(Box::new(item)))
-                            .collect(),
-                    ),
-                    kind: Some(QuoteFragmentKind::Item),
-                },
-            )))),
-            QuotedFragment::Type(ty) => Value::Expr(Box::new(Expr::new(ExprKind::Quote(
-                ExprQuote {
-                    block: ExprBlock::new_expr(Expr::value(Value::Type(ty))),
-                    kind: Some(QuoteFragmentKind::Type),
-                },
-            )))),
+            QuotedFragment::Expr(expr) => Value::QuoteToken(ValueQuoteToken {
+                kind: QuoteFragmentKind::Expr,
+                value: QuoteTokenValue::Expr(expr),
+            }),
+            QuotedFragment::Stmts(stmts) => Value::QuoteToken(ValueQuoteToken {
+                kind: QuoteFragmentKind::Stmt,
+                value: QuoteTokenValue::Stmts(stmts),
+            }),
+            QuotedFragment::Items(items) => Value::QuoteToken(ValueQuoteToken {
+                kind: QuoteFragmentKind::Item,
+                value: QuoteTokenValue::Items(items),
+            }),
+            QuotedFragment::Type(ty) => Value::QuoteToken(ValueQuoteToken {
+                kind: QuoteFragmentKind::Type,
+                value: QuoteTokenValue::Type(ty),
+            }),
         }
     }
 
@@ -472,6 +459,12 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn fragment_from_value(&mut self, value: Value) -> Option<QuotedFragment> {
         match value {
+            Value::QuoteToken(token) => match token.value {
+                QuoteTokenValue::Expr(expr) => Some(QuotedFragment::Expr(expr)),
+                QuoteTokenValue::Stmts(stmts) => Some(QuotedFragment::Stmts(stmts)),
+                QuoteTokenValue::Items(items) => Some(QuotedFragment::Items(items)),
+                QuoteTokenValue::Type(ty) => Some(QuotedFragment::Type(ty)),
+            },
             Value::Expr(expr) => self.fragment_from_expr(&expr),
             _ => None,
         }

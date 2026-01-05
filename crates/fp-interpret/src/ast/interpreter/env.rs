@@ -1,5 +1,5 @@
 use super::*;
-use fp_core::ast::PatternKind;
+use fp_core::ast::{ItemKind, PatternKind, PatternQuote, QuoteItemKind, QuoteTokenValue};
 use std::sync::{Arc, Mutex};
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -62,6 +62,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.insert_value(ident.ident.as_str(), value);
                 }
             }
+            PatternKind::Bind(bind) => {
+                self.insert_value(bind.ident.ident.as_str(), value.clone());
+                self.bind_pattern(&bind.pattern, value);
+            }
             PatternKind::Type(inner) => self.bind_pattern(&inner.pat, value),
             PatternKind::Tuple(tuple) => {
                 if let Value::Tuple(items) = value {
@@ -83,6 +87,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.bind_pattern(pattern, value.clone());
                 true
             }
+            PatternKind::Bind(bind) => {
+                if self.pattern_matches(&bind.pattern, value) {
+                    self.insert_value(bind.ident.ident.as_str(), value.clone());
+                    true
+                } else {
+                    false
+                }
+            }
+            PatternKind::Quote(quote) => self.quote_pattern_matches(quote, value),
             PatternKind::Type(inner) => self.pattern_matches(&inner.pat, value),
             PatternKind::Tuple(tuple) => match value {
                 Value::Tuple(items) if items.values.len() == tuple.patterns.len() => tuple
@@ -188,6 +201,43 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }),
                 _ => false,
             },
+            _ => false,
+        }
+    }
+
+    fn quote_pattern_matches(&mut self, quote: &PatternQuote, value: &Value) -> bool {
+        let Value::QuoteToken(token) = value else {
+            return false;
+        };
+        if token.kind != quote.fragment {
+            return false;
+        }
+        let Some(expected_item) = quote.item else {
+            return true;
+        };
+        let QuoteTokenValue::Items(items) = &token.value else {
+            return false;
+        };
+        if items.len() != 1 {
+            return false;
+        }
+        match items[0].kind() {
+            ItemKind::DefFunction(_) => matches!(expected_item, QuoteItemKind::Function),
+            ItemKind::DefStruct(_) => matches!(expected_item, QuoteItemKind::Struct),
+            ItemKind::DefStructural(_) => matches!(expected_item, QuoteItemKind::Struct),
+            ItemKind::DefEnum(_) => matches!(expected_item, QuoteItemKind::Enum),
+            ItemKind::DefTrait(_) => matches!(expected_item, QuoteItemKind::Trait),
+            ItemKind::Impl(_) => matches!(expected_item, QuoteItemKind::Impl),
+            ItemKind::DefType(_) => matches!(expected_item, QuoteItemKind::Type),
+            ItemKind::DefConst(_) | ItemKind::DeclConst(_) => {
+                matches!(expected_item, QuoteItemKind::Const)
+            }
+            ItemKind::DefStatic(_) | ItemKind::DeclStatic(_) => {
+                matches!(expected_item, QuoteItemKind::Static)
+            }
+            ItemKind::Module(_) => matches!(expected_item, QuoteItemKind::Module),
+            ItemKind::Import(_) => matches!(expected_item, QuoteItemKind::Use),
+            ItemKind::Macro(_) => matches!(expected_item, QuoteItemKind::Macro),
             _ => false,
         }
     }

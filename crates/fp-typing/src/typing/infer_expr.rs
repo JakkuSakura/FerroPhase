@@ -1247,6 +1247,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let ty_var = self.type_from_ast_ty(ty)?;
                 self.unify(var, ty_var)?;
             }
+            Value::QuoteToken(token) => {
+                let quote_ty = Ty::QuoteToken(Box::new(TypeQuoteToken {
+                    kind: token.kind,
+                    inner: None,
+                }));
+                let quote_var = self.type_from_ast_ty(&quote_ty)?;
+                self.unify(var, quote_var)?;
+            }
             Value::Expr(_) => {
                 let message = "embedded expression values are not yet supported".to_string();
                 self.emit_error(message.clone());
@@ -1269,11 +1277,30 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.insert_env(ident.ident.as_str().to_string(), EnvEntry::Mono(var));
                 PatternInfo::new(var).with_binding(ident.ident.as_str().to_string(), var)
             }
+            PatternKind::Bind(bind) => {
+                let inner_info = self.infer_pattern(bind.pattern.as_mut())?;
+                let var = inner_info.var;
+                self.insert_env(bind.ident.ident.as_str().to_string(), EnvEntry::Mono(var));
+                let mut info = inner_info;
+                info.bindings.push(PatternBinding {
+                    name: bind.ident.ident.as_str().to_string(),
+                    var,
+                });
+                info
+            }
             PatternKind::Type(inner) => {
                 let inner_info = self.infer_pattern(inner.pat.as_mut())?;
                 let annot_var = self.type_from_ast_ty(&inner.ty)?;
                 self.unify(inner_info.var, annot_var)?;
                 inner_info
+            }
+            PatternKind::Quote(quote) => {
+                let quote_ty = Ty::QuoteToken(Box::new(TypeQuoteToken {
+                    kind: quote.fragment,
+                    inner: None,
+                }));
+                let var = self.type_from_ast_ty(&quote_ty)?;
+                PatternInfo::new(var)
             }
             PatternKind::Wildcard(_) => PatternInfo::new(self.fresh_type_var()),
             PatternKind::Tuple(tuple) => {

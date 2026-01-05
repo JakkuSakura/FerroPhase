@@ -1,15 +1,17 @@
-use crate::ast::{Expr, Ident, Locator, Ty, TySlot};
+use crate::ast::{Expr, Ident, Locator, QuoteFragmentKind, QuoteItemKind, Ty, TySlot};
 use crate::{common_enum, common_struct};
 pub type BPattern = Box<Pattern>;
 common_enum! {
     pub enum PatternKind {
         Ident(PatternIdent),
+        Bind(PatternBind),
         Tuple(PatternTuple),
         TupleStruct(PatternTupleStruct),
         Struct(PatternStruct),
         Structural(PatternStructural),
         Box(PatternBox),
         Variant(PatternVariant),
+        Quote(PatternQuote),
         Type(PatternType),
         Wildcard(PatternWildcard),
     }
@@ -64,6 +66,7 @@ impl Pattern {
     pub fn as_ident(&self) -> Option<&Ident> {
         match &self.kind {
             PatternKind::Ident(ident) => Some(&ident.ident),
+            PatternKind::Bind(bind) => Some(&bind.ident.ident),
             PatternKind::Type(pattern_type) => pattern_type.pat.as_ident(),
             _ => None,
         }
@@ -72,6 +75,9 @@ impl Pattern {
         match &mut self.kind {
             PatternKind::Ident(ident) => {
                 ident.mutability = Some(true);
+            }
+            PatternKind::Bind(bind) => {
+                bind.ident.mutability = Some(true);
             }
             PatternKind::Type(PatternType { pat, .. }) => {
                 pat.make_mut();
@@ -84,6 +90,12 @@ impl Pattern {
 common_struct! {
     pub struct PatternTuple {
         pub patterns: Vec<Pattern>,
+    }
+}
+common_struct! {
+    pub struct PatternBind {
+        pub ident: PatternIdent,
+        pub pattern: Box<Pattern>,
     }
 }
 common_struct! {
@@ -169,4 +181,12 @@ impl PatternIdent {
 }
 common_struct! {
     pub struct PatternWildcard {}
+}
+
+common_struct! {
+    pub struct PatternQuote {
+        pub fragment: QuoteFragmentKind,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub item: Option<QuoteItemKind>,
+    }
 }

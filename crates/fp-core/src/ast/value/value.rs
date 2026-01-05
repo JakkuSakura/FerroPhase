@@ -8,8 +8,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, Ident, QuoteFragmentKind, Ty, TySlot, TypeBounds,
-    TypeStruct, Value,
+    get_threadlocal_serializer, BExpr, BlockStmt, Expr, Ident, Item, QuoteFragmentKind, Ty, TySlot,
+    TypeBounds, TypeStruct, Value,
 };
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
@@ -245,6 +245,22 @@ impl ValueMap {
             Value::Char(c) => Some(c.value.to_string()),
             _ => None,
         }
+    }
+}
+
+common_enum! {
+    pub enum QuoteTokenValue {
+        Expr(Expr),
+        Stmts(Vec<BlockStmt>),
+        Items(Vec<Item>),
+        Type(Ty),
+    }
+}
+
+common_struct! {
+    pub struct ValueQuoteToken {
+        pub kind: QuoteFragmentKind,
+        pub value: QuoteTokenValue,
     }
 }
 

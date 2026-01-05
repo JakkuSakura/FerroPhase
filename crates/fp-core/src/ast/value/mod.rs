@@ -39,6 +39,7 @@ common_enum! {
         Structural(ValueStructural),
         Function(ValueFunction),
         Tuple(ValueTuple),
+        QuoteToken(ValueQuoteToken),
         Expr(BExpr),
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),

@@ -79,6 +79,7 @@ pub enum CstKind {
     ExprMatch,
     ExprClosure,
     ExprQuote,
+    ExprQuoteToken,
     ExprSplice,
     ExprAsync,
     ExprConstBlock,
@@ -167,6 +168,7 @@ impl CstKind {
             | CstKind::ExprMatch
             | CstKind::ExprClosure
             | CstKind::ExprQuote
+            | CstKind::ExprQuoteToken
             | CstKind::ExprSplice
             | CstKind::ExprAsync
             | CstKind::ExprConstBlock
