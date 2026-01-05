@@ -1841,14 +1841,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                                     continue;
                                 };
                                 if fragments.iter().any(|fragment| {
-                                    matches!(
-                                        fragment,
-                                        QuotedFragment::Items(_) | QuotedFragment::Type(_)
-                                    )
+                                    matches!(fragment, QuotedFragment::Type(_))
                                 }) {
-                                    self.emit_error(
-                                        "item/type splicing is not allowed inside function bodies; move item emission to a module-level const block",
-                                    );
+                                    self.emit_error("splice<type> is not valid in statement position");
                                     continue;
                                 }
                                 let mut to_append = Vec::new();
@@ -1861,7 +1856,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                                             es.semicolon = Some(true);
                                             to_append.push(BlockStmt::Expr(es));
                                         }
-                                        QuotedFragment::Items(_) | QuotedFragment::Type(_) => {}
+                                        QuotedFragment::Items(items) => {
+                                            for item in items {
+                                                to_append.push(BlockStmt::Item(Box::new(item)));
+                                            }
+                                        }
+                                        QuotedFragment::Type(_) => {}
                                     }
                                 }
                                 if !to_append.is_empty() {
@@ -2769,12 +2769,41 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::undefined()
                 }),
             Value::QuoteToken(token) => {
-                if token.kind != QuoteFragmentKind::Item {
+                let is_item_kind = matches!(
+                    token.kind,
+                    QuoteFragmentKind::Item
+                        | QuoteFragmentKind::Items
+                        | QuoteFragmentKind::Fns
+                        | QuoteFragmentKind::Structs
+                        | QuoteFragmentKind::Enums
+                        | QuoteFragmentKind::Traits
+                        | QuoteFragmentKind::Impls
+                        | QuoteFragmentKind::Consts
+                        | QuoteFragmentKind::Statics
+                        | QuoteFragmentKind::Mods
+                        | QuoteFragmentKind::Uses
+                        | QuoteFragmentKind::Macros
+                );
+                if !is_item_kind {
                     let kind = match token.kind {
                         QuoteFragmentKind::Expr => "expr",
+                        QuoteFragmentKind::Exprs => "exprs",
                         QuoteFragmentKind::Stmt => "stmt",
+                        QuoteFragmentKind::Stmts => "stmts",
                         QuoteFragmentKind::Item => "item",
+                        QuoteFragmentKind::Items => "items",
+                        QuoteFragmentKind::Fns => "fns",
+                        QuoteFragmentKind::Structs => "structs",
+                        QuoteFragmentKind::Enums => "enums",
+                        QuoteFragmentKind::Traits => "traits",
+                        QuoteFragmentKind::Impls => "impls",
+                        QuoteFragmentKind::Consts => "consts",
+                        QuoteFragmentKind::Statics => "statics",
+                        QuoteFragmentKind::Mods => "mods",
+                        QuoteFragmentKind::Uses => "uses",
+                        QuoteFragmentKind::Macros => "macros",
                         QuoteFragmentKind::Type => "type",
+                        QuoteFragmentKind::Types => "types",
                     };
                     self.emit_error(format!(
                         "cannot access field '{}' on quote<{}> token",

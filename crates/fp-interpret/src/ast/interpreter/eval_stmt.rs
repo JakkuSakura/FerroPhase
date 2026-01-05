@@ -7,45 +7,56 @@ impl<'ctx> AstInterpreter<'ctx> {
         match stmt {
             BlockStmt::Expr(expr_stmt) => {
                 if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
-                    if !self.in_const_region() {
-                        self.emit_error("splice is only valid inside const { ... } regions");
+                    if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime)
+                    {
+                        self.emit_error("splice is only supported during const evaluation");
                         return None;
                     }
-                    let Some(fragments) =
-                        self.resolve_splice_fragments(splice.token.as_mut())
+                    let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut())
                     else {
                         return None;
                     };
-                    let mut pending = Vec::new();
+                    let mut pending_items = Vec::new();
+                    let mut pending_stmts = Vec::new();
+                    let mut pending_exprs = Vec::new();
                     for fragment in fragments {
                         match fragment {
-                            QuotedFragment::Items(items) => pending.extend(items),
-                            QuotedFragment::Expr(_)
-                            | QuotedFragment::Stmts(_)
-                            | QuotedFragment::Type(_) => {
+                            QuotedFragment::Items(items) => pending_items.extend(items),
+                            QuotedFragment::Stmts(stmts) => pending_stmts.extend(stmts),
+                            QuotedFragment::Expr(expr) => pending_exprs.push(expr),
+                            QuotedFragment::Type(_) => {
                                 self.emit_error(
-                                    "module-level splice only supports item fragments",
+                                    "splice<type> is not valid in statement position",
                                 );
                                 return None;
                             }
                         }
                     }
-                    if !pending.is_empty() {
+                    if !pending_items.is_empty() {
                         if self.value_env.len() > 1 && self.type_env.len() > 1 {
                             let current_values = self.value_env.pop().unwrap();
                             let current_types = self.type_env.pop().unwrap();
-                            for item in pending.iter_mut() {
+                            for item in pending_items.iter_mut() {
                                 self.evaluate_item(item);
                             }
                             self.value_env.push(current_values);
                             self.type_env.push(current_types);
                         } else {
-                            for item in pending.iter_mut() {
+                            for item in pending_items.iter_mut() {
                                 self.evaluate_item(item);
                             }
                         }
-                        self.append_pending_items(pending);
+                        self.append_pending_items(pending_items);
                         self.mark_mutated();
+                    }
+                    if !pending_stmts.is_empty() {
+                        let mut block = ExprBlock::new_stmts(pending_stmts);
+                        self.eval_block(&mut block);
+                    }
+                    if !pending_exprs.is_empty() {
+                        for mut expr in pending_exprs {
+                            let _ = self.eval_expr(&mut expr);
+                        }
                     }
                     return None;
                 }

@@ -8,7 +8,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match ty {
             Ty::QuoteToken(qt) => matches!(
                 qt.kind,
-                QuoteFragmentKind::Stmt | QuoteFragmentKind::Item | QuoteFragmentKind::Expr
+                QuoteFragmentKind::Stmt
+                    | QuoteFragmentKind::Stmts
+                    | QuoteFragmentKind::Item
+                    | QuoteFragmentKind::Items
+                    | QuoteFragmentKind::Fns
+                    | QuoteFragmentKind::Structs
+                    | QuoteFragmentKind::Enums
+                    | QuoteFragmentKind::Traits
+                    | QuoteFragmentKind::Impls
+                    | QuoteFragmentKind::Consts
+                    | QuoteFragmentKind::Statics
+                    | QuoteFragmentKind::Mods
+                    | QuoteFragmentKind::Uses
+                    | QuoteFragmentKind::Macros
+                    | QuoteFragmentKind::Expr
+                    | QuoteFragmentKind::Exprs
             ),
             Ty::Vec(vec) => self.is_stmt_or_item_quote(vec.ty.as_ref()),
             Ty::Array(array) => self.is_stmt_or_item_quote(array.elem.as_ref()),
@@ -18,7 +33,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn is_item_quote(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::QuoteToken(qt) => matches!(qt.kind, QuoteFragmentKind::Item),
+            Ty::QuoteToken(qt) => matches!(
+                qt.kind,
+                QuoteFragmentKind::Item
+                    | QuoteFragmentKind::Items
+                    | QuoteFragmentKind::Fns
+                    | QuoteFragmentKind::Structs
+                    | QuoteFragmentKind::Enums
+                    | QuoteFragmentKind::Traits
+                    | QuoteFragmentKind::Impls
+                    | QuoteFragmentKind::Consts
+                    | QuoteFragmentKind::Statics
+                    | QuoteFragmentKind::Mods
+                    | QuoteFragmentKind::Uses
+                    | QuoteFragmentKind::Macros
+            ),
             Ty::Vec(vec) => self.is_item_quote(vec.ty.as_ref()),
             Ty::Array(array) => self.is_item_quote(array.elem.as_ref()),
             _ => false,

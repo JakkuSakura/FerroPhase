@@ -1302,6 +1302,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let var = self.type_from_ast_ty(&quote_ty)?;
                 PatternInfo::new(var)
             }
+            PatternKind::QuotePlural(quote) => {
+                let quote_ty = Ty::QuoteToken(Box::new(TypeQuoteToken {
+                    kind: quote.fragment,
+                    inner: None,
+                }));
+                let elem_var = self.type_from_ast_ty(&quote_ty)?;
+                let list_var = self.fresh_type_var();
+                self.bind(list_var, TypeTerm::Vec(elem_var));
+                PatternInfo::new(list_var)
+            }
             PatternKind::Wildcard(_) => PatternInfo::new(self.fresh_type_var()),
             PatternKind::Tuple(tuple) => {
                 let mut vars = Vec::new();

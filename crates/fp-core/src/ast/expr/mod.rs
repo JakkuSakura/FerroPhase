@@ -50,7 +50,7 @@ common_enum! {
         Closure(ExprClosure),
         Array(ExprArray),
         ArrayRepeat(ExprArrayRepeat),
-    IntrinsicContainer(ExprIntrinsicContainer),
+        IntrinsicContainer(ExprIntrinsicContainer),
         IntrinsicCall(ExprIntrinsicCall),
         /// quote keyword – capture code as data at compile time
         Quote(ExprQuote),

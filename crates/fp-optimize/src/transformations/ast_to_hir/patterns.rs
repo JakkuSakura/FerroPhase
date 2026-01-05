@@ -37,7 +37,7 @@ impl HirGenerator {
                 None,
                 false,
             )),
-            PatternKind::Quote(_) => Ok((
+            PatternKind::Quote(_) | PatternKind::QuotePlural(_) => Ok((
                 hir::Pat {
                     hir_id: self.next_id(),
                     kind: hir::PatKind::Wild,
