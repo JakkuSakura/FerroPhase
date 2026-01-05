@@ -3,20 +3,20 @@ source_filename = "06_struct_methods"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.06_struct_methods.0 = private unnamed_addr constant [37 x i8] c"\F0\9F\93\98 Tutorial: 06_struct_methods.fp\0A\00", align 1
-@.str.06_struct_methods.1 = private unnamed_addr constant [45 x i8] c"\F0\9F\A7\AD Focus: Struct methods and field access\0A\00", align 1
-@.str.06_struct_methods.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.06_struct_methods.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.06_struct_methods.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.06_struct_methods.5 = private unnamed_addr constant [27 x i8] c"=== Struct Operations ===\0A\00", align 1
-@.str.06_struct_methods.6 = private unnamed_addr constant [19 x i8] c"p1 = (%lld, %lld)\0A\00", align 1
-@.str.06_struct_methods.7 = private unnamed_addr constant [19 x i8] c"p2 = (%lld, %lld)\0A\00", align 1
-@.str.06_struct_methods.8 = private unnamed_addr constant [35 x i8] c"p1 after translate = (%lld, %lld)\0A\00", align 1
-@.str.06_struct_methods.9 = private unnamed_addr constant [27 x i8] c"Distance\C2\B2(p1, p2) = %lld\0A\00", align 1
-@.str.06_struct_methods.10 = private unnamed_addr constant [23 x i8] c"Rectangle: %lld\C3\97%lld\0A\00", align 1
-@.str.06_struct_methods.11 = private unnamed_addr constant [15 x i8] c"  area = %lld\0A\00", align 1
-@.str.06_struct_methods.12 = private unnamed_addr constant [20 x i8] c"  perimeter = %lld\0A\00", align 1
-@.str.06_struct_methods.13 = private unnamed_addr constant [18 x i8] c"  is_square = %d\0A\00", align 1
+@.str.06_struct_methods.0 = constant [37 x i8] c"\F0\9F\93\98 Tutorial: 06_struct_methods.fp\0A\00"
+@.str.06_struct_methods.1 = constant [45 x i8] c"\F0\9F\A7\AD Focus: Struct methods and field access\0A\00"
+@.str.06_struct_methods.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.06_struct_methods.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.06_struct_methods.4 = constant [2 x i8] c"\0A\00"
+@.str.06_struct_methods.5 = constant [27 x i8] c"=== Struct Operations ===\0A\00"
+@.str.06_struct_methods.6 = constant [19 x i8] c"p1 = (%lld, %lld)\0A\00"
+@.str.06_struct_methods.7 = constant [19 x i8] c"p2 = (%lld, %lld)\0A\00"
+@.str.06_struct_methods.8 = constant [35 x i8] c"p1 after translate = (%lld, %lld)\0A\00"
+@.str.06_struct_methods.9 = constant [27 x i8] c"Distance\C2\B2(p1, p2) = %lld\0A\00"
+@.str.06_struct_methods.10 = constant [23 x i8] c"Rectangle: %lld\C3\97%lld\0A\00"
+@.str.06_struct_methods.11 = constant [15 x i8] c"  area = %lld\0A\00"
+@.str.06_struct_methods.12 = constant [20 x i8] c"  perimeter = %lld\0A\00"
+@.str.06_struct_methods.13 = constant [18 x i8] c"  is_square = %d\0A\00"
 
 define internal { i64, i64 } @Point__new(i64 %0, i64 %1) {
 bb0:

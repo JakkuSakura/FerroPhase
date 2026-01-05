@@ -1,5 +1,95 @@
 ast::File {
   items:
+    pub module std {
+      pub module collections {
+        pub struct HashMapEntry {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap {
+          entries: Vec<Expr(HashMapEntry<K
+, V
+>)>
+        }
+        impl HashMap<K
+, V
+> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<K
+, V
+>)>) -> Expr(HashMap<K
+, V
+>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+            block (1 stmt)
+              expr_stmt (value)
+                struct HashMap
+                  entries:
+                    locator entries
+          pub fn len(&self) -> Expr(i64) : fn() -> i64
+            block (1 stmt)
+              expr_stmt (value)
+                invoke
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any
+            block (3 stmts)
+              let mut idx
+                init:
+                  value 0
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        invoke
+                          target: self.entries.len
+                  body:
+                    block (3 stmts)
+                      let entry
+                        init:
+                          index
+                            value:
+                              select .entries [unknown]
+                                object:
+                                  locator self
+                            index:
+                              locator idx
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                select .key [unknown]
+                                  object:
+                                    locator entry
+                              rhs:
+                                locator key
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                intrinsic return
+                                  args:
+                                    select .value [unknown]
+                                      object:
+                                        locator entry
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                loop
+                  block (0 stmts)
+        }
+      }
+    }
     pub import std::fmt::Display
     pub import std::ops::Add
     pub fn<T: Add<T

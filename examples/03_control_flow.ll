@@ -3,21 +3,21 @@ source_filename = "03_control_flow"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.03_control_flow.0 = private unnamed_addr constant [35 x i8] c"\F0\9F\93\98 Tutorial: 03_control_flow.fp\0A\00", align 1
-@.str.03_control_flow.1 = private unnamed_addr constant [81 x i8] c"\F0\9F\A7\AD Focus: Control flow: if/else expressions with const and runtime evaluation\0A\00", align 1
-@.str.03_control_flow.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.03_control_flow.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.03_control_flow.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.03_control_flow.5 = private unnamed_addr constant [5 x i8] c"warm\00", align 1
-@.str.03_control_flow.6 = private unnamed_addr constant [15 x i8] c"%lld\C2\B0C is %s\0A\00", align 1
-@.str.03_control_flow.7 = private unnamed_addr constant [8 x i8] c"outdoor\00", align 1
-@.str.03_control_flow.8 = private unnamed_addr constant [15 x i8] c"Suggested: %s\0A\00", align 1
-@.str.03_control_flow.9 = private unnamed_addr constant [2 x i8] c"B\00", align 1
-@.str.03_control_flow.10 = private unnamed_addr constant [23 x i8] c"Score %lld = grade %s\0A\00", align 1
-@.str.03_control_flow.11 = private unnamed_addr constant [5 x i8] c"high\00", align 1
-@.str.03_control_flow.12 = private unnamed_addr constant [18 x i8] c"Value %lld is %s\0A\00", align 1
-@.str.03_control_flow.13 = private unnamed_addr constant [7 x i8] c"medium\00", align 1
-@.str.03_control_flow.14 = private unnamed_addr constant [4 x i8] c"low\00", align 1
+@.str.03_control_flow.0 = constant [35 x i8] c"\F0\9F\93\98 Tutorial: 03_control_flow.fp\0A\00"
+@.str.03_control_flow.1 = constant [81 x i8] c"\F0\9F\A7\AD Focus: Control flow: if/else expressions with const and runtime evaluation\0A\00"
+@.str.03_control_flow.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.03_control_flow.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.03_control_flow.4 = constant [2 x i8] c"\0A\00"
+@.str.03_control_flow.5 = constant [5 x i8] c"warm\00"
+@.str.03_control_flow.6 = constant [15 x i8] c"%lld\C2\B0C is %s\0A\00"
+@.str.03_control_flow.7 = constant [8 x i8] c"outdoor\00"
+@.str.03_control_flow.8 = constant [15 x i8] c"Suggested: %s\0A\00"
+@.str.03_control_flow.9 = constant [2 x i8] c"B\00"
+@.str.03_control_flow.10 = constant [23 x i8] c"Score %lld = grade %s\0A\00"
+@.str.03_control_flow.11 = constant [5 x i8] c"high\00"
+@.str.03_control_flow.12 = constant [18 x i8] c"Value %lld is %s\0A\00"
+@.str.03_control_flow.13 = constant [7 x i8] c"medium\00"
+@.str.03_control_flow.14 = constant [4 x i8] c"low\00"
 
 define i32 @main() {
 bb0:

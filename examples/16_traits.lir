@@ -124,19 +124,19 @@ lir::Program {
                 i44: %r44 = alloca i32 1 align 8 : ptr ptr { f64 }
                 i45: store %r32, %r44 align 8
                 i46: %r46 = load %r44 align 8 : ptr { f64 }
-                i47: %r47 = call c @print_area__mono_85382269fdc78777_5(%r46)
+                i47: %r47 = call c @print_area__mono_85382269fdc78777_10(%r46)
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
                 i48: %r48 = alloca i32 1 align 8 : ptr ptr { f64, f64 }
                 i49: store %r34, %r48 align 8
                 i50: %r50 = load %r48 align 8 : ptr { f64, f64 }
-                i51: %r51 = call c @print_area__mono_93ff406d3b2fff38_5(%r50)
+                i51: %r51 = call c @print_area__mono_93ff406d3b2fff38_10(%r50)
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8]:
                 terminator: ret void
         }
 
-        fn print_area__mono_85382269fdc78777_5(arg0: ptr { f64 }) -> void [cc: c, linkage: internal] {
+        fn print_area__mono_85382269fdc78777_10(arg0: ptr { f64 }) -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
                 %1: ptr { f64 } // arg
@@ -152,7 +152,7 @@ lir::Program {
                 terminator: ret void
         }
 
-        fn print_area__mono_93ff406d3b2fff38_5(arg0: ptr { f64, f64 }) -> void [cc: c, linkage: internal] {
+        fn print_area__mono_93ff406d3b2fff38_10(arg0: ptr { f64, f64 }) -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
                 %1: ptr { f64, f64 } // arg

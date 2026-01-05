@@ -1,27 +1,45 @@
 hir::Program {
-    pub fn apply_ops(ops: [i32], x: i32, limit: i32) -> i32 {
-        // params: [ops: [i32], x: i32, limit: i32]
-        {
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
             {
-                let mut __fp_idx15 = 0;
-                while ((__fp_idx15 < std::Len(1 args)))
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
                     {
-                        let i = __fp_idx15;
-                        let op = ops[__fp_idx15];
-                        if (((op % 2) == 0))
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
                             {
-                                <control-flow>;
+                                return entry.value;
                             }
-                        else
-                            {
-                                x = (x + op);
-                            }
-                        <control-flow>;
-                        <control-flow>;
-                        __fp_idx15 = (__fp_idx15 + 1);
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
                     }
             }
-            x
         }
     }
 
@@ -32,10 +50,45 @@ hir::Program {
             printf("🧪 What to look for: labeled outputs below\n");
             printf("✅ Expectation: outputs match labels\n");
             printf("\n");
-            let result1 = apply_ops([1, 2, 3, 4], 0, 6);
+            let result1 = apply_ops__const_1(0, 6);
             printf("result1=%d\n", result1);
-            let result2 = apply_ops([5, (-2), 7], 10, 30);
+            let result2 = apply_ops__const_2(10, 30);
             printf("result2=%d\n", result2);
+        }
+    }
+
+    pub fn apply_ops__const_1(x: i32, limit: i32) -> i32 {
+        // params: [x: i32, limit: i32]
+        {
+            x = (x + 1);
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            x = (x + 3);
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            x
+        }
+    }
+
+    pub fn apply_ops__const_2(x: i32, limit: i32) -> i32 {
+        // params: [x: i32, limit: i32]
+        {
+            x = (x + 5);
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            <control-flow>;
+            x = (x + 7);
+            <control-flow>;
+            <control-flow>;
+            x
         }
     }
 }

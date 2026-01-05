@@ -2,7 +2,7 @@ mir::Program {
     items:
         fn main() -> () [body: body0]
     bodies:
-        body0 { arg_count: 0, locals: 28 }
+        body0 { arg_count: 0, locals: 32 }
             return_local: _0
             locals:
                 _0: ()
@@ -21,18 +21,22 @@ mir::Program {
                 _13: ()
                 _14: i64
                 _15: bool
-                _16: <??>
-                _17: u64
+                _16: (<??>, <??>)
+                _17: <??>
                 _18: (<??>, <??>)
-                _19: <??>
-                _20: i64
-                _21: <??>
-                _22: i64
-                _23: ()
-                _24: (i64, i64, i64)
-                _25: i32
-                _26: (i64, i64, i64, <??>)
-                _27: i32
+                _19: (<??>, <??>)
+                _20: (<??>, <??>)
+                _21: i64
+                _22: <??>
+                _23: (<??>, <??>)
+                _24: (<??>, <??>)
+                _25: (<??>, <??>)
+                _26: i64
+                _27: ()
+                _28: (i64, i64, i64)
+                _29: i32
+                _30: (i64, i64, i64, <??>)
+                _31: i32
             blocks:
                 bb0:
                     terminator: call global printf("📘 Tutorial: 08_metaprogramming_patterns.fp\n") -> _1 then bb1
@@ -58,28 +62,32 @@ mir::Program {
                     s0: _14 = 0
                     terminator: goto -> bb9
                 bb9:
-                    s0: _16 = aggregate(tuple; [])
-                    s1: _17 = len(_16)
-                    s2: _15 = Lt(copy _14, copy _17)
+                    s0: _15 = Lt(copy _14, 3)
                     terminator: switch copy _15 [1 -> bb10] otherwise -> bb11
                 bb10:
-                    s0: _19 = aggregate(tuple; [])
-                    s1: _20 = copy _14
-                    s2: _21 = aggregate(tuple; [])
-                    s3: _22 = copy _14
-                    s4: _18 = copy _21[Index(22)]
-                    s5: intrinsic Println "  %s: %s
-" [copy _18[Field(0, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })], copy _18[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
-                    s6: _23 = aggregate(tuple; [])
-                    s7: _14 = Add(copy _14, 1)
+                    s0: _18 = aggregate(tuple; ["x", "i64\n"])
+                    s1: _19 = aggregate(tuple; ["y", "i64\n"])
+                    s2: _20 = aggregate(tuple; ["z", "i64\n"])
+                    s3: _17 = aggregate(array [(<??>, <??>)]; [copy _18, copy _19, copy _20])
+                    s4: _21 = copy _14
+                    s5: _23 = aggregate(tuple; ["x", "i64\n"])
+                    s6: _24 = aggregate(tuple; ["y", "i64\n"])
+                    s7: _25 = aggregate(tuple; ["z", "i64\n"])
+                    s8: _22 = aggregate(array [(<??>, <??>)]; [copy _23, copy _24, copy _25])
+                    s9: _26 = copy _14
+                    s10: _16 = copy _22[Index(26)]
+                    s11: intrinsic Println "  %s: %s
+" [copy _16[Field(0, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })], copy _16[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
+                    s12: _27 = aggregate(tuple; [])
+                    s13: _14 = Add(copy _14, 1)
                     terminator: goto -> bb9
                 bb11:
                     s0: _13 = aggregate(tuple; [])
-                    s1: _24 = aggregate(tuple; [1, 2, 3])
-                    terminator: call global printf("point=(%lld, %lld, %lld)\n", copy _24[Field(0, Ty { kind: Int(I64) })], copy _24[Field(1, Ty { kind: Int(I64) })], copy _24[Field(2, Ty { kind: Int(I64) })]) -> _25 then bb12
+                    s1: _28 = aggregate(tuple; [1, 2, 3])
+                    terminator: call global printf("point=(%lld, %lld, %lld)\n", copy _28[Field(0, Ty { kind: Int(I64) })], copy _28[Field(1, Ty { kind: Int(I64) })], copy _28[Field(2, Ty { kind: Int(I64) })]) -> _29 then bb12
                 bb12:
-                    s0: _26 = aggregate(tuple; [4, 5, 6, "origin"])
-                    terminator: call global printf("labeled=(%lld, %lld, %lld, %s)\n", copy _26[Field(0, Ty { kind: Int(I64) })], copy _26[Field(1, Ty { kind: Int(I64) })], copy _26[Field(2, Ty { kind: Int(I64) })], copy _26[Field(3, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]) -> _27 then bb13
+                    s0: _30 = aggregate(tuple; [4, 5, 6, "origin"])
+                    terminator: call global printf("labeled=(%lld, %lld, %lld, %s)\n", copy _30[Field(0, Ty { kind: Int(I64) })], copy _30[Field(1, Ty { kind: Int(I64) })], copy _30[Field(2, Ty { kind: Int(I64) })], copy _30[Field(3, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]) -> _31 then bb13
                 bb13:
                     terminator: return
 }

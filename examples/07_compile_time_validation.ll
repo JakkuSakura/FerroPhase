@@ -3,20 +3,20 @@ source_filename = "07_compile_time_validation"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.07_compile_time_validation.0 = private unnamed_addr constant [46 x i8] c"\F0\9F\93\98 Tutorial: 07_compile_time_validation.fp\0A\00", align 1
-@.str.07_compile_time_validation.1 = private unnamed_addr constant [79 x i8] c"\F0\9F\A7\AD Focus: Compile-time validation using const expressions and introspection\0A\00", align 1
-@.str.07_compile_time_validation.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.07_compile_time_validation.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.07_compile_time_validation.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.07_compile_time_validation.5 = private unnamed_addr constant [32 x i8] c"data: sizeof=%llu, fields=%llu\0A\00", align 1
-@.str.07_compile_time_validation.6 = private unnamed_addr constant [26 x i8] c"data: has_a=%d, has_x=%d\0A\00", align 1
-@.str.07_compile_time_validation.7 = private unnamed_addr constant [50 x i8] c"header: sizeof=%llu, fields=%llu, has_version=%d\0A\00", align 1
-@.str.07_compile_time_validation.8 = private unnamed_addr constant [12 x i8] c"struct Data\00", align 1
-@.str.07_compile_time_validation.9 = private unnamed_addr constant [5 x i8] c"i64\0A\00", align 1
-@.str.07_compile_time_validation.10 = private unnamed_addr constant [4 x i8] c"u8\0A\00", align 1
-@.str.07_compile_time_validation.11 = private unnamed_addr constant [38 x i8] c"types: data='%s' a='%s' version='%s'\0A\00", align 1
-@.str.07_compile_time_validation.12 = private unnamed_addr constant [24 x i8] c"data has to_string: %d\0A\00", align 1
-@.str.07_compile_time_validation.13 = private unnamed_addr constant [64 x i8] c"layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\0A\00", align 1
+@.str.07_compile_time_validation.0 = constant [46 x i8] c"\F0\9F\93\98 Tutorial: 07_compile_time_validation.fp\0A\00"
+@.str.07_compile_time_validation.1 = constant [79 x i8] c"\F0\9F\A7\AD Focus: Compile-time validation using const expressions and introspection\0A\00"
+@.str.07_compile_time_validation.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.07_compile_time_validation.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.07_compile_time_validation.4 = constant [2 x i8] c"\0A\00"
+@.str.07_compile_time_validation.5 = constant [32 x i8] c"data: sizeof=%llu, fields=%llu\0A\00"
+@.str.07_compile_time_validation.6 = constant [26 x i8] c"data: has_a=%d, has_x=%d\0A\00"
+@.str.07_compile_time_validation.7 = constant [50 x i8] c"header: sizeof=%llu, fields=%llu, has_version=%d\0A\00"
+@.str.07_compile_time_validation.8 = constant [12 x i8] c"struct Data\00"
+@.str.07_compile_time_validation.9 = constant [5 x i8] c"i64\0A\00"
+@.str.07_compile_time_validation.10 = constant [4 x i8] c"u8\0A\00"
+@.str.07_compile_time_validation.11 = constant [38 x i8] c"types: data='%s' a='%s' version='%s'\0A\00"
+@.str.07_compile_time_validation.12 = constant [24 x i8] c"data has to_string: %d\0A\00"
+@.str.07_compile_time_validation.13 = constant [64 x i8] c"layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\0A\00"
 
 define i32 @main() {
 bb0:

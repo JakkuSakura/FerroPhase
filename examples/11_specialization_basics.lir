@@ -34,10 +34,10 @@ lir::Program {
                 i4: %r4 = call c @printf(c"\n") : i32
                 terminator: br bb5
             bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
-                i5: %r5 = call c @pipeline__mono_a7af9f593fdc4675_3(i64 10, i64 20) : i64
+                i5: %r5 = call c @pipeline__mono_a7af9f593fdc4675_8(i64 10, i64 20) : i64
                 terminator: br bb6
             bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
-                i6: %r6 = call c @pipeline__mono_d7ad91e83a08a980_3(f64 1.5, f64 2.5) : f64
+                i6: %r6 = call c @pipeline__mono_d7ad91e83a08a980_8(f64 1.5, f64 2.5) : f64
                 terminator: br bb7
             bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
                 i7: %r7 = alloca i32 1 align 8 : ptr { i64, i64 }
@@ -45,27 +45,27 @@ lir::Program {
                 i9: %r9 = alloca i32 1 align 8 : ptr { f64, f64 }
                 i10: store struct { f64, f64 } { f64 1.25, f64 2.75 }, %r9 align 8
                 i11: %r11 = load %r7 align 8 : { i64, i64 }
-                i12: %r12 = call c @sum_pair__mono_a7af9f593fdc4675_4(%r11) : i64
+                i12: %r12 = call c @sum_pair__mono_a7af9f593fdc4675_9(%r11) : i64
                 terminator: br bb8
             bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
                 i13: %r13 = intrinsic Println "sum_pair i64 = %lld
 " (%r12)
                 i14: %r14 = load %r9 align 8 : { f64, f64 }
-                i15: %r15 = call c @sum_pair__mono_d7ad91e83a08a980_4(%r14) : f64
+                i15: %r15 = call c @sum_pair__mono_d7ad91e83a08a980_9(%r14) : f64
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
                 i16: %r16 = intrinsic Println "sum_pair f64 = %f
 " (%r15)
-                i17: %r17 = call c @max__mono_a7af9f593fdc4675_5(i64 10, i64 3) : i64
+                i17: %r17 = call c @max__mono_a7af9f593fdc4675_10(i64 10, i64 3) : i64
                 terminator: br bb10
             bb10 // label: bb10 // preds: [bb9] // succs: [bb11]:
-                i18: %r18 = call c @max__mono_d7ad91e83a08a980_5(f64 2.5, f64 9) : f64
+                i18: %r18 = call c @max__mono_d7ad91e83a08a980_10(f64 2.5, f64 9) : f64
                 terminator: br bb11
             bb11 // label: bb11 // preds: [bb10]:
                 terminator: ret void
         }
 
-        fn add__mono_a7af9f593fdc4675_1(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
+        fn add__mono_a7af9f593fdc4675_6(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: i64 // arg
@@ -78,7 +78,7 @@ lir::Program {
                 terminator: ret %r22
         }
 
-        fn double__mono_a7af9f593fdc4675_2(arg0: i64) -> i64 [cc: c, linkage: internal] {
+        fn double__mono_a7af9f593fdc4675_7(arg0: i64) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: i64 // arg
@@ -90,7 +90,7 @@ lir::Program {
                 terminator: ret %r26
         }
 
-        fn pipeline__mono_a7af9f593fdc4675_3(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
+        fn pipeline__mono_a7af9f593fdc4675_8(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: i64 // arg
@@ -100,10 +100,10 @@ lir::Program {
                 %5: void
             bb0 // label: bb0 // succs: [bb1]:
                 i27: %r27 = alloca i32 1 align 8 : ptr i64
-                i28: %r28 = call c @add__mono_a7af9f593fdc4675_1(%local1, %local2) : i64
+                i28: %r28 = call c @add__mono_a7af9f593fdc4675_6(%local1, %local2) : i64
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i29: %r29 = call c @double__mono_a7af9f593fdc4675_2(%r28) : i64
+                i29: %r29 = call c @double__mono_a7af9f593fdc4675_7(%r28) : i64
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1]:
                 i30: %r30 = intrinsic Println "specialized result: %lld
@@ -113,7 +113,7 @@ lir::Program {
                 terminator: ret %r32
         }
 
-        fn add__mono_d7ad91e83a08a980_1(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
+        fn add__mono_d7ad91e83a08a980_6(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: f64 // arg
@@ -126,7 +126,7 @@ lir::Program {
                 terminator: ret %r36
         }
 
-        fn double__mono_d7ad91e83a08a980_2(arg0: f64) -> f64 [cc: c, linkage: internal] {
+        fn double__mono_d7ad91e83a08a980_7(arg0: f64) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: f64 // arg
@@ -138,7 +138,7 @@ lir::Program {
                 terminator: ret %r40
         }
 
-        fn pipeline__mono_d7ad91e83a08a980_3(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
+        fn pipeline__mono_d7ad91e83a08a980_8(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: f64 // arg
@@ -148,10 +148,10 @@ lir::Program {
                 %5: void
             bb0 // label: bb0 // succs: [bb1]:
                 i41: %r41 = alloca i32 1 align 8 : ptr f64
-                i42: %r42 = call c @add__mono_d7ad91e83a08a980_1(%local1, %local2) : f64
+                i42: %r42 = call c @add__mono_d7ad91e83a08a980_6(%local1, %local2) : f64
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
-                i43: %r43 = call c @double__mono_d7ad91e83a08a980_2(%r42) : f64
+                i43: %r43 = call c @double__mono_d7ad91e83a08a980_7(%r42) : f64
                 terminator: br bb2
             bb2 // label: bb2 // preds: [bb1]:
                 i44: %r44 = intrinsic Println "specialized result: %f
@@ -161,7 +161,7 @@ lir::Program {
                 terminator: ret %r46
         }
 
-        fn sum_pair__mono_a7af9f593fdc4675_4(arg0: { i64, i64 }) -> i64 [cc: c, linkage: internal] {
+        fn sum_pair__mono_a7af9f593fdc4675_9(arg0: { i64, i64 }) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: { i64, i64 } // arg
@@ -183,7 +183,7 @@ lir::Program {
                 terminator: ret %r60
         }
 
-        fn sum_pair__mono_d7ad91e83a08a980_4(arg0: { f64, f64 }) -> f64 [cc: c, linkage: internal] {
+        fn sum_pair__mono_d7ad91e83a08a980_9(arg0: { f64, f64 }) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: { f64, f64 } // arg
@@ -205,7 +205,7 @@ lir::Program {
                 terminator: ret %r74
         }
 
-        fn max__mono_a7af9f593fdc4675_5(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
+        fn max__mono_a7af9f593fdc4675_10(arg0: i64, arg1: i64) -> i64 [cc: c, linkage: internal] {
             locals:
                 %0: i64
                 %1: i64 // arg
@@ -223,25 +223,25 @@ lir::Program {
                 i80: %r80 = load %r77 align 1 : i1
                 terminator: cond_br %r80, bb1, bb2
             bb1 // label: bb1 // preds: [bb0] // succs: [bb3]:
-                i81: store %local1, %r76 align 8
+                i81: store %local1, %r75 align 8
                 terminator: br bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i82: store %local2, %r76 align 8
+                i82: store %local2, %r75 align 8
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb1, bb2]:
                 i83: %r83 = alloca i32 1 align 8 : ptr i64
-                i84: %r84 = load %r76 align 8 : i64
+                i84: %r84 = load %r75 align 8 : i64
                 i85: store %r84, %r83 align 8
                 i86: %r86 = load %r83 align 8 : i64
                 i87: %r87 = intrinsic Println "max(%lld, %lld) = %lld
 " (%local1, %local2, %r86)
                 i88: %r88 = load %r83 align 8 : i64
-                i89: store %r88, %r75 align 8
-                i90: %r90 = load %r75 align 8 : i64
+                i89: store %r88, %r76 align 8
+                i90: %r90 = load %r76 align 8 : i64
                 terminator: ret %r90
         }
 
-        fn max__mono_d7ad91e83a08a980_5(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
+        fn max__mono_d7ad91e83a08a980_10(arg0: f64, arg1: f64) -> f64 [cc: c, linkage: internal] {
             locals:
                 %0: f64
                 %1: f64 // arg
@@ -259,21 +259,21 @@ lir::Program {
                 i96: %r96 = load %r93 align 1 : i1
                 terminator: cond_br %r96, bb1, bb2
             bb1 // label: bb1 // preds: [bb0] // succs: [bb3]:
-                i97: store %local1, %r92 align 8
+                i97: store %local1, %r91 align 8
                 terminator: br bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i98: store %local2, %r92 align 8
+                i98: store %local2, %r91 align 8
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb1, bb2]:
                 i99: %r99 = alloca i32 1 align 8 : ptr f64
-                i100: %r100 = load %r92 align 8 : f64
+                i100: %r100 = load %r91 align 8 : f64
                 i101: store %r100, %r99 align 8
                 i102: %r102 = load %r99 align 8 : f64
                 i103: %r103 = intrinsic Println "max(%f, %f) = %f
 " (%local1, %local2, %r102)
                 i104: %r104 = load %r99 align 8 : f64
-                i105: store %r104, %r91 align 8
-                i106: %r106 = load %r91 align 8 : f64
+                i105: store %r104, %r92 align 8
+                i106: %r106 = load %r92 align 8 : f64
                 terminator: ret %r106
         }
 }

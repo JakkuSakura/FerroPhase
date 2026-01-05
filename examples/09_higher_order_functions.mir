@@ -12,13 +12,13 @@ mir::Program {
 
         fn add__spec0(arg0: i64, arg1: i64) -> i64 [body: body9]
 
-        fn apply__mono_a7af9f593fdc4675_4(arg0: i64, arg1: i64, arg2: <??>) -> () [body: body5]
+        fn apply__mono_a7af9f593fdc4675_9(arg0: i64, arg1: i64, arg2: <??>) -> () [body: body5]
 
-        fn add__mono_a7af9f593fdc4675_5(arg0: i64, arg1: i64) -> i64 [body: body6]
+        fn add__mono_a7af9f593fdc4675_10(arg0: i64, arg1: i64) -> i64 [body: body6]
 
-        fn apply__mono_d7ad91e83a08a980_4(arg0: f64, arg1: f64, arg2: <??>) -> () [body: body7]
+        fn apply__mono_d7ad91e83a08a980_9(arg0: f64, arg1: f64, arg2: <??>) -> () [body: body7]
 
-        fn add__mono_d7ad91e83a08a980_5(arg0: f64, arg1: f64) -> f64 [body: body8]
+        fn add__mono_d7ad91e83a08a980_10(arg0: f64, arg1: f64) -> f64 [body: body8]
     bodies:
         body0 { arg_count: 2, locals: 3 }
             return_local: _0
@@ -107,9 +107,9 @@ mir::Program {
                 bb5:
                     terminator: call global printf("Generic operations:\n") -> _6 then bb6
                 bb6:
-                    terminator: call fn apply__mono_a7af9f593fdc4675_4(10, 20, fn add__mono_a7af9f593fdc4675_5) -> _7 then bb7
+                    terminator: call fn apply__mono_a7af9f593fdc4675_9(10, 20, fn add__mono_a7af9f593fdc4675_10) -> _7 then bb7
                 bb7:
-                    terminator: call fn apply__mono_d7ad91e83a08a980_4(1.5, 2.5, fn add__mono_d7ad91e83a08a980_5) -> _8 then bb8
+                    terminator: call fn apply__mono_d7ad91e83a08a980_9(1.5, 2.5, fn add__mono_d7ad91e83a08a980_10) -> _8 then bb8
                 bb8:
                     terminator: call global printf("\nConditional:\n") -> _9 then bb9
                 bb9:

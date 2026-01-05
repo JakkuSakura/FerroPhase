@@ -4,9 +4,9 @@ mir::Program {
 
         fn Pair::new__mono_a3cae9220656bc7e(arg0: i64, arg1: <??>) -> (i64, <??>) [body: body1]
 
-        fn max__mono_a7af9f593fdc4675_6(arg0: i64, arg1: i64) -> i64 [body: body2]
+        fn max__mono_a7af9f593fdc4675_11(arg0: i64, arg1: i64) -> i64 [body: body2]
 
-        fn max__mono_d7ad91e83a08a980_6(arg0: f64, arg1: f64) -> f64 [body: body3]
+        fn max__mono_d7ad91e83a08a980_11(arg0: f64, arg1: f64) -> f64 [body: body3]
 
         fn Option::unwrap_or__mono_a7af9f593fdc4675(arg0: (isize, i64), arg1: i64) -> i64 [body: body4]
     bodies:
@@ -49,11 +49,11 @@ mir::Program {
                     s0: intrinsic Println "pair = (%lld, %s)
 " [copy _6[Field(0, Ty { kind: Int(I64) })], copy _6[Field(1, Ty { kind: RawPtr(TypeAndMut { ty: Ty { kind: Int(I8) }, mutbl: Not }) })]]
                     s1: _7 = aggregate(tuple; [])
-                    terminator: call fn max__mono_a7af9f593fdc4675_6(10, 20) -> _8 then bb7
+                    terminator: call fn max__mono_a7af9f593fdc4675_11(10, 20) -> _8 then bb7
                 bb7:
                     terminator: call global printf("max(10, 20) = %lld\n", copy _8) -> _9 then bb8
                 bb8:
-                    terminator: call fn max__mono_d7ad91e83a08a980_6(3.5, 2.1) -> _10 then bb9
+                    terminator: call fn max__mono_d7ad91e83a08a980_11(3.5, 2.1) -> _10 then bb9
                 bb9:
                     terminator: call global printf("max(3.5, 2.1) = %f\n", copy _10) -> _11 then bb10
                 bb10:

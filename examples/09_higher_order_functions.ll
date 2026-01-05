@@ -3,20 +3,20 @@ source_filename = "09_higher_order_functions"
 target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:64-S128-Fn32"
 target triple = "arm64-apple-darwin25.0.0"
 
-@.str.09_higher_order_functions.0 = private unnamed_addr constant [45 x i8] c"\F0\9F\93\98 Tutorial: 09_higher_order_functions.fp\0A\00", align 1
-@.str.09_higher_order_functions.1 = private unnamed_addr constant [81 x i8] c"\F0\9F\A7\AD Focus: Higher-order functions: passing functions as arguments and closures\0A\00", align 1
-@.str.09_higher_order_functions.2 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.09_higher_order_functions.3 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.09_higher_order_functions.4 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.09_higher_order_functions.5 = private unnamed_addr constant [21 x i8] c"Generic operations:\0A\00", align 1
-@.str.09_higher_order_functions.6 = private unnamed_addr constant [15 x i8] c"\0AConditional:\0A\00", align 1
-@.str.09_higher_order_functions.7 = private unnamed_addr constant [29 x i8] c"apply_if(true, 5, 3) = %lld\0A\00", align 1
-@.str.09_higher_order_functions.8 = private unnamed_addr constant [30 x i8] c"apply_if(false, 5, 3) = %lld\0A\00", align 1
-@.str.09_higher_order_functions.9 = private unnamed_addr constant [19 x i8] c"\0AClosure factory:\0A\00", align 1
-@.str.09_higher_order_functions.10 = private unnamed_addr constant [18 x i8] c"add_10(5) = %lld\0A\00", align 1
-@.str.09_higher_order_functions.11 = private unnamed_addr constant [18 x i8] c"double(7) = %lld\0A\00", align 1
-@.str.09_higher_order_functions.12 = private unnamed_addr constant [26 x i8] c"apply(%lld, %lld) = %lld\0A\00", align 1
-@.str.09_higher_order_functions.13 = private unnamed_addr constant [20 x i8] c"apply(%f, %f) = %f\0A\00", align 1
+@.str.09_higher_order_functions.0 = constant [45 x i8] c"\F0\9F\93\98 Tutorial: 09_higher_order_functions.fp\0A\00"
+@.str.09_higher_order_functions.1 = constant [81 x i8] c"\F0\9F\A7\AD Focus: Higher-order functions: passing functions as arguments and closures\0A\00"
+@.str.09_higher_order_functions.2 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.09_higher_order_functions.3 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.09_higher_order_functions.4 = constant [2 x i8] c"\0A\00"
+@.str.09_higher_order_functions.5 = constant [21 x i8] c"Generic operations:\0A\00"
+@.str.09_higher_order_functions.6 = constant [15 x i8] c"\0AConditional:\0A\00"
+@.str.09_higher_order_functions.7 = constant [29 x i8] c"apply_if(true, 5, 3) = %lld\0A\00"
+@.str.09_higher_order_functions.8 = constant [30 x i8] c"apply_if(false, 5, 3) = %lld\0A\00"
+@.str.09_higher_order_functions.9 = constant [19 x i8] c"\0AClosure factory:\0A\00"
+@.str.09_higher_order_functions.10 = constant [18 x i8] c"add_10(5) = %lld\0A\00"
+@.str.09_higher_order_functions.11 = constant [18 x i8] c"double(7) = %lld\0A\00"
+@.str.09_higher_order_functions.12 = constant [26 x i8] c"apply(%lld, %lld) = %lld\0A\00"
+@.str.09_higher_order_functions.13 = constant [20 x i8] c"apply(%f, %f) = %f\0A\00"
 
 define internal i64 @__closure0_call({ i64 } %0, i64 %1) {
 bb0:
@@ -103,11 +103,11 @@ bb5:                                              ; preds = %bb4
   br label %bb6
 
 bb6:                                              ; preds = %bb5
-  call void @apply__mono_a7af9f593fdc4675_4(i64 10, i64 20, ptr @add__mono_a7af9f593fdc4675_5)
+  call void @apply__mono_a7af9f593fdc4675_9(i64 10, i64 20, ptr @add__mono_a7af9f593fdc4675_10)
   br label %bb7
 
 bb7:                                              ; preds = %bb6
-  call void @apply__mono_d7ad91e83a08a980_4(double 1.500000e+00, double 2.500000e+00, ptr @add__mono_d7ad91e83a08a980_5)
+  call void @apply__mono_d7ad91e83a08a980_9(double 1.500000e+00, double 2.500000e+00, ptr @add__mono_d7ad91e83a08a980_10)
   br label %bb8
 
 bb8:                                              ; preds = %bb7
@@ -162,7 +162,7 @@ bb19:                                             ; preds = %bb18
 
 declare i32 @printf(ptr, ...)
 
-define internal void @apply__mono_a7af9f593fdc4675_4(i64 %0, i64 %1, ptr %2) {
+define internal void @apply__mono_a7af9f593fdc4675_9(i64 %0, i64 %1, ptr %2) {
 bb0:
   %call_47 = call i64 %2(i64 %0, i64 %1)
   br label %bb1
@@ -172,7 +172,7 @@ bb1:                                              ; preds = %bb0
   ret void
 }
 
-define internal i64 @add__mono_a7af9f593fdc4675_5(i64 %0, i64 %1) {
+define internal i64 @add__mono_a7af9f593fdc4675_10(i64 %0, i64 %1) {
 bb0:
   %alloca_49 = alloca i64, align 8
   %alloca_count_49 = alloca i64, align 8
@@ -182,7 +182,7 @@ bb0:
   ret i64 %load_52
 }
 
-define internal void @apply__mono_d7ad91e83a08a980_4(double %0, double %1, ptr %2) {
+define internal void @apply__mono_d7ad91e83a08a980_9(double %0, double %1, ptr %2) {
 bb0:
   %call_53 = call double %2(double %0, double %1)
   br label %bb1
@@ -192,7 +192,7 @@ bb1:                                              ; preds = %bb0
   ret void
 }
 
-define internal double @add__mono_d7ad91e83a08a980_5(double %0, double %1) {
+define internal double @add__mono_d7ad91e83a08a980_10(double %0, double %1) {
 bb0:
   %alloca_55 = alloca double, align 8
   %alloca_count_55 = alloca double, align 8

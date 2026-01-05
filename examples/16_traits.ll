@@ -4,13 +4,13 @@ target datalayout = "e-m:o-p270:32:32-p271:32:32-p272:64:64-i64:64-i128:128-n32:
 target triple = "arm64-apple-darwin25.0.0"
 
 @global_0 = internal constant i1 false, align 1
-@.str.16_traits.0 = private unnamed_addr constant [11 x i8] c"area=%.2f\0A\00", align 1
-@.str.16_traits.1 = private unnamed_addr constant [29 x i8] c"\F0\9F\93\98 Tutorial: 16_traits.fp\0A\00", align 1
-@.str.16_traits.2 = private unnamed_addr constant [67 x i8] c"\F0\9F\A7\AD Focus: Traits: defining shared behavior with default methods\0A\00", align 1
-@.str.16_traits.3 = private unnamed_addr constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00", align 1
-@.str.16_traits.4 = private unnamed_addr constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00", align 1
-@.str.16_traits.5 = private unnamed_addr constant [2 x i8] c"\0A\00", align 1
-@.str.16_traits.6 = private unnamed_addr constant [6 x i8] c"%.2f\0A\00", align 1
+@.str.16_traits.0 = constant [11 x i8] c"area=%.2f\0A\00"
+@.str.16_traits.1 = constant [29 x i8] c"\F0\9F\93\98 Tutorial: 16_traits.fp\0A\00"
+@.str.16_traits.2 = constant [67 x i8] c"\F0\9F\A7\AD Focus: Traits: defining shared behavior with default methods\0A\00"
+@.str.16_traits.3 = constant [46 x i8] c"\F0\9F\A7\AA What to look for: labeled outputs below\0A\00"
+@.str.16_traits.4 = constant [39 x i8] c"\E2\9C\85 Expectation: outputs match labels\0A\00"
+@.str.16_traits.5 = constant [2 x i8] c"\0A\00"
+@.str.16_traits.6 = constant [6 x i8] c"%.2f\0A\00"
 
 define internal double @Circle__area(ptr %0) {
 bb0:
@@ -114,20 +114,20 @@ bb6:                                              ; preds = %bb5
 bb7:                                              ; preds = %bb6
   store ptr %alloca_count_32, ptr %alloca_count_44, align 8
   %load_46 = load ptr, ptr %alloca_count_44, align 8
-  call void @print_area__mono_85382269fdc78777_5(ptr %load_46)
+  call void @print_area__mono_85382269fdc78777_10(ptr %load_46)
   br label %bb8
 
 bb8:                                              ; preds = %bb7
   store ptr %alloca_count_34, ptr %alloca_count_48, align 8
   %load_50 = load ptr, ptr %alloca_count_48, align 8
-  call void @print_area__mono_93ff406d3b2fff38_5(ptr %load_50)
+  call void @print_area__mono_93ff406d3b2fff38_10(ptr %load_50)
   br label %bb9
 
 bb9:                                              ; preds = %bb8
   ret i32 0
 }
 
-define internal void @print_area__mono_85382269fdc78777_5(ptr %0) {
+define internal void @print_area__mono_85382269fdc78777_10(ptr %0) {
 bb0:
   %call_52 = call double @Circle__area(ptr %0)
   br label %bb1
@@ -140,7 +140,7 @@ bb2:                                              ; preds = %bb1
   ret void
 }
 
-define internal void @print_area__mono_93ff406d3b2fff38_5(ptr %0) {
+define internal void @print_area__mono_93ff406d3b2fff38_10(ptr %0) {
 bb0:
   %call_54 = call double @Rectangle__area(ptr %0)
   br label %bb1
