@@ -1229,6 +1229,112 @@ impl MirLowering {
         structural: &hir::TypeStructural,
         span: Span,
     ) -> Ty {
+        let mut entries_ty: Option<&hir::TypeExpr> = None;
+        if structural.fields.len() == 1 {
+            if let Some(field) = structural.fields.first() {
+                if field.name.as_str() == "entries" {
+                    entries_ty = Some(field.ty.as_ref());
+                }
+            }
+        } else {
+            for field in &structural.fields {
+                if field.name.as_str() == "entries" {
+                    entries_ty = Some(field.ty.as_ref());
+                    break;
+                }
+            }
+        }
+
+        if let Some(entries_ty) = entries_ty {
+            let mut entry_ty_expr: Option<&hir::TypeExpr> = None;
+            match &entries_ty.kind {
+                hir::TypeExprKind::Path(path) => {
+                    if let Some(tail) = path.segments.last() {
+                        if tail.name.as_str() == "Vec" {
+                            if let Some(args) = &tail.args {
+                                if args.args.len() == 1 {
+                                    if let hir::GenericArg::Type(inner) = &args.args[0] {
+                                        entry_ty_expr = Some(inner.as_ref());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                hir::TypeExprKind::Slice(inner) => {
+                    entry_ty_expr = Some(inner.as_ref());
+                }
+                _ => {}
+            }
+
+            if let Some(mut entry_ty_expr) = entry_ty_expr {
+                if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
+                    if let Some(tail) = path.segments.last() {
+                        if tail.name.as_str() == "Expr" {
+                            if let Some(args) = &tail.args {
+                                if args.args.len() == 1 {
+                                    if let hir::GenericArg::Type(inner) = &args.args[0] {
+                                        entry_ty_expr = inner.as_ref();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let mut key_ty_expr = None;
+                let mut value_ty_expr = None;
+                match &entry_ty_expr.kind {
+                    hir::TypeExprKind::Path(path) => {
+                        if let Some(tail) = path.segments.last() {
+                            if tail.name.as_str() == "HashMapEntry" {
+                                if let Some(args) = &tail.args {
+                                    if args.args.len() == 2 {
+                                        if let (
+                                            hir::GenericArg::Type(key),
+                                            hir::GenericArg::Type(value),
+                                        ) = (&args.args[0], &args.args[1])
+                                        {
+                                            key_ty_expr = Some(key.as_ref());
+                                            value_ty_expr = Some(value.as_ref());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    hir::TypeExprKind::Tuple(fields) => {
+                        if fields.len() == 2 {
+                            key_ty_expr = Some(fields[0].as_ref());
+                            value_ty_expr = Some(fields[1].as_ref());
+                        }
+                    }
+                    hir::TypeExprKind::Structural(structural) => {
+                        for field in &structural.fields {
+                            match field.name.as_str() {
+                                "key" => key_ty_expr = Some(field.ty.as_ref()),
+                                "value" => value_ty_expr = Some(field.ty.as_ref()),
+                                _ => {}
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+
+                if let (Some(key_ty_expr), Some(value_ty_expr)) =
+                    (key_ty_expr, value_ty_expr)
+                {
+                    let key_ty = self.lower_type_expr(key_ty_expr);
+                    let value_ty = self.lower_type_expr(value_ty_expr);
+                    return Ty {
+                        kind: TyKind::Slice(Box::new(Ty {
+                            kind: TyKind::Tuple(vec![Box::new(key_ty), Box::new(value_ty)]),
+                        })),
+                    };
+                }
+            }
+        }
+
         let mut fields = Vec::with_capacity(structural.fields.len());
         for field in &structural.fields {
             fields.push(StructFieldDef {
@@ -2635,8 +2741,7 @@ impl MirLowering {
                         || method_name.ends_with("::from")
                         || method_name.ends_with("::len")
                         || method_name.ends_with("::get_unchecked");
-                    if is_hashmap_impl && is_hashmap_method
-                    {
+                    if is_hashmap_impl && is_hashmap_method {
                         continue;
                     }
                     if impl_is_generic || !function.sig.generics.params.is_empty() {
@@ -3080,6 +3185,97 @@ impl MirLowering {
             hir::TypeExprKind::Slice(elem) => {
                 let elem_ty = self.lower_type_expr(elem.as_ref());
                 Some(ConstContainerArgs::List { elem_ty })
+            }
+            hir::TypeExprKind::Structural(structural) => {
+                let mut entries_ty: Option<&hir::TypeExpr> = None;
+                for field in &structural.fields {
+                    if field.name.as_str() == "entries" {
+                        entries_ty = Some(field.ty.as_ref());
+                        break;
+                    }
+                }
+                let Some(entries_ty) = entries_ty else {
+                    return None;
+                };
+                let mut entry_ty_expr: Option<&hir::TypeExpr> = None;
+                match &entries_ty.kind {
+                    hir::TypeExprKind::Path(path) => {
+                        let tail = path.segments.last()?;
+                        if tail.name.as_str() == "Vec" {
+                            let args = tail.args.as_ref()?;
+                            if args.args.len() == 1 {
+                                if let hir::GenericArg::Type(inner) = &args.args[0] {
+                                    entry_ty_expr = Some(inner.as_ref());
+                                }
+                            }
+                        }
+                    }
+                    hir::TypeExprKind::Slice(inner) => {
+                        entry_ty_expr = Some(inner.as_ref());
+                    }
+                    _ => {}
+                }
+
+                let Some(mut entry_ty_expr) = entry_ty_expr else {
+                    return None;
+                };
+                if let hir::TypeExprKind::Path(path) = &entry_ty_expr.kind {
+                    let tail = path.segments.last()?;
+                    if tail.name.as_str() == "Expr" {
+                        let args = tail.args.as_ref()?;
+                        if args.args.len() == 1 {
+                            if let hir::GenericArg::Type(inner) = &args.args[0] {
+                                entry_ty_expr = inner.as_ref();
+                            }
+                        }
+                    }
+                }
+
+                match &entry_ty_expr.kind {
+                    hir::TypeExprKind::Path(path) => {
+                        let tail = path.segments.last()?;
+                        if tail.name.as_str() == "HashMapEntry" {
+                            let args = tail.args.as_ref()?;
+                            if args.args.len() == 2 {
+                                if let (hir::GenericArg::Type(key), hir::GenericArg::Type(value)) =
+                                    (&args.args[0], &args.args[1])
+                                {
+                                    let key_ty = self.lower_type_expr(key.as_ref());
+                                    let value_ty = self.lower_type_expr(value.as_ref());
+                                    return Some(ConstContainerArgs::Map { key_ty, value_ty });
+                                }
+                            }
+                        }
+                    }
+                    hir::TypeExprKind::Tuple(fields) => {
+                        if fields.len() == 2 {
+                            let key_ty = self.lower_type_expr(fields[0].as_ref());
+                            let value_ty = self.lower_type_expr(fields[1].as_ref());
+                            return Some(ConstContainerArgs::Map { key_ty, value_ty });
+                        }
+                    }
+                    hir::TypeExprKind::Structural(structural) => {
+                        let mut key_ty_expr = None;
+                        let mut value_ty_expr = None;
+                        for field in &structural.fields {
+                            match field.name.as_str() {
+                                "key" => key_ty_expr = Some(field.ty.as_ref()),
+                                "value" => value_ty_expr = Some(field.ty.as_ref()),
+                                _ => {}
+                            }
+                        }
+                        if let (Some(key_ty_expr), Some(value_ty_expr)) =
+                            (key_ty_expr, value_ty_expr)
+                        {
+                            let key_ty = self.lower_type_expr(key_ty_expr);
+                            let value_ty = self.lower_type_expr(value_ty_expr);
+                            return Some(ConstContainerArgs::Map { key_ty, value_ty });
+                        }
+                    }
+                    _ => {}
+                }
+
+                None
             }
             hir::TypeExprKind::Ref(inner) => self.container_args_from_type_expr(inner.as_ref()),
             _ => None,
@@ -5329,13 +5525,16 @@ impl<'a> BodyBuilder<'a> {
         }
         if let hir::ExprKind::Path(path) = &callee.kind {
             let tail = path.segments.last().map(|seg| seg.name.as_str());
-            if tail == Some("get_unchecked") {
-                let Some((place, expected_ty)) = destination else {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "HashMap::get_unchecked requires a destination",
-                    );
-                    return Ok(None);
+            if tail == Some("get_unchecked") || tail == Some("::get_unchecked") {
+                let (place, expected_ty) = match destination.as_ref() {
+                    Some((place, expected_ty)) => (place.clone(), expected_ty.clone()),
+                    None => {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "HashMap::get_unchecked requires a destination",
+                        );
+                        return Ok(None);
+                    }
                 };
                 if args.len() != 2 {
                     self.lowering.emit_error(
@@ -5347,6 +5546,143 @@ impl<'a> BodyBuilder<'a> {
                         ty: expected_ty,
                         struct_def: None,
                     }));
+                }
+
+                if let hir::ExprKind::Path(path) = &args[0].kind {
+                    let mut resolved_path = path.clone();
+                    self.resolve_self_path(&mut resolved_path);
+                    let mut const_info = None;
+                    let mut const_body_len = None;
+                    if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+                        if let Some(info) = self.lowering.const_values.get(def_id) {
+                            const_info = Some(info.clone());
+                        } else if let Some(item) = self.program.def_map.get(def_id) {
+                            if let hir::ItemKind::Const(konst) = &item.kind {
+                                if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
+                                    const_body_len = Some(elements.len() as u64);
+                                }
+                                self.lowering.register_const_value(*def_id, konst);
+                                if let Some(info) = self.lowering.const_values.get(def_id) {
+                                    const_info = Some(info.clone());
+                                }
+                            }
+                        }
+                    } else if resolved_path.segments.len() == 1 {
+                        let name = resolved_path.segments[0].name.as_str();
+                        for (def_id, item) in &self.program.def_map {
+                            if let hir::ItemKind::Const(konst) = &item.kind {
+                                if konst.name.as_str() == name {
+                                    if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
+                                        const_body_len = Some(elements.len() as u64);
+                                    }
+                                    self.lowering.register_const_value(*def_id, konst);
+                                    if let Some(info) = self.lowering.const_values.get(def_id) {
+                                        const_info = Some(info.clone());
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if let Some(const_info) = const_info {
+                        if let mir::ConstantKind::Val(value, _) = &const_info.value.literal {
+                            if let Some((constant, ty)) = self
+                                .lowering
+                                .const_index_value(expr.span, &const_info.value, &args[1])
+                            {
+                                self.push_statement(mir::Statement {
+                                    source_info: expr.span,
+                                    kind: mir::StatementKind::Assign(
+                                        place.clone(),
+                                        mir::Rvalue::Use(mir::Operand::Constant(constant)),
+                                    ),
+                                });
+                                if (place.local as usize) < self.locals.len() {
+                                    self.locals[place.local as usize].ty = ty.clone();
+                                }
+                                return Ok(Some(PlaceInfo {
+                                    place,
+                                    ty,
+                                    struct_def: None,
+                                }));
+                            }
+                            let mut map_len: Option<u64> = None;
+                            let mut map_key_ty: Option<Ty> = None;
+                            let mut map_value_ty: Option<Ty> = None;
+                            match value {
+                                mir::ConstValue::Map {
+                                    entries,
+                                    key_ty,
+                                    value_ty,
+                                } => {
+                                    map_len = Some(entries.len() as u64);
+                                    map_key_ty = Some(key_ty.clone());
+                                    map_value_ty = Some(value_ty.clone());
+                                }
+                                mir::ConstValue::List { elements, elem_ty } => {
+                                    if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                        if fields.len() == 2 {
+                                            map_len = Some(elements.len() as u64);
+                                            map_key_ty = Some((*fields[0].clone()).clone());
+                                            map_value_ty = Some((*fields[1].clone()).clone());
+                                        }
+                                    }
+                                }
+                                mir::ConstValue::Array(elements) => {
+                                    if let TyKind::Array(elem_ty, _) = &const_info.ty.kind {
+                                        if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                            if fields.len() == 2 {
+                                                map_len = Some(elements.len() as u64);
+                                                map_key_ty =
+                                                    Some((*fields[0].clone()).clone());
+                                                map_value_ty =
+                                                    Some((*fields[1].clone()).clone());
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                            if map_len.is_none() {
+                                map_len = const_body_len;
+                            }
+
+                            if let (Some(key_ty), Some(value_ty), Some(len)) =
+                                (map_key_ty, map_value_ty, map_len)
+                            {
+                                if len != 0 {
+                                    let key_operand =
+                                        self.lower_operand(&args[1], Some(&key_ty))?;
+                                    self.push_statement(mir::Statement {
+                                        source_info: expr.span,
+                                        kind: mir::StatementKind::Assign(
+                                            place.clone(),
+                                            mir::Rvalue::ContainerGet {
+                                                kind: mir::ContainerKind::Map {
+                                                    key_ty: key_ty.clone(),
+                                                    value_ty: value_ty.clone(),
+                                                    len,
+                                                },
+                                                container: mir::Operand::Constant(
+                                                    const_info.value.clone(),
+                                                ),
+                                                key: key_operand.operand,
+                                            },
+                                        ),
+                                    });
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty = value_ty.clone();
+                                    }
+                                    return Ok(Some(PlaceInfo {
+                                        place,
+                                        ty: value_ty,
+                                        struct_def: None,
+                                    }));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let container_info = self.lower_operand(&args[0], None)?;
@@ -5393,18 +5729,58 @@ impl<'a> BodyBuilder<'a> {
 
                 if map_len.is_none() {
                     if let Some(local_id) = self.local_id_from_expr(&args[0]) {
-                        if let Some(mir::ContainerKind::Map { key_ty, value_ty, len }) =
-                            self.container_locals.get(&local_id).cloned()
+                        if let Some(container_kind) = self.container_locals.get(&local_id).cloned()
                         {
-                            map_len = Some(len);
-                            map_key_ty = Some(key_ty);
-                            map_value_ty = Some(value_ty);
+                            match container_kind {
+                                mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                    map_len = Some(len);
+                                    map_key_ty = Some(key_ty);
+                                    map_value_ty = Some(value_ty);
+                                }
+                                mir::ContainerKind::List { elem_ty, len } => {
+                                    if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                        if fields.len() == 2 {
+                                            map_len = Some(len);
+                                            map_key_ty = Some((*fields[0].clone()).clone());
+                                            map_value_ty = Some((*fields[1].clone()).clone());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if map_len.is_none() {
+                    if let mir::Operand::Copy(place) = &container_info.operand {
+                        if let Some(container_kind) =
+                            self.container_locals.get(&place.local).cloned()
+                        {
+                            match container_kind {
+                                mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                    map_len = Some(len);
+                                    map_key_ty = Some(key_ty);
+                                    map_value_ty = Some(value_ty);
+                                }
+                                mir::ContainerKind::List { elem_ty, len } => {
+                                    if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                        if fields.len() == 2 {
+                                            map_len = Some(len);
+                                            map_key_ty = Some((*fields[0].clone()).clone());
+                                            map_value_ty = Some((*fields[1].clone()).clone());
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
                 if map_len.is_none() {
-                    match &container_info.ty.kind {
+                    let container_ty = match &container_info.ty.kind {
+                        TyKind::Ref(_, inner, _) => inner.as_ref(),
+                        _ => &container_info.ty,
+                    };
+                    match &container_ty.kind {
                         TyKind::Array(elem_ty, len) => {
                             if let TyKind::Tuple(fields) = &elem_ty.kind {
                                 if fields.len() == 2 {
@@ -5428,41 +5804,32 @@ impl<'a> BodyBuilder<'a> {
 
                 if let (Some(key_ty), Some(value_ty)) = (map_key_ty, map_value_ty) {
                     let len = map_len.unwrap_or(0);
-                    if len == 0 {
-                        self.lowering.emit_error(
-                            expr.span,
-                            "HashMap::get_unchecked requires a literal HashMap for now",
-                        );
+                    if len != 0 {
+                        let key_operand = self.lower_operand(&args[1], Some(&key_ty))?;
+                        self.push_statement(mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                place.clone(),
+                                mir::Rvalue::ContainerGet {
+                                    kind: mir::ContainerKind::Map {
+                                        key_ty: key_ty.clone(),
+                                        value_ty: value_ty.clone(),
+                                        len,
+                                    },
+                                    container: container_info.operand,
+                                    key: key_operand.operand,
+                                },
+                            ),
+                        });
+                        if (place.local as usize) < self.locals.len() {
+                            self.locals[place.local as usize].ty = value_ty.clone();
+                        }
                         return Ok(Some(PlaceInfo {
                             place,
-                            ty: expected_ty,
+                            ty: value_ty,
                             struct_def: None,
                         }));
                     }
-                    let key_operand = self.lower_operand(&args[1], Some(&key_ty))?;
-                    self.push_statement(mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            place.clone(),
-                            mir::Rvalue::ContainerGet {
-                                kind: mir::ContainerKind::Map {
-                                    key_ty: key_ty.clone(),
-                                    value_ty: value_ty.clone(),
-                                    len,
-                                },
-                                container: container_info.operand,
-                                key: key_operand.operand,
-                            },
-                        ),
-                    });
-                    if (place.local as usize) < self.locals.len() {
-                        self.locals[place.local as usize].ty = value_ty.clone();
-                    }
-                    return Ok(Some(PlaceInfo {
-                        place,
-                        ty: value_ty,
-                        struct_def: None,
-                    }));
                 }
             }
         }
@@ -8240,7 +8607,149 @@ impl<'a> BodyBuilder<'a> {
                 let method_key = method_name.clone();
                 let mut resolved_info: Option<(MethodLoweringInfo, Option<PlaceInfo>)> = None;
 
-                if method_name.as_str() == "get_unchecked" && args.len() == 1 {
+                if (method_name.as_str() == "get_unchecked"
+                    || method_name.as_str().ends_with("::get_unchecked"))
+                    && args.len() == 1
+                {
+                    if let hir::ExprKind::Path(path) = &receiver.kind {
+                        let mut resolved_path = path.clone();
+                        self.resolve_self_path(&mut resolved_path);
+                        let mut const_info = None;
+                        let mut const_body_len = None;
+                        if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+                            if let Some(info) = self.lowering.const_values.get(def_id) {
+                                const_info = Some(info.clone());
+                            } else if let Some(item) = self.program.def_map.get(def_id) {
+                                if let hir::ItemKind::Const(konst) = &item.kind {
+                                    if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
+                                        const_body_len = Some(elements.len() as u64);
+                                    }
+                                    self.lowering.register_const_value(*def_id, konst);
+                                    if let Some(info) = self.lowering.const_values.get(def_id) {
+                                        const_info = Some(info.clone());
+                                    }
+                                }
+                            }
+                        } else if resolved_path.segments.len() == 1 {
+                            let name = resolved_path.segments[0].name.as_str();
+                            for (def_id, item) in &self.program.def_map {
+                                if let hir::ItemKind::Const(konst) = &item.kind {
+                                    if konst.name.as_str() == name {
+                                        if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
+                                            const_body_len = Some(elements.len() as u64);
+                                        }
+                                        self.lowering.register_const_value(*def_id, konst);
+                                        if let Some(info) =
+                                            self.lowering.const_values.get(def_id)
+                                        {
+                                            const_info = Some(info.clone());
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if let Some(const_info) = const_info {
+                            if let mir::ConstantKind::Val(value, _) = &const_info.value.literal {
+                                if let Some((constant, ty)) = self
+                                    .lowering
+                                    .const_index_value(expr.span, &const_info.value, &args[0])
+                                {
+                                    self.push_statement(mir::Statement {
+                                        source_info: expr.span,
+                                        kind: mir::StatementKind::Assign(
+                                            place.clone(),
+                                            mir::Rvalue::Use(mir::Operand::Constant(constant)),
+                                        ),
+                                    });
+                                    if (place.local as usize) < self.locals.len() {
+                                        self.locals[place.local as usize].ty = ty.clone();
+                                    }
+                                    return Ok(());
+                                }
+                                let mut map_len: Option<u64> = None;
+                                let mut map_key_ty: Option<Ty> = None;
+                                let mut map_value_ty: Option<Ty> = None;
+                                match value {
+                                    mir::ConstValue::Map {
+                                        entries,
+                                        key_ty,
+                                        value_ty,
+                                    } => {
+                                        map_len = Some(entries.len() as u64);
+                                        map_key_ty = Some(key_ty.clone());
+                                        map_value_ty = Some(value_ty.clone());
+                                    }
+                                    mir::ConstValue::List { elements, elem_ty } => {
+                                        if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                            if fields.len() == 2 {
+                                                map_len = Some(elements.len() as u64);
+                                                map_key_ty = Some((*fields[0].clone()).clone());
+                                                map_value_ty = Some((*fields[1].clone()).clone());
+                                            }
+                                        }
+                                    }
+                                    mir::ConstValue::Array(elements) => {
+                                        if let TyKind::Array(elem_ty, _) = &const_info.ty.kind {
+                                            if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                                if fields.len() == 2 {
+                                                    map_len = Some(elements.len() as u64);
+                                                    map_key_ty =
+                                                        Some((*fields[0].clone()).clone());
+                                                    map_value_ty =
+                                                        Some((*fields[1].clone()).clone());
+                                                }
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                                if map_len.is_none() {
+                                    map_len = const_body_len;
+                                }
+
+                                if map_key_ty.is_none() {
+                                    let key_operand = self.lower_operand(&args[0], None)?;
+                                    map_key_ty = Some(key_operand.ty);
+                                }
+                                if map_value_ty.is_none() {
+                                    map_value_ty = Some(expected_ty.clone());
+                                }
+
+                                if let (Some(key_ty), Some(value_ty), Some(len)) =
+                                    (map_key_ty, map_value_ty, map_len)
+                                {
+                                    if len != 0 {
+                                        let key_operand =
+                                            self.lower_operand(&args[0], Some(&key_ty))?;
+                                        self.push_statement(mir::Statement {
+                                            source_info: expr.span,
+                                            kind: mir::StatementKind::Assign(
+                                                place.clone(),
+                                                mir::Rvalue::ContainerGet {
+                                                    kind: mir::ContainerKind::Map {
+                                                        key_ty: key_ty.clone(),
+                                                        value_ty: value_ty.clone(),
+                                                        len,
+                                                    },
+                                                    container: mir::Operand::Constant(
+                                                        const_info.value.clone(),
+                                                    ),
+                                                    key: key_operand.operand,
+                                                },
+                                            ),
+                                        });
+                                        if (place.local as usize) < self.locals.len() {
+                                            self.locals[place.local as usize].ty = value_ty.clone();
+                                        }
+                                        return Ok(());
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     if let Ok(receiver_info) = self.lower_operand(receiver, None) {
                         if let mir::Operand::Constant(constant) = &receiver_info.operand {
                             if let mir::ConstantKind::Val(
@@ -8278,45 +8787,122 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                         if let Some(local_id) = self.local_id_from_expr(receiver) {
-                            if let Some(mir::ContainerKind::Map { key_ty, value_ty, len }) =
-                                self.container_locals.get(&local_id).cloned()
+                            if let Some(container_kind) = self.container_locals.get(&local_id).cloned()
                             {
-                                if len == 0 {
-                                    self.lowering.emit_error(
-                                        expr.span,
-                                        "HashMap::get_unchecked requires a literal HashMap for now",
-                                    );
+                                let mut map_key_ty = None;
+                                let mut map_value_ty = None;
+                                let mut map_len = 0;
+                                match container_kind {
+                                    mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                        map_key_ty = Some(key_ty);
+                                        map_value_ty = Some(value_ty);
+                                        map_len = len;
+                                    }
+                                    mir::ContainerKind::List { elem_ty, len } => {
+                                        if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                            if fields.len() == 2 {
+                                                map_key_ty = Some((*fields[0].clone()).clone());
+                                                map_value_ty = Some((*fields[1].clone()).clone());
+                                                map_len = len;
+                                            }
+                                        }
+                                    }
                                 }
+                                if let (Some(key_ty), Some(value_ty)) =
+                                    (map_key_ty, map_value_ty)
+                                {
+                                    if map_len != 0 {
+                                        let key_operand =
+                                            self.lower_operand(&args[0], Some(&key_ty))?;
+                                        let local_place = mir::Place::from_local(local_id);
+                                        self.push_statement(mir::Statement {
+                                            source_info: expr.span,
+                                            kind: mir::StatementKind::Assign(
+                                                place.clone(),
+                                                mir::Rvalue::ContainerGet {
+                                                    kind: mir::ContainerKind::Map {
+                                                        key_ty: key_ty.clone(),
+                                                        value_ty: value_ty.clone(),
+                                                        len: map_len,
+                                                    },
+                                                    container: mir::Operand::copy(local_place),
+                                                    key: key_operand.operand,
+                                                },
+                                            ),
+                                        });
 
-                                let key_operand = self.lower_operand(&args[0], Some(&key_ty))?;
-                                let local_place = mir::Place::from_local(local_id);
-                                self.push_statement(mir::Statement {
-                                    source_info: expr.span,
-                                    kind: mir::StatementKind::Assign(
-                                        place.clone(),
-                                        mir::Rvalue::ContainerGet {
-                                            kind: mir::ContainerKind::Map {
-                                                key_ty: key_ty.clone(),
-                                                value_ty: value_ty.clone(),
-                                                len,
-                                            },
-                                            container: mir::Operand::copy(local_place),
-                                            key: key_operand.operand,
-                                        },
-                                    ),
-                                });
-
-                                if (place.local as usize) < self.locals.len() {
-                                    self.locals[place.local as usize].ty = value_ty.clone();
+                                        if (place.local as usize) < self.locals.len() {
+                                            self.locals[place.local as usize].ty =
+                                                value_ty.clone();
+                                        }
+                                        return Ok(());
+                                    }
                                 }
-                                return Ok(());
+                            }
+                        }
+                        if let mir::Operand::Copy(place) = &receiver_info.operand {
+                            if let Some(container_kind) =
+                                self.container_locals.get(&place.local).cloned()
+                            {
+                                let mut map_key_ty = None;
+                                let mut map_value_ty = None;
+                                let mut map_len = 0;
+                                match container_kind {
+                                    mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                        map_key_ty = Some(key_ty);
+                                        map_value_ty = Some(value_ty);
+                                        map_len = len;
+                                    }
+                                    mir::ContainerKind::List { elem_ty, len } => {
+                                        if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                            if fields.len() == 2 {
+                                                map_key_ty = Some((*fields[0].clone()).clone());
+                                                map_value_ty = Some((*fields[1].clone()).clone());
+                                                map_len = len;
+                                            }
+                                        }
+                                    }
+                                }
+                                if let (Some(key_ty), Some(value_ty)) =
+                                    (map_key_ty, map_value_ty)
+                                {
+                                    if map_len != 0 {
+                                        let key_operand =
+                                            self.lower_operand(&args[0], Some(&key_ty))?;
+                                        self.push_statement(mir::Statement {
+                                            source_info: expr.span,
+                                            kind: mir::StatementKind::Assign(
+                                                place.clone(),
+                                                mir::Rvalue::ContainerGet {
+                                                    kind: mir::ContainerKind::Map {
+                                                        key_ty: key_ty.clone(),
+                                                        value_ty: value_ty.clone(),
+                                                        len: map_len,
+                                                    },
+                                                    container: receiver_info.operand.clone(),
+                                                    key: key_operand.operand,
+                                                },
+                                            ),
+                                        });
+
+                                        if (place.local as usize) < self.locals.len() {
+                                            self.locals[place.local as usize].ty =
+                                                value_ty.clone();
+                                        }
+                                        return Ok(());
+                                    }
+                                }
                             }
                         }
 
                         let mut map_len: Option<u64> = None;
                         let mut map_key_ty: Option<Ty> = None;
                         let mut map_value_ty: Option<Ty> = None;
-                        match &receiver_info.ty.kind {
+                        let receiver_ty = match &receiver_info.ty.kind {
+                            TyKind::Ref(_, inner, _) => inner.as_ref(),
+                            _ => &receiver_info.ty,
+                        };
+                        match &receiver_ty.kind {
                             TyKind::Array(elem_ty, len) => {
                                 if let TyKind::Tuple(fields) = &elem_ty.kind {
                                     if fields.len() == 2 {
@@ -8369,33 +8955,28 @@ impl<'a> BodyBuilder<'a> {
 
                         if let (Some(key_ty), Some(value_ty)) = (map_key_ty, map_value_ty) {
                             let len = map_len.unwrap_or(0);
-                            if len == 0 {
-                                self.lowering.emit_error(
-                                    expr.span,
-                                    "HashMap::get_unchecked requires a literal HashMap for now",
-                                );
+                            if len != 0 {
+                                let key_operand = self.lower_operand(&args[0], Some(&key_ty))?;
+                                self.push_statement(mir::Statement {
+                                    source_info: expr.span,
+                                    kind: mir::StatementKind::Assign(
+                                        place.clone(),
+                                        mir::Rvalue::ContainerGet {
+                                            kind: mir::ContainerKind::Map {
+                                                key_ty: key_ty.clone(),
+                                                value_ty: value_ty.clone(),
+                                                len,
+                                            },
+                                            container: receiver_info.operand,
+                                            key: key_operand.operand,
+                                        },
+                                    ),
+                                });
+                                if (place.local as usize) < self.locals.len() {
+                                    self.locals[place.local as usize].ty = value_ty.clone();
+                                }
                                 return Ok(());
                             }
-                            let key_operand = self.lower_operand(&args[0], Some(&key_ty))?;
-                            self.push_statement(mir::Statement {
-                                source_info: expr.span,
-                                kind: mir::StatementKind::Assign(
-                                    place.clone(),
-                                    mir::Rvalue::ContainerGet {
-                                        kind: mir::ContainerKind::Map {
-                                            key_ty: key_ty.clone(),
-                                            value_ty: value_ty.clone(),
-                                            len,
-                                        },
-                                        container: receiver_info.operand,
-                                        key: key_operand.operand,
-                                    },
-                                ),
-                            });
-                            if (place.local as usize) < self.locals.len() {
-                                self.locals[place.local as usize].ty = value_ty.clone();
-                            }
-                            return Ok(());
                         }
                     }
                 }
