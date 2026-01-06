@@ -109,13 +109,13 @@ ast::File {
     pub const _GENERATED: () : ()
       value () : ()
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (18 stmts) : ()
+      block (32 stmts) : ()
         expr_stmt ;
           intrinsic println : ()
             template: "📘 Tutorial: 08_metaprogramming_patterns.fp"
         expr_stmt ;
           intrinsic println : ()
-            template: "🧭 Focus: Metaprogramming: using const metadata to drive code generation"
+            template: "🧭 Focus: Metaprogramming: const metadata + quote/splice execution"
         expr_stmt ;
           intrinsic println : ()
             template: "🧪 What to look for: labeled outputs below"
@@ -125,6 +125,9 @@ ast::File {
         expr_stmt ;
           intrinsic println : ()
             template: ""
+        expr_stmt ;
+          intrinsic println : ()
+            template: "=== Part 1: Const Metadata ==="
         pub const FIELD_COUNT: i64 : i64
           value 3 : i64
         pub const POINT_NAME: &string : &string
@@ -180,4 +183,46 @@ ast::File {
         expr_stmt ;
           intrinsic println : ()
             template: "labeled=({}, {}, {}, {})" lp.x, lp.y, lp.z, lp.label
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
+        expr_stmt ;
+          intrinsic println : ()
+            template: "=== Part 2: Execute Quoted Code ==="
+        let score
+          init:
+            value 20 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "expr splice => {}" score
+        pub const fn_name: &string : &string
+          value "inspected" : &string
+        expr_stmt ;
+          intrinsic println : ()
+            template: "quote<fn> inspect => name={}" fn_name
+        pub const fn_count: i64 : i64
+          value 2 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "quote<[item]> count => {}" fn_count
+        let step
+          init:
+            value 21 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "stmt splice => step={}" step
+        pub struct Banner : Banner{title: &''static Expr(str), rank: Expr(i64)} {
+          title: &''static Expr(str)
+          rank: Expr(i64)
+        }
+        let banner
+          init:
+            struct Banner : Banner{title: &''static Expr(str), rank: Expr(i64)}
+              title:
+                value "metaprogramming" : &string
+              rank:
+                locator score : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "item splice => {} #{}" banner.title, banner.rank
 }

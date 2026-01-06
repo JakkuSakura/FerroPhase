@@ -68,10 +68,11 @@ hir::Program {
     pub fn main() -> () {
         {
             printf("📘 Tutorial: 08_metaprogramming_patterns.fp\n");
-            printf("🧭 Focus: Metaprogramming: using const metadata to drive code generation\n");
+            printf("🧭 Focus: Metaprogramming: const metadata + quote/splice execution\n");
             printf("🧪 What to look for: labeled outputs below\n");
             printf("✅ Expectation: outputs match labels\n");
             printf("\n");
+            printf("=== Part 1: Const Metadata ===\n");
             pub const FIELD_COUNT: i64 =
                 3;
             pub const POINT_NAME: &str =
@@ -86,18 +87,36 @@ hir::Program {
             printf("x type: %s\n", X_TYPE);
             printf("fields:\n");
             {
-                let mut __fp_idx214 = 0;
-                while ((__fp_idx214 < 3))
+                let mut __fp_idx218 = 0;
+                while ((__fp_idx218 < 3))
                     {
-                        let field = FIELDS[__fp_idx214];
+                        let field = FIELDS[__fp_idx218];
                         std::Println(2 args);
-                        __fp_idx214 = (__fp_idx214 + 1);
+                        __fp_idx218 = (__fp_idx218 + 1);
                     }
             }
             let p = Point3D { x: 1, y: 2, z: 3 };
             printf("point=(%lld, %lld, %lld)\n", p.x, p.y, p.z);
             let lp = LabeledPoint { x: 4, y: 5, z: 6, label: "origin" };
             printf("labeled=(%lld, %lld, %lld, %s)\n", lp.x, lp.y, lp.z, lp.label);
+            printf("\n");
+            printf("=== Part 2: Execute Quoted Code ===\n");
+            let score = 20;
+            printf("expr splice => %lld\n", score);
+            pub const fn_name: &&str =
+                "inspected";
+            printf("quote<fn> inspect => name=%s\n", fn_name);
+            pub const fn_count: i64 =
+                2;
+            printf("quote<[item]> count => %lld\n", fn_count);
+            let step = 21;
+            printf("stmt splice => step=%lld\n", step);
+            pub struct Banner {
+                pub title: &str,
+                pub rank: i64,
+            }
+            let banner = Banner { title: "metaprogramming", rank: score };
+            printf("item splice => %s #%lld\n", banner.title, banner.rank);
         }
     }
 }

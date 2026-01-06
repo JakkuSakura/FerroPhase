@@ -10,3 +10,4 @@ fp-rust = { path = "../fp-rust" }
 eyre = "0.6"
 thiserror = "2.0.17"
 winnow = "0.6"
+tracing = "0.1"

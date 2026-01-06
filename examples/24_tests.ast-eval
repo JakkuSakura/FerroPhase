@@ -100,129 +100,87 @@ ast::File {
         }
       }
     }
-    pub struct Point3D : Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64)} {
-      x: Expr(i64)
-      y: Expr(i64)
-      z: Expr(i64)
-    }
-    pub type LabeledPoint = Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)} : Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)}
-    pub const _GENERATED: () : ()
-      value () : ()
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (32 stmts) : ()
+      block (10 stmts) : ()
         expr_stmt ;
           intrinsic println : ()
-            template: "📘 Tutorial: 08_metaprogramming_patterns.fp"
+            template: "📘 Tutorial: 24_tests.fp"
         expr_stmt ;
           intrinsic println : ()
-            template: "🧭 Focus: Metaprogramming: const metadata + quote/splice execution"
+            template: "🧭 Focus: minimal test registration example plus manual execution"
         expr_stmt ;
           intrinsic println : ()
-            template: "🧪 What to look for: labeled outputs below"
+            template: "🧪 What to look for: assert() should not trigger"
         expr_stmt ;
           intrinsic println : ()
-            template: "✅ Expectation: outputs match labels"
+            template: "✅ Expectation: both tests run without printing assertion failure"
         expr_stmt ;
           intrinsic println : ()
             template: ""
         expr_stmt ;
           intrinsic println : ()
-            template: "=== Part 1: Const Metadata ==="
-        pub const FIELD_COUNT: i64 : i64
-          value 3 : i64
-        pub const POINT_NAME: &string : &string
-          value "struct Point3D" : &string
-        pub const SIZE: i64 : i64
-          value 24 : i64
-        pub const FIELDS: Vec<structural{name: &string, type_name: &string}> : Vec<structural{name: &string, type_name: &string}>
-          value [3 values] : Vec<structural{name: &string, type_name: &string}>
-        pub const X_TYPE: &string : &string
-          value "i64\n" : &string
+            template: "Running tests manually:"
+        expr_stmt ;
+          invoke : ()
+            target: adds_two_numbers
         expr_stmt ;
           intrinsic println : ()
-            template: "{} has {} fields (size={})" POINT_NAME, FIELD_COUNT, SIZE
+            template: "  adds_two_numbers ... ok"
+        expr_stmt ;
+          invoke : ()
+            target: string_concat
         expr_stmt ;
           intrinsic println : ()
-            template: "x type: {}" X_TYPE
+            template: "  string_concat ... ok"
+    pub [attrs] fn adds_two_numbers() -> () : fn() -> () : fn() -> ()
+      block (3 stmts) : ()
+        let left
+          init:
+            binop + : i64
+              lhs:
+                value 1 : i64
+              rhs:
+                value 2 : i64
+        let right
+          init:
+            value 3 : i64
         expr_stmt ;
-          intrinsic println : ()
-            template: "fields:"
-        expr_stmt (value)
-          for : ()
-            iter:
-              invoke : Vec<structural{name: &string, type_name: &string}>
-                target: FIELDS.iter
-            body:
+          if : ()
+            cond:
+              unop ! : bool
+                value:
+                  binop == : bool
+                    lhs:
+                      locator left : i64
+                    rhs:
+                      locator right : i64
+            then:
               block (1 stmt) : ()
                 expr_stmt ;
                   intrinsic println : ()
-                    template: "  {}: {}" field.name, field.type_name
-        let p
+                    template: "assertion failed"
+    pub [attrs] fn string_concat() -> () : fn() -> () : fn() -> ()
+      block (2 stmts) : ()
+        let msg
           init:
-            struct Point3D : Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64)}
-              x:
-                value 1 : i64
-              y:
-                value 2 : i64
-              z:
-                value 3 : i64
+            binop + : &string
+              lhs:
+                value "hello, " : &string
+              rhs:
+                value "world" : &string
         expr_stmt ;
-          intrinsic println : ()
-            template: "point=({}, {}, {})" p.x, p.y, p.z
-        let lp
-          init:
-            struct LabeledPoint : Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)}
-              x:
-                value 4 : i64
-              y:
-                value 5 : i64
-              z:
-                value 6 : i64
-              label:
-                value "origin" : &string
-        expr_stmt ;
-          intrinsic println : ()
-            template: "labeled=({}, {}, {}, {})" lp.x, lp.y, lp.z, lp.label
-        expr_stmt ;
-          intrinsic println : ()
-            template: ""
-        expr_stmt ;
-          intrinsic println : ()
-            template: "=== Part 2: Execute Quoted Code ==="
-        let score
-          init:
-            value 20 : i64
-        expr_stmt ;
-          intrinsic println : ()
-            template: "expr splice => {}" score
-        pub const fn_name: &string : &string
-          value "inspected" : &string
-        expr_stmt ;
-          intrinsic println : ()
-            template: "quote<fn> inspect => name={}" fn_name
-        pub const fn_count: i64 : i64
-          value 2 : i64
-        expr_stmt ;
-          intrinsic println : ()
-            template: "quote<[item]> count => {}" fn_count
-        let step
-          init:
-            value 21 : i64
-        expr_stmt ;
-          intrinsic println : ()
-            template: "stmt splice => step={}" step
-        pub struct Banner : Banner{title: &''static Expr(str), rank: Expr(i64)} {
-          title: &''static Expr(str)
-          rank: Expr(i64)
-        }
-        let banner
-          init:
-            struct Banner : Banner{title: &''static Expr(str), rank: Expr(i64)}
-              title:
-                value "metaprogramming" : &string
-              rank:
-                locator score : i64
-        expr_stmt ;
-          intrinsic println : ()
-            template: "item splice => {} #{}" banner.title, banner.rank
+          if : ()
+            cond:
+              unop ! : bool
+                value:
+                  binop == : bool
+                    lhs:
+                      locator msg : &string
+                    rhs:
+                      value "hello, world" : &string
+            then:
+              block (1 stmt) : ()
+                expr_stmt ;
+                  intrinsic println : ()
+                    template: "assertion failed"
 }

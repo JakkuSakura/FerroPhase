@@ -4,7 +4,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::Pattern;
-use fp_core::ast::TypeQuoteToken;
+use fp_core::ast::{TypeQuoteExpr, TypeQuoteToken};
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString, ExprIntrinsicCall,
     ExprInvoke, ExprInvokeTarget, ExprKind, ExprRange, ExprRangeLimit, FormatArgRef,
@@ -1486,6 +1486,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                     .map(|ret| Box::new(self.substitute_ty(ret.as_ref(), subst))),
             }),
             Ty::Expr(_) => ty.clone(),
+            Ty::QuoteExpr(quote) => Ty::QuoteExpr(TypeQuoteExpr {
+                inner: quote
+                    .inner
+                    .as_ref()
+                    .map(|inner| Box::new(self.substitute_ty(inner.as_ref(), subst))),
+            }),
+            Ty::QuoteStmt(_)
+            | Ty::QuoteItem(_)
+            | Ty::QuoteFn(_)
+            | Ty::QuoteStruct(_)
+            | Ty::QuoteEnum(_)
+            | Ty::QuoteTrait(_)
+            | Ty::QuoteImpl(_)
+            | Ty::QuoteConst(_)
+            | Ty::QuoteStatic(_)
+            | Ty::QuoteMod(_)
+            | Ty::QuoteUse(_)
+            | Ty::QuoteMacro(_)
+            | Ty::QuoteType(_) => ty.clone(),
             Ty::QuoteToken(qt) => Ty::QuoteToken(Box::new(TypeQuoteToken {
                 kind: qt.kind,
                 inner: qt
@@ -2769,41 +2788,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::undefined()
                 }),
             Value::QuoteToken(token) => {
-                let is_item_kind = matches!(
-                    token.kind,
-                    QuoteFragmentKind::Item
-                        | QuoteFragmentKind::Items
-                        | QuoteFragmentKind::Fns
-                        | QuoteFragmentKind::Structs
-                        | QuoteFragmentKind::Enums
-                        | QuoteFragmentKind::Traits
-                        | QuoteFragmentKind::Impls
-                        | QuoteFragmentKind::Consts
-                        | QuoteFragmentKind::Statics
-                        | QuoteFragmentKind::Mods
-                        | QuoteFragmentKind::Uses
-                        | QuoteFragmentKind::Macros
-                );
+                let is_item_kind = matches!(token.kind, QuoteFragmentKind::Item);
                 if !is_item_kind {
                     let kind = match token.kind {
                         QuoteFragmentKind::Expr => "expr",
-                        QuoteFragmentKind::Exprs => "exprs",
                         QuoteFragmentKind::Stmt => "stmt",
-                        QuoteFragmentKind::Stmts => "stmts",
                         QuoteFragmentKind::Item => "item",
-                        QuoteFragmentKind::Items => "items",
-                        QuoteFragmentKind::Fns => "fns",
-                        QuoteFragmentKind::Structs => "structs",
-                        QuoteFragmentKind::Enums => "enums",
-                        QuoteFragmentKind::Traits => "traits",
-                        QuoteFragmentKind::Impls => "impls",
-                        QuoteFragmentKind::Consts => "consts",
-                        QuoteFragmentKind::Statics => "statics",
-                        QuoteFragmentKind::Mods => "mods",
-                        QuoteFragmentKind::Uses => "uses",
-                        QuoteFragmentKind::Macros => "macros",
                         QuoteFragmentKind::Type => "type",
-                        QuoteFragmentKind::Types => "types",
                     };
                     self.emit_error(format!(
                         "cannot access field '{}' on quote<{}> token",
@@ -3205,11 +3196,45 @@ fn is_quote_only_item(item: &Item) -> bool {
     match item.kind() {
         ItemKind::DefFunction(func) => {
             func.sig.quote_kind.is_some()
-                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::QuoteToken(_)))
+                || matches!(
+                    func.sig.ret_ty.as_ref(),
+                    Some(Ty::QuoteExpr(_))
+                        | Some(Ty::QuoteStmt(_))
+                        | Some(Ty::QuoteItem(_))
+                        | Some(Ty::QuoteFn(_))
+                        | Some(Ty::QuoteStruct(_))
+                        | Some(Ty::QuoteEnum(_))
+                        | Some(Ty::QuoteTrait(_))
+                        | Some(Ty::QuoteImpl(_))
+                        | Some(Ty::QuoteConst(_))
+                        | Some(Ty::QuoteStatic(_))
+                        | Some(Ty::QuoteMod(_))
+                        | Some(Ty::QuoteUse(_))
+                        | Some(Ty::QuoteMacro(_))
+                        | Some(Ty::QuoteType(_))
+                        | Some(Ty::QuoteToken(_))
+                )
         }
         ItemKind::DeclFunction(func) => {
             func.sig.quote_kind.is_some()
-                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::QuoteToken(_)))
+                || matches!(
+                    func.sig.ret_ty.as_ref(),
+                    Some(Ty::QuoteExpr(_))
+                        | Some(Ty::QuoteStmt(_))
+                        | Some(Ty::QuoteItem(_))
+                        | Some(Ty::QuoteFn(_))
+                        | Some(Ty::QuoteStruct(_))
+                        | Some(Ty::QuoteEnum(_))
+                        | Some(Ty::QuoteTrait(_))
+                        | Some(Ty::QuoteImpl(_))
+                        | Some(Ty::QuoteConst(_))
+                        | Some(Ty::QuoteStatic(_))
+                        | Some(Ty::QuoteMod(_))
+                        | Some(Ty::QuoteUse(_))
+                        | Some(Ty::QuoteMacro(_))
+                        | Some(Ty::QuoteType(_))
+                        | Some(Ty::QuoteToken(_))
+                )
         }
         _ => false,
     }

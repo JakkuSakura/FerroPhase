@@ -756,6 +756,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::List(list) => Value::int(list.values.len() as i64),
                     Value::Map(map) => Value::int(map.len() as i64),
                     Value::String(text) => Value::int(text.value.chars().count() as i64),
+                    Value::QuoteToken(token) => match token.value {
+                        QuoteTokenValue::Items(items) => Value::int(items.len() as i64),
+                        _ => {
+                            self.emit_error(format!(
+                                "'len' is only supported on compile-time arrays, lists, and maps, found {:?}",
+                                Value::QuoteToken(token)
+                            ));
+                            Value::undefined()
+                        }
+                    },
                     other => {
                         self.emit_error(format!(
                             "'len' is only supported on compile-time arrays, lists, and maps, found {:?}",
@@ -1185,6 +1195,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::Map(map) => {
                         return RuntimeFlow::Value(Value::int(map.entries.len() as i64));
                     }
+                    Value::QuoteToken(ref token) => match &token.value {
+                        QuoteTokenValue::Items(items) => {
+                            return RuntimeFlow::Value(Value::int(items.len() as i64));
+                        }
+                        _ => {}
+                    },
                     _ => {}
                 },
                 "iter" => match receiver.value {

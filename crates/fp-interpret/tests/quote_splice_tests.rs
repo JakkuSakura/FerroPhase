@@ -76,7 +76,7 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
         Expr::value(Value::unit()).into(),
     );
     let token = Value::QuoteToken(ValueQuoteToken {
-        kind: QuoteFragmentKind::Items,
+        kind: QuoteFragmentKind::Item,
         value: QuoteTokenValue::Items(vec![
             Item::from(ItemKind::DefFunction(func_a)),
             Item::from(ItemKind::DefFunction(func_b)),
@@ -84,7 +84,7 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
     });
 
     let pattern = Pattern::new(PatternKind::QuotePlural(PatternQuotePlural {
-        fragment: QuoteFragmentKind::Items,
+        fragment: QuoteFragmentKind::Item,
         patterns: vec![Pattern::new(PatternKind::Ident(PatternIdent::new(
             Ident::new("items"),
         )))],

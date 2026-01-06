@@ -124,22 +124,8 @@ common_enum! {
     #[derive(Copy)]
     pub enum QuoteFragmentKind {
         Expr,
-        Exprs,
         Stmt,
-        Stmts,
         Item,
-        Items,
-        Fns,
-        Structs,
-        Enums,
-        Traits,
-        Impls,
-        Types,
-        Consts,
-        Statics,
-        Mods,
-        Uses,
-        Macros,
         Type,
     }
 }

@@ -18,13 +18,9 @@ fn quote_without_kind_infers_expr_when_trailing_expr_present() {
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors);
     match node.ty().expect("ty") {
-        Ty::QuoteToken(qt) => {
+        Ty::QuoteExpr(quote) => {
             assert!(
-                matches!(qt.kind, QuoteFragmentKind::Expr),
-                "expected expr quote kind"
-            );
-            assert!(
-                qt.inner.is_some(),
+                quote.inner.is_some(),
                 "expr quote token should carry inner type"
             );
         }
@@ -40,16 +36,7 @@ fn quote_without_kind_infers_stmt_when_no_trailing_expr() {
     let outcome = typer.infer(&mut node).expect("infer");
     assert!(!outcome.has_errors);
     match node.ty().expect("ty") {
-        Ty::QuoteToken(qt) => {
-            assert!(
-                matches!(qt.kind, QuoteFragmentKind::Stmt),
-                "expected stmt quote kind"
-            );
-            assert!(
-                qt.inner.is_none(),
-                "stmt quote token should not carry inner type"
-            );
-        }
+        Ty::QuoteStmt(_) => {}
         other => panic!("unexpected type for quote: {:?}", other),
     }
 }

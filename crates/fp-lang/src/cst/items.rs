@@ -338,11 +338,22 @@ fn parse_item_cst(
             }
             // const fn ...
             if matches!(
-                input.get(1),
-                Some(Token {
-                    kind: TokenKind::Keyword(Keyword::Fn),
-                    ..
-                })
+                (input.get(1), input.get(2), input.get(3)),
+                (
+                    Some(Token {
+                        kind: TokenKind::Keyword(Keyword::Fn),
+                        ..
+                    }),
+                    Some(Token {
+                        kind: TokenKind::Ident,
+                        ..
+                    }),
+                    Some(Token {
+                        kind: TokenKind::Symbol,
+                        lexeme,
+                        ..
+                    })
+                ) if lexeme == "("
             ) {
                 // consume const + fn
                 children.push(SyntaxElement::Token(syntax_token_from_token(

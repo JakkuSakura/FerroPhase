@@ -3,7 +3,7 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicNormalizer, NormalizeOutcome};
 use fp_rust::normalization::RustIntrinsicNormalizer;
 
-use crate::ast::lower::expr::lower_type_from_cst;
+use crate::ast::expr::lower_type_from_cst;
 use crate::cst::parse_type_lexemes_prefix_to_cst;
 use crate::lexer::lexeme::LexemeKind;
 use crate::lexer::tokenizer::lex_lexemes;

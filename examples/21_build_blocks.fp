@@ -1,7 +1,7 @@
 #!/usr/bin/env fp run
 //! Build blocks with typed quote tokens and expression-driven splice.
 
-const fn build_items(flag: bool) -> quote<item> {
+const fn build_items(flag: bool) -> item {
     quote<item> {
         if flag {
             struct Alpha {

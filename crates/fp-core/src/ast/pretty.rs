@@ -858,25 +858,31 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         }
         ast::Ty::Slice(slice) => format!("[{}]", render_ty_brief(slice.elem.as_ref())),
         ast::Ty::Expr(expr) => format!("Expr({})", render_expr_inline(expr)),
+        ast::Ty::QuoteExpr(quote) => {
+            if let Some(inner) = &quote.inner {
+                format!("QuoteExpr({})", render_ty_brief(inner.as_ref()))
+            } else {
+                "QuoteExpr".into()
+            }
+        }
+        ast::Ty::QuoteStmt(_) => "QuoteStmt".into(),
+        ast::Ty::QuoteItem(_) => "QuoteItem".into(),
+        ast::Ty::QuoteFn(_) => "QuoteFn".into(),
+        ast::Ty::QuoteStruct(_) => "QuoteStruct".into(),
+        ast::Ty::QuoteEnum(_) => "QuoteEnum".into(),
+        ast::Ty::QuoteTrait(_) => "QuoteTrait".into(),
+        ast::Ty::QuoteImpl(_) => "QuoteImpl".into(),
+        ast::Ty::QuoteConst(_) => "QuoteConst".into(),
+        ast::Ty::QuoteStatic(_) => "QuoteStatic".into(),
+        ast::Ty::QuoteMod(_) => "QuoteMod".into(),
+        ast::Ty::QuoteUse(_) => "QuoteUse".into(),
+        ast::Ty::QuoteMacro(_) => "QuoteMacro".into(),
+        ast::Ty::QuoteType(_) => "QuoteType".into(),
         ast::Ty::QuoteToken(q) => {
             let kind = match q.kind {
                 ast::QuoteFragmentKind::Expr => "expr",
-                ast::QuoteFragmentKind::Exprs => "exprs",
                 ast::QuoteFragmentKind::Stmt => "stmt",
-                ast::QuoteFragmentKind::Stmts => "stmts",
                 ast::QuoteFragmentKind::Item => "item",
-                ast::QuoteFragmentKind::Items => "items",
-                ast::QuoteFragmentKind::Fns => "fns",
-                ast::QuoteFragmentKind::Structs => "structs",
-                ast::QuoteFragmentKind::Enums => "enums",
-                ast::QuoteFragmentKind::Traits => "traits",
-                ast::QuoteFragmentKind::Impls => "impls",
-                ast::QuoteFragmentKind::Types => "types",
-                ast::QuoteFragmentKind::Consts => "consts",
-                ast::QuoteFragmentKind::Statics => "statics",
-                ast::QuoteFragmentKind::Mods => "mods",
-                ast::QuoteFragmentKind::Uses => "uses",
-                ast::QuoteFragmentKind::Macros => "macros",
                 ast::QuoteFragmentKind::Type => "type",
             };
             if let Some(inner) = &q.inner {
@@ -1149,22 +1155,8 @@ fn summarize_value(value: &ast::Value) -> String {
         ast::Value::QuoteToken(token) => {
             let kind = match token.kind {
                 ast::QuoteFragmentKind::Expr => "expr",
-                ast::QuoteFragmentKind::Exprs => "exprs",
                 ast::QuoteFragmentKind::Stmt => "stmt",
-                ast::QuoteFragmentKind::Stmts => "stmts",
                 ast::QuoteFragmentKind::Item => "item",
-                ast::QuoteFragmentKind::Items => "items",
-                ast::QuoteFragmentKind::Fns => "fns",
-                ast::QuoteFragmentKind::Structs => "structs",
-                ast::QuoteFragmentKind::Enums => "enums",
-                ast::QuoteFragmentKind::Traits => "traits",
-                ast::QuoteFragmentKind::Impls => "impls",
-                ast::QuoteFragmentKind::Types => "types",
-                ast::QuoteFragmentKind::Consts => "consts",
-                ast::QuoteFragmentKind::Statics => "statics",
-                ast::QuoteFragmentKind::Mods => "mods",
-                ast::QuoteFragmentKind::Uses => "uses",
-                ast::QuoteFragmentKind::Macros => "macros",
                 ast::QuoteFragmentKind::Type => "type",
             };
             format!("quote<{}>", kind)
@@ -1393,9 +1385,7 @@ fn render_pattern(pattern: &Pattern) -> String {
         PatternKind::Quote(quote) => {
             let kind = match quote.fragment {
                 ast::QuoteFragmentKind::Expr => "expr",
-                ast::QuoteFragmentKind::Exprs => "exprs",
                 ast::QuoteFragmentKind::Stmt => "stmt",
-                ast::QuoteFragmentKind::Stmts => "stmts",
                 ast::QuoteFragmentKind::Item => match quote.item {
                     Some(ast::QuoteItemKind::Function) => "fn",
                     Some(ast::QuoteItemKind::Struct) => "struct",
@@ -1410,18 +1400,6 @@ fn render_pattern(pattern: &Pattern) -> String {
                     Some(ast::QuoteItemKind::Macro) => "macro",
                     None => "item",
                 },
-                ast::QuoteFragmentKind::Items => "items",
-                ast::QuoteFragmentKind::Fns => "fns",
-                ast::QuoteFragmentKind::Structs => "structs",
-                ast::QuoteFragmentKind::Enums => "enums",
-                ast::QuoteFragmentKind::Traits => "traits",
-                ast::QuoteFragmentKind::Impls => "impls",
-                ast::QuoteFragmentKind::Types => "types",
-                ast::QuoteFragmentKind::Consts => "consts",
-                ast::QuoteFragmentKind::Statics => "statics",
-                ast::QuoteFragmentKind::Mods => "mods",
-                ast::QuoteFragmentKind::Uses => "uses",
-                ast::QuoteFragmentKind::Macros => "macros",
                 ast::QuoteFragmentKind::Type => "type",
             };
             if quote.fields.is_empty() {
@@ -1440,22 +1418,8 @@ fn render_pattern(pattern: &Pattern) -> String {
         PatternKind::QuotePlural(quote) => {
             let kind = match quote.fragment {
                 ast::QuoteFragmentKind::Expr => "exprs",
-                ast::QuoteFragmentKind::Exprs => "exprs",
                 ast::QuoteFragmentKind::Stmt => "stmts",
-                ast::QuoteFragmentKind::Stmts => "stmts",
                 ast::QuoteFragmentKind::Item => "items",
-                ast::QuoteFragmentKind::Items => "items",
-                ast::QuoteFragmentKind::Fns => "fns",
-                ast::QuoteFragmentKind::Structs => "structs",
-                ast::QuoteFragmentKind::Enums => "enums",
-                ast::QuoteFragmentKind::Traits => "traits",
-                ast::QuoteFragmentKind::Impls => "impls",
-                ast::QuoteFragmentKind::Types => "types",
-                ast::QuoteFragmentKind::Consts => "consts",
-                ast::QuoteFragmentKind::Statics => "statics",
-                ast::QuoteFragmentKind::Mods => "mods",
-                ast::QuoteFragmentKind::Uses => "uses",
-                ast::QuoteFragmentKind::Macros => "macros",
                 ast::QuoteFragmentKind::Type => "types",
             };
             let parts = quote
