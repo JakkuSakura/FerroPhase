@@ -444,7 +444,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             (TypeTerm::Custom(a), TypeTerm::Custom(b)) => {
-                if a == b {
+                if a == b || quote_item_compatible(&a, &b) {
                     Ok(())
                 } else if let (Ty::Array(a_arr), Ty::Array(b_arr)) = (&a, &b) {
                     // Be permissive about array lengths during typing; const-eval
@@ -844,7 +844,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
                 self.bind(var, TypeTerm::Array(elem_var, Some(array_ty.len.clone())));
             }
-            Ty::QuoteToken(_) => {
+            Ty::QuoteExpr(_)
+            | Ty::QuoteStmt(_)
+            | Ty::QuoteItem(_)
+            | Ty::QuoteFn(_)
+            | Ty::QuoteStruct(_)
+            | Ty::QuoteEnum(_)
+            | Ty::QuoteTrait(_)
+            | Ty::QuoteImpl(_)
+            | Ty::QuoteConst(_)
+            | Ty::QuoteStatic(_)
+            | Ty::QuoteMod(_)
+            | Ty::QuoteUse(_)
+            | Ty::QuoteMacro(_)
+            | Ty::QuoteType(_)
+            | Ty::QuoteToken(_) => {
                 // Quote tokens are currently opaque to the typer.
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
@@ -979,6 +993,29 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let key_var = self.type_from_ast_ty(&segment.args[0])?;
         let value_var = self.type_from_ast_ty(&segment.args[1])?;
         Ok(Some((key_var, value_var)))
+    }
+}
+
+fn quote_item_compatible(a: &Ty, b: &Ty) -> bool {
+    let a_kind = quote_item_kind(a);
+    let b_kind = quote_item_kind(b);
+    matches!((a_kind, b_kind), (Some("item"), Some(_)) | (Some(_), Some("item")))
+}
+
+fn quote_item_kind(ty: &Ty) -> Option<&'static str> {
+    match ty {
+        Ty::QuoteItem(_) => Some("item"),
+        Ty::QuoteFn(_) => Some("fn"),
+        Ty::QuoteStruct(_) => Some("struct"),
+        Ty::QuoteEnum(_) => Some("enum"),
+        Ty::QuoteTrait(_) => Some("trait"),
+        Ty::QuoteImpl(_) => Some("impl"),
+        Ty::QuoteConst(_) => Some("const"),
+        Ty::QuoteStatic(_) => Some("static"),
+        Ty::QuoteMod(_) => Some("mod"),
+        Ty::QuoteUse(_) => Some("use"),
+        Ty::QuoteMacro(_) => Some("macro"),
+        _ => None,
     }
 }
 

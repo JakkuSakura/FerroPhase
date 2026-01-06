@@ -678,7 +678,21 @@ impl InterfaceBuilder {
             Ty::Expr(expr) => {
                 expr_to_wit_type(expr, receiver_scope).unwrap_or_else(|| "json".to_string())
             }
-            Ty::QuoteToken(_) => "json".to_string(),
+            Ty::QuoteExpr(_)
+            | Ty::QuoteStmt(_)
+            | Ty::QuoteItem(_)
+            | Ty::QuoteFn(_)
+            | Ty::QuoteStruct(_)
+            | Ty::QuoteEnum(_)
+            | Ty::QuoteTrait(_)
+            | Ty::QuoteImpl(_)
+            | Ty::QuoteConst(_)
+            | Ty::QuoteStatic(_)
+            | Ty::QuoteMod(_)
+            | Ty::QuoteUse(_)
+            | Ty::QuoteMacro(_)
+            | Ty::QuoteType(_)
+            | Ty::QuoteToken(_) => "json".to_string(),
         }
     }
 
@@ -1461,7 +1475,21 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
             let inner = ty_to_wit_with_self(vec_ty.ty.as_ref(), self_name);
             format!("list<{inner}>")
         }
-        Ty::QuoteToken(_) => "json".to_string(),
+        Ty::QuoteExpr(_)
+        | Ty::QuoteStmt(_)
+        | Ty::QuoteItem(_)
+        | Ty::QuoteFn(_)
+        | Ty::QuoteStruct(_)
+        | Ty::QuoteEnum(_)
+        | Ty::QuoteTrait(_)
+        | Ty::QuoteImpl(_)
+        | Ty::QuoteConst(_)
+        | Ty::QuoteStatic(_)
+        | Ty::QuoteMod(_)
+        | Ty::QuoteUse(_)
+        | Ty::QuoteMacro(_)
+        | Ty::QuoteType(_)
+        | Ty::QuoteToken(_) => "json".to_string(),
         Ty::Array(array) => {
             let inner = ty_to_wit_with_self(array.elem.as_ref(), self_name);
             format!("list<{inner}>")

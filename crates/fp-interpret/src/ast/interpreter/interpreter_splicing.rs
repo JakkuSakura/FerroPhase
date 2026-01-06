@@ -2,10 +2,6 @@ use super::*;
 use fp_core::ast::{QuoteFragmentKind, QuoteTokenValue, ValueQuoteToken};
 
 impl<'ctx> AstInterpreter<'ctx> {
-    pub(super) fn quote_token_from_fragment(&mut self, fragment: QuotedFragment) -> Value {
-        self.quote_token_from_fragment_kind(fragment, None)
-    }
-
     pub(super) fn quote_token_from_fragment_kind(
         &mut self,
         fragment: QuotedFragment,
@@ -27,19 +23,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let allowed = match (&value, kind) {
             (QuoteTokenValue::Expr(_), QuoteFragmentKind::Expr) => true,
             (QuoteTokenValue::Stmts(_), QuoteFragmentKind::Stmt) => true,
-            (QuoteTokenValue::Stmts(_), QuoteFragmentKind::Stmts) => true,
             (QuoteTokenValue::Items(_), QuoteFragmentKind::Item) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Items) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Fns) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Structs) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Enums) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Traits) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Impls) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Consts) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Statics) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Mods) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Uses) => true,
-            (QuoteTokenValue::Items(_), QuoteFragmentKind::Macros) => true,
             (QuoteTokenValue::Type(_), QuoteFragmentKind::Type) => true,
             _ => false,
         };
@@ -56,18 +40,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         body: &Expr,
     ) -> Value {
         match kind {
-            QuoteFragmentKind::Item
-            | QuoteFragmentKind::Items
-            | QuoteFragmentKind::Fns
-            | QuoteFragmentKind::Structs
-            | QuoteFragmentKind::Enums
-            | QuoteFragmentKind::Traits
-            | QuoteFragmentKind::Impls
-            | QuoteFragmentKind::Consts
-            | QuoteFragmentKind::Statics
-            | QuoteFragmentKind::Mods
-            | QuoteFragmentKind::Uses
-            | QuoteFragmentKind::Macros => {
+            QuoteFragmentKind::Item => {
                 let mut items = Vec::new();
                 if !self.collect_items_from_expr(body, &mut items) {
                     return Value::undefined();
@@ -77,12 +50,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 self.quote_token_from_fragment_kind(QuotedFragment::Items(items), Some(kind))
             }
-            QuoteFragmentKind::Expr
-            | QuoteFragmentKind::Stmt
-            | QuoteFragmentKind::Type
-            | QuoteFragmentKind::Exprs
-            | QuoteFragmentKind::Stmts
-            | QuoteFragmentKind::Types => {
+            QuoteFragmentKind::Expr | QuoteFragmentKind::Stmt | QuoteFragmentKind::Type => {
                 let block = body.clone().into_block();
                 let fragment = match kind {
                     QuoteFragmentKind::Expr => {
@@ -100,24 +68,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                     }
-                    QuoteFragmentKind::Exprs
-                    | QuoteFragmentKind::Stmts
-                    | QuoteFragmentKind::Types => {
-                        self.emit_error("plural quote kinds are only supported for items");
-                        QuotedFragment::Stmts(Vec::new())
-                    }
-                    QuoteFragmentKind::Item
-                    | QuoteFragmentKind::Items
-                    | QuoteFragmentKind::Fns
-                    | QuoteFragmentKind::Structs
-                    | QuoteFragmentKind::Enums
-                    | QuoteFragmentKind::Traits
-                    | QuoteFragmentKind::Impls
-                    | QuoteFragmentKind::Consts
-                    | QuoteFragmentKind::Statics
-                    | QuoteFragmentKind::Mods
-                    | QuoteFragmentKind::Uses
-                    | QuoteFragmentKind::Macros => unreachable!(),
+                    QuoteFragmentKind::Item => unreachable!(),
                 };
                 self.quote_token_from_fragment_kind(fragment, Some(kind))
             }
@@ -145,17 +96,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     QuotedFragment::Stmts(block.stmts)
                 }
                 QuoteFragmentKind::Item
-                | QuoteFragmentKind::Items
-                | QuoteFragmentKind::Fns
-                | QuoteFragmentKind::Structs
-                | QuoteFragmentKind::Enums
-                | QuoteFragmentKind::Traits
-                | QuoteFragmentKind::Impls
-                | QuoteFragmentKind::Consts
-                | QuoteFragmentKind::Statics
-                | QuoteFragmentKind::Mods
-                | QuoteFragmentKind::Uses
-                | QuoteFragmentKind::Macros => match self.collect_items_from_block(&quote.block) {
+                => match self.collect_items_from_block(&quote.block) {
                     Some(items) => {
                         if self.items_match_kind(&items, kind) {
                             QuotedFragment::Items(items)
@@ -187,12 +128,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                             QuotedFragment::Stmts(quote.block.stmts.clone())
                         }
                     }
-                }
-                QuoteFragmentKind::Exprs
-                | QuoteFragmentKind::Stmts
-                | QuoteFragmentKind::Types => {
-                    self.emit_error("plural quote kinds are only supported for items");
-                    QuotedFragment::Stmts(Vec::new())
                 }
             };
         }
@@ -518,43 +453,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         Some(items)
     }
 
-    fn items_match_kind(&mut self, items: &[Item], kind: QuoteFragmentKind) -> bool {
-        let ok = items.iter().all(|item| self.item_matches_kind(item, kind));
-        if !ok {
-            self.emit_error("quote<items> fragment kind does not match all items");
-        }
-        ok
-    }
-
-    fn item_matches_kind(&self, item: &Item, kind: QuoteFragmentKind) -> bool {
-        match kind {
-            QuoteFragmentKind::Item | QuoteFragmentKind::Items => true,
-            QuoteFragmentKind::Fns => matches!(item.kind(), ItemKind::DefFunction(_)),
-            QuoteFragmentKind::Structs => matches!(
-                item.kind(),
-                ItemKind::DefStruct(_) | ItemKind::DefStructural(_)
-            ),
-            QuoteFragmentKind::Enums => matches!(item.kind(), ItemKind::DefEnum(_)),
-            QuoteFragmentKind::Traits => matches!(item.kind(), ItemKind::DefTrait(_)),
-            QuoteFragmentKind::Impls => matches!(item.kind(), ItemKind::Impl(_)),
-            QuoteFragmentKind::Consts => matches!(
-                item.kind(),
-                ItemKind::DefConst(_) | ItemKind::DeclConst(_)
-            ),
-            QuoteFragmentKind::Statics => matches!(
-                item.kind(),
-                ItemKind::DefStatic(_) | ItemKind::DeclStatic(_)
-            ),
-            QuoteFragmentKind::Mods => matches!(item.kind(), ItemKind::Module(_)),
-            QuoteFragmentKind::Uses => matches!(item.kind(), ItemKind::Import(_)),
-            QuoteFragmentKind::Macros => matches!(item.kind(), ItemKind::Macro(_)),
-            QuoteFragmentKind::Expr
-            | QuoteFragmentKind::Exprs
-            | QuoteFragmentKind::Stmt
-            | QuoteFragmentKind::Stmts
-            | QuoteFragmentKind::Type
-            | QuoteFragmentKind::Types => false,
-        }
+    fn items_match_kind(&mut self, _items: &[Item], _kind: QuoteFragmentKind) -> bool {
+        true
     }
 
     fn collect_items_from_expr(&mut self, expr: &Expr, items: &mut Vec<Item>) -> bool {

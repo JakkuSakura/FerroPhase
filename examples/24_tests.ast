@@ -90,129 +90,87 @@ ast::File {
         }
       }
     }
-    pub struct Point3D {
-      x: Expr(i64)
-      y: Expr(i64)
-      z: Expr(i64)
-    }
-    pub type LabeledPoint = Clone_Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64), label: &'static Expr(str)}
-    pub const _GENERATED: ()
-      value ()
     pub fn main() -> () : fn() -> ()
-      block (32 stmts)
+      block (10 stmts)
         expr_stmt ;
           intrinsic println
-            template: "📘 Tutorial: 08_metaprogramming_patterns.fp"
+            template: "📘 Tutorial: 24_tests.fp"
         expr_stmt ;
           intrinsic println
-            template: "🧭 Focus: Metaprogramming: const metadata + quote/splice execution"
+            template: "🧭 Focus: minimal test registration example plus manual execution"
         expr_stmt ;
           intrinsic println
-            template: "🧪 What to look for: labeled outputs below"
+            template: "🧪 What to look for: assert() should not trigger"
         expr_stmt ;
           intrinsic println
-            template: "✅ Expectation: outputs match labels"
+            template: "✅ Expectation: both tests run without printing assertion failure"
         expr_stmt ;
           intrinsic println
             template: ""
         expr_stmt ;
           intrinsic println
-            template: "=== Part 1: Const Metadata ==="
-        pub const FIELD_COUNT: i64
-          value 3
-        pub const POINT_NAME: &string
-          value "struct Point3D"
-        pub const SIZE: i64
-          value 24
-        pub const FIELDS: Vec<structural{name: &string, type_name: &string}>
-          value [3 values]
-        pub const X_TYPE: &string
-          value "i64\n"
+            template: "Running tests manually:"
+        expr_stmt ;
+          invoke
+            target: adds_two_numbers
         expr_stmt ;
           intrinsic println
-            template: "{} has {} fields (size={})" POINT_NAME, FIELD_COUNT, SIZE
+            template: "  adds_two_numbers ... ok"
+        expr_stmt ;
+          invoke
+            target: string_concat
         expr_stmt ;
           intrinsic println
-            template: "x type: {}" X_TYPE
+            template: "  string_concat ... ok"
+    pub [attrs] fn adds_two_numbers() -> () : fn() -> ()
+      block (3 stmts)
+        let left
+          init:
+            binop +
+              lhs:
+                value 1
+              rhs:
+                value 2
+        let right
+          init:
+            value 3
         expr_stmt ;
-          intrinsic println
-            template: "fields:"
-        expr_stmt (value)
-          for
-            iter:
-              invoke
-                target: FIELDS.iter
-            body:
+          if
+            cond:
+              unop !
+                value:
+                  binop ==
+                    lhs:
+                      locator left
+                    rhs:
+                      locator right
+            then:
               block (1 stmt)
                 expr_stmt ;
                   intrinsic println
-                    template: "  {}: {}" field.name, field.type_name
-        let p
+                    template: "assertion failed"
+    pub [attrs] fn string_concat() -> () : fn() -> ()
+      block (2 stmts)
+        let msg
           init:
-            struct Point3D
-              x:
-                value 1
-              y:
-                value 2
-              z:
-                value 3
+            binop +
+              lhs:
+                value "hello, "
+              rhs:
+                value "world"
         expr_stmt ;
-          intrinsic println
-            template: "point=({}, {}, {})" p.x, p.y, p.z
-        let lp
-          init:
-            struct LabeledPoint
-              x:
-                value 4
-              y:
-                value 5
-              z:
-                value 6
-              label:
-                value "origin"
-        expr_stmt ;
-          intrinsic println
-            template: "labeled=({}, {}, {}, {})" lp.x, lp.y, lp.z, lp.label
-        expr_stmt ;
-          intrinsic println
-            template: ""
-        expr_stmt ;
-          intrinsic println
-            template: "=== Part 2: Execute Quoted Code ==="
-        let score
-          init:
-            value 20
-        expr_stmt ;
-          intrinsic println
-            template: "expr splice => {}" score
-        pub const fn_name: &string
-          value "inspected"
-        expr_stmt ;
-          intrinsic println
-            template: "quote<fn> inspect => name={}" fn_name
-        pub const fn_count: i64
-          value 2
-        expr_stmt ;
-          intrinsic println
-            template: "quote<[item]> count => {}" fn_count
-        let step
-          init:
-            value 21
-        expr_stmt ;
-          intrinsic println
-            template: "stmt splice => step={}" step
-        pub struct Banner {
-          title: &''static Expr(str)
-          rank: Expr(i64)
-        }
-        let banner
-          init:
-            struct Banner
-              title:
-                value "metaprogramming"
-              rank:
-                locator score
-        expr_stmt ;
-          intrinsic println
-            template: "item splice => {} #{}" banner.title, banner.rank
+          if
+            cond:
+              unop !
+                value:
+                  binop ==
+                    lhs:
+                      locator msg
+                    rhs:
+                      value "hello, world"
+            then:
+              block (1 stmt)
+                expr_stmt ;
+                  intrinsic println
+                    template: "assertion failed"
 }

@@ -7,7 +7,8 @@ use fp_core::ast::{
     ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
     ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter,
     MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum,
-    TypeQuoteToken, TypeStruct, Value, Visibility, ExprUnOp,
+    TypeQuoteExpr, TypeQuoteItem, TypeQuoteStmt, TypeQuoteType, TypeStruct, Value, Visibility,
+    ExprUnOp,
 };
 use fp_core::ops::UnOpKind;
 use fp_core::cst::CstCategory;
@@ -356,29 +357,44 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         .and_then(|_| sig.ret_ty.as_ref())
         .and_then(|ty| match ty {
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => locator.as_ident().map(|id| match id.as_str() {
-                    "expr" => QuoteFragmentKind::Expr,
-                    "exprs" => QuoteFragmentKind::Exprs,
-                    "stmt" => QuoteFragmentKind::Stmt,
-                    "stmts" => QuoteFragmentKind::Stmts,
-                    "item" => QuoteFragmentKind::Item,
-                    "items" => QuoteFragmentKind::Items,
-                    "type" => QuoteFragmentKind::Type,
-                    "types" => QuoteFragmentKind::Types,
-                    "fns" => QuoteFragmentKind::Fns,
-                    "structs" => QuoteFragmentKind::Structs,
-                    "enums" => QuoteFragmentKind::Enums,
-                    "traits" => QuoteFragmentKind::Traits,
-                    "impls" => QuoteFragmentKind::Impls,
-                    "consts" => QuoteFragmentKind::Consts,
-                    "statics" => QuoteFragmentKind::Statics,
-                    "mods" => QuoteFragmentKind::Mods,
-                    "uses" => QuoteFragmentKind::Uses,
-                    "macros" => QuoteFragmentKind::Macros,
-                    _ => QuoteFragmentKind::Item,
+                ExprKind::Locator(locator) => locator.as_ident().and_then(|id| match id.as_str() {
+                    "expr" => Some(QuoteFragmentKind::Expr),
+                    "stmt" => Some(QuoteFragmentKind::Stmt),
+                    "item" => Some(QuoteFragmentKind::Item),
+                    "type" => Some(QuoteFragmentKind::Type),
+                    "items"
+                    | "fns"
+                    | "structs"
+                    | "enums"
+                    | "traits"
+                    | "impls"
+                    | "consts"
+                    | "statics"
+                    | "mods"
+                    | "uses"
+                    | "macros" => {
+                        tracing::warn!("deprecated plural quote fragment kind: {}", id.as_str());
+                        Some(QuoteFragmentKind::Item)
+                    }
+                    "exprs" | "stmts" | "types" => None,
+                    _ => Some(QuoteFragmentKind::Item),
                 }),
                 _ => None,
             },
+            Ty::QuoteExpr(_) => Some(QuoteFragmentKind::Expr),
+            Ty::QuoteStmt(_) => Some(QuoteFragmentKind::Stmt),
+            Ty::QuoteItem(_)
+            | Ty::QuoteFn(_)
+            | Ty::QuoteStruct(_)
+            | Ty::QuoteEnum(_)
+            | Ty::QuoteTrait(_)
+            | Ty::QuoteImpl(_)
+            | Ty::QuoteConst(_)
+            | Ty::QuoteStatic(_)
+            | Ty::QuoteMod(_)
+            | Ty::QuoteUse(_)
+            | Ty::QuoteMacro(_) => Some(QuoteFragmentKind::Item),
+            Ty::QuoteType(_) => Some(QuoteFragmentKind::Type),
             Ty::QuoteToken(qt) => Some(qt.kind),
             _ => None,
         })
@@ -405,10 +421,17 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         sig.is_const = true;
         sig.quote_kind = Some(kind);
         let inner = sig.ret_ty.as_ref().and_then(|ty| match ty {
-            Ty::QuoteToken(qt) => qt.inner.clone(),
+            Ty::QuoteExpr(quote) => quote.inner.clone().map(|ty| (*ty).clone()),
             _ => None,
         });
-        sig.ret_ty = Some(Ty::QuoteToken(Box::new(TypeQuoteToken { kind, inner })));
+        sig.ret_ty = Some(match kind {
+            QuoteFragmentKind::Expr => Ty::QuoteExpr(TypeQuoteExpr {
+                inner: inner.map(Box::new),
+            }),
+            QuoteFragmentKind::Stmt => Ty::QuoteStmt(TypeQuoteStmt {}),
+            QuoteFragmentKind::Item => Ty::QuoteItem(TypeQuoteItem {}),
+            QuoteFragmentKind::Type => Ty::QuoteType(TypeQuoteType {}),
+        });
     }
     let mut def = ItemDefFunction::new_simple(
         sig.name

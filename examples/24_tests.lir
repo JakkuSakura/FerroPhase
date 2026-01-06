@@ -1,0 +1,127 @@
+lir::Program {
+    functions:
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i32
+                %2: i32
+                %3: i32
+                %4: i32
+                %5: i32
+                %6: i32
+                %7: void
+                %8: i32
+                %9: void
+                %10: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = call c @printf(c"📘 Tutorial: 24_tests.fp\n") : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i1: %r1 = call c @printf(c"🧭 Focus: minimal test registration example plus manual execution\n") : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i2: %r2 = call c @printf(c"🧪 What to look for: assert() should not trigger\n") : i32
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i3: %r3 = call c @printf(c"✅ Expectation: both tests run without printing assertion failure\n") : i32
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i4: %r4 = call c @printf(c"\n") : i32
+                terminator: br bb5
+            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
+                i5: %r5 = call c @printf(c"Running tests manually:\n") : i32
+                terminator: br bb6
+            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
+                i6: %r6 = call c @adds_two_numbers()
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
+                i7: %r7 = call c @printf(c"  adds_two_numbers ... ok\n") : i32
+                terminator: br bb8
+            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
+                i8: %r8 = call c @string_concat()
+                terminator: br bb9
+            bb9 // label: bb9 // preds: [bb8] // succs: [bb10]:
+                i9: %r9 = call c @printf(c"  string_concat ... ok\n") : i32
+                terminator: br bb10
+            bb10 // label: bb10 // preds: [bb9]:
+                terminator: ret void
+        }
+
+        fn adds_two_numbers() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i64
+                %2: i64
+                %3: i64
+                %4: void
+                %5: i1
+                %6: i1
+                %7: i32
+            bb0 // label: bb0 // succs: [bb1, bb2]:
+                i10: %r10 = alloca i32 1 align 8 : ptr i64
+                i11: %r11 = add i64 1, i64 2 : i64
+                i12: store %r11, %r10 align 8
+                i13: %r13 = alloca i32 1 align 8 : ptr i64
+                i14: %r14 = load %r10 align 8 : i64
+                i15: store %r14, %r13 align 8
+                i16: %r16 = alloca i32 1 align 8 : ptr i64
+                i17: store i64 3, %r16 align 8
+                i18: %r18 = alloca i32 1 align 1 : ptr i1
+                i19: %r19 = load %r13 align 8 : i64
+                i20: %r20 = load %r16 align 8 : i64
+                i21: %r21 = eq %r19, %r20 : i1
+                i22: store %r21, %r18 align 1
+                i23: %r23 = alloca i32 1 align 1 : ptr i1
+                i24: %r24 = load %r18 align 1 : i1
+                i25: %r25 = not %r24 : i1
+                i26: store %r25, %r23 align 1
+                i27: %r27 = load %r23 align 1 : i1
+                terminator: cond_br %r27, bb1, bb2
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb4]:
+                i28: %r28 = call c @printf(c"assertion failed\n") : i32
+                terminator: br bb4
+            bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
+                terminator: br bb3
+            bb4 // label: bb4 // preds: [bb1] // succs: [bb3]:
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2, bb4]:
+                terminator: ret void
+        }
+
+        fn string_concat() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i8
+                %2: ptr i8
+                %3: void
+                %4: i1
+                %5: i1
+                %6: i32
+            bb0 // label: bb0 // succs: [bb1, bb2]:
+                i29: %r29 = alloca i32 1 align 8 : ptr ptr i8
+                i30: %r30 = add c"hello, ", c"world" : ptr i8
+                i31: store %r30, %r29 align 8
+                i32: %r32 = alloca i32 1 align 8 : ptr ptr i8
+                i33: %r33 = load %r29 align 8 : ptr i8
+                i34: store %r33, %r32 align 8
+                i35: %r35 = alloca i32 1 align 1 : ptr i1
+                i36: %r36 = load %r32 align 8 : ptr i8
+                i37: %r37 = eq %r36, c"hello, world" : i1
+                i38: store %r37, %r35 align 1
+                i39: %r39 = alloca i32 1 align 1 : ptr i1
+                i40: %r40 = load %r35 align 1 : i1
+                i41: %r41 = not %r40 : i1
+                i42: store %r41, %r39 align 1
+                i43: %r43 = load %r39 align 1 : i1
+                terminator: cond_br %r43, bb1, bb2
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb4]:
+                i44: %r44 = call c @printf(c"assertion failed\n") : i32
+                terminator: br bb4
+            bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
+                terminator: br bb3
+            bb4 // label: bb4 // preds: [bb1] // succs: [bb3]:
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2, bb4]:
+                terminator: ret void
+        }
+}

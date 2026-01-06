@@ -844,6 +844,7 @@ dependencies = [
  "fp-optimize",
  "fp-rust",
  "thiserror 2.0.17",
+ "tracing",
  "winnow 0.6.26",
 ]
 

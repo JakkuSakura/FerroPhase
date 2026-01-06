@@ -40,7 +40,7 @@ fp run examples/01_const_eval_basics.fp
 | `11_specialization_basics.fp`    | Function specialization | Inlining, optimization, monomorphization |
 | `18_comptime_collections.fp`     | Const collections       | `Vec`/`HashMap` construction in const    |
 | `20_quote_splice.fp`             | Quote/splice            | Typed quote tokens, const block splicing |
-| `21_build_blocks.fp`             | Build blocks            | Item generation with `quote<item>` lists |
+| `21_build_blocks.fp`             | Build blocks            | Item generation with `item` and `[item]` |
 | `23_runtime_collections.fp`      | Runtime collections     | List/map indexing and linear search      |
 
 ### Type System

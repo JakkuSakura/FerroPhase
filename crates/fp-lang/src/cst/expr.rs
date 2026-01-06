@@ -307,7 +307,12 @@ impl Parser {
             match self.peek_non_trivia_raw() {
                 Some("{") => {
                     if allow_struct_literal
-                        && matches!(base.kind, SyntaxKind::ExprName | SyntaxKind::ExprPath)
+                        && matches!(
+                            base.kind,
+                            SyntaxKind::ExprName
+                                | SyntaxKind::ExprPath
+                                | SyntaxKind::ExprQuoteToken
+                        )
                     {
                         base = self.parse_struct_literal(base)?;
                         continue;
@@ -360,6 +365,7 @@ impl Parser {
                             crate::lexer::Keyword::Crate
                                 | crate::lexer::Keyword::Super
                                 | crate::lexer::Keyword::Emit
+                                | crate::lexer::Keyword::Fn
                         ) =>
                     {
                         self.parse_name_or_path()
@@ -547,16 +553,46 @@ impl Parser {
             self.expect_token_raw("<")?;
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
-            match self.peek_non_trivia_token_kind() {
-                Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
-                    self.bump_token_into(&mut children);
+            if self.peek_non_trivia_raw() == Some("[") {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                match self.peek_non_trivia_token_kind() {
+                    Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                        self.bump_token_into(&mut children);
+                    }
+                    _ => return Err(self.error("expected quote fragment kind")),
                 }
-                _ => return Err(self.error("expected quote fragment kind")),
+                self.bump_trivia_into(&mut children);
+                self.expect_token_raw("]")?;
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+                self.expect_token_raw(">")?;
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            } else {
+                let kind_text = match self.peek_non_trivia_token_kind() {
+                    Some(TokenKind::Ident) | Some(TokenKind::Keyword(_)) => {
+                        let text = self.peek_non_trivia_raw().unwrap_or_default().to_string();
+                        self.bump_token_into(&mut children);
+                        text
+                    }
+                    _ => return Err(self.error("expected quote fragment kind")),
+                };
+                self.bump_trivia_into(&mut children);
+                if kind_text == "expr" && self.peek_non_trivia_raw() == Some("<") {
+                    self.bump_token_into(&mut children); // '<'
+                    self.bump_trivia_into(&mut children);
+                    let ty = self.parse_type_node_until(&[">"])?;
+                    children.push(SyntaxElement::Node(Box::new(ty)));
+                    self.bump_trivia_into(&mut children);
+                    self.expect_token_raw(">")?;
+                    self.bump_token_into(&mut children);
+                    self.bump_trivia_into(&mut children);
+                }
+                self.expect_token_raw(">")?;
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
             }
-            self.bump_trivia_into(&mut children);
-            self.expect_token_raw(">")?;
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
         }
         if self.peek_non_trivia_raw() == Some("{") {
             let block = self.parse_block_expr()?;
@@ -1204,7 +1240,18 @@ impl Parser {
             Some("(") => self.parse_paren_type(stops),
             Some("&") => self.parse_ref_type(stops),
             Some("[") => self.parse_array_or_slice_type(),
-            Some("fn") => self.parse_fn_type(),
+            Some("fn") => {
+                if self.peek_second_non_trivia_raw() == Some("(") {
+                    self.parse_fn_type()
+                } else {
+                    // Treat `fn` as a plain type name when it is not a function signature.
+                    let mut children = Vec::new();
+                    self.bump_trivia_into(&mut children);
+                    self.bump_token_into(&mut children);
+                    let span = span_for_children(&children).unwrap_or(start);
+                    Ok(SyntaxNode::new(SyntaxKind::TyPath, children, span))
+                }
+            }
             Some("impl") => self.parse_impl_traits_type(),
             Some("struct") => {
                 if self.peek_second_non_trivia_raw() == Some("{") {
