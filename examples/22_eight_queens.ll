@@ -71,26 +71,26 @@ bb0:
   %alloca_count_16 = alloca i1, align 1
   %alloca_12 = alloca i1, align 1
   %alloca_count_12 = alloca i1, align 1
-  %alloca_11 = alloca i64, align 8
-  %alloca_count_11 = alloca i64, align 8
-  %alloca_10 = alloca i64, align 8
-  %alloca_count_10 = alloca i64, align 8
-  %alloca_8 = alloca ptr, align 8
-  %alloca_count_8 = alloca ptr, align 8
-  %alloca_7 = alloca i64, align 8
-  %alloca_count_7 = alloca i64, align 8
+  %alloca_10 = alloca ptr, align 8
+  %alloca_count_10 = alloca ptr, align 8
+  %alloca_9 = alloca i64, align 8
+  %alloca_count_9 = alloca i64, align 8
+  %alloca_7 = alloca ptr, align 8
+  %alloca_count_7 = alloca ptr, align 8
   %alloca_6 = alloca i64, align 8
   %alloca_count_6 = alloca i64, align 8
-  %alloca_4 = alloca ptr, align 8
-  %alloca_count_4 = alloca ptr, align 8
-  %alloca_2 = alloca ptr, align 8
-  %alloca_count_2 = alloca ptr, align 8
+  %alloca_5 = alloca i64, align 8
+  %alloca_count_5 = alloca i64, align 8
+  %alloca_3 = alloca ptr, align 8
+  %alloca_count_3 = alloca ptr, align 8
+  %alloca_2 = alloca i64, align 8
+  %alloca_count_2 = alloca i64, align 8
   %alloca_0 = alloca ptr, align 8
   %alloca_count_0 = alloca ptr, align 8
   store ptr %3, ptr %alloca_count_0, align 8
-  store ptr %4, ptr %alloca_count_2, align 8
-  store ptr %2, ptr %alloca_count_4, align 8
-  store ptr %1, ptr %alloca_count_8, align 8
+  store ptr %2, ptr %alloca_count_3, align 8
+  store ptr %1, ptr %alloca_count_7, align 8
+  store ptr %4, ptr %alloca_count_10, align 8
   %icmp_13 = icmp eq i64 %0, 8
   store i1 %icmp_13, ptr %alloca_count_12, align 1
   %load_15 = load i1, ptr %alloca_count_12, align 1
@@ -108,53 +108,53 @@ bb2:                                              ; preds = %bb0
   br label %bb3
 
 bb4:                                              ; preds = %bb1
-  store i64 0, ptr %alloca_count_6, align 8
+  store i64 0, ptr %alloca_count_9, align 8
   br label %bb7
 
 bb5:                                              ; preds = %bb1
   br label %bb6
 
 bb3:                                              ; preds = %bb10, %bb2
-  store i64 0, ptr %alloca_count_7, align 8
-  store i64 0, ptr %alloca_count_11, align 8
+  store i64 0, ptr %alloca_count_2, align 8
+  store i64 0, ptr %alloca_count_6, align 8
   br label %bb11
 
 bb7:                                              ; preds = %bb8, %bb4
-  %load_25 = load i64, ptr %alloca_count_6, align 8
+  %load_25 = load i64, ptr %alloca_count_9, align 8
   %icmp_26 = icmp slt i64 %load_25, 8
   store i1 %icmp_26, ptr %alloca_count_24, align 1
   %load_28 = load i1, ptr %alloca_count_24, align 1
   br i1 %load_28, label %bb8, label %bb9
 
 bb6:                                              ; preds = %bb9, %bb5
-  store i64 1, ptr %alloca_count_10, align 8
-  %load_30 = load i64, ptr %alloca_count_10, align 8
+  store i64 1, ptr %alloca_count_5, align 8
+  %load_30 = load i64, ptr %alloca_count_5, align 8
   ret i64 %load_30
 
 bb11:                                             ; preds = %bb16, %bb3
-  %load_32 = load i64, ptr %alloca_count_11, align 8
+  %load_32 = load i64, ptr %alloca_count_6, align 8
   %icmp_33 = icmp slt i64 %load_32, 8
   store i1 %icmp_33, ptr %alloca_count_31, align 1
   %load_35 = load i1, ptr %alloca_count_31, align 1
   br i1 %load_35, label %bb12, label %bb13
 
 bb8:                                              ; preds = %bb7
-  %load_37 = load i64, ptr %alloca_count_6, align 8
+  %load_37 = load i64, ptr %alloca_count_9, align 8
   store i64 %load_37, ptr %alloca_count_36, align 8
-  %load_40 = load i64, ptr %alloca_count_6, align 8
+  %load_40 = load i64, ptr %alloca_count_9, align 8
   store i64 %load_40, ptr %alloca_count_39, align 8
   %load_42 = load i64, ptr %alloca_count_36, align 8
   %iop_43 = mul i64 %load_42, 8
   %gep_45 = getelementptr inbounds i8, ptr %5, i64 %iop_43
-  %load_47 = load ptr, ptr %alloca_count_2, align 8
+  %load_47 = load ptr, ptr %alloca_count_10, align 8
   %load_48 = load i64, ptr %alloca_count_39, align 8
   %iop_49 = mul i64 %load_48, 8
   %gep_51 = getelementptr inbounds i8, ptr %load_47, i64 %iop_49
   %load_53 = load i64, ptr %gep_51, align 8
   store i64 %load_53, ptr %gep_45, align 8
-  %load_55 = load i64, ptr %alloca_count_6, align 8
+  %load_55 = load i64, ptr %alloca_count_9, align 8
   %iop_56 = add i64 %load_55, 1
-  store i64 %iop_56, ptr %alloca_count_6, align 8
+  store i64 %iop_56, ptr %alloca_count_9, align 8
   br label %bb7
 
 bb9:                                              ; preds = %bb7
@@ -162,12 +162,12 @@ bb9:                                              ; preds = %bb7
   br label %bb6
 
 bb12:                                             ; preds = %bb11
-  %load_60 = load i64, ptr %alloca_count_11, align 8
+  %load_60 = load i64, ptr %alloca_count_6, align 8
   %iop_61 = add i64 %0, %load_60
   store i64 %iop_61, ptr %alloca_count_59, align 8
   %load_64 = load i64, ptr %alloca_count_59, align 8
   store i64 %load_64, ptr %alloca_count_63, align 8
-  %load_67 = load i64, ptr %alloca_count_11, align 8
+  %load_67 = load i64, ptr %alloca_count_6, align 8
   %iop_68 = sub i64 %0, %load_67
   store i64 %iop_68, ptr %alloca_count_66, align 8
   %load_71 = load i64, ptr %alloca_count_66, align 8
@@ -175,9 +175,9 @@ bb12:                                             ; preds = %bb11
   store i64 %iop_72, ptr %alloca_count_70, align 8
   %load_75 = load i64, ptr %alloca_count_70, align 8
   store i64 %load_75, ptr %alloca_count_74, align 8
-  %load_78 = load i64, ptr %alloca_count_11, align 8
+  %load_78 = load i64, ptr %alloca_count_6, align 8
   store i64 %load_78, ptr %alloca_count_77, align 8
-  %load_81 = load ptr, ptr %alloca_count_8, align 8
+  %load_81 = load ptr, ptr %alloca_count_7, align 8
   %load_82 = load i64, ptr %alloca_count_77, align 8
   %iop_83 = mul i64 %load_82, 8
   %gep_85 = getelementptr inbounds i8, ptr %load_81, i64 %iop_83
@@ -186,7 +186,7 @@ bb12:                                             ; preds = %bb11
   store i1 %icmp_88, ptr %alloca_count_80, align 1
   %load_91 = load i64, ptr %alloca_count_63, align 8
   store i64 %load_91, ptr %alloca_count_90, align 8
-  %load_94 = load ptr, ptr %alloca_count_4, align 8
+  %load_94 = load ptr, ptr %alloca_count_3, align 8
   %load_95 = load i64, ptr %alloca_count_90, align 8
   %iop_96 = mul i64 %load_95, 8
   %gep_98 = getelementptr inbounds i8, ptr %load_94, i64 %iop_96
@@ -218,22 +218,22 @@ bb12:                                             ; preds = %bb11
   br i1 %load_126, label %bb14, label %bb15
 
 bb13:                                             ; preds = %bb11
-  %load_127 = load i64, ptr %alloca_count_7, align 8
-  store i64 %load_127, ptr %alloca_count_10, align 8
-  %load_129 = load i64, ptr %alloca_count_10, align 8
+  %load_127 = load i64, ptr %alloca_count_2, align 8
+  store i64 %load_127, ptr %alloca_count_5, align 8
+  %load_129 = load i64, ptr %alloca_count_5, align 8
   ret i64 %load_129
 
 bb14:                                             ; preds = %bb12
-  %load_131 = load i64, ptr %alloca_count_11, align 8
+  %load_131 = load i64, ptr %alloca_count_6, align 8
   store i64 %load_131, ptr %alloca_count_130, align 8
-  %load_133 = load ptr, ptr %alloca_count_8, align 8
+  %load_133 = load ptr, ptr %alloca_count_7, align 8
   %load_134 = load i64, ptr %alloca_count_130, align 8
   %iop_135 = mul i64 %load_134, 8
   %gep_137 = getelementptr inbounds i8, ptr %load_133, i64 %iop_135
   store i64 1, ptr %gep_137, align 8
   %load_141 = load i64, ptr %alloca_count_63, align 8
   store i64 %load_141, ptr %alloca_count_140, align 8
-  %load_143 = load ptr, ptr %alloca_count_4, align 8
+  %load_143 = load ptr, ptr %alloca_count_3, align 8
   %load_144 = load i64, ptr %alloca_count_140, align 8
   %iop_145 = mul i64 %load_144, 8
   %gep_147 = getelementptr inbounds i8, ptr %load_143, i64 %iop_145
@@ -246,19 +246,19 @@ bb14:                                             ; preds = %bb12
   %gep_157 = getelementptr inbounds i8, ptr %load_153, i64 %iop_155
   store i64 1, ptr %gep_157, align 8
   store i64 %0, ptr %alloca_count_160, align 8
-  %load_162 = load ptr, ptr %alloca_count_2, align 8
+  %load_162 = load ptr, ptr %alloca_count_10, align 8
   %load_163 = load i64, ptr %alloca_count_160, align 8
   %iop_164 = mul i64 %load_163, 8
   %gep_166 = getelementptr inbounds i8, ptr %load_162, i64 %iop_164
-  %load_168 = load i64, ptr %alloca_count_11, align 8
+  %load_168 = load i64, ptr %alloca_count_6, align 8
   store i64 %load_168, ptr %gep_166, align 8
   %iop_171 = add i64 %0, 1
   store i64 %iop_171, ptr %alloca_count_170, align 8
   %load_173 = load i64, ptr %alloca_count_170, align 8
-  %load_174 = load ptr, ptr %alloca_count_8, align 8
-  %load_175 = load ptr, ptr %alloca_count_4, align 8
+  %load_174 = load ptr, ptr %alloca_count_7, align 8
+  %load_175 = load ptr, ptr %alloca_count_3, align 8
   %load_176 = load ptr, ptr %alloca_count_0, align 8
-  %load_177 = load ptr, ptr %alloca_count_2, align 8
+  %load_177 = load ptr, ptr %alloca_count_10, align 8
   %call_178 = call i64 @solve(i64 %load_173, ptr %load_174, ptr %load_175, ptr %load_176, ptr %load_177, ptr %5, ptr %6)
   br label %bb17
 
@@ -266,19 +266,19 @@ bb15:                                             ; preds = %bb12
   br label %bb16
 
 bb17:                                             ; preds = %bb14
-  %load_179 = load i64, ptr %alloca_count_7, align 8
+  %load_179 = load i64, ptr %alloca_count_2, align 8
   %iop_180 = add i64 %load_179, %call_178
-  store i64 %iop_180, ptr %alloca_count_7, align 8
-  %load_183 = load i64, ptr %alloca_count_11, align 8
+  store i64 %iop_180, ptr %alloca_count_2, align 8
+  %load_183 = load i64, ptr %alloca_count_6, align 8
   store i64 %load_183, ptr %alloca_count_182, align 8
-  %load_185 = load ptr, ptr %alloca_count_8, align 8
+  %load_185 = load ptr, ptr %alloca_count_7, align 8
   %load_186 = load i64, ptr %alloca_count_182, align 8
   %iop_187 = mul i64 %load_186, 8
   %gep_189 = getelementptr inbounds i8, ptr %load_185, i64 %iop_187
   store i64 0, ptr %gep_189, align 8
   %load_193 = load i64, ptr %alloca_count_63, align 8
   store i64 %load_193, ptr %alloca_count_192, align 8
-  %load_195 = load ptr, ptr %alloca_count_4, align 8
+  %load_195 = load ptr, ptr %alloca_count_3, align 8
   %load_196 = load i64, ptr %alloca_count_192, align 8
   %iop_197 = mul i64 %load_196, 8
   %gep_199 = getelementptr inbounds i8, ptr %load_195, i64 %iop_197
@@ -291,7 +291,7 @@ bb17:                                             ; preds = %bb14
   %gep_209 = getelementptr inbounds i8, ptr %load_205, i64 %iop_207
   store i64 0, ptr %gep_209, align 8
   store i64 %0, ptr %alloca_count_212, align 8
-  %load_214 = load ptr, ptr %alloca_count_2, align 8
+  %load_214 = load ptr, ptr %alloca_count_10, align 8
   %load_215 = load i64, ptr %alloca_count_212, align 8
   %iop_216 = mul i64 %load_215, 8
   %gep_218 = getelementptr inbounds i8, ptr %load_214, i64 %iop_216
@@ -299,9 +299,9 @@ bb17:                                             ; preds = %bb14
   br label %bb16
 
 bb16:                                             ; preds = %bb17, %bb15
-  %load_222 = load i64, ptr %alloca_count_11, align 8
+  %load_222 = load i64, ptr %alloca_count_6, align 8
   %iop_223 = add i64 %load_222, 1
-  store i64 %iop_223, ptr %alloca_count_11, align 8
+  store i64 %iop_223, ptr %alloca_count_6, align 8
   br label %bb11
 
 bb10:                                             ; No predecessors!
@@ -326,38 +326,38 @@ bb0:
   br label %bb1
 
 bb1:                                              ; preds = %bb0
-  store i64 0, ptr %alloca_count_225, align 8
+  store i64 0, ptr %alloca_count_226, align 8
   br label %bb2
 
 bb2:                                              ; preds = %bb7, %bb1
-  %load_230 = load i64, ptr %alloca_count_225, align 8
+  %load_230 = load i64, ptr %alloca_count_226, align 8
   %icmp_231 = icmp slt i64 %load_230, 8
   store i1 %icmp_231, ptr %alloca_count_229, align 1
   %load_233 = load i1, ptr %alloca_count_229, align 1
   br i1 %load_233, label %bb3, label %bb4
 
 bb3:                                              ; preds = %bb2
-  store i64 0, ptr %alloca_count_226, align 8
+  store i64 0, ptr %alloca_count_225, align 8
   br label %bb5
 
 bb4:                                              ; preds = %bb2
   ret void
 
 bb5:                                              ; preds = %bb10, %bb3
-  %load_236 = load i64, ptr %alloca_count_226, align 8
+  %load_236 = load i64, ptr %alloca_count_225, align 8
   %icmp_237 = icmp slt i64 %load_236, 8
   store i1 %icmp_237, ptr %alloca_count_235, align 1
   %load_239 = load i1, ptr %alloca_count_235, align 1
   br i1 %load_239, label %bb6, label %bb7
 
 bb6:                                              ; preds = %bb5
-  %load_241 = load i64, ptr %alloca_count_225, align 8
+  %load_241 = load i64, ptr %alloca_count_226, align 8
   store i64 %load_241, ptr %alloca_count_240, align 8
   %load_244 = load i64, ptr %alloca_count_240, align 8
   %iop_245 = mul i64 %load_244, 8
   %gep_247 = getelementptr inbounds i8, ptr %0, i64 %iop_245
   %load_249 = load i64, ptr %gep_247, align 8
-  %load_250 = load i64, ptr %alloca_count_226, align 8
+  %load_250 = load i64, ptr %alloca_count_225, align 8
   %icmp_251 = icmp eq i64 %load_249, %load_250
   store i1 %icmp_251, ptr %alloca_count_243, align 1
   %load_253 = load i1, ptr %alloca_count_243, align 1
@@ -365,9 +365,9 @@ bb6:                                              ; preds = %bb5
 
 bb7:                                              ; preds = %bb5
   %call_254 = call i32 (ptr, ...) @printf(ptr @.str.22_eight_queens.1)
-  %load_255 = load i64, ptr %alloca_count_225, align 8
+  %load_255 = load i64, ptr %alloca_count_226, align 8
   %iop_256 = add i64 %load_255, 1
-  store i64 %iop_256, ptr %alloca_count_225, align 8
+  store i64 %iop_256, ptr %alloca_count_226, align 8
   br label %bb2
 
 bb8:                                              ; preds = %bb6
@@ -379,9 +379,9 @@ bb9:                                              ; preds = %bb6
   br label %bb10
 
 bb10:                                             ; preds = %bb9, %bb8
-  %load_260 = load i64, ptr %alloca_count_226, align 8
+  %load_260 = load i64, ptr %alloca_count_225, align 8
   %iop_261 = add i64 %load_260, 1
-  store i64 %iop_261, ptr %alloca_count_226, align 8
+  store i64 %iop_261, ptr %alloca_count_225, align 8
   br label %bb5
 }
 
