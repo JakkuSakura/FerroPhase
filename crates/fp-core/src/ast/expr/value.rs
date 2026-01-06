@@ -247,12 +247,19 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 },
             ))
         }
+        IntrinsicCallKind::CatchUnwind => Some(IntrinsicCall::new(
+            kind,
+            IntrinsicCallPayload::Args {
+                args: invoke.args.clone(),
+            },
+        )),
         IntrinsicCallKind::ConstBlock
         | IntrinsicCallKind::DebugAssertions
         | IntrinsicCallKind::Input
         | IntrinsicCallKind::Break
         | IntrinsicCallKind::Continue
         | IntrinsicCallKind::Return
+        | IntrinsicCallKind::Panic
         | IntrinsicCallKind::SizeOf
         | IntrinsicCallKind::ReflectFields
         | IntrinsicCallKind::HasMethod
@@ -277,6 +284,7 @@ fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
             "print" => Some(IntrinsicCallKind::Print),
             "println" => Some(IntrinsicCallKind::Println),
             "len" => Some(IntrinsicCallKind::Len),
+            "catch_unwind" => Some(IntrinsicCallKind::CatchUnwind),
             _ => None,
         },
         Locator::Path(path) => {

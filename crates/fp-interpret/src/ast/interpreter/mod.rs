@@ -185,6 +185,7 @@ enum RuntimeFlow {
     Break(Option<Value>),
     Continue,
     Return(Option<Value>),
+    Panic(Value),
 }
 
 #[derive(Debug, Clone)]
@@ -1822,6 +1823,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.emit_error("`return` is not allowed outside of a function");
                 value.unwrap_or_else(Value::unit)
             }
+            RuntimeFlow::Panic(message) => {
+                self.emit_error(format!("panic: {}", message));
+                Value::undefined()
+            }
         }
     }
 
@@ -2013,6 +2018,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.loop_depth -= 1;
                     return RuntimeFlow::Return(value);
                 }
+                RuntimeFlow::Panic(message) => {
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Panic(message);
+                }
             }
         }
     }
@@ -2051,6 +2060,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Return(value) => {
                     self.loop_depth -= 1;
                     return RuntimeFlow::Return(value);
+                }
+                RuntimeFlow::Panic(message) => {
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Panic(message);
                 }
             }
         }
@@ -2094,6 +2107,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.pop_scope();
                     self.loop_depth -= 1;
                     return RuntimeFlow::Return(value);
+                }
+                RuntimeFlow::Panic(message) => {
+                    self.pop_scope();
+                    self.loop_depth -= 1;
+                    return RuntimeFlow::Panic(message);
                 }
             }
         }

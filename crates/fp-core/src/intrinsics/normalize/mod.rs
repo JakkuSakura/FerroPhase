@@ -1,12 +1,9 @@
 use crate::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprFormatString, ExprIf, ExprIntrinsicCall,
-    ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, ExprUnOp, Ident, Item,
-    ItemKind, Locator, Node, NodeKind, Ty, Value,
+    BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprIntrinsicContainer,
+    ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Ty, Value,
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
-use crate::ops::UnOpKind;
-
 mod bootstrap;
 mod format;
 
@@ -191,9 +188,7 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             ExprKind::Invoke(invoke) => {
                 normalize_invoke(invoke, strategy)?;
 
-                if let Some(repl) = rewrite_assert_invoke(invoke) {
-                    replacement = Some(repl);
-                } else if let Some(intrinsic_call) = crate::ast::intrinsic_call_from_invoke(invoke) {
+                if let Some(intrinsic_call) = crate::ast::intrinsic_call_from_invoke(invoke) {
                     replacement = Some(Expr::new(ExprKind::IntrinsicCall(intrinsic_call)));
                 } else if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
                     replacement = Some(repl);
@@ -302,42 +297,6 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
     }
 
     Ok(())
-}
-
-fn rewrite_assert_invoke(invoke: &ExprInvoke) -> Option<Expr> {
-    let locator = match &invoke.target {
-        ExprInvokeTarget::Function(locator) => locator,
-        _ => return None,
-    };
-    let name = match locator {
-        Locator::Ident(ident) => ident.name.as_str(),
-        Locator::Path(path) => path.segments.last().map(|seg| seg.name.as_str())?,
-        _ => return None,
-    };
-    if name != "assert" || invoke.args.len() != 1 {
-        return None;
-    }
-
-    let cond = invoke.args[0].clone();
-    let not_expr = Expr::new(ExprKind::UnOp(ExprUnOp {
-        op: UnOpKind::Not,
-        val: Box::new(cond),
-    }));
-
-    let message = Expr::value(Value::string("assertion failed".to_string()));
-    let call = Expr::new(ExprKind::Invoke(ExprInvoke {
-        target: ExprInvokeTarget::Function(Locator::Ident(Ident::new("println"))),
-        args: vec![message],
-    }));
-    let stmt = BlockStmt::Expr(BlockStmtExpr::new(call).with_semicolon(true));
-    let block = ExprBlock::new_stmts(vec![stmt]);
-    let then_expr = Expr::new(ExprKind::Block(block));
-
-    Some(Expr::new(ExprKind::If(ExprIf {
-        cond: Box::new(not_expr),
-        then: Box::new(then_expr),
-        elze: None,
-    })))
 }
 
 fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {

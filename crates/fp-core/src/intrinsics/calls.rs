@@ -21,6 +21,10 @@ pub enum IntrinsicCallKind {
     Continue,
     /// Early return from function with optional value.
     Return,
+    /// Abort execution with a panic payload.
+    Panic,
+    /// Execute a callable and catch panic flows, returning success state.
+    CatchUnwind,
 
     // Metaprogramming intrinsics
     /// `sizeof!` - get size of a type in bytes

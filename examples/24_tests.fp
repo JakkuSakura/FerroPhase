@@ -3,27 +3,29 @@
 
 fn main() {
     println!("📘 Tutorial: 24_tests.fp");
-    println!("🧭 Focus: minimal test registration example plus manual execution");
-    println!("🧪 What to look for: assert() should not trigger");
-    println!("✅ Expectation: both tests run without printing assertion failure");
+    println!("🧭 Focus: minimal test harness using assert! macros");
+    println!("🧪 What to look for: both tests pass with no assertion failures");
+    println!("✅ Expectation: test report shows 2 passed");
     println!("");
 
-    println!("Running tests manually:");
-    adds_two_numbers();
-    println!("  adds_two_numbers ... ok");
-    string_concat();
-    println!("  string_concat ... ok");
+    println!("Running tests via std::test::run:");
+    let tests = vec![
+        std::test::TestCase { name: "adds_two_numbers", run: adds_two_numbers },
+        std::test::TestCase { name: "string_concat", run: string_concat },
+    ];
+    let report = std::test::run(tests);
+    println!("Summary: {} passed, {} failed, {} total", report.passed, report.failed, report.total);
 }
 
 #[test]
 fn adds_two_numbers() {
     let left = 1 + 2;
     let right = 3;
-    assert(left == right);
+    assert_eq!(left, right);
 }
 
 #[test]
 fn string_concat() {
     let msg = "hello, " + "world";
-    assert(msg == "hello, world");
+    assert_eq!(msg, "hello, world");
 }

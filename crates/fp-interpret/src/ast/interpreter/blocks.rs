@@ -390,7 +390,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                             RuntimeFlow::Value(_) => {}
                                             RuntimeFlow::Break(_)
                                             | RuntimeFlow::Continue
-                                            | RuntimeFlow::Return(_) => {
+                                            | RuntimeFlow::Return(_)
+                                            | RuntimeFlow::Panic(_) => {
                                                 self.emit_error(
                                                     "control flow is not allowed at top-level of const blocks",
                                                 );

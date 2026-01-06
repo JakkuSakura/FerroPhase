@@ -60,6 +60,35 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 RuntimeFlow::Return(None)
             }
+            IntrinsicCallKind::Panic => {
+                let message = self.intrinsic_panic_message(call);
+                self.stdout.push(format!("panic: {}", message));
+                RuntimeFlow::Panic(Value::string(message))
+            }
+            IntrinsicCallKind::CatchUnwind => {
+                let args = match &mut call.payload {
+                    IntrinsicCallPayload::Args { args } => args,
+                    IntrinsicCallPayload::Format { .. } => {
+                        self.emit_error("catch_unwind does not accept formatted payloads");
+                        return RuntimeFlow::Value(Value::bool(false));
+                    }
+                };
+                if args.len() != 1 {
+                    self.emit_error("catch_unwind expects exactly one callable argument");
+                    return RuntimeFlow::Value(Value::bool(false));
+                }
+                let callable = self.eval_expr_runtime(&mut args[0]);
+                let value = match callable {
+                    RuntimeFlow::Value(value) => value,
+                    RuntimeFlow::Panic(_) => return RuntimeFlow::Value(Value::bool(false)),
+                    other => return other,
+                };
+                let flow = self.invoke_runtime_callable(value, Vec::new());
+                match flow {
+                    RuntimeFlow::Panic(_) => RuntimeFlow::Value(Value::bool(false)),
+                    other => RuntimeFlow::Value(Value::bool(matches!(other, RuntimeFlow::Value(_)))),
+                }
+            }
             IntrinsicCallKind::ConstBlock => {
                 if let IntrinsicCallPayload::Args { args } = &mut call.payload {
                     if let Some(expr) = args.first_mut() {
@@ -157,6 +186,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.emit_error("const block requires an argument");
                 Value::undefined()
             }
+            IntrinsicCallKind::Panic | IntrinsicCallKind::CatchUnwind => {
+                self.emit_error(format!(
+                    "intrinsic {:?} is not supported during const evaluation",
+                    call.kind
+                ));
+                Value::undefined()
+            }
             _ => {
                 let intrinsic_name = match super::intrinsic_symbol(call.kind) {
                     Some(name) => name,
@@ -229,6 +265,43 @@ impl<'ctx> AstInterpreter<'ctx> {
                 for arg in args.iter_mut() {
                     self.evaluate_function_body(arg);
                 }
+            }
+        }
+    }
+
+    fn intrinsic_panic_message(&mut self, call: &mut ExprIntrinsicCall) -> String {
+        match &mut call.payload {
+            IntrinsicCallPayload::Args { args } => {
+                if args.is_empty() {
+                    return "panic! macro triggered".to_string();
+                }
+                if args.len() > 1 {
+                    self.emit_error("panic expects zero or one argument");
+                }
+                let flow = self.eval_expr_runtime(&mut args[0]);
+                let value = self.finish_runtime_flow(flow);
+                format!("{}", value)
+            }
+            IntrinsicCallPayload::Format { .. } => {
+                self.emit_error("panic does not accept formatted payloads");
+                "panic! macro triggered".to_string()
+            }
+        }
+    }
+
+    fn invoke_runtime_callable(&mut self, value: Value, args: Vec<Value>) -> RuntimeFlow {
+        match value {
+            Value::Function(function) => self.call_value_function_runtime(&function, args),
+            Value::Any(any) => {
+                if let Some(closure) = any.downcast_ref::<ConstClosure>() {
+                    return self.call_const_closure_runtime(closure, args);
+                }
+                self.emit_error("catch_unwind expects a callable value");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            _ => {
+                self.emit_error("catch_unwind expects a callable value");
+                RuntimeFlow::Value(Value::undefined())
             }
         }
     }

@@ -1504,6 +1504,8 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::Break => "break",
         IntrinsicCallKind::Continue => "continue",
         IntrinsicCallKind::Return => "return",
+        IntrinsicCallKind::Panic => "panic",
+        IntrinsicCallKind::CatchUnwind => "catch_unwind",
         IntrinsicCallKind::SizeOf => "size_of",
         IntrinsicCallKind::ReflectFields => "reflect_fields",
         IntrinsicCallKind::HasMethod => "has_method",

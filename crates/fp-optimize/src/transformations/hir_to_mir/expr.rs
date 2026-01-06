@@ -6994,6 +6994,22 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
+                if call.kind == IntrinsicCallKind::Panic {
+                    self.emit_panic_intrinsic(call, expr.span)?;
+                    let unit_ty = MirLowering::unit_ty();
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
+                        ty: unit_ty,
+                    });
+                }
+                if call.kind == IntrinsicCallKind::CatchUnwind {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "catch_unwind is not supported in compiled backends",
+                    );
+                    let operand = self.constant_bool_operand(false, expr.span);
+                    return Ok(operand);
+                }
                 if call.kind == IntrinsicCallKind::Len {
                     let args = match &call.payload {
                         IntrinsicCallPayload::Args { args } => args,
@@ -7545,6 +7561,72 @@ impl<'a> BodyBuilder<'a> {
                 args: operands,
             },
         });
+        Ok(())
+    }
+
+    fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
+        let message = match &call.payload {
+            IntrinsicCallPayload::Args { args } => {
+                if args.is_empty() {
+                    "panic! macro triggered".to_string()
+                } else if args.len() == 1 {
+                    match &args[0].kind {
+                        hir::ExprKind::Literal(hir::Lit::Str(text)) => text.clone(),
+                        _ => {
+                            self.lowering.emit_error(
+                                span,
+                                "panic expects a string literal in compiled backends",
+                            );
+                            "<panic message unavailable>".to_string()
+                        }
+                    }
+                } else {
+                    self.lowering
+                        .emit_error(span, "panic expects zero or one argument");
+                    "<panic message unavailable>".to_string()
+                }
+            }
+            IntrinsicCallPayload::Format { template } => {
+                if template.args.is_empty() && template.kwargs.is_empty() {
+                    template
+                        .parts
+                        .iter()
+                        .map(|part| match part {
+                            hir::FormatTemplatePart::Literal(text) => text.as_str(),
+                            hir::FormatTemplatePart::Placeholder(_) => "{...}",
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                } else {
+                    self.lowering.emit_error(
+                        span,
+                        "panic format payload is not supported in compiled backends",
+                    );
+                    "<panic message unavailable>".to_string()
+                }
+            }
+        };
+
+        let panic_call = hir::IntrinsicCallExpr {
+            kind: IntrinsicCallKind::Println,
+            payload: IntrinsicCallPayload::Format {
+                template: hir::FormatString {
+                    parts: vec![hir::FormatTemplatePart::Literal(format!(
+                        "panic: {}",
+                        message
+                    ))],
+                    args: Vec::new(),
+                    kwargs: Vec::new(),
+                },
+            },
+        };
+
+        self.emit_printf_call(&panic_call, span)?;
+        self.set_current_terminator(mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Abort,
+        });
+        self.current_block = self.new_block();
         Ok(())
     }
 
@@ -8567,6 +8649,37 @@ impl<'a> BodyBuilder<'a> {
                     if (place.local as usize) < self.locals.len() {
                         self.locals[place.local as usize].ty = MirLowering::unit_ty();
                     }
+                    return Ok(());
+                }
+                IntrinsicCallKind::Panic => {
+                    let unit_assign = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                        ),
+                    };
+                    self.push_statement(unit_assign);
+                    self.emit_panic_intrinsic(call, expr.span)?;
+                    return Ok(());
+                }
+                IntrinsicCallKind::CatchUnwind => {
+                    self.lowering.emit_error(
+                        expr.span,
+                        "catch_unwind is not supported in compiled backends",
+                    );
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::Bool(false),
+                            })),
+                        ),
+                    };
+                    self.push_statement(statement);
                     return Ok(());
                 }
                 _ => {

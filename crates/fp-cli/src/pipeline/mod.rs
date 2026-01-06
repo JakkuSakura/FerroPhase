@@ -9,7 +9,7 @@ use crate::languages::{self, detect_source_language};
 #[cfg(feature = "bootstrap")]
 use fp_core::ast::json as ast_json;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstSerializer, Node, NodeKind, RuntimeValue, Value};
+use fp_core::ast::{AstSerializer, Item, Node, NodeKind, RuntimeValue, Value};
 #[cfg(feature = "bootstrap")]
 use fp_core::ast::{AstSnapshot, snapshot};
 use fp_core::context::SharedScopedContext;
@@ -1028,21 +1028,22 @@ impl Pipeline {
         ast: &mut Node,
         manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
-        let std_path = runtime_std_hashmap_path();
-        let source = fs::read_to_string(&std_path).map_err(|err| {
-            manager.add_diagnostic(
-                Diagnostic::error(format!(
-                    "Failed to read runtime std HashMap at {}: {}",
-                    std_path.display(),
-                    err
-                ))
-                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
-            );
-            Self::stage_failure(STAGE_RUNTIME_MATERIALIZE)
-        })?;
-        let std_node = self.parse_source_public(&source, Some(&std_path))?;
-        let merged = merge_runtime_std(ast.clone(), std_node, manager)?;
-        *ast = merged;
+        for std_path in runtime_std_paths() {
+            let source = fs::read_to_string(&std_path).map_err(|err| {
+                manager.add_diagnostic(
+                    Diagnostic::error(format!(
+                        "Failed to read runtime std module at {}: {}",
+                        std_path.display(),
+                        err
+                    ))
+                    .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+                );
+                Self::stage_failure(STAGE_RUNTIME_MATERIALIZE)
+            })?;
+            let std_node = self.parse_source_public(&source, Some(&std_path))?;
+            let merged = merge_runtime_std(ast.clone(), std_node, manager)?;
+            *ast = merged;
+        }
         Ok(())
     }
 
@@ -2313,9 +2314,12 @@ fn workspace_comment_prefix(target: &PipelineTarget) -> &'static str {
     }
 }
 
-fn runtime_std_hashmap_path() -> PathBuf {
+fn runtime_std_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    root.join("../../src/std/collection/hashmap.fp")
+    vec![
+        root.join("../../src/std/collection/hashmap.fp"),
+        root.join("../../src/std/test/mod.fp"),
+    ]
 }
 
 fn merge_runtime_std(
@@ -2339,21 +2343,42 @@ fn merge_runtime_std(
         );
         return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
     };
-    if file.items.iter().any(|item| {
-        matches!(
-            item.kind(),
-            fp_core::ast::ItemKind::Module(module) if module.name.as_str() == "std"
-        )
-    }) {
-        return Ok(Node {
-            ty,
-            kind: NodeKind::File(file),
-        });
+    let mut std_module = None;
+    let mut std_items = Vec::new();
+    for item in std_file.items {
+        if let fp_core::ast::ItemKind::Module(module) = item.kind() {
+            if module.name.as_str() == "std" {
+                std_module = Some(module);
+                continue;
+            }
+        }
+        std_items.push(item);
     }
-    let mut items = Vec::with_capacity(std_file.items.len() + file.items.len());
-    items.extend(std_file.items);
-    items.append(&mut file.items);
-    file.items = items;
+    let Some(mut std_module) = std_module else {
+        manager.add_diagnostic(
+            Diagnostic::error("Runtime std file must define module std".to_string())
+                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+        );
+        return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
+    };
+    std_module.items.extend(std_items);
+
+    let mut merged_into_existing = false;
+    for item in &mut file.items {
+        if let fp_core::ast::ItemKind::Module(existing) = item.kind_mut() {
+            if existing.name.as_str() == "std" {
+                existing.items.extend(std_module.items);
+                merged_into_existing = true;
+                break;
+            }
+        }
+    }
+    if !merged_into_existing {
+        let mut items = Vec::with_capacity(file.items.len() + 1);
+        items.push(Item::from(fp_core::ast::ItemKind::Module(std_module)));
+        items.append(&mut file.items);
+        file.items = items;
+    }
     Ok(Node {
         ty,
         kind: NodeKind::File(file),
