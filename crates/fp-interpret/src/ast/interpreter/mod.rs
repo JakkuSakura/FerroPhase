@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::Pattern;
-use fp_core::ast::{TypeQuoteExpr, TypeQuoteToken};
 use fp_core::ast::{
     BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString, ExprIntrinsicCall,
     ExprInvoke, ExprInvokeTarget, ExprKind, ExprRange, ExprRangeLimit, FormatArgRef,
@@ -12,7 +11,7 @@ use fp_core::ast::{
     StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
     TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit,
     TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
-    QuoteFragmentKind, QuoteTokenValue,
+    QuoteFragmentKind, QuoteTokenValue, TypeQuote,
 };
 use fp_core::ast::DecimalType;
 use fp_core::ast::{Ident, Locator};
@@ -1486,32 +1485,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                     .map(|ret| Box::new(self.substitute_ty(ret.as_ref(), subst))),
             }),
             Ty::Expr(_) => ty.clone(),
-            Ty::QuoteExpr(quote) => Ty::QuoteExpr(TypeQuoteExpr {
+            Ty::Quote(quote) => Ty::Quote(TypeQuote {
+                kind: quote.kind,
+                item: quote.item,
                 inner: quote
                     .inner
                     .as_ref()
                     .map(|inner| Box::new(self.substitute_ty(inner.as_ref(), subst))),
             }),
-            Ty::QuoteStmt(_)
-            | Ty::QuoteItem(_)
-            | Ty::QuoteFn(_)
-            | Ty::QuoteStruct(_)
-            | Ty::QuoteEnum(_)
-            | Ty::QuoteTrait(_)
-            | Ty::QuoteImpl(_)
-            | Ty::QuoteConst(_)
-            | Ty::QuoteStatic(_)
-            | Ty::QuoteMod(_)
-            | Ty::QuoteUse(_)
-            | Ty::QuoteMacro(_)
-            | Ty::QuoteType(_) => ty.clone(),
-            Ty::QuoteToken(qt) => Ty::QuoteToken(Box::new(TypeQuoteToken {
-                kind: qt.kind,
-                inner: qt
-                    .inner
-                    .as_ref()
-                    .map(|inner| Box::new(self.substitute_ty(inner.as_ref(), subst))),
-            })),
             Ty::Structural(structural) => Ty::Structural(structural.clone()),
             Ty::Enum(enm) => Ty::Enum(enm.clone()),
             Ty::ImplTraits(_)
@@ -3196,45 +3177,11 @@ fn is_quote_only_item(item: &Item) -> bool {
     match item.kind() {
         ItemKind::DefFunction(func) => {
             func.sig.quote_kind.is_some()
-                || matches!(
-                    func.sig.ret_ty.as_ref(),
-                    Some(Ty::QuoteExpr(_))
-                        | Some(Ty::QuoteStmt(_))
-                        | Some(Ty::QuoteItem(_))
-                        | Some(Ty::QuoteFn(_))
-                        | Some(Ty::QuoteStruct(_))
-                        | Some(Ty::QuoteEnum(_))
-                        | Some(Ty::QuoteTrait(_))
-                        | Some(Ty::QuoteImpl(_))
-                        | Some(Ty::QuoteConst(_))
-                        | Some(Ty::QuoteStatic(_))
-                        | Some(Ty::QuoteMod(_))
-                        | Some(Ty::QuoteUse(_))
-                        | Some(Ty::QuoteMacro(_))
-                        | Some(Ty::QuoteType(_))
-                        | Some(Ty::QuoteToken(_))
-                )
+                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
         }
         ItemKind::DeclFunction(func) => {
             func.sig.quote_kind.is_some()
-                || matches!(
-                    func.sig.ret_ty.as_ref(),
-                    Some(Ty::QuoteExpr(_))
-                        | Some(Ty::QuoteStmt(_))
-                        | Some(Ty::QuoteItem(_))
-                        | Some(Ty::QuoteFn(_))
-                        | Some(Ty::QuoteStruct(_))
-                        | Some(Ty::QuoteEnum(_))
-                        | Some(Ty::QuoteTrait(_))
-                        | Some(Ty::QuoteImpl(_))
-                        | Some(Ty::QuoteConst(_))
-                        | Some(Ty::QuoteStatic(_))
-                        | Some(Ty::QuoteMod(_))
-                        | Some(Ty::QuoteUse(_))
-                        | Some(Ty::QuoteMacro(_))
-                        | Some(Ty::QuoteType(_))
-                        | Some(Ty::QuoteToken(_))
-                )
+                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
         }
         _ => false,
     }

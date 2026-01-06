@@ -208,26 +208,7 @@ fn strip_quote_consts_in_expr(expr: &mut Expr) {
 }
 
 fn is_quote_type(ty: Option<&Ty>) -> bool {
-    matches!(
-        ty,
-        Some(
-            Ty::QuoteExpr(_)
-                | Ty::QuoteStmt(_)
-                | Ty::QuoteItem(_)
-                | Ty::QuoteFn(_)
-                | Ty::QuoteStruct(_)
-                | Ty::QuoteEnum(_)
-                | Ty::QuoteTrait(_)
-                | Ty::QuoteImpl(_)
-                | Ty::QuoteConst(_)
-                | Ty::QuoteStatic(_)
-                | Ty::QuoteMod(_)
-                | Ty::QuoteUse(_)
-                | Ty::QuoteMacro(_)
-                | Ty::QuoteType(_)
-                | Ty::QuoteToken(_)
-        )
-    )
+    matches!(ty, Some(Ty::Quote(_)))
 }
 
 fn is_quote_expr(expr: &fp_core::ast::Expr) -> bool {

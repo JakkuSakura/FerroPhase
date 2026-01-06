@@ -844,21 +844,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let elem_var = self.type_from_ast_ty(&array_ty.elem)?;
                 self.bind(var, TypeTerm::Array(elem_var, Some(array_ty.len.clone())));
             }
-            Ty::QuoteExpr(_)
-            | Ty::QuoteStmt(_)
-            | Ty::QuoteItem(_)
-            | Ty::QuoteFn(_)
-            | Ty::QuoteStruct(_)
-            | Ty::QuoteEnum(_)
-            | Ty::QuoteTrait(_)
-            | Ty::QuoteImpl(_)
-            | Ty::QuoteConst(_)
-            | Ty::QuoteStatic(_)
-            | Ty::QuoteMod(_)
-            | Ty::QuoteUse(_)
-            | Ty::QuoteMacro(_)
-            | Ty::QuoteType(_)
-            | Ty::QuoteToken(_) => {
+            Ty::Quote(_) => {
                 // Quote tokens are currently opaque to the typer.
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
@@ -1004,17 +990,20 @@ fn quote_item_compatible(a: &Ty, b: &Ty) -> bool {
 
 fn quote_item_kind(ty: &Ty) -> Option<&'static str> {
     match ty {
-        Ty::QuoteItem(_) => Some("item"),
-        Ty::QuoteFn(_) => Some("fn"),
-        Ty::QuoteStruct(_) => Some("struct"),
-        Ty::QuoteEnum(_) => Some("enum"),
-        Ty::QuoteTrait(_) => Some("trait"),
-        Ty::QuoteImpl(_) => Some("impl"),
-        Ty::QuoteConst(_) => Some("const"),
-        Ty::QuoteStatic(_) => Some("static"),
-        Ty::QuoteMod(_) => Some("mod"),
-        Ty::QuoteUse(_) => Some("use"),
-        Ty::QuoteMacro(_) => Some("macro"),
+        Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Item => match quote.item {
+            Some(QuoteItemKind::Function) => Some("fn"),
+            Some(QuoteItemKind::Struct) => Some("struct"),
+            Some(QuoteItemKind::Enum) => Some("enum"),
+            Some(QuoteItemKind::Trait) => Some("trait"),
+            Some(QuoteItemKind::Impl) => Some("impl"),
+            Some(QuoteItemKind::Const) => Some("const"),
+            Some(QuoteItemKind::Static) => Some("static"),
+            Some(QuoteItemKind::Module) => Some("mod"),
+            Some(QuoteItemKind::Use) => Some("use"),
+            Some(QuoteItemKind::Macro) => Some("macro"),
+            None => Some("item"),
+            Some(QuoteItemKind::Type) => Some("type"),
+        },
         _ => None,
     }
 }
