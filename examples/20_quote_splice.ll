@@ -204,21 +204,21 @@ bb0:
   %alloca_count_88 = alloca i1, align 1
   %alloca_75 = alloca i1, align 1
   %alloca_count_75 = alloca i1, align 1
-  %alloca_68 = alloca i32, align 4
-  %alloca_count_68 = alloca i32, align 4
+  %alloca_69 = alloca i32, align 4
+  %alloca_count_69 = alloca i32, align 4
   %alloca_67 = alloca i32, align 4
   %alloca_count_67 = alloca i32, align 4
-  store i32 %0, ptr %alloca_count_68, align 4
-  %load_70 = load i32, ptr %alloca_count_68, align 4
+  store i32 %0, ptr %alloca_count_67, align 4
+  %load_70 = load i32, ptr %alloca_count_67, align 4
   %zext = zext i32 %load_70 to i64
   %iop_71 = add i64 %zext, 5
-  store i64 %iop_71, ptr %alloca_count_68, align 4
-  %load_73 = load i32, ptr %alloca_count_68, align 4
+  store i64 %iop_71, ptr %alloca_count_67, align 4
+  %load_73 = load i32, ptr %alloca_count_67, align 4
   %call_74 = call i32 (ptr, ...) @printf(ptr @.str.20_quote_splice.7, i64 0, i32 %load_73)
   br label %bb1
 
 bb1:                                              ; preds = %bb0
-  %load_76 = load i32, ptr %alloca_count_68, align 4
+  %load_76 = load i32, ptr %alloca_count_67, align 4
   %zext1 = zext i32 %load_76 to i64
   %zext2 = zext i32 %1 to i64
   %icmp_77 = icmp sge i64 %zext1, %zext2
@@ -227,25 +227,25 @@ bb1:                                              ; preds = %bb0
   br i1 %load_79, label %bb2, label %bb3
 
 bb2:                                              ; preds = %bb1
-  %load_80 = load i32, ptr %alloca_count_68, align 4
-  store i32 %load_80, ptr %alloca_count_67, align 4
-  %load_82 = load i32, ptr %alloca_count_67, align 4
+  %load_80 = load i32, ptr %alloca_count_67, align 4
+  store i32 %load_80, ptr %alloca_count_69, align 4
+  %load_82 = load i32, ptr %alloca_count_69, align 4
   ret i32 %load_82
 
 bb3:                                              ; preds = %bb1
   br label %bb4
 
 bb4:                                              ; preds = %bb5, %bb3
-  %load_83 = load i32, ptr %alloca_count_68, align 4
+  %load_83 = load i32, ptr %alloca_count_67, align 4
   %zext3 = zext i32 %load_83 to i64
   %iop_84 = add i64 %zext3, -2
-  store i64 %iop_84, ptr %alloca_count_68, align 4
-  %load_86 = load i32, ptr %alloca_count_68, align 4
+  store i64 %iop_84, ptr %alloca_count_67, align 4
+  %load_86 = load i32, ptr %alloca_count_67, align 4
   %call_87 = call i32 (ptr, ...) @printf(ptr @.str.20_quote_splice.7, i64 1, i32 %load_86)
   br label %bb6
 
 bb6:                                              ; preds = %bb4
-  %load_89 = load i32, ptr %alloca_count_68, align 4
+  %load_89 = load i32, ptr %alloca_count_67, align 4
   %zext4 = zext i32 %load_89 to i64
   %zext5 = zext i32 %1 to i64
   %icmp_90 = icmp sge i64 %zext4, %zext5
@@ -254,25 +254,25 @@ bb6:                                              ; preds = %bb4
   br i1 %load_92, label %bb7, label %bb8
 
 bb7:                                              ; preds = %bb6
-  %load_93 = load i32, ptr %alloca_count_68, align 4
-  store i32 %load_93, ptr %alloca_count_67, align 4
-  %load_95 = load i32, ptr %alloca_count_67, align 4
+  %load_93 = load i32, ptr %alloca_count_67, align 4
+  store i32 %load_93, ptr %alloca_count_69, align 4
+  %load_95 = load i32, ptr %alloca_count_69, align 4
   ret i32 %load_95
 
 bb8:                                              ; preds = %bb6
   br label %bb9
 
 bb9:                                              ; preds = %bb10, %bb8
-  %load_96 = load i32, ptr %alloca_count_68, align 4
+  %load_96 = load i32, ptr %alloca_count_67, align 4
   %zext6 = zext i32 %load_96 to i64
   %iop_97 = add i64 %zext6, 7
-  store i64 %iop_97, ptr %alloca_count_68, align 4
-  %load_99 = load i32, ptr %alloca_count_68, align 4
+  store i64 %iop_97, ptr %alloca_count_67, align 4
+  %load_99 = load i32, ptr %alloca_count_67, align 4
   %call_100 = call i32 (ptr, ...) @printf(ptr @.str.20_quote_splice.7, i64 2, i32 %load_99)
   br label %bb11
 
 bb11:                                             ; preds = %bb9
-  %load_102 = load i32, ptr %alloca_count_68, align 4
+  %load_102 = load i32, ptr %alloca_count_67, align 4
   %zext7 = zext i32 %load_102 to i64
   %zext8 = zext i32 %1 to i64
   %icmp_103 = icmp sge i64 %zext7, %zext8
@@ -281,18 +281,18 @@ bb11:                                             ; preds = %bb9
   br i1 %load_105, label %bb12, label %bb13
 
 bb12:                                             ; preds = %bb11
-  %load_106 = load i32, ptr %alloca_count_68, align 4
-  store i32 %load_106, ptr %alloca_count_67, align 4
-  %load_108 = load i32, ptr %alloca_count_67, align 4
+  %load_106 = load i32, ptr %alloca_count_67, align 4
+  store i32 %load_106, ptr %alloca_count_69, align 4
+  %load_108 = load i32, ptr %alloca_count_69, align 4
   ret i32 %load_108
 
 bb13:                                             ; preds = %bb11
   br label %bb14
 
 bb14:                                             ; preds = %bb15, %bb13
-  %load_109 = load i32, ptr %alloca_count_68, align 4
-  store i32 %load_109, ptr %alloca_count_67, align 4
-  %load_111 = load i32, ptr %alloca_count_67, align 4
+  %load_109 = load i32, ptr %alloca_count_67, align 4
+  store i32 %load_109, ptr %alloca_count_69, align 4
+  %load_111 = load i32, ptr %alloca_count_69, align 4
   ret i32 %load_111
 
 bb5:                                              ; No predecessors!
