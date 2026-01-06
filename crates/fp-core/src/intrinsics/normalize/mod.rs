@@ -396,26 +396,8 @@ fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
                 normalize_expr(expr.as_mut(), strategy)?;
             }
         }
-        Ty::QuoteExpr(quote) => {
+        Ty::Quote(quote) => {
             if let Some(inner) = quote.inner.as_mut() {
-                normalize_ty(inner.as_mut(), strategy)?;
-            }
-        }
-        Ty::QuoteStmt(_)
-        | Ty::QuoteItem(_)
-        | Ty::QuoteFn(_)
-        | Ty::QuoteStruct(_)
-        | Ty::QuoteEnum(_)
-        | Ty::QuoteTrait(_)
-        | Ty::QuoteImpl(_)
-        | Ty::QuoteConst(_)
-        | Ty::QuoteStatic(_)
-        | Ty::QuoteMod(_)
-        | Ty::QuoteUse(_)
-        | Ty::QuoteMacro(_)
-        | Ty::QuoteType(_) => {}
-        Ty::QuoteToken(token) => {
-            if let Some(inner) = token.inner.as_mut() {
                 normalize_ty(inner.as_mut(), strategy)?;
             }
         }

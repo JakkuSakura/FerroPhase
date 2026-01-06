@@ -761,10 +761,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let token_ty = self.resolve_to_ty(token_var)?;
                     if !self.is_item_quote(&token_ty) {
                         match token_ty {
-                            Ty::QuoteToken(qt) => {
+                            Ty::Quote(quote) => {
                                 self.emit_error(format!(
                                     "splice in item position requires item token, found {:?}",
-                                    qt.kind
+                                    quote.kind
                                 ));
                             }
                             _ => self.emit_error("splice expects a quote token expression"),

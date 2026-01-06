@@ -858,37 +858,31 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         }
         ast::Ty::Slice(slice) => format!("[{}]", render_ty_brief(slice.elem.as_ref())),
         ast::Ty::Expr(expr) => format!("Expr({})", render_expr_inline(expr)),
-        ast::Ty::QuoteExpr(quote) => {
-            if let Some(inner) = &quote.inner {
-                format!("QuoteExpr({})", render_ty_brief(inner.as_ref()))
-            } else {
-                "QuoteExpr".into()
-            }
-        }
-        ast::Ty::QuoteStmt(_) => "QuoteStmt".into(),
-        ast::Ty::QuoteItem(_) => "QuoteItem".into(),
-        ast::Ty::QuoteFn(_) => "QuoteFn".into(),
-        ast::Ty::QuoteStruct(_) => "QuoteStruct".into(),
-        ast::Ty::QuoteEnum(_) => "QuoteEnum".into(),
-        ast::Ty::QuoteTrait(_) => "QuoteTrait".into(),
-        ast::Ty::QuoteImpl(_) => "QuoteImpl".into(),
-        ast::Ty::QuoteConst(_) => "QuoteConst".into(),
-        ast::Ty::QuoteStatic(_) => "QuoteStatic".into(),
-        ast::Ty::QuoteMod(_) => "QuoteMod".into(),
-        ast::Ty::QuoteUse(_) => "QuoteUse".into(),
-        ast::Ty::QuoteMacro(_) => "QuoteMacro".into(),
-        ast::Ty::QuoteType(_) => "QuoteType".into(),
-        ast::Ty::QuoteToken(q) => {
-            let kind = match q.kind {
+        ast::Ty::Quote(quote) => {
+            let kind = match quote.kind {
                 ast::QuoteFragmentKind::Expr => "expr",
                 ast::QuoteFragmentKind::Stmt => "stmt",
                 ast::QuoteFragmentKind::Item => "item",
                 ast::QuoteFragmentKind::Type => "type",
             };
-            if let Some(inner) = &q.inner {
-                format!("QuoteToken<{}>({})", kind, render_ty_brief(inner.as_ref()))
+            let item = match quote.item {
+                Some(ast::QuoteItemKind::Function) => ":fn",
+                Some(ast::QuoteItemKind::Struct) => ":struct",
+                Some(ast::QuoteItemKind::Enum) => ":enum",
+                Some(ast::QuoteItemKind::Trait) => ":trait",
+                Some(ast::QuoteItemKind::Impl) => ":impl",
+                Some(ast::QuoteItemKind::Type) => ":type",
+                Some(ast::QuoteItemKind::Const) => ":const",
+                Some(ast::QuoteItemKind::Static) => ":static",
+                Some(ast::QuoteItemKind::Module) => ":mod",
+                Some(ast::QuoteItemKind::Use) => ":use",
+                Some(ast::QuoteItemKind::Macro) => ":macro",
+                None => "",
+            };
+            if let Some(inner) = &quote.inner {
+                format!("Quote<{}{}>({})", kind, item, render_ty_brief(inner.as_ref()))
             } else {
-                format!("QuoteToken<{}>", kind)
+                format!("Quote<{}{}>", kind, item)
             }
         }
         ast::Ty::TypeBinaryOp(_) => "TypeBinaryOp".into(),

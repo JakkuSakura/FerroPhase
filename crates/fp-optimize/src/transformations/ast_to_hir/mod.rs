@@ -1340,21 +1340,7 @@ impl HirGenerator {
                 };
                 Ok(expr)
             }
-            ast::Ty::QuoteExpr(_)
-            | ast::Ty::QuoteStmt(_)
-            | ast::Ty::QuoteItem(_)
-            | ast::Ty::QuoteFn(_)
-            | ast::Ty::QuoteStruct(_)
-            | ast::Ty::QuoteEnum(_)
-            | ast::Ty::QuoteTrait(_)
-            | ast::Ty::QuoteImpl(_)
-            | ast::Ty::QuoteConst(_)
-            | ast::Ty::QuoteStatic(_)
-            | ast::Ty::QuoteMod(_)
-            | ast::Ty::QuoteUse(_)
-            | ast::Ty::QuoteMacro(_)
-            | ast::Ty::QuoteType(_)
-            | ast::Ty::QuoteToken(_) => {
+            ast::Ty::Quote(_) => {
                 self.add_error(
                     Diagnostic::error(
                         "quote token types should be removed by const-eval".to_string(),

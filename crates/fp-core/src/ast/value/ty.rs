@@ -6,88 +6,18 @@ use std::hash::Hash;
 
 pub type TypeId = u64;
 pub type BType = Box<Ty>;
-// TODO: move them into TypeQuote, make them as wrapped types. so it's cleaner in Ty
 common_struct! {
     /// Type of a quoted fragment token.
     /// - `kind` records the fragment kind (expr/stmt/item/type).
+    /// - `item` refines item fragments (fn/struct/enum/...) when present.
     /// - `inner` may carry the inner expression/type when applicable (e.g., expr quoting).
-    pub struct TypeQuoteToken {
+    pub struct TypeQuote {
         pub kind: QuoteFragmentKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        pub inner: Option<Box<Ty>>,
-    }
-}
-common_struct! {
-    /// Type of a quoted expression token.
-    pub struct TypeQuoteExpr {
+        pub item: Option<QuoteItemKind>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub inner: Option<Box<Ty>>,
     }
-}
-
-common_struct! {
-    /// Type of a quoted statement token.
-    pub struct TypeQuoteStmt {}
-}
-
-common_struct! {
-    /// Type of a quoted item token.
-    pub struct TypeQuoteItem {}
-}
-
-common_struct! {
-    /// Type of a quoted function item token.
-    pub struct TypeQuoteFn {}
-}
-
-common_struct! {
-    /// Type of a quoted struct item token.
-    pub struct TypeQuoteStruct {}
-}
-
-common_struct! {
-    /// Type of a quoted enum item token.
-    pub struct TypeQuoteEnum {}
-}
-
-common_struct! {
-    /// Type of a quoted trait item token.
-    pub struct TypeQuoteTrait {}
-}
-
-common_struct! {
-    /// Type of a quoted impl item token.
-    pub struct TypeQuoteImpl {}
-}
-
-common_struct! {
-    /// Type of a quoted const item token.
-    pub struct TypeQuoteConst {}
-}
-
-common_struct! {
-    /// Type of a quoted static item token.
-    pub struct TypeQuoteStatic {}
-}
-
-common_struct! {
-    /// Type of a quoted module item token.
-    pub struct TypeQuoteMod {}
-}
-
-common_struct! {
-    /// Type of a quoted use item token.
-    pub struct TypeQuoteUse {}
-}
-
-common_struct! {
-    /// Type of a quoted macro item token.
-    pub struct TypeQuoteMacro {}
-}
-
-common_struct! {
-    /// Type of a quoted type token.
-    pub struct TypeQuoteType {}
 }
 
 common_enum! {
@@ -138,21 +68,7 @@ common_enum! {
         Reference(TypeReference),
         Slice(TypeSlice),
         Expr(BExpr),
-        QuoteExpr(TypeQuoteExpr),
-        QuoteStmt(TypeQuoteStmt),
-        QuoteItem(TypeQuoteItem),
-        QuoteFn(TypeQuoteFn),
-        QuoteStruct(TypeQuoteStruct),
-        QuoteEnum(TypeQuoteEnum),
-        QuoteTrait(TypeQuoteTrait),
-        QuoteImpl(TypeQuoteImpl),
-        QuoteConst(TypeQuoteConst),
-        QuoteStatic(TypeQuoteStatic),
-        QuoteMod(TypeQuoteMod),
-        QuoteUse(TypeQuoteUse),
-        QuoteMacro(TypeQuoteMacro),
-        QuoteType(TypeQuoteType),
-        QuoteToken(Box<TypeQuoteToken>),
+        Quote(TypeQuote),
         TypeBinaryOp(Box<TypeBinaryOp>),
         AnyBox(AnyBox),
     }

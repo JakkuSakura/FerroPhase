@@ -44,33 +44,71 @@ fn quote_item_type_from_items(items: &[&Item]) -> Option<Ty> {
 
 fn quote_item_type_from_item(item: &Item) -> Option<Ty> {
     match item.kind() {
-        ItemKind::DefFunction(_) | ItemKind::DeclFunction(_) => Some(Ty::QuoteFn(TypeQuoteFn {})),
-        ItemKind::DefStruct(_) | ItemKind::DefStructural(_) => {
-            Some(Ty::QuoteStruct(TypeQuoteStruct {}))
-        }
-        ItemKind::DefEnum(_) => Some(Ty::QuoteEnum(TypeQuoteEnum {})),
-        ItemKind::DefTrait(_) => Some(Ty::QuoteTrait(TypeQuoteTrait {})),
-        ItemKind::Impl(_) => Some(Ty::QuoteImpl(TypeQuoteImpl {})),
-        ItemKind::DefConst(_) | ItemKind::DeclConst(_) => Some(Ty::QuoteConst(TypeQuoteConst {})),
-        ItemKind::DefStatic(_) | ItemKind::DeclStatic(_) => {
-            Some(Ty::QuoteStatic(TypeQuoteStatic {}))
-        }
-        ItemKind::Module(_) => Some(Ty::QuoteMod(TypeQuoteMod {})),
-        ItemKind::Import(_) => Some(Ty::QuoteUse(TypeQuoteUse {})),
-        ItemKind::Macro(_) => Some(Ty::QuoteMacro(TypeQuoteMacro {})),
+        ItemKind::DefFunction(_) | ItemKind::DeclFunction(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Function),
+            inner: None,
+        })),
+        ItemKind::DefStruct(_) | ItemKind::DefStructural(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Struct),
+            inner: None,
+        })),
+        ItemKind::DefEnum(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Enum),
+            inner: None,
+        })),
+        ItemKind::DefTrait(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Trait),
+            inner: None,
+        })),
+        ItemKind::Impl(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Impl),
+            inner: None,
+        })),
+        ItemKind::DefConst(_) | ItemKind::DeclConst(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Const),
+            inner: None,
+        })),
+        ItemKind::DefStatic(_) | ItemKind::DeclStatic(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Static),
+            inner: None,
+        })),
+        ItemKind::Module(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Module),
+            inner: None,
+        })),
+        ItemKind::Import(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Use),
+            inner: None,
+        })),
+        ItemKind::Macro(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Macro),
+            inner: None,
+        })),
+        ItemKind::DefType(_) | ItemKind::DeclType(_) => Some(Ty::Quote(TypeQuote {
+            kind: QuoteFragmentKind::Item,
+            item: Some(QuoteItemKind::Type),
+            inner: None,
+        })),
         _ => None,
     }
 }
 
 fn quote_ty_from_fragment(kind: QuoteFragmentKind, inner: Option<Ty>) -> Ty {
-    match kind {
-        QuoteFragmentKind::Expr => Ty::QuoteExpr(TypeQuoteExpr {
-            inner: inner.map(Box::new),
-        }),
-        QuoteFragmentKind::Stmt => Ty::QuoteStmt(TypeQuoteStmt {}),
-        QuoteFragmentKind::Item => Ty::QuoteItem(TypeQuoteItem {}),
-        QuoteFragmentKind::Type => Ty::QuoteType(TypeQuoteType {}),
-    }
+    Ty::Quote(TypeQuote {
+        kind,
+        item: None,
+        inner: inner.map(Box::new),
+    })
 }
 
 fn block_contains_return(block: &ExprBlock) -> bool {
@@ -181,12 +219,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         let elem_ty = quote_item_type_from_items(&items).unwrap_or_else(|| {
                             if items.is_empty() {
-                                Ty::QuoteItem(TypeQuoteItem {})
+                                Ty::Quote(TypeQuote {
+                                    kind: QuoteFragmentKind::Item,
+                                    item: None,
+                                    inner: None,
+                                })
                             } else {
                                 self.emit_error(
                                     "quote<item> contains multiple item kinds; using item type",
                                 );
-                                Ty::QuoteItem(TypeQuoteItem {})
+                                Ty::Quote(TypeQuote {
+                                    kind: QuoteFragmentKind::Item,
+                                    item: None,
+                                    inner: None,
+                                })
                             }
                         });
                         Ty::Slice(TypeSlice {
@@ -210,7 +256,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let token_var = self.infer_expr(splice.token.as_mut())?;
                 let token_ty = self.resolve_to_ty(token_var)?;
                 match token_ty {
-                    Ty::QuoteExpr(quote) => {
+                    Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
                         if let Some(inner) = quote.inner.clone() {
                             let var = self.fresh_type_var();
                             self.bind(var, TypeTerm::Custom((*inner).clone()));
@@ -225,30 +271,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             any_var
                         }
                     }
-                    Ty::QuoteToken(qt) => match qt.kind {
-                        QuoteFragmentKind::Expr => {
-                            if let Some(inner) = qt.inner.clone() {
-                                let var = self.fresh_type_var();
-                                self.bind(var, TypeTerm::Custom((*inner).clone()));
-                                expr.set_ty(*inner);
-                                var
-                            } else {
-                                self.emit_warning(
-                                    "splice expr token lacks inner type; defaulting to any",
-                                );
-                                let any_var = self.fresh_type_var();
-                                self.bind(any_var, TypeTerm::Any);
-                                any_var
-                            }
-                        }
-                        other => {
-                            self.emit_error(format!(
-                                "splice in expression position requires expr token, found {:?}",
-                                other
-                            ));
-                            self.error_type_var()
-                        }
-                    },
+                    Ty::Quote(quote) => {
+                        self.emit_error(format!(
+                            "splice in expression position requires expr token, found {:?}",
+                            quote.kind
+                        ));
+                        self.error_type_var()
+                    }
                     _ => {
                         self.emit_error("splice expects a quote token expression");
                         self.error_type_var()
@@ -1380,7 +1409,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     self.emit_error(
                                         "quote<item> contains multiple item kinds; using item type",
                                     );
-                                    Ty::QuoteItem(TypeQuoteItem {})
+                                    Ty::Quote(TypeQuote {
+                                        kind: QuoteFragmentKind::Item,
+                                        item: None,
+                                        inner: None,
+                                    })
                                 },
                             );
                             Ty::Slice(TypeSlice {
@@ -1435,16 +1468,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             PatternKind::Quote(quote) => {
                 let quote_ty = match quote.item {
-                    Some(QuoteItemKind::Function) => Ty::QuoteFn(TypeQuoteFn {}),
-                    Some(QuoteItemKind::Struct) => Ty::QuoteStruct(TypeQuoteStruct {}),
-                    Some(QuoteItemKind::Enum) => Ty::QuoteEnum(TypeQuoteEnum {}),
-                    Some(QuoteItemKind::Trait) => Ty::QuoteTrait(TypeQuoteTrait {}),
-                    Some(QuoteItemKind::Impl) => Ty::QuoteImpl(TypeQuoteImpl {}),
-                    Some(QuoteItemKind::Const) => Ty::QuoteConst(TypeQuoteConst {}),
-                    Some(QuoteItemKind::Static) => Ty::QuoteStatic(TypeQuoteStatic {}),
-                    Some(QuoteItemKind::Module) => Ty::QuoteMod(TypeQuoteMod {}),
-                    Some(QuoteItemKind::Use) => Ty::QuoteUse(TypeQuoteUse {}),
-                    Some(QuoteItemKind::Macro) => Ty::QuoteMacro(TypeQuoteMacro {}),
+                    Some(item) => Ty::Quote(TypeQuote {
+                        kind: QuoteFragmentKind::Item,
+                        item: Some(item),
+                        inner: None,
+                    }),
                     _ => quote_ty_from_fragment(quote.fragment, None),
                 };
                 let var = self.type_from_ast_ty(&quote_ty)?;

@@ -11,10 +11,8 @@ use fp_core::ast::{
     PatternQuotePlural, PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct,
     PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet,
     StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
-    TypeQuoteConst, TypeQuoteEnum, TypeQuoteExpr, TypeQuoteFn, TypeQuoteImpl, TypeQuoteItem,
-    TypeQuoteMacro, TypeQuoteMod, TypeQuoteStatic, TypeQuoteStmt, TypeQuoteStruct, TypeQuoteTrait,
-    TypeQuoteType, TypeQuoteUse, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec,
-    Value, ValueNone, ValueString,
+    TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone,
+    ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
@@ -1624,85 +1622,141 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             let inner = args.get(0).cloned().map(Box::new);
-            Some(Ty::QuoteExpr(TypeQuoteExpr { inner }))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Expr,
+                item: None,
+                inner,
+            }))
         }
         "stmt" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteStmt(TypeQuoteStmt {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Stmt,
+                item: None,
+                inner: None,
+            }))
         }
         "item" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteItem(TypeQuoteItem {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: None,
+                inner: None,
+            }))
         }
         "type" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteType(TypeQuoteType {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Type,
+                item: None,
+                inner: None,
+            }))
         }
         "fn" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteFn(TypeQuoteFn {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Function),
+                inner: None,
+            }))
         }
         "struct" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteStruct(TypeQuoteStruct {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Struct),
+                inner: None,
+            }))
         }
         "enum" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteEnum(TypeQuoteEnum {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Enum),
+                inner: None,
+            }))
         }
         "trait" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteTrait(TypeQuoteTrait {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Trait),
+                inner: None,
+            }))
         }
         "impl" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteImpl(TypeQuoteImpl {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Impl),
+                inner: None,
+            }))
         }
         "const" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteConst(TypeQuoteConst {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Const),
+                inner: None,
+            }))
         }
         "static" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteStatic(TypeQuoteStatic {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Static),
+                inner: None,
+            }))
         }
         "mod" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteMod(TypeQuoteMod {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Module),
+                inner: None,
+            }))
         }
         "use" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteUse(TypeQuoteUse {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Use),
+                inner: None,
+            }))
         }
         "macro" => {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::QuoteMacro(TypeQuoteMacro {}))
+            Some(Ty::Quote(TypeQuote {
+                kind: QuoteFragmentKind::Item,
+                item: Some(QuoteItemKind::Macro),
+                inner: None,
+            }))
         }
         _ => None,
     }
@@ -1710,20 +1764,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
 
 fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
     match arg {
-        Ty::QuoteExpr(_)
-        | Ty::QuoteStmt(_)
-        | Ty::QuoteItem(_)
-        | Ty::QuoteFn(_)
-        | Ty::QuoteStruct(_)
-        | Ty::QuoteEnum(_)
-        | Ty::QuoteTrait(_)
-        | Ty::QuoteImpl(_)
-        | Ty::QuoteConst(_)
-        | Ty::QuoteStatic(_)
-        | Ty::QuoteMod(_)
-        | Ty::QuoteUse(_)
-        | Ty::QuoteMacro(_)
-        | Ty::QuoteType(_) => Some(arg.clone()),
+        Ty::Quote(_) => Some(arg.clone()),
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Locator(locator) => {
                 let ident = locator.as_ident()?.as_str().to_string();

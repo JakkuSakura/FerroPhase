@@ -6,24 +6,9 @@ use fp_core::error::Result;
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::QuoteExpr(_)
-            | Ty::QuoteStmt(_)
-            | Ty::QuoteItem(_)
-            | Ty::QuoteFn(_)
-            | Ty::QuoteStruct(_)
-            | Ty::QuoteEnum(_)
-            | Ty::QuoteTrait(_)
-            | Ty::QuoteImpl(_)
-            | Ty::QuoteConst(_)
-            | Ty::QuoteStatic(_)
-            | Ty::QuoteMod(_)
-            | Ty::QuoteUse(_)
-            | Ty::QuoteMacro(_) => true,
-            Ty::QuoteToken(qt) => matches!(
-                qt.kind,
-                QuoteFragmentKind::Stmt
-                    | QuoteFragmentKind::Item
-                    | QuoteFragmentKind::Expr
+            Ty::Quote(quote) => matches!(
+                quote.kind,
+                QuoteFragmentKind::Stmt | QuoteFragmentKind::Item | QuoteFragmentKind::Expr
             ),
             Ty::Vec(vec) => self.is_stmt_or_item_quote(vec.ty.as_ref()),
             Ty::Array(array) => self.is_stmt_or_item_quote(array.elem.as_ref()),
@@ -34,21 +19,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn is_item_quote(&self, ty: &Ty) -> bool {
         match ty {
-            Ty::QuoteItem(_)
-            | Ty::QuoteFn(_)
-            | Ty::QuoteStruct(_)
-            | Ty::QuoteEnum(_)
-            | Ty::QuoteTrait(_)
-            | Ty::QuoteImpl(_)
-            | Ty::QuoteConst(_)
-            | Ty::QuoteStatic(_)
-            | Ty::QuoteMod(_)
-            | Ty::QuoteUse(_)
-            | Ty::QuoteMacro(_) => true,
-            Ty::QuoteToken(qt) => matches!(
-                qt.kind,
-                QuoteFragmentKind::Item
-            ),
+            Ty::Quote(quote) => matches!(quote.kind, QuoteFragmentKind::Item),
             Ty::Vec(vec) => self.is_item_quote(vec.ty.as_ref()),
             Ty::Array(array) => self.is_item_quote(array.elem.as_ref()),
             Ty::Slice(slice) => self.is_item_quote(slice.elem.as_ref()),
@@ -92,10 +63,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let token_ty = self.resolve_to_ty(token_var)?;
                         if !self.is_stmt_or_item_quote(&token_ty) {
                             match token_ty {
-                                Ty::QuoteToken(qt) => {
+                                Ty::Quote(quote) => {
                                     self.emit_error(format!(
                                         "splice in statement position requires stmt/item/expr token, found {:?}",
-                                        qt.kind
+                                        quote.kind
                                     ));
                                 }
                                 _ => self.emit_error("splice expects a quote token expression"),

@@ -114,7 +114,9 @@ fn parse_items_ast_supports_quote_fn() {
     match items.first().map(|item| item.kind()) {
         Some(ItemKind::DefFunction(func)) => {
             match func.sig.ret_ty.as_ref() {
-                Some(Ty::QuoteItem(_)) => {}
+                Some(Ty::Quote(quote)) => {
+                    assert_eq!(quote.kind, QuoteFragmentKind::Item);
+                }
                 other => panic!("expected quote item return type, got {:?}", other),
             }
             assert_eq!(func.sig.quote_kind, Some(QuoteFragmentKind::Item));
