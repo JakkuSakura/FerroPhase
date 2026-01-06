@@ -188,6 +188,10 @@ static RUNTIME_DECLS: LazyLock<HashMap<&'static str, IntrinsicSignature>> = Lazy
         "atexit",
         IntrinsicSignature::new("atexit", vec![ptr()], i32(), false),
     );
+    map.insert(
+        "fp_panic",
+        IntrinsicSignature::new("fp_panic", vec![ptr()], void(), false),
+    );
 
     map.insert(
         "fopen",

@@ -216,6 +216,22 @@ impl MirLowering {
                 },
             },
         );
+        map.insert(
+            "fp_panic".to_string(),
+            mir::FunctionSig {
+                inputs: vec![Ty {
+                    kind: TyKind::RawPtr(TypeAndMut {
+                        ty: Box::new(Ty {
+                            kind: TyKind::Int(IntTy::I8),
+                        }),
+                        mutbl: Mutability::Not,
+                    }),
+                }],
+                output: Ty {
+                    kind: TyKind::Tuple(Vec::new()),
+                },
+            },
+        );
         map
     }
 
@@ -400,7 +416,7 @@ impl MirLowering {
     }
 
     fn is_extern_runtime_function(&self, name: &str) -> bool {
-        matches!(name, "printf")
+        matches!(name, "printf" | "fp_panic")
     }
 
     fn default_constant_for_ty(&self, ty: &Ty) -> mir::ConstantKind {
@@ -7003,12 +7019,7 @@ impl<'a> BodyBuilder<'a> {
                     });
                 }
                 if call.kind == IntrinsicCallKind::CatchUnwind {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "catch_unwind is not supported in compiled backends",
-                    );
-                    let operand = self.constant_bool_operand(false, expr.span);
-                    return Ok(operand);
+                    return self.lower_catch_unwind(expr, call, None);
                 }
                 if call.kind == IntrinsicCallKind::Len {
                     let args = match &call.payload {
@@ -7607,27 +7618,158 @@ impl<'a> BodyBuilder<'a> {
             }
         };
 
-        let panic_call = hir::IntrinsicCallExpr {
-            kind: IntrinsicCallKind::Println,
-            payload: IntrinsicCallPayload::Format {
-                template: hir::FormatString {
-                    parts: vec![hir::FormatTemplatePart::Literal(format!(
-                        "panic: {}",
-                        message
-                    ))],
-                    args: Vec::new(),
-                    kwargs: Vec::new(),
-                },
+        let sig = mir::FunctionSig {
+            inputs: vec![self.lowering.raw_string_ptr_ty()],
+            output: MirLowering::unit_ty(),
+        };
+        self.lowering.ensure_runtime_stub("fp_panic", &sig);
+        let fn_ty = self.lowering.function_pointer_ty(&sig);
+        let func = mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Fn(mir::Symbol::new("fp_panic".to_string()), fn_ty),
+        });
+        let args = vec![mir::Operand::Constant(mir::Constant {
+            span,
+            user_ty: None,
+            literal: mir::ConstantKind::Str(message),
+        })];
+
+        let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+        let after_block = self.new_block();
+        let terminator = mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Call {
+                func,
+                args,
+                destination: Some((mir::Place::from_local(result_local), after_block)),
+                cleanup: None,
+                from_hir_call: true,
+                fn_span: span,
             },
         };
+        self.blocks[self.current_block as usize].terminator = Some(terminator);
 
-        self.emit_printf_call(&panic_call, span)?;
+        self.current_block = after_block;
         self.set_current_terminator(mir::Terminator {
             source_info: span,
-            kind: mir::TerminatorKind::Abort,
+            kind: mir::TerminatorKind::Unreachable,
         });
         self.current_block = self.new_block();
         Ok(())
+    }
+
+    fn lower_catch_unwind(
+        &mut self,
+        expr: &hir::Expr,
+        call: &hir::IntrinsicCallExpr,
+        destination: Option<mir::Place>,
+    ) -> Result<OperandInfo> {
+        let args = match &call.payload {
+            IntrinsicCallPayload::Args { args } => args,
+            IntrinsicCallPayload::Format { .. } => {
+                self.lowering.emit_error(
+                    expr.span,
+                    "catch_unwind does not accept formatted payloads",
+                );
+                return Ok(self.constant_bool_operand(false, expr.span));
+            }
+        };
+
+        if args.len() != 1 {
+            self.lowering.emit_error(
+                expr.span,
+                "catch_unwind expects exactly one callable argument",
+            );
+            return Ok(self.constant_bool_operand(false, expr.span));
+        }
+
+        let callee = &args[0];
+        let (func, sig, _name) = self.resolve_callee(callee)?;
+        if !sig.inputs.is_empty() {
+            self.lowering
+                .emit_error(expr.span, "catch_unwind only supports zero-argument callables");
+        }
+        if !MirLowering::is_unit_ty(&sig.output) {
+            self.lowering.emit_error(
+                expr.span,
+                "catch_unwind only supports callables that return unit",
+            );
+        }
+
+        let result_ty = Ty {
+            kind: TyKind::Bool,
+        };
+        let result_place = destination.unwrap_or_else(|| {
+            let local_id = self.allocate_temp(result_ty.clone(), expr.span);
+            mir::Place::from_local(local_id)
+        });
+        if (result_place.local as usize) < self.locals.len() {
+            self.locals[result_place.local as usize].ty = result_ty.clone();
+        }
+
+        let call_result_local = self.allocate_temp(sig.output.clone(), expr.span);
+        let call_result_place = mir::Place::from_local(call_result_local);
+
+        let ok_block = self.new_block();
+        let unwind_block = self.new_block();
+        if let Some(block) = self.blocks.get_mut(unwind_block as usize) {
+            block.is_cleanup = true;
+        }
+        let join_block = self.new_block();
+
+        let terminator = mir::Terminator {
+            source_info: expr.span,
+            kind: mir::TerminatorKind::Call {
+                func,
+                args: Vec::new(),
+                destination: Some((call_result_place, ok_block)),
+                cleanup: Some(unwind_block),
+                from_hir_call: true,
+                fn_span: expr.span,
+            },
+        };
+        self.blocks[self.current_block as usize].terminator = Some(terminator);
+
+        self.current_block = ok_block;
+        self.push_statement(mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                result_place.clone(),
+                mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Bool(true),
+                })),
+            ),
+        });
+        self.set_current_terminator(mir::Terminator {
+            source_info: expr.span,
+            kind: mir::TerminatorKind::Goto { target: join_block },
+        });
+
+        self.current_block = unwind_block;
+        self.push_statement(mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                result_place.clone(),
+                mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                    span: expr.span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Bool(false),
+                })),
+            ),
+        });
+        self.set_current_terminator(mir::Terminator {
+            source_info: expr.span,
+            kind: mir::TerminatorKind::Goto { target: join_block },
+        });
+
+        self.current_block = join_block;
+        Ok(OperandInfo {
+            operand: mir::Operand::copy(result_place),
+            ty: result_ty,
+        })
     }
 
     fn prepare_printf_arg(
@@ -8664,22 +8806,7 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(());
                 }
                 IntrinsicCallKind::CatchUnwind => {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "catch_unwind is not supported in compiled backends",
-                    );
-                    let statement = mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            place.clone(),
-                            mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
-                                span: expr.span,
-                                user_ty: None,
-                                literal: mir::ConstantKind::Bool(false),
-                            })),
-                        ),
-                    };
-                    self.push_statement(statement);
+                    self.lower_catch_unwind(expr, call, Some(place.clone()))?;
                     return Ok(());
                 }
                 _ => {

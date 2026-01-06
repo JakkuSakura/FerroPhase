@@ -36,8 +36,31 @@ impl Pipeline {
             return Err(Self::stage_failure(STAGE_LINK_BINARY));
         }
 
-        let mut cmd = Command::new("clang");
-        cmd.arg(llvm_ir_path).arg("-o").arg(&binary_path);
+        let llvm_ir_text = fs::read_to_string(llvm_ir_path).unwrap_or_default();
+        let requires_eh = llvm_ir_text.contains("landingpad") || llvm_ir_text.contains("invoke");
+        let linker = if requires_eh { "clang++" } else { "clang" };
+        if requires_eh {
+            let clangxx_available = Command::new("clang++").arg("--version").output();
+            if matches!(clangxx_available, Err(_)) {
+                manager.add_diagnostic(
+                    Diagnostic::error(
+                        "`clang++` not found in PATH; install LLVM toolchain to produce binaries with unwind support"
+                            .to_string(),
+                    )
+                    .with_source_context(STAGE_LINK_BINARY),
+                );
+                return Err(Self::stage_failure(STAGE_LINK_BINARY));
+            }
+        }
+        let mut cmd = Command::new(linker);
+        cmd.arg(llvm_ir_path);
+        if requires_eh {
+            let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../runtime/fp_unwind.cc");
+            cmd.arg(runtime_path);
+            cmd.arg("-fexceptions");
+        }
+        cmd.arg("-o").arg(&binary_path);
         if options.release {
             cmd.arg("-O2");
         }

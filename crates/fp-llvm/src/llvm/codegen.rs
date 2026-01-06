@@ -817,6 +817,65 @@ impl<'a> LirCodegen<'a> {
                     }
                 }
             }
+            lir::LirInstructionKind::LandingPad {
+                result_type,
+                personality,
+                cleanup,
+                clauses,
+            } => {
+                let personality_fn = if let Some(value) = personality {
+                    let callee = self.resolve_callee(&value)?;
+                    match callee {
+                        Callee::Direct(func) => func,
+                        Callee::Indirect(_, _) => {
+                            return Err(report_error_with_context(
+                                LOG_AREA,
+                                "landingpad personality must be a direct function".to_string(),
+                            ));
+                        }
+                    }
+                } else {
+                    self.ensure_eh_personality()?
+                };
+
+                if let Some(function) = self.current_function {
+                    function.set_personality_function(personality_fn);
+                }
+
+                let result_ty = self.llvm_basic_type(&result_type)?;
+                let result_struct = result_ty.into_struct_type();
+                let landingpad = self
+                    .llvm_ctx
+                    .builder
+                    .build_landing_pad(result_struct, personality_fn, &[], "landingpad")
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                landingpad.set_cleanup(cleanup);
+
+                for clause in clauses {
+                    match clause {
+                        lir::LandingPadClause::Catch(value) => {
+                            let clause_value = self.convert_lir_value_to_basic_value(value)?;
+                            landingpad.add_clause(clause_value);
+                        }
+                        lir::LandingPadClause::Filter(values) => {
+                            let mut clause_values = Vec::with_capacity(values.len());
+                            for value in values {
+                                clause_values.push(self.convert_lir_value_to_basic_value(value)?);
+                            }
+                            let array_ty = self
+                                .llvm_ctx
+                                .context
+                                .i8_type()
+                                .ptr_type(AddressSpace::default())
+                                .array_type(clause_values.len() as u32);
+                            let array_const = array_ty.const_array(&clause_values);
+                            landingpad.add_clause(array_const.as_basic_value_enum());
+                        }
+                    }
+                }
+
+                self.record_result(instr_id, Some(result_type), landingpad.as_basic_value_enum());
+            }
             lir::LirInstructionKind::Unreachable => {
                 self.llvm_ctx
                     .builder
@@ -882,6 +941,62 @@ impl<'a> LirCodegen<'a> {
                 self.llvm_ctx
                     .builder
                     .build_conditional_branch(bool_value, *true_bb, *false_bb)
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            }
+            lir::LirTerminator::Invoke {
+                function,
+                args,
+                normal_dest,
+                unwind_dest,
+                calling_convention,
+            } => {
+                let callee = self.resolve_callee(&function)?;
+                let mut call_args: Vec<BasicMetadataValueEnum> =
+                    Vec::with_capacity(args.len());
+                for arg in args {
+                    let value = self.convert_lir_value_to_basic_value(arg)?;
+                    call_args.push(value.into());
+                }
+
+                let normal_bb = self.block_map.get(&normal_dest).ok_or_else(|| {
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown invoke target {}", normal_dest),
+                    )
+                })?;
+                let unwind_bb = self.block_map.get(&unwind_dest).ok_or_else(|| {
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown invoke unwind target {}", unwind_dest),
+                    )
+                })?;
+
+                let call_site = match callee {
+                    Callee::Direct(func) => self
+                        .llvm_ctx
+                        .builder
+                        .build_invoke(
+                            func,
+                            &call_args,
+                            *normal_bb,
+                            *unwind_bb,
+                            "invoke",
+                        )
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+                    Callee::Indirect(_, _) => {
+                        return Err(report_error_with_context(
+                            LOG_AREA,
+                            "indirect invoke is not supported".to_string(),
+                        ));
+                    }
+                };
+
+                call_site.set_call_convention(self.convert_calling_convention(&calling_convention));
+            }
+            lir::LirTerminator::Unreachable => {
+                self.llvm_ctx
+                    .builder
+                    .build_unreachable()
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             }
             term => {
@@ -1010,6 +1125,22 @@ impl<'a> LirCodegen<'a> {
                 format!("Unsupported call target in LLVM lowering: {:?}", other),
             )),
         }
+    }
+
+    fn ensure_eh_personality(&mut self) -> Result<FunctionValue<'static>> {
+        let name = "__gxx_personality_v0";
+        if let Some(func) = self.llvm_ctx.module.get_function(name) {
+            return Ok(func);
+        }
+        let fn_type = self
+            .llvm_ctx
+            .context
+            .i32_type()
+            .fn_type(&[], true);
+        Ok(self
+            .llvm_ctx
+            .module
+            .add_function(name, fn_type, Some(inkwell::module::Linkage::External)))
     }
 
     fn populate_argument_operands(

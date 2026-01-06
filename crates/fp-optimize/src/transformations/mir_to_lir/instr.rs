@@ -628,6 +628,30 @@ impl LirGenerator {
             successors: Vec::new(),
         };
 
+        if bb_data.is_cleanup {
+            let landingpad_ty = lir::LirType::Struct {
+                fields: vec![
+                    lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+                    lir::LirType::I32,
+                ],
+                packed: false,
+                name: None,
+            };
+            lir_block.instructions.push(lir::LirInstruction {
+                id: self.next_id(),
+                kind: lir::LirInstructionKind::LandingPad {
+                    result_type: landingpad_ty.clone(),
+                    personality: None,
+                    cleanup: false,
+                    clauses: vec![lir::LandingPadClause::Catch(lir::LirValue::Constant(
+                        lir::LirConstant::Null(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
+                    ))],
+                },
+                type_hint: Some(landingpad_ty),
+                debug_info: None,
+            });
+        }
+
         // Transform all MIR statements into LIR instructions
         for stmt in &bb_data.statements {
             if bb_id == 0 && !self.entry_allocas.is_empty() {
@@ -1463,12 +1487,14 @@ impl LirGenerator {
                 Ok(lir::LirTerminator::Return(self.prepare_return_value(block)))
             }
             mir::TerminatorKind::Goto { target } => Ok(lir::LirTerminator::Br(*target)),
+            mir::TerminatorKind::Unreachable => Ok(lir::LirTerminator::Unreachable),
             mir::TerminatorKind::Call {
                 func,
                 args,
                 destination,
+                cleanup,
                 ..
-            } => self.transform_call_terminator(func, args, destination, block),
+            } => self.transform_call_terminator(func, args, destination, cleanup, block),
             mir::TerminatorKind::SwitchInt {
                 discr,
                 switch_ty: _,
@@ -3451,6 +3477,7 @@ impl LirGenerator {
         func: &mir::Operand,
         args: &[mir::Operand],
         destination: &Option<(mir::Place, mir::BasicBlockId)>,
+        cleanup: &Option<mir::BasicBlockId>,
         block: &mut lir::LirBasicBlock,
     ) -> Result<lir::LirTerminator> {
         let mut function_value = self.transform_operand(func)?;
@@ -3484,6 +3511,22 @@ impl LirGenerator {
             .map(|ty| self.lir_type_from_ty(&ty));
         if let Some(sig_ty) = signature_return.clone() {
             result_type = Some(sig_ty);
+        }
+
+        if cleanup.is_some() {
+            let Some((_, dest_bb)) = destination.as_ref() else {
+                return Err(fp_core::error::Error::from(
+                    "invoke lowering requires a destination basic block",
+                ));
+            };
+            let unwind_bb = *cleanup.expect("invoke lowering requires a cleanup block");
+            return Ok(lir::LirTerminator::Invoke {
+                function: function_value,
+                args: lowered_args,
+                normal_dest: *dest_bb,
+                unwind_dest: unwind_bb,
+                calling_convention: lir::CallingConvention::C,
+            });
         }
 
         block.instructions.push(lir::LirInstruction {
