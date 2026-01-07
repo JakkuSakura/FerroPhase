@@ -55,17 +55,12 @@ fn test_workspace_crate_detection() -> Result<()> {
     
     // Create a Magnet.toml file
     let config_path = workspace_dir.join("Magnet.toml");
-    let mut config = ManifestConfig::new();
-    config.package = Some(magnet::configs::PackageConfig {
-        name: "test-workspace".to_string(),
-        version: "0.1.0".to_string(),
-        ..Default::default()
-    });
-    config.workspace = Some(magnet::configs::WorkspaceConfig {
-        members: vec!["crates/*".to_string()],
-        ..Default::default()
-    });
-    config.save_to_file(&config_path)?;
+    fs::write(
+        &config_path,
+        r#"[workspace]
+members = ["crates/*"]
+"#,
+    )?;
     
     // Create some test crates
     let crates_dir = workspace_dir.join("crates");
@@ -102,21 +97,7 @@ crate1 = { version = "0.1.0" }
     
     // Now test that we can detect these crates
     use magnet::models::WorkspaceModel;
-    
-    // Create a workspace model manually since we don't have a real workspace manager
-    let workspace = WorkspaceModel {
-        name: "test-workspace".to_string(),
-        description: Some("Test workspace".to_string()),
-        members: vec!["crates/*".to_string()],
-        exclude: vec![],
-        resolver: Some("2".to_string()),
-        paths: Default::default(),
-        custom: Default::default(),
-        dependencies: Default::default(),
-        patch: None,
-        root_path: workspace_dir.clone(),
-        source_path: workspace_dir.join("Magnet.toml"),
-    };
+    let workspace = WorkspaceModel::from_dir(&workspace_dir)?;
     
     let crates = workspace.list_packages()?;
     

@@ -1,6 +1,6 @@
 use crate::models::{DependencyModel, ManifestModel, PackageModel};
 use eyre::Result;
-use fp_core::package::provider::{ModuleSource, PackageProvider};
+use fp_core::package::provider::{ModuleProvider, ModuleSource, PackageProvider};
 use fp_core::package::DependencyDescriptor;
 use fp_rust::package::{CargoPackageProvider, RustModuleProvider};
 use fp_typescript::TypeScriptPackageProvider;
@@ -376,6 +376,58 @@ edition = "2021"
         let graph = PackageGraph::from_typescript_manifest(&root.join("package.json"))?;
         assert_eq!(graph.packages.len(), 1);
         assert_eq!(graph.packages[0].name, "ts-demo");
+        Ok(())
+    }
+
+    #[test]
+    fn build_graph_from_magnet_workspace_with_dependencies() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        fs::write(
+            root.join("Magnet.toml"),
+            r#"[workspace]
+members = ["crates/*"]
+"#,
+        )?;
+
+        let crates_dir = root.join("crates");
+        fs::create_dir_all(&crates_dir)?;
+
+        let shared_dir = crates_dir.join("shared");
+        fs::create_dir_all(shared_dir.join("src"))?;
+        fs::write(
+            shared_dir.join("Magnet.toml"),
+            r#"[package]
+name = "shared"
+version = "0.1.0"
+"#,
+        )?;
+        fs::write(shared_dir.join("src").join("lib.fp"), "pub fn shared() {}")?;
+
+        let app_dir = crates_dir.join("app");
+        fs::create_dir_all(app_dir.join("src"))?;
+        fs::write(
+            app_dir.join("Magnet.toml"),
+            r#"[package]
+name = "app"
+version = "0.1.0"
+
+[dependencies]
+shared = { path = "../shared" }
+"#,
+        )?;
+        fs::write(app_dir.join("src").join("main.fp"), "fn main() {}")?;
+
+        let graph = PackageGraph::from_path(root)?;
+        let app = graph
+            .packages
+            .iter()
+            .find(|pkg| pkg.name == "app")
+            .expect("missing app package");
+        assert!(app
+            .dependencies
+            .iter()
+            .any(|dep| dep.name == "shared"));
         Ok(())
     }
 }

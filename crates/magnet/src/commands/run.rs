@@ -25,11 +25,11 @@ pub struct RunOptions {
 
 pub fn run(options: &RunOptions) -> Result<()> {
     let start_dir = resolve_start_dir(&options.path)?;
-    let (_root, manifest) = find_furthest_manifest(&start_dir)?;
+    let (root, manifest) = find_furthest_manifest(&start_dir)?;
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
     let entry = resolve_entry(&options.path, &package, options.entry.as_deref())?;
     let sources = collect_sources(&package, &entry)?;
-    let graph_path = write_package_graph(&package.root_path, &package)?;
+    let graph_path = write_package_graph(&root, &package)?;
 
     match options.mode {
         RunMode::Compile => {
@@ -211,8 +211,8 @@ pub(crate) fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf 
     output_dir.join(format!("{}.{}", stem, ext))
 }
 
-fn write_package_graph(package_root: &Path, package: &PackageModel) -> Result<PathBuf> {
-    let mut graph = PackageGraph::from_path(package_root)?;
+fn write_package_graph(manifest_root: &Path, package: &PackageModel) -> Result<PathBuf> {
+    let mut graph = PackageGraph::from_path(manifest_root)?;
     graph.selected_package = Some(package.name.clone());
     let output_dir = package.root_path.join("target").join("magnet");
     fs::create_dir_all(&output_dir).with_context(|| {
@@ -340,7 +340,11 @@ mod tests {
 
         let package = PackageModel::from_dir(&package_dir)?;
         let resolved = resolve_entry(package_dir.as_path(), &package, None)?;
-        assert_eq!(resolved, package_dir.join("src").join("main.fp"));
+        let expected = package_dir.join("src").join("main.fp");
+        assert_eq!(
+            resolved.canonicalize().unwrap_or(resolved),
+            expected.canonicalize().unwrap_or(expected)
+        );
 
         Ok(())
     }
