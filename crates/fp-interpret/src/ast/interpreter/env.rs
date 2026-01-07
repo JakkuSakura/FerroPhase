@@ -8,19 +8,34 @@ use std::sync::{Arc, Mutex};
 impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn insert_value(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.value_env.last_mut() {
-            scope.insert(name.to_string(), StoredValue::Plain(value));
+            scope.insert(name.to_string(), StoredValue::Plain(value.clone()));
+        }
+        if self.in_std_module() {
+            if let Some(root) = self.value_env.first_mut() {
+                root.insert(name.to_string(), StoredValue::Plain(value));
+            }
         }
     }
 
     pub(super) fn insert_mutable_value(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.value_env.last_mut() {
-            scope.insert(name.to_string(), StoredValue::shared(value));
+            scope.insert(name.to_string(), StoredValue::shared(value.clone()));
+        }
+        if self.in_std_module() {
+            if let Some(root) = self.value_env.first_mut() {
+                root.insert(name.to_string(), StoredValue::shared(value));
+            }
         }
     }
 
     pub(super) fn insert_shared_value(&mut self, name: &str, shared: Arc<Mutex<Value>>) {
         if let Some(scope) = self.value_env.last_mut() {
-            scope.insert(name.to_string(), StoredValue::Shared(shared));
+            scope.insert(name.to_string(), StoredValue::Shared(Arc::clone(&shared)));
+        }
+        if self.in_std_module() {
+            if let Some(root) = self.value_env.first_mut() {
+                root.insert(name.to_string(), StoredValue::Shared(shared));
+            }
         }
     }
 
@@ -483,7 +498,10 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn insert_type(&mut self, name: &str, ty: Ty) {
         if let Some(scope) = self.type_env.last_mut() {
-            scope.insert(name.to_string(), ty);
+            scope.insert(name.to_string(), ty.clone());
+        }
+        if self.in_std_module() {
+            self.global_types.insert(name.to_string(), ty);
         }
     }
 }

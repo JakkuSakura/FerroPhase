@@ -352,18 +352,33 @@ impl LirGenerator {
             },
             mir::ConstantKind::UInt(value) => lir::LirConstant::UInt(*value, target_ty.clone()),
             mir::ConstantKind::Float(value) => lir::LirConstant::Float(*value, target_ty.clone()),
-            mir::ConstantKind::Str(value) => lir::LirConstant::String(value.clone()),
+            mir::ConstantKind::Str(value) => {
+                if let TyKind::Slice(elem_ty) = &ty_hint.kind {
+                    let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                    let slice_ty = self.slice_lir_type(&elem_lir_ty);
+                    let ptr_const = lir::LirConstant::String(value.clone());
+                    let len_const =
+                        lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
+                    lir::LirConstant::Struct(vec![ptr_const, len_const], slice_ty)
+                } else {
+                    lir::LirConstant::String(value.clone())
+                }
+            }
             mir::ConstantKind::Null => lir::LirConstant::Null(target_ty.clone()),
             mir::ConstantKind::Val(value, value_ty) => {
                 self.const_value_to_lir_constant(value, value_ty)?
             }
-            mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => {
-                fp_core::diagnostics::report_warning_with_context(
-                    "mir→lir",
-                    "function/global constant in static initializer lowered to null".to_string(),
-                );
-                lir::LirConstant::Null(target_ty.clone())
+            mir::ConstantKind::Fn(name, _ty) => {
+                lir::LirConstant::FunctionRef(
+                    lir::Name::new(name.as_str().to_string()),
+                    target_ty.clone(),
+                )
             }
+            mir::ConstantKind::Global(name, _ty) => lir::LirConstant::GlobalRef(
+                lir::Name::new(name.as_str().to_string()),
+                target_ty.clone(),
+                Vec::new(),
+            ),
             mir::ConstantKind::Ty(_) => {
                 fp_core::diagnostics::report_warning_with_context(
                     "mir→lir",
@@ -399,8 +414,25 @@ impl LirGenerator {
                 *value,
                 self.lir_type_from_ty(ty),
             )),
-            mir::ConstValue::Str(value) => Ok(lir::LirConstant::String(value.clone())),
+            mir::ConstValue::Str(value) => {
+                if let TyKind::Slice(elem_ty) = &ty.kind {
+                    let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                    let slice_ty = self.slice_lir_type(&elem_lir_ty);
+                    let ptr_const = lir::LirConstant::String(value.clone());
+                    let len_const =
+                        lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
+                    return Ok(lir::LirConstant::Struct(
+                        vec![ptr_const, len_const],
+                        slice_ty,
+                    ));
+                }
+                Ok(lir::LirConstant::String(value.clone()))
+            }
             mir::ConstValue::Null => Ok(lir::LirConstant::Null(self.lir_type_from_ty(ty))),
+            mir::ConstValue::Fn(name) => Ok(lir::LirConstant::FunctionRef(
+                lir::Name::new(name.as_str().to_string()),
+                self.lir_type_from_ty(ty),
+            )),
             mir::ConstValue::Tuple(elements) => {
                 let element_types = match &ty.kind {
                     TyKind::Tuple(items) => items.clone(),
@@ -535,8 +567,28 @@ impl LirGenerator {
             mir::ConstValue::Float(value) => {
                 Ok(lir::LirConstant::Float(*value, lir_ty.clone()))
             }
-            mir::ConstValue::Str(value) => Ok(lir::LirConstant::String(value.clone())),
+            mir::ConstValue::Str(value) => {
+                if let lir::LirType::Struct { fields, .. } = lir_ty {
+                    if fields.len() == 2
+                        && matches!(&fields[0], lir::LirType::Ptr(inner) if **inner == lir::LirType::I8)
+                        && fields[1] == lir::LirType::I64
+                    {
+                        let ptr_const = lir::LirConstant::String(value.clone());
+                        let len_const =
+                            lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
+                        return Ok(lir::LirConstant::Struct(
+                            vec![ptr_const, len_const],
+                            lir_ty.clone(),
+                        ));
+                    }
+                }
+                Ok(lir::LirConstant::String(value.clone()))
+            }
             mir::ConstValue::Null => Ok(lir::LirConstant::Null(lir_ty.clone())),
+            mir::ConstValue::Fn(name) => Ok(lir::LirConstant::FunctionRef(
+                lir::Name::new(name.as_str().to_string()),
+                lir_ty.clone(),
+            )),
             mir::ConstValue::Array(elements) => {
                 let lir::LirType::Array(elem_ty, _len) = lir_ty else {
                     return Err(fp_core::error::Error::from(
@@ -2866,6 +2918,7 @@ impl LirGenerator {
                 | lir::LirConstant::Array(_, ty)
                 | lir::LirConstant::Struct(_, ty)
                 | lir::LirConstant::GlobalRef(_, ty, _)
+                | lir::LirConstant::FunctionRef(_, ty)
                 | lir::LirConstant::Null(ty)
                 | lir::LirConstant::Undef(ty) => Some(ty.clone()),
                 lir::LirConstant::Bool(_) => Some(lir::LirType::I1),
@@ -3519,7 +3572,7 @@ impl LirGenerator {
                     "invoke lowering requires a destination basic block",
                 ));
             };
-            let unwind_bb = *cleanup.expect("invoke lowering requires a cleanup block");
+            let unwind_bb = cleanup.expect("invoke lowering requires a cleanup block");
             return Ok(lir::LirTerminator::Invoke {
                 function: function_value,
                 args: lowered_args,

@@ -494,7 +494,12 @@ impl PrettyPrintable for ast::Item {
                     .ty_annotation()
                     .or(def.ty.as_ref())
                     .map(|ty| render_ty_brief(ty));
-                let mut line = format!("{}const {}", visibility_prefix(&def.visibility), def.name);
+                let mut line = format!(
+                    "{}const {}{}",
+                    visibility_prefix(&def.visibility),
+                    if def.mutable.unwrap_or(false) { "mut " } else { "" },
+                    def.name
+                );
                 if let Some(ty) = ty_display {
                     line.push_str(": ");
                     line.push_str(&ty);

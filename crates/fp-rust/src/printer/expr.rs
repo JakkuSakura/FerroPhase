@@ -856,6 +856,8 @@ impl RustPrinter {
             IntrinsicCallKind::Break => quote!(intrinsic_break),
             IntrinsicCallKind::Continue => quote!(intrinsic_continue),
             IntrinsicCallKind::Return => quote!(intrinsic_return),
+            IntrinsicCallKind::Panic => quote!(intrinsic_panic),
+            IntrinsicCallKind::CatchUnwind => quote!(intrinsic_catch_unwind),
             IntrinsicCallKind::SizeOf => quote!(intrinsic_size_of),
             IntrinsicCallKind::ReflectFields => quote!(intrinsic_reflect_fields),
             IntrinsicCallKind::HasMethod => quote!(intrinsic_has_method),

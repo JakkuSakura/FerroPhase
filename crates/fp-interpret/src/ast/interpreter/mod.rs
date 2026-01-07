@@ -5,13 +5,13 @@ use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::Pattern;
 use fp_core::ast::{
-    BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprRange, ExprRangeLimit, FormatArgRef,
-    FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemKind, Node, NodeKind, Path,
-    StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
-    TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit,
-    TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
-    QuoteFragmentKind, QuoteTokenValue, TypeQuote,
+    AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
+    FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemKind, Node,
+    NodeKind, Path, StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind,
+    TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
+    TypeTuple, TypeUnit, TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct,
+    ValueStructural, ValueTuple, QuoteFragmentKind, QuoteTokenValue, TypeQuote,
 };
 use fp_core::ast::DecimalType;
 use fp_core::ast::{Ident, Locator};
@@ -174,6 +174,12 @@ struct EnumVariantInfo {
 }
 
 #[derive(Debug, Clone)]
+struct MutableConstTarget {
+    expr_ptr: *mut Expr,
+    ty: Option<Ty>,
+}
+
+#[derive(Debug, Clone)]
 enum StructLiteralType {
     Struct(TypeStruct),
     Structural(TypeStructural),
@@ -215,6 +221,7 @@ pub struct AstInterpreter<'ctx> {
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     evaluated_constants: HashMap<String, Value>,
+    mutable_const_targets: HashMap<String, MutableConstTarget>,
     stdout: Vec<String>,
     functions: HashMap<String, ItemDefFunction>,
     generic_functions: HashMap<String, GenericTemplate>,
@@ -258,6 +265,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             diagnostics: Vec::new(),
             has_errors: false,
             evaluated_constants: HashMap::new(),
+            mutable_const_targets: HashMap::new(),
             stdout: Vec::new(),
             functions: HashMap::new(),
             generic_functions: HashMap::new(),
@@ -377,6 +385,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.mutations_applied = true;
     }
 
+    fn in_std_module(&self) -> bool {
+        self.module_stack.first().map(|m| m == "std").unwrap_or(false)
+    }
+
     fn append_pending_items(&mut self, items: Vec<Item>) {
         if let Some(scope_pending) = self.pending_items.last_mut() {
             scope_pending.extend(items);
@@ -400,6 +412,106 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.finish_runtime_flow(flow)
             }
         }
+    }
+
+    fn attr_to_locator(&mut self, attr: &Attribute) -> Option<Locator> {
+        match &attr.meta {
+            AttrMeta::Path(path) => Some(Locator::path(path.clone())),
+            _ => {
+                self.emit_error("attribute must be a simple path");
+                None
+            }
+        }
+    }
+
+    fn fallback_attr_locator(&self, locator: &Locator) -> Option<Locator> {
+        let ident = locator.as_ident()?;
+        if ident.as_str() != "test" {
+            return None;
+        }
+        let path = Path::new(vec![
+            Ident::new("std"),
+            Ident::new("test"),
+            Ident::new(ident.as_str()),
+        ]);
+        Some(Locator::path(path))
+    }
+
+    fn apply_item_attributes(&mut self, item: &mut Item, attrs: &[Attribute]) -> bool {
+        if attrs.is_empty() {
+            return false;
+        }
+        if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
+            self.emit_error("attributes require const evaluation");
+            return true;
+        }
+
+        let mut quoted_item = item.clone();
+        if let ItemKind::DefFunction(func) = quoted_item.kind_mut() {
+            func.attrs.clear();
+        }
+
+        let quote = ExprQuote {
+            block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(quoted_item))]),
+            kind: Some(QuoteFragmentKind::Item),
+        };
+        let mut expr = Expr::new(ExprKind::Quote(quote));
+
+        for attr in attrs {
+            let Some(mut locator) = self.attr_to_locator(attr) else {
+                return true;
+            };
+            let mut invoke = ExprInvoke {
+                target: ExprInvokeTarget::Function(locator.clone()),
+                args: vec![expr],
+            };
+            let function = if let Some(function) =
+                self.resolve_function_call(&mut locator, &mut invoke.args)
+            {
+                Some(function)
+            } else if let Some(fallback) = self.fallback_attr_locator(&locator) {
+                locator = fallback;
+                invoke.target = ExprInvokeTarget::Function(locator.clone());
+                self.resolve_function_call(&mut locator, &mut invoke.args)
+            } else {
+                None
+            };
+            let Some(function) = function else {
+                self.emit_error(format!("attribute function `{}` not found", locator));
+                return true;
+            };
+            if !function.sig.is_const {
+                self.emit_error(format!(
+                    "attribute function `{}` must be const",
+                    locator
+                ));
+                return true;
+            }
+            invoke.target = ExprInvokeTarget::Function(locator);
+            expr = Expr::new(ExprKind::Invoke(invoke));
+        }
+
+        let mut token_expr = expr;
+        let Some(fragments) = self.resolve_splice_fragments(&mut token_expr) else {
+            return true;
+        };
+        let mut pending = Vec::new();
+        for fragment in fragments {
+            match fragment {
+                QuotedFragment::Items(items) => pending.extend(items),
+                _ => {
+                    self.emit_error("attribute expansion must return item fragments");
+                    return true;
+                }
+            }
+        }
+
+        if !pending.is_empty() {
+            self.append_pending_items(pending);
+        }
+        *item = Item::unit();
+        self.mark_mutated();
+        true
     }
 
     fn evaluate_item(&mut self, item: &mut Item) {
@@ -463,6 +575,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.insert_type(def.name.as_str(), def.value.clone());
             }
             ItemKind::DefConst(def) => {
+                let is_mutable = def.mutable.unwrap_or(false);
+                if is_mutable && !matches!(self.mode, InterpreterMode::CompileTime) {
+                    self.emit_error("const mut is only supported during const evaluation");
+                    return;
+                }
                 if let Some(inner_ty) = def.ty_annotation_mut().as_mut() {
                     self.evaluate_ty(inner_ty);
                 }
@@ -490,8 +607,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
                 let qualified = self.qualified_name(def.name.as_str());
-                self.insert_value(def.name.as_str(), value.clone());
-                self.evaluated_constants.insert(qualified, value.clone());
+                if is_mutable {
+                    self.insert_mutable_value(def.name.as_str(), value.clone());
+                } else {
+                    self.insert_value(def.name.as_str(), value.clone());
+                }
+                self.evaluated_constants
+                    .insert(qualified.clone(), value.clone());
 
                 // Preserve unevaluated placeholders (e.g., closures) so later lowering
                 // can still see the original expression shape.
@@ -499,16 +621,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                     value,
                     Value::Undefined(_) | Value::Unit(_) | Value::Any(_)
                 );
-                if matches!(value, Value::Map(_)) {
-                    should_replace = false;
+                if is_mutable && !matches!(value, Value::Undefined(_) | Value::Any(_)) {
+                    should_replace = true;
                 }
-                if matches!(value, Value::List(_)) {
-                    let mut is_array = false;
-                    if let Some(ty) = def.ty_annotation().or_else(|| def.ty.as_ref()) {
-                        is_array = matches!(ty, Ty::Array(_));
-                    }
-                    if !is_array {
+                if !is_mutable {
+                    if matches!(value, Value::Map(_)) {
                         should_replace = false;
+                    }
+                    if matches!(value, Value::List(_)) {
+                        let mut is_array = false;
+                        if let Some(ty) = def.ty_annotation().or_else(|| def.ty.as_ref()) {
+                            is_array = matches!(ty, Ty::Array(_));
+                        }
+                        if !is_array {
+                            should_replace = false;
+                        }
                     }
                 }
 
@@ -519,6 +646,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                     *def.value = expr_value;
                     self.mark_mutated();
+                }
+                if is_mutable {
+                    let expr_ptr = def.value.as_mut() as *mut Expr;
+                    let ty = def.ty.clone().or_else(|| def.ty_annotation().cloned());
+                    self.mutable_const_targets
+                        .insert(qualified, MutableConstTarget { expr_ptr, ty });
+                    def.mutable = None;
                 }
             }
             ItemKind::DefStatic(def) => {
@@ -652,6 +786,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.impl_stack.pop();
             }
             ItemKind::DefFunction(func) => {
+                if matches!(self.mode, InterpreterMode::CompileTime) && !func.attrs.is_empty() {
+                    let attrs = func.attrs.clone();
+                    let _ = self.apply_item_attributes(item, &attrs);
+                    return;
+                }
                 let base_name = func.name.as_str().to_string();
                 let qualified_name = self.qualified_name(func.name.as_str());
                 if let Some(context) = self
@@ -2824,6 +2963,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.emit_error("quote<item> item has no name");
                             Value::undefined()
                         }),
+                    "fn" | "value" => match item.kind() {
+                        ItemKind::DefFunction(func) => Value::Function(ValueFunction {
+                            sig: func.sig.clone(),
+                            body: func.body.clone(),
+                        }),
+                        _ => {
+                            self.emit_error(
+                                "quote<item> function access requires a function item",
+                            );
+                            Value::undefined()
+                        }
+                    },
                     _ => {
                         self.emit_error(format!(
                             "field '{}' not available on quote<item> values",
@@ -3132,6 +3283,37 @@ impl<'ctx> AstInterpreter<'ctx> {
             qualified.push_str("::");
             qualified.push_str(name);
             qualified
+        }
+    }
+
+    fn update_mutable_constant(&mut self, name: &str, value: Value) {
+        let suffix = format!("::{}", name);
+        let keys: Vec<String> = self
+            .evaluated_constants
+            .keys()
+            .filter(|key| key.as_str() == name || key.ends_with(&suffix))
+            .cloned()
+            .collect();
+        for key in keys {
+            self.evaluated_constants.insert(key, value.clone());
+        }
+        let target_keys: Vec<String> = self
+            .mutable_const_targets
+            .keys()
+            .filter(|key| key.as_str() == name || key.ends_with(&suffix))
+            .cloned()
+            .collect();
+        for key in target_keys {
+            if let Some(target) = self.mutable_const_targets.get(&key) {
+                let mut expr_value = Expr::value(value.clone());
+                if let Some(ty) = target.ty.clone() {
+                    expr_value.set_ty(ty);
+                }
+                unsafe {
+                    *target.expr_ptr = expr_value;
+                }
+                self.mark_mutated();
+            }
         }
     }
 

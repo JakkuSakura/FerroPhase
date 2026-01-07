@@ -5,13 +5,22 @@ mod std {
             run: fn(),
         }
 
+        const mut REGISTRY: Vec<TestCase> = Vec::new();
+
+        const fn test(item: quote<item>) -> quote<item> {
+            let name = item.name;
+            REGISTRY.push(TestCase { name, run: item.value });
+            item
+        }
+
         struct TestReport {
             total: i64,
             passed: i64,
             failed: i64,
         }
 
-        fn run(tests: Vec<TestCase>) -> TestReport {
+        fn run_tests() -> TestReport {
+            let tests = REGISTRY;
             let mut passed = 0;
             let mut failed = 0;
             let mut idx = 0;
@@ -39,6 +48,10 @@ mod std {
                 passed,
                 failed,
             }
+        }
+
+        fn run() -> TestReport {
+            run_tests()
         }
     }
 }

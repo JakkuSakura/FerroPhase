@@ -176,6 +176,7 @@ fn parse_const_value(
 ) -> Result<Item> {
     let value_expr = parse_literal_expr(value_node, source)?;
     Ok(Item::new(ItemKind::DefConst(ItemDefConst {
+        mutable: None,
         ty_annotation: None,
         visibility,
         name,

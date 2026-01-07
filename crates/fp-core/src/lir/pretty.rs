@@ -715,6 +715,7 @@ fn format_constant(constant: &LirConstant) -> String {
                 format!("global {}[{}] as {}", name, index_list, format_type(ty))
             }
         }
+        FunctionRef(name, ty) => format!("fn {} as {}", name, format_type(ty)),
         Null(ty) => format!("null {}", format_type(ty)),
         Undef(ty) => format!("undef {}", format_type(ty)),
     }

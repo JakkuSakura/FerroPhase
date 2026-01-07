@@ -382,6 +382,17 @@ impl HirGenerator {
                 Ok(hir::ExprKind::Array(entries))
             }
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
+            Value::Function(func) => {
+                let name = func.sig.name.clone().ok_or_else(|| {
+                    crate::error::optimization_error(
+                        "function value must have a name for HIR lowering",
+                    )
+                })?;
+                let locator = Locator::Ident(name);
+                let path =
+                    self.locator_to_hir_path_with_scope(&locator, PathResolutionScope::Value)?;
+                Ok(hir::ExprKind::Path(path))
+            }
             _ => Err(crate::error::optimization_error(format!(
                 "Unimplemented AST value type for HIR transformation: {:?}",
                 std::mem::discriminant(value.as_ref())

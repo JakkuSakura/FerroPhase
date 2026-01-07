@@ -18,6 +18,7 @@ fn empty_file() -> File {
 
 fn push_const_item(file: &mut File, name: &str) {
     file.items.push(Item::from(ItemDefConst {
+        mutable: None,
         ty_annotation: None,
         visibility: Visibility::Private,
         name: Ident::new(name),

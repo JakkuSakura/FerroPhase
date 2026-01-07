@@ -749,6 +749,76 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
         if let ExprInvokeTarget::Method(select) = &mut invoke.target {
+            if select.field.name.as_str() == "push" && invoke.args.len() == 1 {
+                let value = self.eval_expr(&mut invoke.args[0]);
+                if let ExprKind::Locator(locator) = select.obj.kind() {
+                    let binding = match locator {
+                        Locator::Ident(ident) => Some(ident.as_str().to_string()),
+                        Locator::Path(path) => path
+                            .segments
+                            .last()
+                            .map(|segment| segment.as_str().to_string()),
+                        Locator::ParameterPath(path) => path
+                            .segments
+                            .last()
+                            .map(|segment| segment.ident.as_str().to_string()),
+                    };
+                    if let Some(name) = binding {
+                        if let Some(stored) = self.lookup_stored_value_mut(&name) {
+                            if let Some(shared) = stored.shared_handle() {
+                                match shared.lock() {
+                                    Ok(mut guard) => match &mut *guard {
+                                        Value::List(list) => {
+                                            list.values.push(value);
+                                            self.update_mutable_constant(
+                                                &name,
+                                                Value::List(list.clone()),
+                                            );
+                                            self.mark_mutated();
+                                            self.pending_expr_ty = Some(Ty::unit());
+                                            return Value::unit();
+                                        }
+                                        other => {
+                                            self.emit_error(format!(
+                                                "push expects a mutable list, found {}",
+                                                other
+                                            ));
+                                            return Value::undefined();
+                                        }
+                                    },
+                                    Err(err) => {
+                                        let mut guard = err.into_inner();
+                                        match &mut *guard {
+                                        Value::List(list) => {
+                                            list.values.push(value);
+                                            self.update_mutable_constant(
+                                                &name,
+                                                Value::List(list.clone()),
+                                            );
+                                            self.mark_mutated();
+                                            self.pending_expr_ty = Some(Ty::unit());
+                                            return Value::unit();
+                                        }
+                                            other => {
+                                                self.emit_error(format!(
+                                                    "push expects a mutable list, found {}",
+                                                    other
+                                                ));
+                                                return Value::undefined();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            self.emit_error("push requires a mutable binding");
+                            return Value::undefined();
+                        }
+                    }
+                }
+                self.emit_error("push requires a mutable list binding");
+                return Value::undefined();
+            }
+
             if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                 let value = self.eval_expr(select.obj.as_mut());
                 self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));

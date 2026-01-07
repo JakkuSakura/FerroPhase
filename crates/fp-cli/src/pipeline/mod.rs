@@ -796,7 +796,8 @@ impl Pipeline {
             )?;
         }
 
-        let outcome = if options.bootstrap_mode || !stage_enabled(options, STAGE_CONST_EVAL) {
+        let did_const_eval = !options.bootstrap_mode && stage_enabled(options, STAGE_CONST_EVAL);
+        let outcome = if !did_const_eval {
             ConstEvalOutcome::default()
         } else {
             self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
@@ -805,7 +806,7 @@ impl Pipeline {
         };
         self.last_const_eval = Some(outcome.clone());
 
-        if matches!(target, PipelineTarget::Llvm | PipelineTarget::Binary) {
+        if matches!(target, PipelineTarget::Llvm | PipelineTarget::Binary) && !did_const_eval {
             self.inject_runtime_std(&mut ast, &diagnostic_manager)?;
         }
 
@@ -1041,7 +1042,7 @@ impl Pipeline {
                 Self::stage_failure(STAGE_RUNTIME_MATERIALIZE)
             })?;
             let std_node = self.parse_source_public(&source, Some(&std_path))?;
-            let merged = merge_runtime_std(ast.clone(), std_node, manager)?;
+            let merged = merge_std_module(ast.clone(), std_node, manager, STAGE_RUNTIME_MATERIALIZE)?;
             *ast = merged;
         }
         Ok(())
@@ -2322,33 +2323,34 @@ fn runtime_std_paths() -> Vec<PathBuf> {
     ]
 }
 
-fn merge_runtime_std(
+fn merge_std_module(
     ast: Node,
     std_node: Node,
     manager: &DiagnosticManager,
+    stage: &'static str,
 ) -> Result<Node, CliError> {
     let Node { ty, kind } = ast;
     let Node { kind: std_kind, .. } = std_node;
     let NodeKind::File(mut file) = kind else {
         manager.add_diagnostic(
-            Diagnostic::error("Runtime std injection expects a file AST".to_string())
-                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+            Diagnostic::error("std injection expects a file AST".to_string())
+                .with_source_context(stage),
         );
-        return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
+        return Err(Pipeline::stage_failure(stage));
     };
     let NodeKind::File(std_file) = std_kind else {
         manager.add_diagnostic(
-            Diagnostic::error("Runtime std module must be a file".to_string())
-                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+            Diagnostic::error("std module must be a file".to_string())
+                .with_source_context(stage),
         );
-        return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
+        return Err(Pipeline::stage_failure(stage));
     };
     let mut std_module = None;
     let mut std_items = Vec::new();
     for item in std_file.items {
         if let fp_core::ast::ItemKind::Module(module) = item.kind() {
             if module.name.as_str() == "std" {
-                std_module = Some(module);
+                std_module = Some(module.clone());
                 continue;
             }
         }
@@ -2356,10 +2358,10 @@ fn merge_runtime_std(
     }
     let Some(mut std_module) = std_module else {
         manager.add_diagnostic(
-            Diagnostic::error("Runtime std file must define module std".to_string())
-                .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+            Diagnostic::error("std file must define module std".to_string())
+                .with_source_context(stage),
         );
-        return Err(Pipeline::stage_failure(STAGE_RUNTIME_MATERIALIZE));
+        return Err(Pipeline::stage_failure(stage));
     };
     std_module.items.extend(std_items);
 
@@ -2367,7 +2369,9 @@ fn merge_runtime_std(
     for item in &mut file.items {
         if let fp_core::ast::ItemKind::Module(existing) = item.kind_mut() {
             if existing.name.as_str() == "std" {
-                existing.items.extend(std_module.items);
+                existing
+                    .items
+                    .extend(std::mem::take(&mut std_module.items));
                 merged_into_existing = true;
                 break;
             }

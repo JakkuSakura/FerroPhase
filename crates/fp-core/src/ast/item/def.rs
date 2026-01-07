@@ -50,6 +50,8 @@ common_struct! {
 common_struct! {
     pub struct ItemDefConst {
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub mutable: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty_annotation: TySlot,
         pub visibility: Visibility,
         pub name: Ident,

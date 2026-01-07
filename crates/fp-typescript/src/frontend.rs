@@ -1480,6 +1480,7 @@ fn lower_var_decl(var_decl: &VarDecl, visibility: Visibility) -> Vec<Item> {
         match var_decl.kind {
             VarDeclKind::Const => {
                 let mut item = ItemDefConst {
+                    mutable: None,
                     ty_annotation: None,
                     visibility: visibility.clone(),
                     name: name_ident.clone(),

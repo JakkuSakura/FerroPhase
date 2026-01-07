@@ -117,6 +117,44 @@ pub struct AstTypeInferencer<'ctx> {
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
+    fn register_qualified_symbol(&mut self, name: String) -> TypeVarId {
+        if let Some(var) = self.lookup_env_var(&name) {
+            return var;
+        }
+        let var = self.fresh_type_var();
+        self.insert_env(name, EnvEntry::Mono(var));
+        var
+    }
+
+    fn register_qualified_items(&mut self, items: &[Item], prefix: &str) {
+        for item in items {
+            match item.kind() {
+                ItemKind::Module(module) => {
+                    let next = format!("{}::{}", prefix, module.name.as_str());
+                    self.register_qualified_items(&module.items, &next);
+                }
+                ItemKind::DefFunction(def) => {
+                    let name = format!("{}::{}", prefix, def.name.as_str());
+                    let var = self.register_qualified_symbol(name);
+                    self.prebind_function_signature(def, var);
+                }
+                ItemKind::DeclFunction(decl) => {
+                    let name = format!("{}::{}", prefix, decl.name.as_str());
+                    self.register_qualified_symbol(name);
+                }
+                ItemKind::DefConst(def) => {
+                    let name = format!("{}::{}", prefix, def.name.as_str());
+                    self.register_qualified_symbol(name);
+                }
+                ItemKind::DefStatic(def) => {
+                    let name = format!("{}::{}", prefix, def.name.as_str());
+                    self.register_qualified_symbol(name);
+                }
+                _ => {}
+            }
+        }
+    }
+
     pub fn new() -> Self {
         Self {
             ctx: None,
@@ -406,6 +444,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.predeclare_item(child);
                 }
                 self.exit_scope();
+                self.register_qualified_items(&module.items, module.name.as_str());
             }
             ItemKind::Impl(impl_block) => {
                 let ctx = self.resolve_impl_context(&impl_block.self_ty);
@@ -613,6 +652,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ItemKind::DefConst(def) => {
                 let placeholder = self.symbol_var(&def.name);
+                if let Some(annot) = def.ty.as_ref() {
+                    def.value.set_ty(annot.clone());
+                }
                 let expr_var = {
                     let mut value = def.value.as_mut();
                     self.infer_expr(&mut value)?
@@ -1265,6 +1307,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Locator::Path(path) = locator {
             if let Some(first) = path.segments.first() {
                 if let Some(var) = self.lookup_env_var(first.as_str()) {
+                    return Ok(var);
+                }
+            }
+            if let Some(last) = path.segments.last() {
+                if let Some(var) = self.lookup_env_var(last.as_str()) {
                     return Ok(var);
                 }
             }

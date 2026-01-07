@@ -137,6 +137,16 @@ impl<'a> LirCodegen<'a> {
             })?;
         }
 
+        // Predeclare functions so constant initializers can reference them.
+        for function in &functions {
+            self.declare_function_stub(function).map_err(|err| {
+                self.attach_context(
+                    err,
+                    format!("while declaring function '{}'", function.name),
+                )
+            })?;
+        }
+
         // Populate global initializers.
         for (i, global) in globals.into_iter().enumerate() {
             debug!(
@@ -201,6 +211,36 @@ impl<'a> LirCodegen<'a> {
         gvar.set_alignment(global.alignment.unwrap_or(0));
         gvar.set_section(global.section.as_deref());
 
+        Ok(())
+    }
+
+    fn declare_function_stub(&mut self, lir_func: &lir::LirFunction) -> Result<()> {
+        let llvm_name = self.llvm_symbol_for(&lir_func.name);
+        if self.llvm_ctx.module.get_function(&llvm_name).is_some() {
+            return Ok(());
+        }
+
+        let mut signature = lir_func.signature.clone();
+        let is_main = llvm_name == "main";
+        if is_main && matches!(signature.return_type, lir::LirType::Void) {
+            signature.return_type = lir::LirType::I32;
+        }
+        let fn_type = self.function_type_from_signature(signature)?;
+        let linkage = self.convert_linkage(lir_func.linkage.clone());
+        let function = self.llvm_ctx.module.add_function(
+            &llvm_name,
+            fn_type,
+            Some(if is_main {
+                inkwell::module::Linkage::External
+            } else {
+                linkage
+            }),
+        );
+        if is_main {
+            function.set_linkage(inkwell::module::Linkage::External);
+        } else {
+            function.set_linkage(linkage);
+        }
         Ok(())
     }
 
@@ -844,37 +884,44 @@ impl<'a> LirCodegen<'a> {
 
                 let result_ty = self.llvm_basic_type(&result_type)?;
                 let result_struct = result_ty.into_struct_type();
-                let landingpad = self
-                    .llvm_ctx
-                    .builder
-                    .build_landing_pad(result_struct, personality_fn, &[], "landingpad")
-                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-                landingpad.set_cleanup(cleanup);
-
+                let mut clause_values: Vec<BasicValueEnum> = Vec::new();
                 for clause in clauses {
                     match clause {
                         lir::LandingPadClause::Catch(value) => {
-                            let clause_value = self.convert_lir_value_to_basic_value(value)?;
-                            landingpad.add_clause(clause_value);
+                            clause_values.push(self.convert_lir_value_to_basic_value(value)?);
                         }
                         lir::LandingPadClause::Filter(values) => {
-                            let mut clause_values = Vec::with_capacity(values.len());
+                            let mut pointers = Vec::with_capacity(values.len());
                             for value in values {
-                                clause_values.push(self.convert_lir_value_to_basic_value(value)?);
+                                let basic = self.convert_lir_value_to_basic_value(value)?;
+                                if !basic.is_pointer_value() {
+                                    return Err(report_error_with_context(
+                                        LOG_AREA,
+                                        "landingpad filter expects pointer values".to_string(),
+                                    ));
+                                }
+                                pointers.push(basic.into_pointer_value());
                             }
-                            let array_ty = self
-                                .llvm_ctx
-                                .context
-                                .i8_type()
-                                .ptr_type(AddressSpace::default())
-                                .array_type(clause_values.len() as u32);
-                            let array_const = array_ty.const_array(&clause_values);
-                            landingpad.add_clause(array_const.as_basic_value_enum());
+                            let ptr_ty = self.llvm_ctx.context.ptr_type(AddressSpace::default());
+                            let array_const = ptr_ty.const_array(&pointers);
+                            clause_values.push(array_const.as_basic_value_enum());
                         }
                     }
                 }
 
-                self.record_result(instr_id, Some(result_type), landingpad.as_basic_value_enum());
+                let landingpad = self
+                    .llvm_ctx
+                    .builder
+                    .build_landing_pad(
+                        result_struct,
+                        personality_fn,
+                        &clause_values,
+                        cleanup,
+                        "landingpad",
+                    )
+                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+                self.record_result(instr_id, Some(result_type), landingpad);
             }
             lir::LirInstructionKind::Unreachable => {
                 self.llvm_ctx
@@ -951,11 +998,10 @@ impl<'a> LirCodegen<'a> {
                 calling_convention,
             } => {
                 let callee = self.resolve_callee(&function)?;
-                let mut call_args: Vec<BasicMetadataValueEnum> =
-                    Vec::with_capacity(args.len());
+                let mut call_args: Vec<BasicValueEnum> = Vec::with_capacity(args.len());
                 for arg in args {
                     let value = self.convert_lir_value_to_basic_value(arg)?;
-                    call_args.push(value.into());
+                    call_args.push(value);
                 }
 
                 let normal_bb = self.block_map.get(&normal_dest).ok_or_else(|| {
@@ -983,12 +1029,18 @@ impl<'a> LirCodegen<'a> {
                             "invoke",
                         )
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
-                    Callee::Indirect(_, _) => {
-                        return Err(report_error_with_context(
-                            LOG_AREA,
-                            "indirect invoke is not supported".to_string(),
-                        ));
-                    }
+                    Callee::Indirect(ptr, fn_ty) => self
+                        .llvm_ctx
+                        .builder
+                        .build_indirect_invoke(
+                            fn_ty,
+                            ptr,
+                            &call_args,
+                            *normal_bb,
+                            *unwind_bb,
+                            "invoke",
+                        )
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                 };
 
                 call_site.set_call_convention(self.convert_calling_convention(&calling_convention));
@@ -1547,6 +1599,25 @@ impl<'a> LirCodegen<'a> {
                 };
                 Ok(ptr.const_cast(target_ptr_ty).into())
             }
+            lir::LirConstant::FunctionRef(name, ty) => {
+                let llvm_name = self.llvm_symbol_for(&name);
+                let func = self
+                    .llvm_ctx
+                    .module
+                    .get_function(&llvm_name)
+                    .ok_or_else(|| {
+                        report_error_with_context(
+                            LOG_AREA,
+                            format!("Unknown function referenced in constant: {}", name),
+                        )
+                    })?;
+                let ptr = func.as_global_value().as_pointer_value();
+                let target_ptr_ty = match self.llvm_basic_type(&ty)? {
+                    BasicTypeEnum::PointerType(ptr_ty) => ptr_ty,
+                    _other => self.llvm_ctx.context.ptr_type(inkwell::AddressSpace::default()),
+                };
+                Ok(ptr.const_cast(target_ptr_ty).into())
+            }
             lir::LirConstant::Null(ty) => {
                 let llvm_ty = self.llvm_basic_type(&ty)?;
                 Ok(llvm_ty.const_zero())
@@ -1617,6 +1688,7 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirConstant::Struct(_, ty) => ty.clone(),
             lir::LirConstant::GlobalRef(_, ty, _) => ty.clone(),
+            lir::LirConstant::FunctionRef(_, ty) => ty.clone(),
             lir::LirConstant::Null(ty) => ty.clone(),
             lir::LirConstant::Undef(ty) => ty.clone(),
         }

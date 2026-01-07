@@ -190,6 +190,7 @@ impl RustParser {
         let ty = self.parse_type(*c.ty)?;
         let value = self.parse_expr(*c.expr)?.into();
         Ok(ItemDefConst {
+            mutable: None,
             ty_annotation: None,
             name: parse_ident(c.ident),
             ty: ty.into(),

@@ -289,8 +289,33 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprKind::Value(value) => {
                 if let Value::List(list) = value.as_ref() {
-                    if matches!(existing_ty.as_ref(), Some(Ty::Array(_))) {
+                    let hint_ty = if let Some(ty) = existing_ty.as_ref() {
+                        self.type_from_ast_ty(ty)
+                            .ok()
+                            .and_then(|var| self.resolve_to_ty(var).ok())
+                    } else {
+                        None
+                    };
+                    if matches!(hint_ty.as_ref(), Some(Ty::Array(_))) {
                         self.infer_value(value.as_ref())?
+                    } else if let Some(Ty::Vec(vec_ty)) = hint_ty.as_ref() {
+                        let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
+                        for value in &list.values {
+                            let value_var = self.infer_value(value)?;
+                            self.unify(value_var, elem_var)?;
+                        }
+                        let vec_var = self.fresh_type_var();
+                        self.bind(vec_var, TypeTerm::Vec(elem_var));
+                        vec_var
+                    } else if let Some(Ty::Slice(slice_ty)) = hint_ty.as_ref() {
+                        let elem_var = self.type_from_ast_ty(&slice_ty.elem)?;
+                        for value in &list.values {
+                            let value_var = self.infer_value(value)?;
+                            self.unify(value_var, elem_var)?;
+                        }
+                        let slice_var = self.fresh_type_var();
+                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        slice_var
                     } else {
                         self.infer_list_value_as_vec(list)?
                     }
@@ -591,6 +616,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some((key_var, value_var)) = self.lookup_hashmap_args(object_var) {
             self.unify(key_var, idx_var)?;
             return Ok(value_var);
+        }
+
+        if let Ok(obj_ty) = self.resolve_to_ty(object_var) {
+            match Self::peel_reference(obj_ty) {
+                Ty::Vec(vec) => return self.type_from_ast_ty(&vec.ty),
+                Ty::Array(array) => return self.type_from_ast_ty(&array.elem),
+                Ty::Slice(slice) => return self.type_from_ast_ty(&slice.elem),
+                _ => {}
+            }
         }
 
         let idx_ty = self.resolve_to_ty(idx_var)?;
@@ -1282,9 +1316,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             first_var
         } else {
-            let fresh = self.fresh_type_var();
-            self.bind(fresh, TypeTerm::Any);
-            fresh
+            self.fresh_type_var()
         };
         let vec_var = self.fresh_type_var();
         self.bind(vec_var, TypeTerm::Vec(elem_var));
@@ -1305,9 +1337,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     first_var
                 } else {
-                    let fresh = self.fresh_type_var();
-                    self.bind(fresh, TypeTerm::Any);
-                    fresh
+                    self.fresh_type_var()
                 };
                 let vec_var = self.fresh_type_var();
                 self.bind(vec_var, TypeTerm::Vec(elem_var));
@@ -1866,11 +1896,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         field: &Ident,
         arg_len: usize,
     ) -> Result<Option<TypeVarId>> {
-        if arg_len != 0 {
-            return Ok(None);
-        }
         match field.name.as_str() {
+            "push" if arg_len == 1 => {
+                let obj_ty = match self.resolve_to_ty(obj_var) {
+                    Ok(ty) => Self::peel_reference(ty),
+                    Err(_) => return Ok(None),
+                };
+                if matches!(obj_ty, Ty::Vec(_)) {
+                    let unit_var = self.fresh_type_var();
+                    self.bind(unit_var, TypeTerm::Unit);
+                    Ok(Some(unit_var))
+                } else {
+                    Ok(None)
+                }
+            }
             "to_string" => {
+                if arg_len != 0 {
+                    return Ok(None);
+                }
                 let obj_ty = match self.resolve_to_ty(obj_var) {
                     Ok(ty) => Self::peel_reference(ty),
                     Err(_) => return Ok(None),
@@ -1889,6 +1932,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             // Keep iterator methods permissive for now; these are primarily
             // used by examples and desugar into Rust iterator chains.
             "iter" | "enumerate" => {
+                if arg_len != 0 {
+                    return Ok(None);
+                }
                 let obj_ty = match self.resolve_to_ty(obj_var) {
                     Ok(ty) => Self::peel_reference(ty),
                     Err(_) => {
@@ -1950,6 +1996,37 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty);
         match resolved_ty {
+            Ty::Quote(ref quote) if quote.kind == QuoteFragmentKind::Item => match field.name.as_str() {
+                "name" => {
+                    let var = self.fresh_type_var();
+                    self.bind(var, TypeTerm::Primitive(TypePrimitive::String));
+                    Ok(var)
+                }
+                "value" | "fn" => {
+                    if matches!(quote.item, Some(QuoteItemKind::Function) | None) {
+                        let fn_ty = Ty::Function(TypeFunction {
+                            params: Vec::new(),
+                            generics_params: Vec::new(),
+                            ret_ty: Some(Box::new(Ty::Unit(TypeUnit))),
+                        });
+                        let var = self.type_from_ast_ty(&fn_ty)?;
+                        Ok(var)
+                    } else {
+                        self.emit_error(format!(
+                            "field {} requires a quoted function item",
+                            field
+                        ));
+                        Ok(self.error_type_var())
+                    }
+                }
+                _ => {
+                    self.emit_error(format!(
+                        "cannot access field {} on value of type {}",
+                        field, resolved_ty
+                    ));
+                    Ok(self.error_type_var())
+                }
+            },
             Ty::Struct(struct_ty) => {
                 if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
                     let var = self.type_from_ast_ty(&def_field.value)?;

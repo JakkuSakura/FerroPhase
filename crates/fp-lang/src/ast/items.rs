@@ -283,8 +283,13 @@ fn lower_type_alias(node: &SyntaxNode) -> Result<ItemDefType, LowerItemsError> {
 
 fn lower_const(node: &SyntaxNode) -> Result<ItemDefConst, LowerItemsError> {
     let visibility = lower_visibility(first_visibility(node)?)?;
+    let is_mutable = node.children.iter().any(|child| match child {
+        SyntaxElement::Token(token) => token.text == "mut",
+        _ => false,
+    });
     let name = Ident::new(
-        first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("const name"))?,
+        first_ident_token_text_skipping(node, &["mut"])
+            .ok_or(LowerItemsError::MissingToken("const name"))?,
     );
     let ty = first_child_by_category(node, CstCategory::Type)
         .map(|t| lower_type_from_cst(t))
@@ -295,6 +300,7 @@ fn lower_const(node: &SyntaxNode) -> Result<ItemDefConst, LowerItemsError> {
     let value =
         lower_expr_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
     Ok(ItemDefConst {
+        mutable: if is_mutable { Some(true) } else { None },
         ty_annotation: None,
         visibility,
         name,

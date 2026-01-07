@@ -368,6 +368,9 @@ fn parse_item_cst(
                 Ok(node(SyntaxKind::ItemFn, children))
             } else {
                 advance(input);
+                if match_keyword(input, Keyword::Mut) {
+                    children.push(SyntaxElement::Token(token_text("mut")));
+                }
                 let name = expect_ident_token(input)?;
                 children.push(SyntaxElement::Token(name));
                 if match_symbol(input, ":") {

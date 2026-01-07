@@ -312,6 +312,7 @@ pub enum LirConstant {
     Array(Vec<LirConstant>, LirType),
     Struct(Vec<LirConstant>, LirType),
     GlobalRef(Name, LirType, Vec<u64>),
+    FunctionRef(Name, LirType),
     Null(LirType),
     Undef(LirType),
 }

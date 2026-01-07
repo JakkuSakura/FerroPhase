@@ -449,6 +449,7 @@ pub enum ConstValue {
     Float(f64),
     Str(String),
     Null,
+    Fn(Symbol),
     Tuple(Vec<ConstValue>),
     Array(Vec<ConstValue>),
     Struct(Vec<ConstValue>),

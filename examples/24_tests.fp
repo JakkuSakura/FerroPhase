@@ -8,12 +8,8 @@ fn main() {
     println!("✅ Expectation: test report shows 2 passed");
     println!("");
 
-    println!("Running tests via std::test::run:");
-    let tests = vec![
-        std::test::TestCase { name: "adds_two_numbers", run: adds_two_numbers },
-        std::test::TestCase { name: "string_concat", run: string_concat },
-    ];
-    let report = std::test::run(tests);
+    println!("Running tests via std::test::run_tests:");
+    let report = std::test::run_tests();
     println!("Summary: {} passed, {} failed, {} total", report.passed, report.failed, report.total);
 }
 
