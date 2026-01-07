@@ -66,6 +66,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
+                        if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                            return RuntimeFlow::Value(placeholder);
+                        }
                         return RuntimeFlow::Value(value);
                     }
                 }
@@ -453,6 +456,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
+                        if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                            return placeholder;
+                        }
                         if matches!(value, Value::List(_) | Value::Map(_)) {
                             return value;
                         }

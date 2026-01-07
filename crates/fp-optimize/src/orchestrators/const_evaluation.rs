@@ -60,6 +60,7 @@ impl ConstEvaluationOrchestrator {
             debug_assertions: self.debug_assertions,
             diagnostics: self.diagnostics.clone(),
             diagnostic_context: DIAGNOSTIC_CONTEXT,
+            module_resolution: None,
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);

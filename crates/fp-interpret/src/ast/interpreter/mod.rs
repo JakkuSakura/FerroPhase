@@ -7,8 +7,8 @@ use fp_core::ast::Pattern;
 use fp_core::ast::{
     AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString,
     ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
-    FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemKind, Node,
-    NodeKind, Path, StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind,
+    FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemImport, ItemImportTree,
+    ItemKind, Node, NodeKind, Path, StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind,
     TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
     TypeTuple, TypeUnit, TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct,
     ValueStructural, ValueTuple, QuoteFragmentKind, QuoteTokenValue, TypeQuote,
@@ -19,6 +19,9 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
+use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
+use fp_core::package::graph::PackageGraph;
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
@@ -58,6 +61,8 @@ pub struct InterpreterOptions {
     pub debug_assertions: bool,
     pub diagnostics: Option<Arc<DiagnosticManager>>,
     pub diagnostic_context: &'static str,
+    // Optional module resolution context for handling `use`/imports during evaluation.
+    pub module_resolution: Option<ModuleResolutionContext>,
 }
 
 impl Default for InterpreterOptions {
@@ -67,8 +72,16 @@ impl Default for InterpreterOptions {
             debug_assertions: false,
             diagnostics: None,
             diagnostic_context: DEFAULT_DIAGNOSTIC_CONTEXT,
+            module_resolution: None,
         }
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct ModuleResolutionContext {
+    pub graph: Arc<PackageGraph>,
+    pub resolvers: Arc<ResolverRegistry>,
+    pub current_module: Option<ModuleId>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -136,6 +149,17 @@ impl StoredValue {
             }
         }
     }
+}
+
+#[derive(Debug, Clone)]
+struct ImportedSymbol {
+    module: ModuleId,
+    symbol: SymbolDescriptor,
+}
+
+#[derive(Debug, Clone)]
+struct ImportedModule {
+    module: ModuleId,
 }
 
 impl PartialEq for StoredValue {
@@ -206,6 +230,28 @@ struct GenericTemplate {
     generics: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+struct ImportDirective {
+    module_spec: String,
+    binding: ImportBinding,
+}
+
+#[derive(Debug, Clone)]
+enum ImportBinding {
+    Module { alias: Option<String> },
+    Symbol { name: String, alias: Option<String> },
+    Glob,
+}
+
+#[derive(Debug, Clone)]
+enum ImportSegment {
+    Root,
+    SelfMod,
+    Super,
+    Crate,
+    Ident(String),
+}
+
 pub struct AstInterpreter<'ctx> {
     ctx: &'ctx SharedScopedContext,
     diag_manager: Option<Arc<DiagnosticManager>>,
@@ -213,6 +259,7 @@ pub struct AstInterpreter<'ctx> {
     mode: InterpreterMode,
     debug_assertions: bool,
     diagnostic_context: &'static str,
+    module_resolution: Option<ModuleResolutionContext>,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -240,6 +287,9 @@ pub struct AstInterpreter<'ctx> {
     impl_methods: HashMap<String, HashMap<String, ItemDefFunction>>,
     trait_methods: HashMap<String, HashMap<String, ItemDefFunction>>,
     enum_variants: HashMap<String, EnumVariantInfo>,
+    imported_modules: HashMap<String, ModuleId>,
+    imported_symbols: HashMap<String, SymbolDescriptor>,
+    imported_types: HashSet<String>,
     loop_depth: usize,
     function_depth: usize,
 }
@@ -258,6 +308,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             mode: options.mode,
             debug_assertions: options.debug_assertions,
             diagnostic_context: options.diagnostic_context,
+            module_resolution: options.module_resolution.clone(),
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -284,6 +335,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             impl_methods: HashMap::new(),
             trait_methods: HashMap::new(),
             enum_variants: HashMap::new(),
+            imported_modules: HashMap::new(),
+            imported_symbols: HashMap::new(),
+            imported_types: HashSet::new(),
             loop_depth: 0,
             function_depth: 0,
         }
@@ -889,8 +943,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             | ItemKind::DeclStatic(_)
             | ItemKind::DeclFunction(_)
             | ItemKind::DeclType(_)
-            | ItemKind::Import(_)
             | ItemKind::Any(_) => {}
+            ItemKind::Import(import) => {
+                self.handle_import(import);
+            }
         }
     }
 
@@ -3208,6 +3264,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             self.global_types.insert(name.to_string(), resolved.clone());
             return Some(resolved);
         }
+        if self.imported_types.contains(name) {
+            self.emit_error(format!(
+                "imported type '{}' cannot be resolved without module execution",
+                name
+            ));
+        }
         None
     }
 
@@ -3225,12 +3287,337 @@ impl<'ctx> AstInterpreter<'ctx> {
         Ty::Expr(expr)
     }
 
+    fn handle_import(&mut self, import: &ItemImport) {
+        let Some(context) = self.module_resolution.as_ref() else {
+            self.emit_error("module resolution is not configured for this interpreter");
+            return;
+        };
+
+        let current_module = context
+            .current_module
+            .as_ref()
+            .and_then(|module_id| context.graph.module(module_id));
+        let language = current_module
+            .map(|module| module.language.clone())
+            .unwrap_or(ModuleLanguage::Ferro);
+        let resolver = match context.resolvers.resolver_for(&language) {
+            Some(resolver) => resolver,
+            None => {
+                self.emit_error(format!(
+                    "no resolver registered for module language {:?}",
+                    language
+                ));
+                return;
+            }
+        };
+
+        for directive in self.expand_import_tree(&import.tree) {
+            let module_spec = ModuleImport::new(directive.module_spec.clone());
+            let module_id = match resolver.resolve_module(&module_spec, current_module, &context.graph)
+            {
+                Ok(module_id) => module_id,
+                Err(err) => {
+                    self.emit_resolver_error("import", err);
+                    continue;
+                }
+            };
+            let Some(module) = context.graph.module(&module_id) else {
+                self.emit_error(format!("import resolved to unknown module {}", module_id));
+                continue;
+            };
+
+            match directive.binding {
+                ImportBinding::Module { alias } => {
+                    let name = alias.or_else(|| self.module_alias_from_spec(&directive.module_spec));
+                    let Some(name) = name else {
+                        self.emit_error(format!(
+                            "cannot import module '{}' without a binding name",
+                            directive.module_spec
+                        ));
+                        continue;
+                    };
+                    self.register_imported_module(name, module_id.clone());
+                }
+                ImportBinding::Glob => {
+                    let exports = match resolver.list_exports(module, &context.graph) {
+                        Ok(exports) => exports,
+                        Err(err) => {
+                            self.emit_resolver_error("import", err);
+                            continue;
+                        }
+                    };
+                    for (name, symbol) in exports {
+                        self.register_imported_symbol(name, module_id.clone(), symbol);
+                    }
+                }
+                ImportBinding::Symbol { name, alias } => {
+                    match resolver.resolve_symbol(module, &name, &context.graph) {
+                        Ok(ResolvedSymbol::Symbol(symbol)) => {
+                            let binding = alias.unwrap_or_else(|| name.clone());
+                            self.register_imported_symbol(binding, module_id.clone(), symbol);
+                        }
+                        Ok(ResolvedSymbol::Module(symbol_module)) => {
+                            let binding = alias.unwrap_or_else(|| name.clone());
+                            self.register_imported_module(binding, symbol_module);
+                        }
+                        Err(err) => {
+                            self.emit_resolver_error("import", err);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn expand_import_tree(&self, tree: &ItemImportTree) -> Vec<ImportDirective> {
+        let mut out = Vec::new();
+        let prefix = Vec::new();
+        self.collect_import_tree(prefix, tree, &mut out);
+        out
+    }
+
+    fn collect_import_tree(
+        &self,
+        prefix: Vec<ImportSegment>,
+        tree: &ItemImportTree,
+        out: &mut Vec<ImportDirective>,
+    ) {
+        match tree {
+            ItemImportTree::Root => self.push_segment(prefix, ImportSegment::Root, out),
+            ItemImportTree::SelfMod => self.push_segment(prefix, ImportSegment::SelfMod, out),
+            ItemImportTree::SuperMod => self.push_segment(prefix, ImportSegment::Super, out),
+            ItemImportTree::Crate => self.push_segment(prefix, ImportSegment::Crate, out),
+            ItemImportTree::Ident(ident) => {
+                self.push_segment(prefix, ImportSegment::Ident(ident.as_str().to_string()), out)
+            }
+            ItemImportTree::Rename(rename) => {
+                let module_spec = self.render_import_path(&prefix);
+                out.push(ImportDirective {
+                    module_spec,
+                    binding: ImportBinding::Symbol {
+                        name: rename.from.as_str().to_string(),
+                        alias: Some(rename.to.as_str().to_string()),
+                    },
+                });
+            }
+            ItemImportTree::Glob => {
+                let module_spec = self.render_import_path(&prefix);
+                out.push(ImportDirective {
+                    module_spec,
+                    binding: ImportBinding::Glob,
+                });
+            }
+            ItemImportTree::Group(group) => {
+                for item in &group.items {
+                    self.collect_import_tree(prefix.clone(), item, out);
+                }
+            }
+            ItemImportTree::Path(path) => {
+                let mut cursor = prefix;
+                for segment in &path.segments {
+                    match segment {
+                        ItemImportTree::Group(group) => {
+                            for item in &group.items {
+                                self.collect_import_tree(cursor.clone(), item, out);
+                            }
+                            return;
+                        }
+                        ItemImportTree::Glob => {
+                            let module_spec = self.render_import_path(&cursor);
+                            out.push(ImportDirective {
+                                module_spec,
+                                binding: ImportBinding::Glob,
+                            });
+                            return;
+                        }
+                        ItemImportTree::Rename(rename) => {
+                            let module_spec = self.render_import_path(&cursor);
+                            out.push(ImportDirective {
+                                module_spec,
+                                binding: ImportBinding::Symbol {
+                                    name: rename.from.as_str().to_string(),
+                                    alias: Some(rename.to.as_str().to_string()),
+                                },
+                            });
+                            return;
+                        }
+                        ItemImportTree::Root => cursor.push(ImportSegment::Root),
+                        ItemImportTree::SelfMod => cursor.push(ImportSegment::SelfMod),
+                        ItemImportTree::SuperMod => cursor.push(ImportSegment::Super),
+                        ItemImportTree::Crate => cursor.push(ImportSegment::Crate),
+                        ItemImportTree::Ident(ident) => {
+                            cursor.push(ImportSegment::Ident(ident.as_str().to_string()))
+                        }
+                        ItemImportTree::Path(inner) => {
+                            self.collect_import_tree(cursor.clone(), &ItemImportTree::Path(inner.clone()), out);
+                            return;
+                        }
+                    }
+                }
+                if cursor.is_empty() {
+                    self.emit_error("import path cannot be empty");
+                    return;
+                }
+                let module_spec = self.render_import_path(&cursor);
+                let alias = cursor.iter().rev().find_map(|segment| match segment {
+                    ImportSegment::Ident(name) => Some(name.clone()),
+                    _ => None,
+                });
+                out.push(ImportDirective {
+                    module_spec,
+                    binding: ImportBinding::Module { alias },
+                });
+            }
+        }
+    }
+
+    fn push_segment(
+        &self,
+        mut prefix: Vec<ImportSegment>,
+        segment: ImportSegment,
+        out: &mut Vec<ImportDirective>,
+    ) {
+        prefix.push(segment);
+        if prefix.is_empty() {
+            self.emit_error("import path cannot be empty");
+            return;
+        }
+        let module_spec = self.render_import_path(&prefix);
+        let alias = prefix.iter().rev().find_map(|seg| match seg {
+            ImportSegment::Ident(name) => Some(name.clone()),
+            _ => None,
+        });
+        out.push(ImportDirective {
+            module_spec,
+            binding: ImportBinding::Module { alias },
+        });
+    }
+
+    fn render_import_path(&self, segments: &[ImportSegment]) -> String {
+        let mut parts = Vec::new();
+        let mut has_root = false;
+        for segment in segments {
+            match segment {
+                ImportSegment::Root => has_root = true,
+                ImportSegment::SelfMod => parts.push("self".to_string()),
+                ImportSegment::Super => parts.push("super".to_string()),
+                ImportSegment::Crate => parts.push("crate".to_string()),
+                ImportSegment::Ident(name) => parts.push(name.clone()),
+            }
+        }
+        let joined = parts.join("::");
+        if has_root {
+            if joined.is_empty() {
+                "::".to_string()
+            } else {
+                format!("::{}", joined)
+            }
+        } else {
+            joined
+        }
+    }
+
+    fn module_alias_from_spec(&self, spec: &str) -> Option<String> {
+        spec.rsplit("::")
+            .next()
+            .and_then(|segment| if segment.is_empty() { None } else { Some(segment.to_string()) })
+    }
+
+    fn register_imported_symbol(&mut self, name: String, module: ModuleId, symbol: SymbolDescriptor) {
+        if matches!(
+            symbol.symbol_kind,
+            SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::Type
+        ) {
+            self.imported_types.insert(name.clone());
+        }
+        self.imported_symbols.insert(name.clone(), symbol.clone());
+        self.insert_value(
+            &name,
+            Value::Any(AnyBox::new(ImportedSymbol { module, symbol })),
+        );
+    }
+
+    fn register_imported_module(&mut self, name: String, module: ModuleId) {
+        self.imported_modules.insert(name.clone(), module.clone());
+        self.insert_value(&name, Value::Any(AnyBox::new(ImportedModule { module })));
+    }
+
+    fn emit_resolver_error(&mut self, context: &str, err: ResolverError) {
+        self.emit_error(format!("{} resolution failed: {}", context, err));
+    }
+
+    fn imported_placeholder_message(&self, value: &Value) -> Option<String> {
+        if let Value::Any(any) = value {
+            if let Some(symbol) = any.downcast_ref::<ImportedSymbol>() {
+                return Some(format!(
+                    "imported symbol '{}' from module {} cannot be evaluated without module execution",
+                    symbol.symbol.name,
+                    symbol.module
+                ));
+            }
+            if let Some(module) = any.downcast_ref::<ImportedModule>() {
+                return Some(format!(
+                    "imported module {} cannot be evaluated as a value",
+                    module.module
+                ));
+            }
+        }
+        None
+    }
+
+    fn imported_placeholder_value(&mut self, value: Value) -> Option<Value> {
+        if let Some(message) = self.imported_placeholder_message(&value) {
+            self.emit_error(message);
+            return Some(Value::undefined());
+        }
+        None
+    }
+
+    fn resolve_imported_symbol_path(&mut self, symbol: &str) -> Option<Value> {
+        let (module_spec, name) = symbol.rsplit_once("::")?;
+        let context = self.module_resolution.as_ref()?;
+        let current_module = context
+            .current_module
+            .as_ref()
+            .and_then(|module_id| context.graph.module(module_id));
+        let language = current_module
+            .map(|module| module.language.clone())
+            .unwrap_or(ModuleLanguage::Ferro);
+        let resolver = context.resolvers.resolver_for(&language)?;
+        let module_import = ModuleImport::new(module_spec);
+        let module_id = resolver
+            .resolve_module(&module_import, current_module, &context.graph)
+            .ok()?;
+        let module = context.graph.module(&module_id)?;
+        match resolver.resolve_symbol(module, name, &context.graph) {
+            Ok(ResolvedSymbol::Symbol(symbol_desc)) => Some(Value::Any(AnyBox::new(
+                ImportedSymbol {
+                    module: module_id,
+                    symbol: symbol_desc,
+                },
+            ))),
+            Ok(ResolvedSymbol::Module(symbol_module)) => Some(Value::Any(AnyBox::new(
+                ImportedModule {
+                    module: symbol_module,
+                },
+            ))),
+            Err(_) => None,
+        }
+    }
+
     fn resolve_qualified(&mut self, symbol: String) -> Value {
         if let Some(primitive) = Self::primitive_type_from_name(&symbol) {
             return Value::Type(Ty::Primitive(primitive));
         }
         if let Some(value) = self.evaluated_constants.get(&symbol) {
             return value.clone();
+        }
+        if let Some(symbol) = self.imported_symbols.get(&symbol) {
+            self.emit_error(format!(
+                "imported symbol '{}' cannot be evaluated without module execution",
+                symbol.name
+            ));
+            return Value::undefined();
         }
         if symbol == "Self" {
             if let Some(self_ty) = self.impl_stack.last().and_then(|ctx| ctx.self_ty.clone()) {
@@ -3244,6 +3631,14 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         if symbol == "printf" {
             return Value::unit();
+        }
+        if symbol.contains("::") {
+            if let Some(value) = self.resolve_imported_symbol_path(&symbol) {
+                if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                    return placeholder;
+                }
+                return value;
+            }
         }
         self.emit_error(format!(
             "unresolved symbol '{}' in const evaluation",

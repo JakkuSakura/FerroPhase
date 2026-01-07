@@ -1409,6 +1409,7 @@ impl Pipeline {
             debug_assertions: !options.release,
             diagnostics: None,
             diagnostic_context: STAGE_AST_INTERPRET,
+            module_resolution: None,
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
 
