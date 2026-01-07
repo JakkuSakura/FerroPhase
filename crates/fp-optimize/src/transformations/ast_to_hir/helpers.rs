@@ -38,11 +38,35 @@ impl HirGenerator {
             }
         };
 
-        // Try resolve against current scope using the last segment
-        let mut resolved = segments.last().and_then(|segment| match scope {
-            PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
-            PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
-        });
+        let mut resolved = None;
+
+        if let Some(first) = segments.first() {
+            let alias = match scope {
+                PathResolutionScope::Value => self.resolve_value_symbol(&first.name),
+                PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
+            };
+            if let Some(hir::Res::Module(module_path)) = alias {
+                let mut canonical = module_path;
+                canonical.extend(
+                    segments
+                        .iter()
+                        .skip(1)
+                        .map(|seg| seg.name.as_str().to_string()),
+                );
+                resolved = self.lookup_global_res(&canonical, scope);
+                if resolved.is_none() && segments.len() == 1 {
+                    resolved = Some(hir::Res::Module(canonical));
+                }
+            }
+        }
+
+        if resolved.is_none() {
+            // Try resolve against current scope using the last segment
+            resolved = segments.last().and_then(|segment| match scope {
+                PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+                PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+            });
+        }
 
         // Fallback to global symbol tables based on canonicalized segments
         if resolved.is_none() {

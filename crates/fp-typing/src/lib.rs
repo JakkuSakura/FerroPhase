@@ -107,6 +107,10 @@ pub struct AstTypeInferencer<'ctx> {
     impl_traits: HashMap<String, HashSet<String>>,
     generic_trait_bounds: HashMap<TypeVarId, Vec<String>>,
     impl_stack: Vec<Option<ImplContext>>,
+    module_path: Vec<String>,
+    module_defs: HashSet<Vec<String>>,
+    module_aliases: Vec<HashMap<String, Vec<String>>>,
+    symbol_aliases: Vec<HashMap<String, String>>,
     current_level: usize,
     diagnostics: Vec<TypingDiagnostic>,
     has_errors: bool,
@@ -169,6 +173,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             impl_traits: HashMap::new(),
             generic_trait_bounds: HashMap::new(),
             impl_stack: Vec::new(),
+            module_path: Vec::new(),
+            module_defs: HashSet::new(),
+            module_aliases: vec![HashMap::new()],
+            symbol_aliases: vec![HashMap::new()],
             current_level: 0,
             diagnostics: Vec::new(),
             has_errors: false,
@@ -439,11 +447,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.register_symbol(&decl.name);
             }
             ItemKind::Module(module) => {
+                self.record_module_def(module.name.as_str());
+                self.push_module_path(module.name.as_str());
                 self.enter_scope();
                 for child in &module.items {
                     self.predeclare_item(child);
                 }
                 self.exit_scope();
+                self.pop_module_path();
                 self.register_qualified_items(&module.items, module.name.as_str());
             }
             ItemKind::Impl(impl_block) => {
@@ -473,6 +484,155 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             _ => {}
+        }
+    }
+
+    fn register_import_aliases(&mut self, import: &ItemImport) {
+        let entries = match self.expand_import_tree(&import.tree, Vec::new()) {
+            Ok(entries) => entries,
+            Err(err) => {
+                self.emit_error(format!("failed to expand import tree: {}", err));
+                return;
+            }
+        };
+
+        for (path_segments, alias) in entries {
+            if let Some(first) = path_segments.first() {
+                if first == "std" || first == "core" || first == "alloc" || first == "fp_rust" {
+                    continue;
+                }
+            }
+            if path_segments.is_empty() {
+                continue;
+            }
+            let qualified = path_segments.join("::");
+            if self.lookup_env_var(&qualified).is_some() {
+                self.insert_symbol_alias(&alias, qualified);
+                continue;
+            }
+            if self.module_defs.contains(&path_segments) {
+                self.insert_module_alias(&alias, path_segments);
+                continue;
+            }
+            self.emit_error(format!("unresolved import: {}", qualified));
+        }
+    }
+
+    fn insert_module_alias(&mut self, alias: &str, path: Vec<String>) {
+        if let Some(scope) = self.module_aliases.last_mut() {
+            scope.insert(alias.to_string(), path);
+        }
+    }
+
+    fn insert_symbol_alias(&mut self, alias: &str, qualified: String) {
+        if let Some(scope) = self.symbol_aliases.last_mut() {
+            scope.insert(alias.to_string(), qualified);
+        }
+    }
+
+    fn expand_import_tree(
+        &self,
+        tree: &ItemImportTree,
+        base: Vec<String>,
+    ) -> Result<Vec<(Vec<String>, String)>> {
+        match tree {
+            ItemImportTree::Path(path) => self.expand_import_segments(&path.segments, base),
+            ItemImportTree::Group(group) => {
+                let mut results = Vec::new();
+                for item in &group.items {
+                    results.extend(self.expand_import_tree(item, base.clone())?);
+                }
+                Ok(results)
+            }
+            ItemImportTree::Root => self.expand_import_segments(&[], Vec::new()),
+            ItemImportTree::SelfMod => self.expand_import_segments(&[], self.module_path.clone()),
+            ItemImportTree::SuperMod => self.expand_import_segments(&[], self.parent_module_path()),
+            ItemImportTree::Crate => self.expand_import_segments(&[], Vec::new()),
+            ItemImportTree::Glob => Err(typing_error("glob imports are not yet supported")),
+            _ => self.expand_import_segments(std::slice::from_ref(tree), base),
+        }
+    }
+
+    fn expand_import_segments(
+        &self,
+        segments: &[ItemImportTree],
+        base: Vec<String>,
+    ) -> Result<Vec<(Vec<String>, String)>> {
+        if segments.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let first = &segments[0];
+        let rest = &segments[1..];
+        match first {
+            ItemImportTree::Ident(ident) => {
+                let name = ident.name.as_str();
+                let mut new_base = base;
+                match name {
+                    "self" => new_base = self.module_path.clone(),
+                    "super" => new_base = self.parent_module_path(),
+                    "crate" => new_base = Vec::new(),
+                    _ => new_base.push(ident.name.clone()),
+                }
+
+                if rest.is_empty() && !matches!(name, "self" | "super" | "crate") {
+                    Ok(vec![(new_base.clone(), ident.name.clone())])
+                } else if rest.is_empty() {
+                    Ok(Vec::new())
+                } else {
+                    self.expand_import_segments(rest, new_base)
+                }
+            }
+            ItemImportTree::Rename(rename) => {
+                if !rest.is_empty() {
+                    return Err(typing_error("rename segments must be terminal"));
+                }
+                let mut new_base = base;
+                new_base.push(rename.from.name.clone());
+                Ok(vec![(new_base, rename.to.name.clone())])
+            }
+            ItemImportTree::Group(group) => {
+                let mut results = Vec::new();
+                for item in &group.items {
+                    results.extend(self.expand_import_tree(item, base.clone())?);
+                }
+                if rest.is_empty() {
+                    Ok(results)
+                } else {
+                    let mut final_results = Vec::new();
+                    for (path_segments, alias) in results {
+                        let mut more = self.expand_import_segments(rest, path_segments.clone())?;
+                        if more.is_empty() {
+                            final_results.push((path_segments, alias));
+                        } else {
+                            final_results.append(&mut more);
+                        }
+                    }
+                    Ok(final_results)
+                }
+            }
+            ItemImportTree::Path(path) => {
+                let nested = self.expand_import_segments(&path.segments, base.clone())?;
+                if rest.is_empty() {
+                    Ok(nested)
+                } else {
+                    let mut results = Vec::new();
+                    for (segments_acc, alias) in nested {
+                        let mut more = self.expand_import_segments(rest, segments_acc.clone())?;
+                        if more.is_empty() {
+                            results.push((segments_acc, alias));
+                        } else {
+                            results.append(&mut more);
+                        }
+                    }
+                    Ok(results)
+                }
+            }
+            ItemImportTree::Root => self.expand_import_segments(rest, Vec::new()),
+            ItemImportTree::SelfMod => self.expand_import_segments(rest, self.module_path.clone()),
+            ItemImportTree::SuperMod => self.expand_import_segments(rest, self.parent_module_path()),
+            ItemImportTree::Crate => self.expand_import_segments(rest, Vec::new()),
+            ItemImportTree::Glob => Err(typing_error("glob imports are not yet supported")),
         }
     }
 
@@ -718,7 +878,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.exit_scope();
                 Ty::Unit(TypeUnit)
             }
-            ItemKind::Import(_) => Ty::Unit(TypeUnit),
+            ItemKind::Import(import) => {
+                self.register_import_aliases(import);
+                Ty::Unit(TypeUnit)
+            }
             ItemKind::DefTrait(trait_def) => {
                 let trait_name = trait_def.name.as_str().to_string();
                 self.enter_scope();
@@ -1200,14 +1363,38 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.current_level += 1;
         self.env.push(HashMap::new());
         self.generic_scopes.push(HashSet::new());
+        self.module_aliases.push(HashMap::new());
+        self.symbol_aliases.push(HashMap::new());
     }
 
     fn exit_scope(&mut self) {
         self.env.pop();
         self.generic_scopes.pop();
+        self.module_aliases.pop();
+        self.symbol_aliases.pop();
         if self.current_level > 0 {
             self.current_level -= 1;
         }
+    }
+
+    fn push_module_path(&mut self, name: &str) {
+        self.module_path.push(name.to_string());
+    }
+
+    fn pop_module_path(&mut self) {
+        self.module_path.pop();
+    }
+
+    fn record_module_def(&mut self, name: &str) {
+        let mut path = self.module_path.clone();
+        path.push(name.to_string());
+        self.module_defs.insert(path);
+    }
+
+    fn parent_module_path(&self) -> Vec<String> {
+        let mut parent = self.module_path.clone();
+        parent.pop();
+        parent
     }
 
     // fresh_type_var moved to typing/unify.rs
@@ -1295,17 +1482,32 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lookup_locator(&mut self, locator: &Locator) -> Result<TypeVarId> {
-        let key = locator.to_string();
+        let key = self
+            .resolve_alias_locator(locator)
+            .unwrap_or_else(|| locator.to_string());
         if let Some(var) = self.lookup_env_var(&key) {
             return Ok(var);
         }
         if let Some(ident) = locator.as_ident() {
+            if let Some(qualified) = self.lookup_symbol_alias(ident.as_str()) {
+                if let Some(var) = self.lookup_env_var(&qualified) {
+                    return Ok(var);
+                }
+            }
             if let Some(var) = self.lookup_env_var(ident.as_str()) {
                 return Ok(var);
             }
         }
         if let Locator::Path(path) = locator {
             if let Some(first) = path.segments.first() {
+                if let Some(module_path) = self.lookup_module_alias(first.as_str()) {
+                    let mut qualified = module_path;
+                    qualified.extend(path.segments.iter().skip(1).map(|seg| seg.as_str().to_string()));
+                    let qualified = qualified.join("::");
+                    if let Some(var) = self.lookup_env_var(&qualified) {
+                        return Ok(var);
+                    }
+                }
                 if let Some(var) = self.lookup_env_var(first.as_str()) {
                     return Ok(var);
                 }
@@ -1340,6 +1542,60 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
         self.emit_error(format!("unresolved symbol: {}", key));
         Ok(self.error_type_var())
+    }
+
+    fn resolve_alias_locator(&self, locator: &Locator) -> Option<String> {
+        match locator {
+            Locator::Ident(ident) => self.lookup_symbol_alias(ident.as_str()),
+            Locator::Path(path) => {
+                if let Some(first) = path.segments.first() {
+                    if let Some(module_path) = self.lookup_module_alias(first.as_str()) {
+                        let mut qualified = module_path;
+                        qualified.extend(
+                            path.segments
+                                .iter()
+                                .skip(1)
+                                .map(|seg| seg.as_str().to_string()),
+                        );
+                        return Some(qualified.join("::"));
+                    }
+                }
+                None
+            }
+            Locator::ParameterPath(path) => {
+                if let Some(first) = path.segments.first() {
+                    if let Some(module_path) = self.lookup_module_alias(first.ident.as_str()) {
+                        let mut qualified = module_path;
+                        qualified.extend(
+                            path.segments
+                                .iter()
+                                .skip(1)
+                                .map(|seg| seg.ident.as_str().to_string()),
+                        );
+                        return Some(qualified.join("::"));
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn lookup_symbol_alias(&self, name: &str) -> Option<String> {
+        for scope in self.symbol_aliases.iter().rev() {
+            if let Some(target) = scope.get(name) {
+                return Some(target.clone());
+            }
+        }
+        None
+    }
+
+    fn lookup_module_alias(&self, name: &str) -> Option<Vec<String>> {
+        for scope in self.module_aliases.iter().rev() {
+            if let Some(path) = scope.get(name) {
+                return Some(path.clone());
+            }
+        }
+        None
     }
 
     fn lookup_env_var(&mut self, name: &str) -> Option<TypeVarId> {

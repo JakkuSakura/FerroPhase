@@ -28,6 +28,7 @@ fp run examples/01_const_eval_basics.fp
 | `04_struct_introspection.fp` | Type introspection         | `sizeof!`, `field_count!`, `hasfield!`, transpilation |
 | `05_struct_generation.fp`    | Config-driven structs      | Const toggles, conditional defaults                   |
 | `06_struct_methods.fp`       | Struct methods             | `impl` blocks, methods, field access                  |
+| `25_module_imports.fp`       | Modules and imports         | `mod`, `use`, aliasing, std traits, external modules  |
 
 ### Advanced Features
 

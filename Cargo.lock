@@ -1457,6 +1457,9 @@ version = "0.1.0"
 dependencies = [
  "clap",
  "eyre",
+ "fp-core",
+ "fp-rust",
+ "fp-typescript",
  "glob",
  "pathdiff",
  "serde",

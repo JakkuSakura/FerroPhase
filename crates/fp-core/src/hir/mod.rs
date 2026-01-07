@@ -425,6 +425,7 @@ pub enum Res {
     Def(DefId),
     Local(HirId),
     SelfTy,
+    Module(Vec<String>),
 }
 
 // Temporary types until we have proper implementations

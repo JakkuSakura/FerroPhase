@@ -9,7 +9,10 @@ use crate::languages::{self, detect_source_language};
 #[cfg(feature = "bootstrap")]
 use fp_core::ast::json as ast_json;
 use fp_core::ast::register_threadlocal_serializer;
-use fp_core::ast::{AstSerializer, Item, Node, NodeKind, RuntimeValue, Value};
+use fp_core::ast::{
+    AstSerializer, File, Ident, Item, ItemChunk, ItemImportTree, ItemKind, Module, Node, NodeKind,
+    RuntimeValue, Value, Visibility,
+};
 #[cfg(feature = "bootstrap")]
 use fp_core::ast::{AstSnapshot, snapshot};
 use fp_core::context::SharedScopedContext;
@@ -30,7 +33,7 @@ use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirL
 use fp_rust::printer::RustPrinter;
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
@@ -378,7 +381,13 @@ impl Pipeline {
             CliError::Compilation(format!("Unsupported source language: {}", language))
         })?;
 
-        self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)
+        let ast = self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)?;
+        if language == languages::FERROPHASE {
+            if let Some(path) = input_path {
+                return self.resolve_file_modules(options, &frontend, ast, path);
+            }
+        }
+        Ok(ast)
     }
 
     fn try_load_bootstrap_ast(&mut self, path: &Path) -> Result<Option<Node>, CliError> {
@@ -630,6 +639,50 @@ impl Pipeline {
         self.frontend_snapshot = snapshot;
 
         Ok(ast)
+    }
+
+    fn resolve_file_modules(
+        &mut self,
+        options: &PipelineOptions,
+        frontend: &Arc<dyn LanguageFrontend>,
+        ast: Node,
+        input_path: &PathBuf,
+    ) -> Result<Node, CliError> {
+        let NodeKind::File(file) = ast.kind().clone() else {
+            return Ok(ast);
+        };
+
+        let root_dir = input_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| PathBuf::from("."));
+
+        let mut loader = FileModuleLoader::new(self, root_dir, options, frontend);
+        let module_tree = loader.collect_modules(&file, Vec::new(), input_path)?;
+        if module_tree.children.is_empty() {
+            return Ok(Node::file(file));
+        }
+
+        let merged_items = merge_module_items(&file.items, module_tree);
+        Ok(Node::file(File {
+            path: file.path,
+            items: merged_items,
+        }))
+    }
+
+    fn parse_module_file(
+        &mut self,
+        options: &PipelineOptions,
+        frontend: &Arc<dyn LanguageFrontend>,
+        path: &Path,
+    ) -> Result<Node, CliError> {
+        let source = std::fs::read_to_string(path).map_err(|err| {
+            CliError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                format!("Failed to read file {}: {err}", path.display()),
+            ))
+        })?;
+        self.parse_with_frontend(frontend, &source, Some(path), options)
     }
 
     pub fn prepare_for_transpile(
@@ -2435,6 +2488,350 @@ fn write_workspace_module_output(
                 target
             )))
         }
+    }
+}
+
+#[derive(Default, Clone)]
+struct ModuleTree {
+    items: Option<ItemChunk>,
+    children: BTreeMap<String, ModuleTree>,
+}
+
+impl ModuleTree {
+    fn insert(&mut self, path: &[String], items: ItemChunk) {
+        if path.is_empty() {
+            return;
+        }
+        let head = path[0].clone();
+        let child = self.children.entry(head).or_insert_with(ModuleTree::default);
+        if path.len() == 1 {
+            if child.items.is_none() {
+                child.items = Some(items);
+            }
+            return;
+        }
+        child.insert(&path[1..], items);
+    }
+}
+
+fn merge_module_items(existing: &ItemChunk, tree: ModuleTree) -> ItemChunk {
+    let mut remaining_children = tree.children;
+    let mut out = Vec::new();
+
+    for item in existing {
+        if let ItemKind::Module(module) = item.kind() {
+            if let Some(child) = remaining_children.remove(module.name.as_str()) {
+                let merged_items = merge_module_items(&module.items, child);
+                let merged_module = Module {
+                    name: module.name.clone(),
+                    items: merged_items,
+                    visibility: module.visibility.clone(),
+                };
+                out.push(Item {
+                    ty: item.ty.clone(),
+                    kind: ItemKind::Module(merged_module),
+                });
+            } else {
+                out.push(item.clone());
+            }
+        } else {
+            out.push(item.clone());
+        }
+    }
+
+    for (name, child) in remaining_children {
+        let items = child.items.clone().unwrap_or_default();
+        let merged_items = merge_module_items(&items, child);
+        let module = Module {
+            name: Ident::new(name),
+            items: merged_items,
+            visibility: Visibility::Public,
+        };
+        out.push(Item::new(ItemKind::Module(module)));
+    }
+
+    out
+}
+
+struct FileModuleLoader<'a> {
+    pipeline: &'a mut Pipeline,
+    root_dir: PathBuf,
+    options: &'a PipelineOptions,
+    frontend: &'a Arc<dyn LanguageFrontend>,
+    visited_files: HashSet<PathBuf>,
+    visited_modules: HashSet<Vec<String>>,
+    inline_modules: HashSet<Vec<String>>,
+}
+
+impl<'a> FileModuleLoader<'a> {
+    fn new(
+        pipeline: &'a mut Pipeline,
+        root_dir: PathBuf,
+        options: &'a PipelineOptions,
+        frontend: &'a Arc<dyn LanguageFrontend>,
+    ) -> Self {
+        Self {
+            pipeline,
+            root_dir,
+            options,
+            frontend,
+            visited_files: HashSet::new(),
+            visited_modules: HashSet::new(),
+            inline_modules: HashSet::new(),
+        }
+    }
+
+    fn collect_modules(
+        &mut self,
+        file: &File,
+        module_path: Vec<String>,
+        entry_path: &PathBuf,
+    ) -> Result<ModuleTree, CliError> {
+        self.register_inline_modules(&file.items, &module_path);
+        let mut tree = ModuleTree::default();
+        let mut queue = Vec::new();
+        self.collect_import_module_paths(&file.items, &module_path, &mut queue);
+        self.load_modules_from_queue(&mut tree, &mut queue, entry_path)?;
+        Ok(tree)
+    }
+
+    fn register_inline_modules(&mut self, items: &ItemChunk, module_path: &[String]) {
+        for item in items {
+            if let ItemKind::Module(module) = item.kind() {
+                let mut path = module_path.to_vec();
+                path.push(module.name.as_str().to_string());
+                self.inline_modules.insert(path.clone());
+                self.register_inline_modules(&module.items, &path);
+            }
+        }
+    }
+
+    fn collect_import_module_paths(
+        &mut self,
+        items: &ItemChunk,
+        module_path: &[String],
+        queue: &mut Vec<Vec<String>>,
+    ) {
+        for item in items {
+            match item.kind() {
+                ItemKind::Import(import) => {
+                    let entries = expand_import_tree(&import.tree, module_path);
+                    for path in entries {
+                        if let Some(first) = path.first() {
+                            if matches!(first.as_str(), "std" | "core" | "alloc" | "fp_rust") {
+                                continue;
+                            }
+                        }
+                        for prefix_len in 1..=path.len() {
+                            let prefix = path[..prefix_len].to_vec();
+                            if self.inline_modules.contains(&prefix) {
+                                continue;
+                            }
+                            if self.visited_modules.insert(prefix.clone()) {
+                                queue.push(prefix);
+                            }
+                        }
+                    }
+                }
+                ItemKind::Module(module) => {
+                    let mut path = module_path.to_vec();
+                    path.push(module.name.as_str().to_string());
+                    self.collect_import_module_paths(&module.items, &path, queue);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn load_modules_from_queue(
+        &mut self,
+        tree: &mut ModuleTree,
+        queue: &mut Vec<Vec<String>>,
+        entry_path: &PathBuf,
+    ) -> Result<(), CliError> {
+        while let Some(module_path) = queue.pop() {
+            if self.inline_modules.contains(&module_path) {
+                continue;
+            }
+            let Some(module_file) = resolve_module_file(&self.root_dir, &module_path) else {
+                continue;
+            };
+            let canonical = module_file
+                .canonicalize()
+                .unwrap_or_else(|_| module_file.clone());
+            if !self.visited_files.insert(canonical.clone()) {
+                continue;
+            }
+
+            let ast = self
+                .pipeline
+                .parse_module_file(self.options, self.frontend, &canonical)?;
+            let NodeKind::File(file) = ast.kind() else {
+                continue;
+            };
+
+            self.register_inline_modules(&file.items, &module_path);
+            tree.insert(&module_path, file.items.clone());
+
+            let mut nested_imports = Vec::new();
+            self.collect_import_module_paths(&file.items, &module_path, &mut nested_imports);
+            for import_path in nested_imports {
+                if self.inline_modules.contains(&import_path) {
+                    continue;
+                }
+                if self.visited_modules.insert(import_path.clone()) {
+                    queue.push(import_path);
+                }
+            }
+
+            if canonical == *entry_path {
+                continue;
+            }
+        }
+        Ok(())
+    }
+}
+
+fn resolve_module_file(root_dir: &Path, module_path: &[String]) -> Option<PathBuf> {
+    if module_path.is_empty() {
+        return None;
+    }
+    let mut base = root_dir.to_path_buf();
+    for segment in module_path {
+        base.push(segment);
+    }
+    let flat_path = base.with_extension("fp");
+    if flat_path.is_file() {
+        return Some(flat_path);
+    }
+    let mod_path = base.join("mod.fp");
+    if mod_path.is_file() {
+        return Some(mod_path);
+    }
+    None
+}
+
+fn expand_import_tree(tree: &ItemImportTree, module_path: &[String]) -> Vec<Vec<String>> {
+    expand_import_tree_with_base(tree, Vec::new(), module_path)
+}
+
+fn expand_import_tree_with_base(
+    tree: &ItemImportTree,
+    base: Vec<String>,
+    module_path: &[String],
+) -> Vec<Vec<String>> {
+    match tree {
+        ItemImportTree::Path(path) => expand_import_segments(&path.segments, base, module_path),
+        ItemImportTree::Group(group) => {
+            let mut results = Vec::new();
+            for item in &group.items {
+                results.extend(expand_import_tree_with_base(item, base.clone(), module_path));
+            }
+            results
+        }
+        ItemImportTree::Root => expand_import_segments(&[], Vec::new(), module_path),
+        ItemImportTree::SelfMod => expand_import_segments(&[], module_path.to_vec(), module_path),
+        ItemImportTree::SuperMod => {
+            let mut parent = module_path.to_vec();
+            parent.pop();
+            expand_import_segments(&[], parent, module_path)
+        }
+        ItemImportTree::Crate => expand_import_segments(&[], Vec::new(), module_path),
+        ItemImportTree::Glob => Vec::new(),
+        _ => expand_import_segments(std::slice::from_ref(tree), base, module_path),
+    }
+}
+
+fn expand_import_segments(
+    segments: &[ItemImportTree],
+    base: Vec<String>,
+    module_path: &[String],
+) -> Vec<Vec<String>> {
+    if segments.is_empty() {
+        return Vec::new();
+    }
+
+    let first = &segments[0];
+    let rest = &segments[1..];
+    match first {
+        ItemImportTree::Ident(ident) => {
+            let name = ident.name.as_str();
+            let mut new_base = base;
+            match name {
+                "self" => new_base = module_path.to_vec(),
+                "super" => {
+                    let mut parent = module_path.to_vec();
+                    parent.pop();
+                    new_base = parent;
+                }
+                "crate" => new_base = Vec::new(),
+                _ => new_base.push(ident.name.clone()),
+            }
+
+            if rest.is_empty() && !matches!(name, "self" | "super" | "crate") {
+                vec![new_base]
+            } else if rest.is_empty() {
+                Vec::new()
+            } else {
+                expand_import_segments(rest, new_base, module_path)
+            }
+        }
+        ItemImportTree::Rename(rename) => {
+            if !rest.is_empty() {
+                return Vec::new();
+            }
+            let mut new_base = base;
+            new_base.push(rename.from.name.clone());
+            vec![new_base]
+        }
+        ItemImportTree::Group(group) => {
+            let mut results = Vec::new();
+            for item in &group.items {
+                results.extend(expand_import_tree_with_base(item, base.clone(), module_path));
+            }
+            if rest.is_empty() {
+                results
+            } else {
+                let mut final_results = Vec::new();
+                for path_segments in results {
+                    let mut more = expand_import_segments(rest, path_segments.clone(), module_path);
+                    if more.is_empty() {
+                        final_results.push(path_segments);
+                    } else {
+                        final_results.append(&mut more);
+                    }
+                }
+                final_results
+            }
+        }
+        ItemImportTree::Path(path) => {
+            let nested = expand_import_segments(&path.segments, base.clone(), module_path);
+            if rest.is_empty() {
+                nested
+            } else {
+                let mut results = Vec::new();
+                for path_segments in nested {
+                    let mut more = expand_import_segments(rest, path_segments.clone(), module_path);
+                    if more.is_empty() {
+                        results.push(path_segments);
+                    } else {
+                        results.append(&mut more);
+                    }
+                }
+                results
+            }
+        }
+        ItemImportTree::Root => expand_import_segments(rest, Vec::new(), module_path),
+        ItemImportTree::SelfMod => {
+            expand_import_segments(rest, module_path.to_vec(), module_path)
+        }
+        ItemImportTree::SuperMod => {
+            let mut parent = module_path.to_vec();
+            parent.pop();
+            expand_import_segments(rest, parent, module_path)
+        }
+        ItemImportTree::Crate => expand_import_segments(rest, Vec::new(), module_path),
+        ItemImportTree::Glob => Vec::new(),
     }
 }
 

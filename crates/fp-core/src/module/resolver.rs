@@ -62,6 +62,15 @@ pub struct ResolverRegistry {
     resolvers: HashMap<ModuleLanguage, Arc<dyn LanguageResolver>>,
 }
 
+impl std::fmt::Debug for ResolverRegistry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let languages: Vec<&ModuleLanguage> = self.resolvers.keys().collect();
+        f.debug_struct("ResolverRegistry")
+            .field("languages", &languages)
+            .finish()
+    }
+}
+
 impl ResolverRegistry {
     pub fn new() -> Self {
         Self {

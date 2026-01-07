@@ -1,0 +1,327 @@
+ast::File {
+  items:
+    pub module std : () {
+      pub module collections : () {
+        pub struct HashMapEntry : HashMapEntry{key: Expr(K), value: Expr(V)} {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>} {
+          entries: Vec<Expr(HashMapEntry<K
+, V
+>)>
+        }
+        impl HashMap<K
+, V
+> : () {
+          pub fn from(entries: Vec<Expr(HashMapEntry<K
+, V
+>)>) -> Expr(HashMap<K
+, V
+>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+              expr_stmt (value)
+                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+                  entries:
+                    locator entries : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
+          pub fn len(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
+            block (1 stmt) : i64
+              expr_stmt (value)
+                invoke : i64
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any : fn(any) -> any
+            block (3 stmts) : !
+              let mut idx
+                init:
+                  value 0 : i64
+              expr_stmt (value)
+                while : ()
+                  cond:
+                    binop < : bool
+                      lhs:
+                        locator idx : i64
+                      rhs:
+                        invoke : i64
+                          target: self.entries.len
+                  body:
+                    block (3 stmts) : ()
+                      let entry
+                        init:
+                          index : HashMapEntry{key: Expr(K), value: Expr(V)}
+                            value:
+                              select .entries [unknown] : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
+                                object:
+                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+                            index:
+                              locator idx : i64
+                      expr_stmt (value)
+                        if : ()
+                          cond:
+                            binop == : bool
+                              lhs:
+                                select .key [unknown] : any
+                                  object:
+                                    locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                              rhs:
+                                locator key : any
+                          then:
+                            block (1 stmt) : ()
+                              expr_stmt ;
+                                intrinsic return : !
+                                  args:
+                                    select .value [unknown] : any
+                                      object:
+                                        locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                      expr_stmt ;
+                        assign : i64
+                          target:
+                            locator idx : i64
+                          value:
+                            binop + : i64
+                              lhs:
+                                locator idx : i64
+                              rhs:
+                                value 1 : i64
+              expr_stmt (value)
+                loop : !
+                  block (0 stmts) : ()
+        }
+      }
+      pub module test : () {
+        pub struct TestCase : TestCase{name: Expr(str), run: fn() -> ()} {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}> : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values] : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            let tests
+              init:
+                locator REGISTRY : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+            let mut passed
+              init:
+                value 0 : i64
+            let mut failed
+              init:
+                value 0 : i64
+            let mut idx
+              init:
+                value 0 : i64
+            expr_stmt (value)
+              while : ()
+                cond:
+                  binop < : bool
+                    lhs:
+                      locator idx : i64
+                    rhs:
+                      invoke : i64
+                        target: tests.len
+                body:
+                  block (4 stmts) : ()
+                    let test
+                      init:
+                        index : TestCase{name: Expr(str), run: fn() -> ()}
+                          value:
+                            locator tests : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+                          index:
+                            locator idx : i64
+                    let ok
+                      init:
+                        intrinsic catch_unwind : bool
+                          args:
+                            closure () : fn() -> ()
+                              invoke : ()
+                                target: test.run
+                    expr_stmt (value)
+                      if : ()
+                        cond:
+                          locator ok : bool
+                        then:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator passed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator passed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... ok" test.name
+                        else:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator failed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator failed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... FAILED" test.name
+                    expr_stmt ;
+                      assign : i64
+                        target:
+                          locator idx : i64
+                        value:
+                          binop + : i64
+                            lhs:
+                              locator idx : i64
+                            rhs:
+                              value 1 : i64
+            let total
+              init:
+                binop + : i64
+                  lhs:
+                    locator passed : i64
+                  rhs:
+                    locator failed : i64
+            expr_stmt ;
+              intrinsic println : ()
+                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+            expr_stmt (value)
+              struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                total:
+                  locator total : i64
+                passed:
+                  locator passed : i64
+                failed:
+                  locator failed : i64
+        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (1 stmt) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            expr_stmt (value)
+              invoke : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                target: run_tests
+      }
+    }
+    pub module helpers : () {
+      pub const GREETING: &string : &string
+        value "Hello" : &string
+      pub fn greet(name: &Expr(str)) -> () : fn(&string) -> () : fn(&string) -> ()
+        block (1 stmt) : ()
+          expr_stmt ;
+            intrinsic println : ()
+              template: "{} {}!" GREETING, name
+      pub module math : () {
+        pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+          block (1 stmt) : i64
+            expr_stmt (value)
+              binop + : i64
+                lhs:
+                  locator a : i64
+                rhs:
+                  locator b : i64
+      }
+    }
+    pub import helpers : ()
+    pub import helpers::greet as say_hi : ()
+    pub import helpers::math::add : ()
+    pub import modules::helpers::greet_from_file as file_greet : ()
+    pub import modules::helpers::math::add as file_add : ()
+    pub import std::fmt::Display : ()
+    pub fn<T: Display> echo(value: Expr(T)) -> () : fn<T: Display>(unknown) -> () : fn<T: Display>(unknown) -> ()
+      block (1 stmt) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "echo: {}" value
+    pub const fn main() -> () : fn() -> () : fn() -> ()
+      block (12 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📦 Example: 25_module_imports.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🔧 Focus: inline modules + external file modules + std imports"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🔍 Expect: greetings + math output using imported names"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
+        expr_stmt ;
+          invoke : ()
+            target: helpers::greet
+            args:
+              value "Ferro" : &string
+        expr_stmt ;
+          invoke : ()
+            target: say_hi
+            args:
+              value "module imports" : &string
+        expr_stmt ;
+          invoke : ()
+            target: file_greet
+            args:
+              value "external module" : &string
+        expr_stmt ;
+          invoke : ()
+            target: echo
+            args:
+              value 2025 : i64
+        let sum
+          init:
+            invoke : i64
+              target: add
+              args:
+                value 8 : i64
+                value 34 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "math.add(8, 34) = {}" sum
+        let file_sum
+          init:
+            invoke : i64
+              target: file_add
+              args:
+                value 10 : i64
+                value 32 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            template: "file_math.add(10, 32) = {}" file_sum
+    pub module modules : () {
+      pub module helpers : () {
+        pub const SOURCE: &string : &string
+          value "file module" : &string
+        pub fn greet_from_file(name: &Expr(str)) -> () : fn(&string) -> () : fn(&string) -> ()
+          block (1 stmt) : ()
+            expr_stmt ;
+              intrinsic println : ()
+                template: "[{}] Hello, {}!" SOURCE, name
+        pub module math : () {
+          pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+            block (1 stmt) : i64
+              expr_stmt (value)
+                binop + : i64
+                  lhs:
+                    locator a : i64
+                  rhs:
+                    locator b : i64
+        }
+      }
+    }
+}

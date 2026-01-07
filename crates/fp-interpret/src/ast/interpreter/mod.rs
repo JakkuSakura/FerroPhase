@@ -151,13 +151,13 @@ impl StoredValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct ImportedSymbol {
     module: ModuleId,
     symbol: SymbolDescriptor,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct ImportedModule {
     module: ModuleId,
 }
@@ -3288,9 +3288,13 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn handle_import(&mut self, import: &ItemImport) {
-        let Some(context) = self.module_resolution.as_ref() else {
-            self.emit_error("module resolution is not configured for this interpreter");
-            return;
+        let context = match self.module_resolution.clone() {
+            Some(context) => context,
+            None => {
+                // Imports are resolved during later lowering stages; const-eval ignores them
+                // when no module graph is available.
+                return;
+            }
         };
 
         let current_module = context
@@ -3369,7 +3373,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn expand_import_tree(&self, tree: &ItemImportTree) -> Vec<ImportDirective> {
+    fn expand_import_tree(&mut self, tree: &ItemImportTree) -> Vec<ImportDirective> {
         let mut out = Vec::new();
         let prefix = Vec::new();
         self.collect_import_tree(prefix, tree, &mut out);
@@ -3377,7 +3381,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn collect_import_tree(
-        &self,
+        &mut self,
         prefix: Vec<ImportSegment>,
         tree: &ItemImportTree,
         out: &mut Vec<ImportDirective>,
@@ -3472,7 +3476,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn push_segment(
-        &self,
+        &mut self,
         mut prefix: Vec<ImportSegment>,
         segment: ImportSegment,
         out: &mut Vec<ImportDirective>,

@@ -44,6 +44,7 @@ pub struct HirGenerator {
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
+    module_defs: HashSet<Vec<String>>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -131,6 +132,7 @@ impl HirGenerator {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
+            module_defs: HashSet::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -209,6 +211,14 @@ impl HirGenerator {
                         // user code can continue through the pipeline.
                         continue;
                     }
+                }
+                if self.module_defs.contains(&path_segments) {
+                    let module_res = hir::Res::Module(path_segments.clone());
+                    self.current_value_scope()
+                        .insert(alias.clone(), module_res.clone());
+                    self.current_type_scope()
+                        .insert(alias.clone(), module_res);
+                    continue;
                 }
                 if self.error_tolerance {
                     // Collect error and continue instead of early return
@@ -399,6 +409,7 @@ impl HirGenerator {
             structural_value_defs: HashMap::new(),
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
+            module_defs: HashSet::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -428,6 +439,7 @@ impl HirGenerator {
         self.preassigned_def_ids.clear();
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
+        self.module_defs.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -457,6 +469,12 @@ impl HirGenerator {
     fn register_value_local(&mut self, name: &str, hir_id: hir::HirId) {
         self.current_value_scope()
             .insert(name.to_string(), hir::Res::Local(hir_id));
+    }
+
+    fn record_module_def(&mut self, name: &str) {
+        let mut path = self.module_path.clone();
+        path.push(name.to_string());
+        self.module_defs.insert(path);
     }
 
     fn register_type_def(&mut self, name: &str, def_id: hir::DefId, visibility: &ast::Visibility) {
@@ -542,6 +560,7 @@ impl HirGenerator {
         self.const_list_length_scopes.clear();
         self.const_list_length_scopes.push(HashMap::new());
         self.synthetic_items.clear();
+        self.module_defs.clear();
         // Keep predeclared struct fields available for struct update lowering.
     }
 
@@ -550,6 +569,7 @@ impl HirGenerator {
             match item.kind() {
                 ItemKind::Module(module) => {
                     self.allocate_def_id_for_item(item);
+                    self.record_module_def(module.name.as_str());
                     self.push_module_scope(&module.name.name, &module.visibility);
                     self.predeclare_items(&module.items)?;
                     self.pop_module_scope();

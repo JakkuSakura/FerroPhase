@@ -6451,6 +6451,20 @@ impl<'a> BodyBuilder<'a> {
                 });
                 return Ok((operand, sig, Some(String::from(name))));
             }
+            if let Some(item) = self.program.def_map.get(def_id) {
+                if let hir::ItemKind::Function(func) = &item.kind {
+                    let sig = self.lowering.lower_function_sig(&func.sig, None);
+                    self.lowering.function_sigs.insert(*def_id, sig.clone());
+                    let name = func.sig.name.clone();
+                    let ty = self.lowering.function_pointer_ty(&sig);
+                    let operand = mir::Operand::Constant(mir::Constant {
+                        span: callee.span,
+                        user_ty: None,
+                        literal: mir::ConstantKind::Fn(mir::Symbol::from(name.clone()), ty),
+                    });
+                    return Ok((operand, sig, Some(String::from(name))));
+                }
+            }
         }
 
         let name = resolved_path
