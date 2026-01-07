@@ -99,40 +99,161 @@ ast::File {
                   block (0 stmts) : ()
         }
       }
+      pub module test : () {
+        pub struct TestCase : TestCase{name: Expr(str), run: fn() -> ()} {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}> : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+          value [2 values] : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            let tests
+              init:
+                locator REGISTRY : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+            let mut passed
+              init:
+                value 0 : i64
+            let mut failed
+              init:
+                value 0 : i64
+            let mut idx
+              init:
+                value 0 : i64
+            expr_stmt (value)
+              while : ()
+                cond:
+                  binop < : bool
+                    lhs:
+                      locator idx : i64
+                    rhs:
+                      invoke : i64
+                        target: tests.len
+                body:
+                  block (5 stmts) : ()
+                    let test
+                      init:
+                        index : TestCase{name: Expr(str), run: fn() -> ()}
+                          value:
+                            locator tests : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+                          index:
+                            locator idx : i64
+                    let run
+                      init:
+                        select .run [unknown] : fn() -> ()
+                          object:
+                            locator test : TestCase{name: Expr(str), run: fn() -> ()}
+                    let ok
+                      init:
+                        intrinsic catch_unwind : bool
+                          args:
+                            closure () : fn() -> ()
+                              invoke : ()
+                                target: run
+                    expr_stmt (value)
+                      if : ()
+                        cond:
+                          locator ok : bool
+                        then:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator passed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator passed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... ok" test.name
+                        else:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator failed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator failed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... FAILED" test.name
+                    expr_stmt ;
+                      assign : i64
+                        target:
+                          locator idx : i64
+                        value:
+                          binop + : i64
+                            lhs:
+                              locator idx : i64
+                            rhs:
+                              value 1 : i64
+            let total
+              init:
+                binop + : i64
+                  lhs:
+                    locator passed : i64
+                  rhs:
+                    locator failed : i64
+            expr_stmt ;
+              intrinsic println : ()
+                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+            expr_stmt (value)
+              struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                total:
+                  locator total : i64
+                passed:
+                  locator passed : i64
+                failed:
+                  locator failed : i64
+        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (1 stmt) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            expr_stmt (value)
+              invoke : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                target: run_tests
+      }
     }
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (10 stmts) : ()
+      block (8 stmts) : ()
         expr_stmt ;
           intrinsic println : ()
             template: "📘 Tutorial: 24_tests.fp"
         expr_stmt ;
           intrinsic println : ()
-            template: "🧭 Focus: minimal test registration example plus manual execution"
+            template: "🧭 Focus: minimal test harness using assert! macros"
         expr_stmt ;
           intrinsic println : ()
-            template: "🧪 What to look for: assert() should not trigger"
+            template: "🧪 What to look for: both tests pass with no assertion failures"
         expr_stmt ;
           intrinsic println : ()
-            template: "✅ Expectation: both tests run without printing assertion failure"
+            template: "✅ Expectation: test report shows 2 passed"
         expr_stmt ;
           intrinsic println : ()
             template: ""
         expr_stmt ;
           intrinsic println : ()
-            template: "Running tests manually:"
-        expr_stmt ;
-          invoke : ()
-            target: adds_two_numbers
-        expr_stmt ;
-          intrinsic println : ()
-            template: "  adds_two_numbers ... ok"
-        expr_stmt ;
-          invoke : ()
-            target: string_concat
+            template: "Running tests via std::test::run_tests:"
+        let report
+          init:
+            invoke : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+              target: std::test::run_tests
         expr_stmt ;
           intrinsic println : ()
-            template: "  string_concat ... ok"
-    pub [attrs] fn adds_two_numbers() -> () : fn() -> () : fn() -> ()
+            template: "Summary: {} passed, {} failed, {} total" report.passed, report.failed, report.total
+    expr_item : ()
+      value () : ()
+    pub fn adds_two_numbers() -> () : fn() -> () : fn() -> ()
       block (3 stmts) : ()
         let left
           init:
@@ -145,21 +266,34 @@ ast::File {
           init:
             value 3 : i64
         expr_stmt ;
-          if : ()
-            cond:
-              unop ! : bool
-                value:
-                  binop == : bool
-                    lhs:
-                      locator left : i64
-                    rhs:
-                      locator right : i64
-            then:
-              block (1 stmt) : ()
-                expr_stmt ;
-                  intrinsic println : ()
-                    template: "assertion failed"
-    pub [attrs] fn string_concat() -> () : fn() -> () : fn() -> ()
+          block (4 stmts) : ()
+            let __fp_assert_left
+              init:
+                locator left : i64
+            let __fp_assert_right
+              init:
+                locator right : i64
+            expr_stmt ;
+              if : ()
+                cond:
+                  unop ! : bool
+                    value:
+                      binop == : bool
+                        lhs:
+                          locator __fp_assert_left : i64
+                        rhs:
+                          locator __fp_assert_right : i64
+                then:
+                  block (1 stmt) : ()
+                    expr_stmt ;
+                      intrinsic panic : !
+                        args:
+                          value "assertion failed: left != right" : &string
+            expr_stmt ;
+              value () : ()
+    expr_item : ()
+      value () : ()
+    pub fn string_concat() -> () : fn() -> () : fn() -> ()
       block (2 stmts) : ()
         let msg
           init:
@@ -169,18 +303,29 @@ ast::File {
               rhs:
                 value "world" : &string
         expr_stmt ;
-          if : ()
-            cond:
-              unop ! : bool
-                value:
-                  binop == : bool
-                    lhs:
-                      locator msg : &string
-                    rhs:
-                      value "hello, world" : &string
-            then:
-              block (1 stmt) : ()
-                expr_stmt ;
-                  intrinsic println : ()
-                    template: "assertion failed"
+          block (4 stmts) : ()
+            let __fp_assert_left
+              init:
+                locator msg : &string
+            let __fp_assert_right
+              init:
+                value "hello, world" : &string
+            expr_stmt ;
+              if : ()
+                cond:
+                  unop ! : bool
+                    value:
+                      binop == : bool
+                        lhs:
+                          locator __fp_assert_left : &string
+                        rhs:
+                          locator __fp_assert_right : &string
+                then:
+                  block (1 stmt) : ()
+                    expr_stmt ;
+                      intrinsic panic : !
+                        args:
+                          value "assertion failed: left != right" : &string
+            expr_stmt ;
+              value () : ()
 }

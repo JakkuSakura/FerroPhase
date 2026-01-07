@@ -2680,8 +2680,10 @@ impl CaptureCollector {
             }
             ast::ExprKind::Macro(_) => {}
             ast::ExprKind::Invoke(invoke) => {
-                if let ast::ExprInvokeTarget::Expr(target) = &invoke.target {
-                    self.visit(target.as_ref());
+                match &invoke.target {
+                    ast::ExprInvokeTarget::Expr(target) => self.visit(target.as_ref()),
+                    ast::ExprInvokeTarget::Method(select) => self.visit(select.obj.as_ref()),
+                    _ => {}
                 }
                 for arg in &invoke.args {
                     self.visit(arg);
@@ -2972,8 +2974,28 @@ impl CaptureReplacer {
                 for arg in &mut invoke.args {
                     self.visit(arg);
                 }
-                if let ast::ExprInvokeTarget::Expr(target) = &mut invoke.target {
-                    self.visit(target.as_mut());
+                match &mut invoke.target {
+                    ast::ExprInvokeTarget::Expr(target) => {
+                        self.visit(target.as_mut());
+                    }
+                    ast::ExprInvokeTarget::Function(locator) => {
+                        if let Some(ident) = locator.as_ident() {
+                            if let Some(capture_ty) = self.captures.get(ident.as_str()) {
+                                let mut expr_struct =
+                                    ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
+                                        obj: ast::Expr::ident(self.env_ident.clone()).into(),
+                                        field: ident.clone(),
+                                        select: ast::ExprSelectType::Field,
+                                    }));
+                                expr_struct.set_ty(capture_ty.clone());
+                                invoke.target = ast::ExprInvokeTarget::Expr(expr_struct.into());
+                            }
+                        }
+                    }
+                    ast::ExprInvokeTarget::Method(select) => {
+                        self.visit(select.obj.as_mut());
+                    }
+                    _ => {}
                 }
             }
             ast::ExprKind::Await(await_expr) => {

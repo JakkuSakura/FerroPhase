@@ -270,7 +270,7 @@ impl Parser {
             _ => {}
         }
 
-        if self.peek_non_trivia_raw() == Some("|") {
+        if matches!(self.peek_non_trivia_raw(), Some("|") | Some("||")) {
             return self.parse_closure_expr();
         }
 
@@ -881,12 +881,18 @@ impl Parser {
             self.bump_token_into(&mut children);
             self.bump_trivia_into(&mut children);
         }
-        self.expect_token_raw("|")?;
-        self.bump_token_into(&mut children);
-        self.bump_trivia_into(&mut children);
+        let is_double_bar = self.peek_non_trivia_raw() == Some("||");
+        if is_double_bar {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        } else {
+            self.expect_token_raw("|")?;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
 
         // params until '|'
-        if self.peek_non_trivia_raw() != Some("|") {
+        if !is_double_bar && self.peek_non_trivia_raw() != Some("|") {
             loop {
                 self.parse_closure_param_into(&mut children)?;
                 self.bump_trivia_into(&mut children);
@@ -898,9 +904,11 @@ impl Parser {
                 self.bump_trivia_into(&mut children);
             }
         }
-        self.expect_token_raw("|")?;
-        self.bump_token_into(&mut children);
-        self.bump_trivia_into(&mut children);
+        if !is_double_bar {
+            self.expect_token_raw("|")?;
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
 
         let body = if self.peek_non_trivia_raw() == Some("{") {
             self.parse_block_expr()?

@@ -7831,10 +7831,43 @@ impl<'a> BodyBuilder<'a> {
         }
 
         let callee = &args[0];
-        let (func, sig, _name) = self.resolve_callee(callee)?;
-        if !sig.inputs.is_empty() {
-            self.lowering
-                .emit_error(expr.span, "catch_unwind only supports zero-argument callables");
+        let mut call_args: Vec<mir::Operand> = Vec::new();
+        let (func, sig, _name) = if let hir::ExprKind::Struct(path, _) = &callee.kind {
+            let struct_name = path.segments.last().map(|seg| seg.name.as_str());
+            let closure_suffix = struct_name.and_then(|name| name.strip_prefix("__Closure"));
+            if let Some(suffix) = closure_suffix {
+                let env = self.lower_operand(callee, None)?;
+                let call_name = format!("__closure{}_call", suffix);
+                let path = hir::Path {
+                    segments: vec![hir::PathSegment {
+                        name: hir::Symbol::new(call_name),
+                        args: None,
+                    }],
+                    res: None,
+                };
+                let call_expr = hir::Expr {
+                    hir_id: expr.hir_id,
+                    kind: hir::ExprKind::Path(path),
+                    span: expr.span,
+                };
+                call_args.push(env.operand);
+                self.resolve_callee(&call_expr)?
+            } else {
+                self.resolve_callee(callee)?
+            }
+        } else {
+            self.resolve_callee(callee)?
+        };
+        if call_args.is_empty() {
+            if !sig.inputs.is_empty() {
+                self.lowering
+                    .emit_error(expr.span, "catch_unwind only supports zero-argument callables");
+            }
+        } else if sig.inputs.len() != call_args.len() {
+            self.lowering.emit_error(
+                expr.span,
+                "catch_unwind closure must not take user arguments",
+            );
         }
         if !MirLowering::is_unit_ty(&sig.output) {
             self.lowering.emit_error(
@@ -7868,7 +7901,7 @@ impl<'a> BodyBuilder<'a> {
             source_info: expr.span,
             kind: mir::TerminatorKind::Call {
                 func,
-                args: Vec::new(),
+                args: call_args,
                 destination: Some((call_result_place, ok_block)),
                 cleanup: Some(unwind_block),
                 from_hir_call: true,

@@ -3311,6 +3311,19 @@ impl LirGenerator {
         target_ty: &lir::LirType,
     ) -> lir::LirConstant {
         match constant {
+            lir::LirConstant::String(value)
+                if matches!(target_ty, lir::LirType::Struct { fields, .. } if fields.len() == 2
+                    && matches!(&fields[0], lir::LirType::Ptr(inner) if **inner == lir::LirType::I8)
+                    && fields[1] == lir::LirType::I64) =>
+            {
+                lir::LirConstant::Struct(
+                    vec![
+                        lir::LirConstant::String(value.clone()),
+                        lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64),
+                    ],
+                    target_ty.clone(),
+                )
+            }
             lir::LirConstant::Int(0, _) if matches!(target_ty, lir::LirType::Ptr(_)) => {
                 lir::LirConstant::Null(target_ty.clone())
             }

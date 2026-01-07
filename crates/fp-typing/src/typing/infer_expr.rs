@@ -877,6 +877,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         arg_vars.len()
                     ));
                 }
+                if let Some(&arg_var) = arg_vars.first() {
+                    let ret_var = self.unit_type_var();
+                    let fn_var = self.fresh_type_var();
+                    self.bind(
+                        fn_var,
+                        TypeTerm::Function(FunctionTerm {
+                            params: Vec::new(),
+                            ret: ret_var,
+                        }),
+                    );
+                    self.unify(arg_var, fn_var)?;
+                }
                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
             }
             IntrinsicCallKind::Input => {
@@ -1066,7 +1078,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 }
-                self.lookup_struct_method(obj_var, &select.field)?
+                if let Some(field_var) =
+                    self.try_infer_field_function_call(obj_var, &select.field)?
+                {
+                    field_var
+                } else {
+                    self.lookup_struct_method(obj_var, &select.field)?
+                }
             }
         };
 
@@ -1076,6 +1094,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.unify(*param_var, arg_var)?;
         }
         Ok(func_info.ret)
+    }
+
+    fn try_infer_field_function_call(
+        &mut self,
+        obj_var: TypeVarId,
+        field: &Ident,
+    ) -> Result<Option<TypeVarId>> {
+        let ty = self.resolve_to_ty(obj_var)?;
+        let resolved_ty = Self::peel_reference(ty);
+        let field_ty = match resolved_ty {
+            Ty::Struct(struct_ty) => struct_ty
+                .fields
+                .iter()
+                .find(|f| f.name == *field)
+                .map(|f| f.value.clone()),
+            Ty::Structural(structural) => structural
+                .fields
+                .iter()
+                .find(|f| f.name == *field)
+                .map(|f| f.value.clone()),
+            _ => None,
+        };
+        let Some(field_ty) = field_ty else {
+            return Ok(None);
+        };
+        if !matches!(field_ty, Ty::Function(_)) {
+            return Ok(None);
+        }
+        let field_var = self.type_from_ast_ty(&field_ty)?;
+        Ok(Some(field_var))
     }
 
     fn try_infer_collection_call(&mut self, invoke: &mut ExprInvoke) -> Result<Option<TypeVarId>> {

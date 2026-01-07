@@ -1,4 +1,13 @@
 hir::Program {
+    struct __Closure0 {
+        pub __fp_no_capture: i8,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        run()
+    }
+
     pub struct std::collections::HashMapEntry<K, V> {
         pub key: K,
         pub value: V,
@@ -43,18 +52,65 @@ hir::Program {
         }
     }
 
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 2] =
+        [TestCase { name: "adds_two_numbers", run: adds_two_numbers }, TestCase { name: "string_concat", run: string_concat }];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let run = test.run;
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
     pub fn main() -> () {
         {
             printf("📘 Tutorial: 24_tests.fp\n");
-            printf("🧭 Focus: minimal test registration example plus manual execution\n");
-            printf("🧪 What to look for: assert() should not trigger\n");
-            printf("✅ Expectation: both tests run without printing assertion failure\n");
+            printf("🧭 Focus: minimal test harness using assert! macros\n");
+            printf("🧪 What to look for: both tests pass with no assertion failures\n");
+            printf("✅ Expectation: test report shows 2 passed\n");
             printf("\n");
-            printf("Running tests manually:\n");
-            adds_two_numbers();
-            printf("  adds_two_numbers ... ok\n");
-            string_concat();
-            printf("  string_concat ... ok\n");
+            printf("Running tests via std::test::run_tests:\n");
+            let report = std::test::run_tests();
+            printf("Summary: %lld passed, %lld failed, %lld total\n", report.passed, report.failed, report.total);
         }
     }
 
