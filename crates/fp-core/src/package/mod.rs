@@ -89,3 +89,4 @@ pub struct PackageDescriptor {
 }
 
 pub mod provider;
+pub mod graph;

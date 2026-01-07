@@ -23,7 +23,7 @@ impl Display for ModuleId {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ModuleLanguage {
     Ferro,
     Rust,
@@ -73,3 +73,5 @@ pub struct ModuleDescriptor {
     pub exports: Vec<SymbolDescriptor>,
     pub requires_features: Vec<FeatureRef>,
 }
+
+pub mod resolver;
