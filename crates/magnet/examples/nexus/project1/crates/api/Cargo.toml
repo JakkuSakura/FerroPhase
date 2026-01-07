@@ -1,0 +1,18 @@
+[package]
+name = "project1-api"
+version = "0.1.0"
+edition = "2024"
+description = ""
+authors = []
+
+[dependencies.shared-types]
+path = "../../../shared-lib/crates/shared-types"
+
+[dependencies.eyre]
+version = "*"
+
+[dependencies.log]
+version = "*"
+
+[dependencies.shared-utils]
+path = "../../../shared-lib/crates/shared-utils"
