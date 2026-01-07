@@ -23,6 +23,12 @@ cargo install --path ./crates/magnet
 magnet init [path]
 ```
 
+### Initialize Magnet.toml from Cargo.toml
+
+```bash
+magnet init --from-cargo [path]
+```
+
 ### Generate Cargo.toml from Magnet.toml
 
 ```bash
@@ -39,6 +45,12 @@ magnet check [--config Magnet.toml]
 
 ```bash
 magnet list [--config Magnet.toml]
+```
+
+### Run a FerroPhase package via fp-cli
+
+```bash
+magnet run [path] [--package name] [--entry src/main.fp] [--mode compile|interpret]
 ```
 
 ## Example Magnet.toml

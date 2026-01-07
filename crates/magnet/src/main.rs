@@ -1,10 +1,10 @@
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use eyre::{Context, Result};
 use std::path::PathBuf;
 use tracing::{debug, info};
 
 // Use local utils module instead of common crate
-use magnet::commands::{self, generate::GenerateOptions};
+use magnet::commands::{self, generate::GenerateOptions, RunMode, RunOptions};
 use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point
@@ -28,7 +28,7 @@ fn main() -> Result<()> {
 
     // Execute the appropriate subcommand
     match cli.command {
-        Some(Commands::Init { path }) => commands::init(&path),
+        Some(Commands::Init { path, from_cargo }) => commands::init(&path, from_cargo),
         Some(Commands::Generate {
             config,
             clean,
@@ -80,6 +80,20 @@ fn main() -> Result<()> {
             SubmoduleAction::List => commands::submodule_list(&path),
             SubmoduleAction::Switch { rev } => commands::submodule_switch(&path, &rev),
         },
+        Some(Commands::Run {
+            path,
+            package,
+            entry,
+            mode,
+        }) => {
+            let options = RunOptions {
+                path,
+                package,
+                entry,
+                mode: mode.into(),
+            };
+            commands::run(&options)
+        }
         None => {
             info!("No command specified. Run with --help for usage information.");
             Ok(())
@@ -110,6 +124,10 @@ enum Commands {
         /// Path to initialize the Magnet.toml file
         #[arg(default_value = ".")]
         path: PathBuf,
+
+        /// Initialize Magnet.toml from an existing Cargo.toml
+        #[arg(long)]
+        from_cargo: bool,
     },
     /// Generate or update Cargo.toml files from Magnet.toml
     Generate {
@@ -175,6 +193,24 @@ enum Commands {
         #[arg(short = 'd', long, default_value = "crates")]
         crates_dir: String,
     },
+    /// Run a FerroPhase package via fp-cli
+    Run {
+        /// Path to a package/workspace directory or entry file
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Select a package by name (preferred over cwd/auto)
+        #[arg(long)]
+        package: Option<String>,
+
+        /// Override the entry file (default: src/main.fp)
+        #[arg(long)]
+        entry: Option<PathBuf>,
+
+        /// Run mode (compile or interpret)
+        #[arg(long, default_value = "compile")]
+        mode: RunModeArg,
+    },
     /// Manage git submodules
     Submodule {
         /// Action to perform on submodules
@@ -189,6 +225,21 @@ enum Commands {
         #[arg(short, long)]
         remote: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum RunModeArg {
+    Compile,
+    Interpret,
+}
+
+impl From<RunModeArg> for RunMode {
+    fn from(value: RunModeArg) -> Self {
+        match value {
+            RunModeArg::Compile => RunMode::Compile,
+            RunModeArg::Interpret => RunMode::Interpret,
+        }
+    }
 }
 
 #[derive(Subcommand)]

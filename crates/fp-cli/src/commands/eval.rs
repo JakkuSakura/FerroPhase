@@ -8,7 +8,7 @@ use crate::{
 };
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
-use clap::Args;
+use clap::{ArgAction, Args};
 use tracing::info;
 
 /// Arguments for the eval command
@@ -18,9 +18,9 @@ pub struct EvalArgs {
     #[arg(short, long, conflicts_with = "file")]
     pub expr: Option<String>,
 
-    /// File containing code to evaluate
-    #[arg(short, long)]
-    pub file: Option<std::path::PathBuf>,
+    /// File(s) containing code to evaluate
+    #[arg(short, long, action = ArgAction::Append)]
+    pub file: Vec<std::path::PathBuf>,
 
     /// Print the AST representation
     #[arg(long)]
@@ -41,53 +41,98 @@ pub struct EvalArgs {
 
 /// Execute the eval command
 pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
-    // Determine pipeline input
-    let (input, description) = if let Some(expr) = &args.expr {
-        (
-            PipelineInput::Expression(expr.clone()),
-            format!("expression: {}", expr),
-        )
-    } else if let Some(file) = &args.file {
-        crate::commands::validate_paths_exist(&[file.clone()], true, "eval")?;
-        (
-            PipelineInput::File(file.clone()),
-            format!("file '{}'", file.display()),
-        )
-    } else {
+    if let Some(expr) = &args.expr {
+        let input = PipelineInput::Expression(expr.clone());
+        let description = format!("expression: {}", expr);
+        return eval_single(input, &description, &args).await;
+    }
+
+    if !args.file.is_empty() {
+        crate::commands::validate_paths_exist(&args.file, true, "eval")?;
+        return eval_files(&args).await;
+    }
+
+    {
         return Err(CliError::InvalidInput(
             "Either --expr or --file must be provided".to_string(),
         ));
-    };
+    }
+}
 
+// printing is centralized in commands::common::print_runtime_result
+
+async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -> Result<()> {
     info!("Evaluating {}", description);
 
-    // Configure pipeline for evaluation
     let config = PipelineConfig {
         optimization_level: 0,
         print_ast: args.print_ast,
         print_passes: args.print_passes,
         target: "eval".to_string(),
-        runtime: args.runtime.unwrap_or_else(|| "literal".to_string()),
+        runtime: args.runtime.clone().unwrap_or_else(|| "literal".to_string()),
     };
 
-    // Execute pipeline
     let mut pipeline = Pipeline::new();
     let output = pipeline.execute(input, &config).await?;
+    print_eval_output(&output, args, None)?;
 
-    // Extract and print result
+    Ok(())
+}
+
+async fn eval_files(args: &EvalArgs) -> Result<()> {
+    let config = PipelineConfig {
+        optimization_level: 0,
+        print_ast: args.print_ast,
+        print_passes: args.print_passes,
+        target: "eval".to_string(),
+        runtime: args.runtime.clone().unwrap_or_else(|| "literal".to_string()),
+    };
+
+    for file in &args.file {
+        let description = format!("file '{}'", file.display());
+        info!("Evaluating {}", description);
+        let mut pipeline = Pipeline::new();
+        let output = pipeline
+            .execute(PipelineInput::File(file.clone()), &config)
+            .await?;
+        let label = if args.file.len() > 1 {
+            Some(file.as_path())
+        } else {
+            None
+        };
+        print_eval_output(&output, args, label)?;
+    }
+
+    Ok(())
+}
+
+fn print_eval_output(
+    output: &PipelineOutput,
+    args: &EvalArgs,
+    label: Option<&std::path::Path>,
+) -> Result<()> {
+    let prefix = match label {
+        Some(path) => format!("{} ", path.display()),
+        None => String::new(),
+    };
+
     match output {
         PipelineOutput::Value(value) => {
             if args.print_result {
                 println!(
-                    "{} {}",
+                    "{}{} {}",
+                    prefix,
                     console::style("Result:").green().bold(),
-                    format_value_brief(&value)
+                    format_value_brief(value)
                 );
             }
         }
         PipelineOutput::RuntimeValue(runtime_value) => {
             if args.print_result {
-                print_runtime_result(&runtime_value)?;
+                if !prefix.is_empty() {
+                    println!("{}", prefix.trim_end());
+                }
+                print_runtime_result(runtime_value)?;
             }
         }
         _ => {
@@ -100,8 +145,6 @@ pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
     Ok(())
 }
 
-// printing is centralized in commands::common::print_runtime_result
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,7 +156,7 @@ mod tests {
         let config = CliConfig::default();
         let args = EvalArgs {
             expr: Some("1 + 2 * 3".to_string()),
-            file: None,
+            file: Vec::new(),
             print_ast: false,
             print_passes: false,
             print_result: true,
@@ -137,7 +180,7 @@ mod tests {
 
         let args = EvalArgs {
             expr: None,
-            file: Some(temp_file.path().to_path_buf()),
+            file: vec![temp_file.path().to_path_buf()],
             print_ast: false,
             print_passes: false,
             print_result: true,

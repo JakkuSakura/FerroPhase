@@ -27,8 +27,26 @@ fn test_magnet_cli_commands() -> Result<()> {
     
     // Read the generated Magnet.toml and check its contents
     let content = fs::read_to_string(&magnet_toml_path)?;
-    assert!(content.contains("[project]"), "Magnet.toml missing [project] section");
     assert!(content.contains("[workspace]"), "Magnet.toml missing [workspace] section");
+    assert!(
+        content.contains("members"),
+        "Magnet.toml missing workspace members"
+    );
+
+    let project_name = temp_dir
+        .path()
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("magnet-project");
+    let package_manifest = temp_dir
+        .path()
+        .join("crates")
+        .join(project_name)
+        .join("Magnet.toml");
+    assert!(
+        package_manifest.exists(),
+        "Package Magnet.toml was not created"
+    );
     
     // Create a crates directory and some test crates
     let crates_dir = temp_dir.path().join("crates");
@@ -66,11 +84,7 @@ crate1 = { version = "0.1.0" }
     // Update Magnet.toml to include our test crates
     fs::write(
         &magnet_toml_path,
-        r#"[project]
-name = "test-project"
-version = "0.1.0"
-
-[workspace]
+        r#"[workspace]
 members = ["crates/*"]
 exclude = []
 resolver = "2"
@@ -80,18 +94,22 @@ serde = "1.0"
 "#
     )?;
     
-    // Test the list command
+    // Test the tree command
     let output = Command::new(magnet_bin)
-        .args(["list", "--config", magnet_toml_path.to_str().unwrap()])
+        .args(["tree", "--config", magnet_toml_path.to_str().unwrap()])
         .current_dir(temp_dir.path())
         .output()?;
     
     assert!(output.status.success(), 
-        "magnet list failed with: {}", String::from_utf8_lossy(&output.stderr));
+        "magnet tree failed with: {}", String::from_utf8_lossy(&output.stderr));
     
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    assert!(output_str.contains("crate1"), "List output should include crate1");
-    assert!(output_str.contains("crate2"), "List output should include crate2");
+    let output_str = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output_str.contains("crate1"), "Tree output should include crate1");
+    assert!(output_str.contains("crate2"), "Tree output should include crate2");
     
     // Test the generate command
     let output = Command::new(magnet_bin)
