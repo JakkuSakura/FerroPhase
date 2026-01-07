@@ -1,10 +1,11 @@
 //! Command implementation for running FerroPhase code via fp-cli
 
-use crate::models::{ManifestModel, PackageModel};
+use crate::models::{ManifestModel, PackageGraph, PackageModel};
 use crate::utils::find_furthest_manifest;
 use eyre::{Context, Result, bail};
 use glob::glob;
 use std::collections::BTreeSet;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -19,21 +20,32 @@ pub struct RunOptions {
     pub package: Option<String>,
     pub entry: Option<PathBuf>,
     pub mode: RunMode,
+    pub resolver: String,
 }
 
 pub fn run(options: &RunOptions) -> Result<()> {
     let start_dir = resolve_start_dir(&options.path)?;
-    let package = resolve_package(&start_dir, options.package.as_deref())?;
+    let (_root, manifest) = find_furthest_manifest(&start_dir)?;
+    let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
     let entry = resolve_entry(&options.path, &package, options.entry.as_deref())?;
     let sources = collect_sources(&package, &entry)?;
+    let graph_path = write_package_graph(&package.root_path, &package)?;
 
     match options.mode {
-        RunMode::Compile => run_compile(&package, &entry, &sources),
-        RunMode::Interpret => run_interpret(&package, &sources),
+        RunMode::Compile => {
+            run_compile(&package, &entry, &sources, &graph_path, &options.resolver)
+        }
+        RunMode::Interpret => run_interpret(&package, &sources, &graph_path, &options.resolver),
     }
 }
 
-fn run_compile(package: &PackageModel, entry: &Path, sources: &[PathBuf]) -> Result<()> {
+fn run_compile(
+    package: &PackageModel,
+    entry: &Path,
+    sources: &[PathBuf],
+    graph_path: &Path,
+    resolver: &str,
+) -> Result<()> {
     let fp_bin = resolve_fp_binary()?;
     let output_dir = package.root_path.join("target").join("magnet");
     let entry_output = output_path_for_entry(entry, &output_dir);
@@ -45,6 +57,8 @@ fn run_compile(package: &PackageModel, entry: &Path, sources: &[PathBuf]) -> Res
     }
     command.arg("--target").arg("binary");
     command.arg("--output").arg(&output_dir);
+    command.arg("--package-graph").arg(graph_path);
+    command.arg("--resolver").arg(resolver);
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
@@ -74,7 +88,12 @@ fn run_compile(package: &PackageModel, entry: &Path, sources: &[PathBuf]) -> Res
     Ok(())
 }
 
-fn run_interpret(package: &PackageModel, sources: &[PathBuf]) -> Result<()> {
+fn run_interpret(
+    package: &PackageModel,
+    sources: &[PathBuf],
+    graph_path: &Path,
+    resolver: &str,
+) -> Result<()> {
     let fp_bin = resolve_fp_binary()?;
     let mut command = Command::new(&fp_bin);
     command.arg("compile");
@@ -82,6 +101,8 @@ fn run_interpret(package: &PackageModel, sources: &[PathBuf]) -> Result<()> {
         command.arg(source);
     }
     command.arg("--target").arg("interpret");
+    command.arg("--package-graph").arg(graph_path);
+    command.arg("--resolver").arg(resolver);
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
@@ -106,9 +127,12 @@ fn resolve_start_dir(path: &Path) -> Result<PathBuf> {
     }
 }
 
-pub(crate) fn resolve_package(start_dir: &Path, package_name: Option<&str>) -> Result<PackageModel> {
+pub(crate) fn resolve_package(
+    start_dir: &Path,
+    manifest: &ManifestModel,
+    package_name: Option<&str>,
+) -> Result<PackageModel> {
     if let Some(name) = package_name {
-        let (_root, manifest) = find_furthest_manifest(start_dir)?;
         let packages = manifest.list_packages()?;
         return packages
             .into_iter()
@@ -120,7 +144,6 @@ pub(crate) fn resolve_package(start_dir: &Path, package_name: Option<&str>) -> R
         return Ok(package);
     }
 
-    let (_root, manifest) = find_furthest_manifest(start_dir)?;
     let packages = manifest.list_packages()?;
     match packages.len() {
         0 => bail!("No packages found under {}", start_dir.display()),
@@ -186,6 +209,24 @@ pub(crate) fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf 
         .unwrap_or("main");
     let ext = if cfg!(windows) { "exe" } else { "out" };
     output_dir.join(format!("{}.{}", stem, ext))
+}
+
+fn write_package_graph(package_root: &Path, package: &PackageModel) -> Result<PathBuf> {
+    let mut graph = PackageGraph::from_path(package_root)?;
+    graph.selected_package = Some(package.name.clone());
+    let output_dir = package.root_path.join("target").join("magnet");
+    fs::create_dir_all(&output_dir).with_context(|| {
+        format!(
+            "Failed to create output directory at {}",
+            output_dir.display()
+        )
+    })?;
+    let graph_path = output_dir.join("package-graph.json");
+    let payload =
+        serde_json::to_string_pretty(&graph).context("Failed to serialize package graph")?;
+    fs::write(&graph_path, payload)
+        .with_context(|| format!("Failed to write {}", graph_path.display()))?;
+    Ok(graph_path)
 }
 
 fn resolve_fp_binary() -> Result<PathBuf> {

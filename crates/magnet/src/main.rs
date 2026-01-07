@@ -85,12 +85,14 @@ fn main() -> Result<()> {
             package,
             entry,
             mode,
+            resolver,
         }) => {
             let options = RunOptions {
                 path,
                 package,
                 entry,
                 mode: mode.into(),
+                resolver,
             };
             commands::run(&options)
         }
@@ -210,6 +212,10 @@ enum Commands {
         /// Run mode (compile or interpret)
         #[arg(long, default_value = "compile")]
         mode: RunModeArg,
+
+        /// Module resolver strategy used by fp
+        #[arg(long, default_value = "ferrophase")]
+        resolver: String,
     },
     /// Manage git submodules
     Submodule {

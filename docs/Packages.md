@@ -27,7 +27,9 @@ awesome-lib/
 ```
 
 - `Ferrophase.toml` – package manifest (see below).
-- `src/` – FerroPhase modules (see `Modules.md`).
+- `src/` – FerroPhase modules (see `Modules.md`). The fp compiler does not scan
+  the filesystem directly; module discovery is provided by the package graph
+  produced by Magnet.
 - `bindings/` – generated or hand-authored language bindings.
 - `tests/` – language-aware tests; subdirectories mirror `targets`.
 - `target/` – build outputs, caches, and transpiled artefacts. The CLI manages
@@ -103,8 +105,9 @@ publish = true
 
 ### In-Memory Package Model
 
-Internally the toolchain represents each package with an immutable snapshot so
-higher layers can reason about metadata without repeatedly reading manifests:
+Internally the toolchain represents each package with an immutable snapshot.
+Magnet provides this package graph to fp; fp does not load manifests or scan
+files directly:
 
 ```rust
 pub struct PackageDescriptor {
@@ -129,16 +132,41 @@ pub struct PackageMetadata {
 }
 ```
 
-- `manifest_path` and `root` live inside the virtual filesystem layer so package
-  providers work with overlays or generated trees.
-- `modules` stores the module descriptors collected for this package (see
-  `Modules.md`).
+- `manifest_path` and `root` live inside the virtual filesystem layer so the
+  package graph can be generated from overlays or build outputs.
+- `modules` stores module descriptors collected by Magnet. fp treats this as
+  authoritative input and never enumerates the filesystem.
 - `dependencies` captures the normalized dependency graph, including feature
-  edges and target filters, ready for resolvers or registries.
+  edges and target filters.
 
-Providers such as `fp_rust::package::CargoPackageProvider` populate these
-structs by parsing `Cargo.toml`, `Ferrophase.toml`, or registry manifests and
-reading sources via the virtual filesystem abstraction.
+Magnet is responsible for producing this graph; fp only consumes it.
+
+### Package Graph Contract
+
+Magnet emits a package graph that fp consumes at runtime:
+
+- Package identity (name, version, features, dependencies) is resolved by
+  Magnet.
+- Module descriptors include `module_path`, `language`, and `source`. The
+  `module_path` is canonical and language-agnostic.
+- The graph is immutable for a compilation run; fp caches it for resolution.
+
+fp does not attempt to infer module trees or read manifests. It relies entirely
+on the graph for correctness and reproducibility.
+
+### Language-Specific Resolution
+
+fp resolves modules and symbols via a language-specific strategy:
+
+- **Rust-like (FerroPhase)**: `crate::`, `self::`, `super::`, `use` trees, and
+  Rust visibility rules.
+- **Python**: dotted module paths, `from x import y`, optional `*` imports, and
+  runtime-only dynamic imports.
+- **TypeScript**: module specifiers (package/path) mapped to `module_path` by
+  Magnet, with default/named exports.
+
+Each strategy maps imports to `ModuleId` and resolves symbols within a module.
+The shared fp pipeline only orchestrates resolution and diagnostics.
 
 ## Workspaces
 
@@ -161,36 +189,25 @@ toolchain = "nightly-2024-08-15"
 
 ### Magnet Integration
 
-Projects managed by the Magnet super-workspace can layer FerroPhase packages
-alongside existing Cargo crates:
+Magnet owns nexus/workspace/package management and emits the package graph that
+fp consumes:
 
-1. Magnet owns the outer workspace definition (`Magnet.toml`) and is
-   responsible for generating `Cargo.toml` manifests via `magnet generate`.
-2. FerroPhase packages live inside Magnet members (e.g. `crates/my_lib/`). Each
-   retains its own `Ferrophase.toml` describing multi-language targets.
-3. Run Magnet first to ensure Cargo manifests are up-to-date, then invoke
-   `fp workspace build` (or `fp build`) to produce FerroPhase artefacts.
-4. Keep FerroPhase lockfiles (`Ferrophase.lock`) alongside Magnet’s Cargo
-   metadata; both should be committed to source control to guarantee reproducible
-   builds.
-5. When adding a new package, register it in both `Magnet.toml` (for Rust
-   dependency wiring) and `Ferrophase.workspace.toml` (for multi-language
-   tracking).
-
-Magnet’s path-based dependency rewrites complement FerroPhase’s own manifest
-system: use Magnet to govern Rust crates, while FerroPhase manifests govern
-transpiled outputs and cross-language bindings.
+1. Magnet owns the outer workspace definition (`Magnet.toml`) and package
+   manifests (including cross-language bindings).
+2. Magnet emits the normalized package graph (packages, modules, dependencies).
+3. fp consumes the graph and performs language-specific module resolution at
+   runtime. It does not scan files or interpret manifests itself.
+4. Keep lockfiles (`Ferrophase.lock`) alongside Magnet metadata for
+   reproducibility.
 
 ## Dependency Resolution & Lockfiles
 
-- Dependencies are resolved against the default FerroPhase registry unless a
-  `[registry]` override is present.
+- Dependencies are resolved by Magnet and serialized into the package graph.
 - `Ferrophase.lock` records exact versions, checksums, and supported targets per
-  dependency.
-- Target-specific builds (e.g. `fp build --target python`) prune dependencies
-  that opt out of that language.
-- The resolver rejects circular package dependencies and enforces semver
-  compatibility across all targets.
+  dependency, as produced by Magnet.
+- Target-specific builds prune dependencies via target filters already captured
+  in the graph.
+- fp assumes the graph is consistent (no cycles, compatible versions).
 
 ## Build Pipeline
 

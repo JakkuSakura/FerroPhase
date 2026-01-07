@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 #[path = "crate.rs"]
 mod crate_;
 mod dependency;
+mod graph;
 mod nexus;
 mod package;
 mod workspace;
@@ -12,6 +13,7 @@ mod patch;
 use crate::configs::ManifestConfig;
 pub use crate_::*;
 pub use dependency::*;
+pub use graph::*;
 pub use nexus::*;
 pub use package::*;
 pub use workspace::*;
