@@ -1,6 +1,6 @@
 # Magnet CLI Tool Examples
 
-This directory contains examples demonstrating how to use the `magnet` CLI tool for managing dependencies in Rust projects, with a focus on the super-workspace concept and automatic path resolution.
+This directory contains examples demonstrating how to use the `magnet` CLI tool for managing dependencies in Rust projects, with a focus on the nexus concept and automatic path resolution.
 
 ## Key Features Demonstrated
 
@@ -52,12 +52,12 @@ serde = { workspace = true } # Use the workspace-defined version
 
 ## Examples Overview
 
-### Basic Workspace Example
+### Workspace Example
 
-The `basic-workspace/` example shows how to use `magnet` to manage a single workspace with multiple crates:
+The `workspace/` example shows how to use `magnet` to manage a single workspace with multiple crates:
 
 ```
-basic-workspace/
+workspace/
 ├── Magnet.toml           # Root workspace configuration
 ├── crates/
 │   ├── core/             # Core library
@@ -70,12 +70,12 @@ Key features demonstrated:
 - Per-crate Magnet.toml configuration
 - Workspace-level dependency management
 
-### Super Workspace Example
+### Nexus Example
 
-The `super-workspace/` example demonstrates how to manage dependencies across multiple separate projects:
+The `nexus/` example demonstrates how to manage dependencies across multiple separate projects:
 
 ```
-super-workspace/
+nexus/
 ├── shared-lib/           # Shared library project
 │   ├── Magnet.toml
 │   └── crates/
@@ -93,8 +93,32 @@ super-workspace/
 
 Key features demonstrated:
 - Auto-detection of crates across projects with `nexus = true`
-- Creating a super-workspace spanning multiple projects
+- Creating a nexus spanning multiple projects
 - Consistent dependency management across separate codebases
+
+### FerroPhase Example
+
+The `ferrophase/` example shows a minimal FerroPhase package managed by Magnet:
+
+```
+ferrophase/
+├── Magnet.toml
+└── src/
+    └── main.fp
+```
+
+Key features demonstrated:
+- `magnet run` driving fp-cli with a package-local entrypoint
+
+### Import From Cargo Example
+
+The `from-cargo/` example shows how to import a Cargo manifest:
+
+```
+from-cargo/
+├── Cargo.toml
+└── README.md
+```
 
 ## Using the Examples
 
@@ -123,19 +147,19 @@ To check for configuration inconsistencies:
 magnet check
 ```
 
-### 3. Listing Workspace Crates
+### 3. Showing the Workspace Tree
 
-To list all crates in the workspace:
+To show the workspace tree:
 
 ```bash
-magnet list
+magnet tree
 ```
 
 ## Key Concepts
 
-### Super-Workspace Pattern
+### Nexus Pattern
 
-A super-workspace spans multiple separate projects, allowing them to share code while maintaining independent project structures:
+A nexus spans multiple separate projects, allowing them to share code while maintaining independent project structures:
 
 1. Each project has its own `Magnet.toml`
 2. Projects reference shared crates with `nexus = true`

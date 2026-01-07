@@ -106,7 +106,7 @@ fn resolve_start_dir(path: &Path) -> Result<PathBuf> {
     }
 }
 
-fn resolve_package(start_dir: &Path, package_name: Option<&str>) -> Result<PackageModel> {
+pub(crate) fn resolve_package(start_dir: &Path, package_name: Option<&str>) -> Result<PackageModel> {
     if let Some(name) = package_name {
         let (_root, manifest) = find_furthest_manifest(start_dir)?;
         let packages = manifest.list_packages()?;
@@ -135,7 +135,7 @@ fn resolve_package(start_dir: &Path, package_name: Option<&str>) -> Result<Packa
     }
 }
 
-fn resolve_entry(path: &Path, package: &PackageModel, entry: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn resolve_entry(path: &Path, package: &PackageModel, entry: Option<&Path>) -> Result<PathBuf> {
     let entry_path = if let Some(entry) = entry {
         resolve_path(entry, &package.root_path)
     } else if path.is_file() {
@@ -159,7 +159,7 @@ fn resolve_path(path: &Path, base: &Path) -> PathBuf {
     }
 }
 
-fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Vec<PathBuf>> {
+pub(crate) fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Vec<PathBuf>> {
     let mut sources = BTreeSet::new();
     let src_root = package.root_path.join("src");
     if src_root.exists() {
@@ -179,7 +179,7 @@ fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Vec<PathBuf>>
     Ok(sources.into_iter().collect())
 }
 
-fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf {
+pub(crate) fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf {
     let stem = entry
         .file_stem()
         .and_then(|s| s.to_str())
@@ -239,7 +239,7 @@ fn binary_name() -> &'static str {
     }
 }
 
-fn find_nearest_package(start_dir: &Path) -> Result<Option<PackageModel>> {
+pub(crate) fn find_nearest_package(start_dir: &Path) -> Result<Option<PackageModel>> {
     let mut current = start_dir.to_path_buf();
     loop {
         if current.join("Magnet.toml").exists() || current.join("Cargo.toml").exists() {
@@ -256,4 +256,74 @@ fn find_nearest_package(start_dir: &Path) -> Result<Option<PackageModel>> {
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn resolve_entry_prefers_file_argument() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        let package_dir = root.join("pkg");
+        fs::create_dir_all(package_dir.join("src"))?;
+        fs::write(
+            package_dir.join("Magnet.toml"),
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+        )?;
+
+        let entry = package_dir.join("entry.fp");
+        fs::write(&entry, "fn main() {}")?;
+
+        let package = PackageModel::from_dir(&package_dir)?;
+        let resolved = resolve_entry(&entry, &package, None)?;
+        assert_eq!(resolved, entry);
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_entry_defaults_to_main() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        let package_dir = root.join("pkg");
+        fs::create_dir_all(package_dir.join("src"))?;
+        fs::write(
+            package_dir.join("Magnet.toml"),
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(package_dir.join("src").join("main.fp"), "fn main() {}")?;
+
+        let package = PackageModel::from_dir(&package_dir)?;
+        let resolved = resolve_entry(package_dir.as_path(), &package, None)?;
+        assert_eq!(resolved, package_dir.join("src").join("main.fp"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn collect_sources_includes_entry() -> Result<()> {
+        let temp = tempdir()?;
+        let package_dir = temp.path().join("pkg");
+        fs::create_dir_all(package_dir.join("src"))?;
+        fs::write(
+            package_dir.join("Magnet.toml"),
+            "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\n",
+        )?;
+
+        let entry = package_dir.join("src").join("main.fp");
+        fs::write(&entry, "fn main() {}")?;
+        fs::write(package_dir.join("src").join("lib.fp"), "fn lib() {}")?;
+
+        let package = PackageModel::from_dir(&package_dir)?;
+        let sources = collect_sources(&package, &entry)?;
+
+        assert!(sources.contains(&entry));
+        assert!(sources.iter().any(|path| path.ends_with("lib.fp")));
+
+        Ok(())
+    }
 }

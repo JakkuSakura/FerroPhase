@@ -130,3 +130,25 @@ crate1 = { version = "0.1.0" }
     
     Ok(())
 }
+
+#[test]
+fn test_init_from_cargo_creates_magnet_toml() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let cargo_path = temp_dir.path().join("Cargo.toml");
+    fs::write(
+        &cargo_path,
+        r#"[package]
+name = "imported"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+
+    magnet::commands::init(temp_dir.path(), true)?;
+
+    let magnet_path = temp_dir.path().join("Magnet.toml");
+    assert!(magnet_path.exists(), "Magnet.toml was not created");
+    let content = fs::read_to_string(magnet_path)?;
+    assert!(content.contains("[package]"), "Magnet.toml missing [package]");
+    Ok(())
+}
