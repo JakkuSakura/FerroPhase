@@ -51,7 +51,7 @@ int main() {
     );
     println!(
         "Target triple: {}",
-        module.module.get_target_triple().as_str().to_string_lossy()
+        module.module.get_triple().as_str().to_string_lossy()
     );
     println!(
         "Data layout: {}",
