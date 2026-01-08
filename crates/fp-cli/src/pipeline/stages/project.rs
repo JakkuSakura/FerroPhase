@@ -56,7 +56,7 @@ impl Pipeline {
         cmd.arg(llvm_ir_path);
         if requires_eh {
             let runtime_path =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../runtime/fp_unwind.cc");
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/fp-llvm/runtime/fp_unwind.cc");
             cmd.arg(runtime_path);
             cmd.arg("-fexceptions");
         }
