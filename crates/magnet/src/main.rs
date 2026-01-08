@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 // Use local utils module instead of common crate
-use magnet::commands::{self, generate::GenerateOptions, RunMode, RunOptions};
+use magnet::commands::{self, generate::GenerateOptions, RunMode, RunOptions, TestOptions};
 use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point
@@ -86,6 +86,8 @@ fn main() -> Result<()> {
             entry,
             mode,
             resolver,
+            example,
+            release,
         }) => {
             let options = RunOptions {
                 path,
@@ -93,8 +95,22 @@ fn main() -> Result<()> {
                 entry,
                 mode: mode.into(),
                 resolver,
+                example,
+                release,
             };
             commands::run(&options)
+        }
+        Some(Commands::Test {
+            path,
+            package,
+            release,
+        }) => {
+            let options = TestOptions {
+                path,
+                package,
+                release,
+            };
+            commands::test(&options)
         }
         None => {
             info!("No command specified. Run with --help for usage information.");
@@ -216,6 +232,28 @@ enum Commands {
         /// Module resolver strategy used by fp
         #[arg(long, default_value = "ferrophase")]
         resolver: String,
+
+        /// Run a named example under ./examples
+        #[arg(long)]
+        example: Option<String>,
+
+        /// Use release profile output paths
+        #[arg(long)]
+        release: bool,
+    },
+    /// Run cargo tests for a package
+    Test {
+        /// Path to a package/workspace directory or manifest
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Select a package by name
+        #[arg(long)]
+        package: Option<String>,
+
+        /// Run tests in release mode
+        #[arg(long)]
+        release: bool,
     },
     /// Manage git submodules
     Submodule {

@@ -8,22 +8,17 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, TranspilePreparationOptions},
 };
-use clap::{ArgAction, Args};
+use clap::Args;
 use console::style;
-use fp_core::ast::{AstSerializer, Ident, Item, Module as AstModule, Node, NodeKind, Visibility};
+use fp_core::ast::{AstSerializer, Node};
 use fp_csharp::CSharpSerializer;
 use fp_python::PythonSerializer;
-use fp_rust::parse_cargo_workspace;
 use fp_rust::printer::RustPrinter;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_wit::WorldMode;
 use fp_wit::{WitOptions, WitSerializer};
 use fp_zig::ZigSerializer;
-use pathdiff::diff_paths;
-use serde_json::Value as JsonValue;
-use std::collections::BTreeMap;
-use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
 use tracing::{info, info_span};
 
 /// Arguments for the syntax-transpile command (also used by Clap)
@@ -64,10 +59,6 @@ pub struct SyntaxTranspileArgs {
     /// Generate a single WIT world instead of per-package worlds
     #[arg(long)]
     pub single_world: bool,
-
-    /// Resolve and parse imported modules (disable with --no-resolve)
-    #[arg(long = "no-resolve", action = ArgAction::SetFalse, default_value_t = true)]
-    pub resolve_imports: bool,
 }
 
 /// Execute the syntax-transpile command.
@@ -127,15 +118,15 @@ async fn syntax_transpile_file(
         args.target
     );
 
-    let package_info = find_package_info(input);
+    if is_package_manifest(input) || is_tsconfig(input) {
+        return Err(CliError::Compilation(
+            "fp syntax-transpile only accepts source files; use magnet for package manifests"
+                .to_string(),
+        ));
+    }
 
     // Parse source
     let mut pipeline = Pipeline::new();
-    let is_cargo_manifest = input
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("Cargo.toml"))
-        .unwrap_or(false);
 
     use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
     let detected = detect_language_source_by_path(input);
@@ -145,119 +136,24 @@ async fn syntax_transpile_file(
         Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
     );
 
-    let mut source_cache: Option<String> = None;
-    let module_root_path = package_info
-        .as_ref()
-        .map(|info| info.root.clone())
-        .or_else(|| input.parent().map(|dir| dir.to_path_buf()))
-        .unwrap_or_else(|| PathBuf::from("."));
-    let module_root_path = canonicalize_path(&module_root_path);
-
-    let (mut ast, base_path) = if is_cargo_manifest {
-        let node = parse_cargo_workspace(input)?;
-        pipeline.set_serializer(Arc::new(RustPrinter::new_with_rustfmt()));
-        (node, input.parent().map(|dir| dir.to_path_buf()))
-    } else {
-        let source = std::fs::read_to_string(input).map_err(CliError::Io)?;
-        info!(path = %input.display(), "Parsing source file");
-        let node = pipeline.parse_source_public(&source, Some(input))?;
-        source_cache = Some(source);
-        (node, None)
-    };
-
-    let mut module_bucket = if is_typescript_input {
-        Some(BTreeMap::<String, (Ident, Vec<Item>)>::new())
-    } else {
-        None
-    };
-
-    if args.resolve_imports && is_typescript_input {
-        if let (Some(ref source), Some(frontend)) =
-            (source_cache.as_ref(), pipeline.typescript_frontend())
-        {
-            let resolve_span = info_span!(
-                "typescript.resolve",
-                root = %input.display(),
-                mode = ?frontend.parse_mode()
-            );
-            let _resolve_enter = resolve_span.enter();
-
-            let outcome = frontend
-                .parse_dependencies(input, source, true)
-                .map_err(|err| CliError::Compilation(err.to_string()))?;
-            for warning in outcome.warnings {
-                eprintln!("{warning}");
-            }
-            if !outcome.modules.is_empty() {
-                let resolved_modules_count = outcome.modules.len();
-                if let Some(bucket) = module_bucket.as_mut() {
-                    for (module_path, node) in outcome.modules {
-                        tracing::debug!(path = %module_path.display(), "Parsing resolved import");
-                        if let NodeKind::File(dep_file) = node.kind() {
-                            merge_module_items(
-                                bucket,
-                                module_ident_from_path(&module_root_path, &module_path),
-                                dep_file.items.clone(),
-                            );
-                        }
-                    }
-                }
-                info!(
-                    count = resolved_modules_count,
-                    "Resolved {} imported module{} for {}",
-                    resolved_modules_count,
-                    if resolved_modules_count == 1 { "" } else { "s" },
-                    input.display()
-                );
-            }
-        }
-    }
-
-    if is_typescript_input {
-        if let Some(mut bucket) = module_bucket {
-            if let NodeKind::File(root_file) = ast.kind_mut() {
-                let original_items = std::mem::take(&mut root_file.items);
-                merge_module_items(
-                    &mut bucket,
-                    module_ident_from_path(&module_root_path, input),
-                    original_items,
-                );
-
-                let merged_items: Vec<Item> = bucket
-                    .into_iter()
-                    .map(|(_, (ident, items))| build_module_item(ident, items))
-                    .collect();
-
-                info!(
-                    modules = merged_items.len(),
-                    "Collected {} module{} for {}",
-                    merged_items.len(),
-                    if merged_items.len() == 1 { "" } else { "s" },
-                    input.display()
-                );
-
-                root_file.items = merged_items;
-            }
-        }
-    }
+    let source = std::fs::read_to_string(input).map_err(CliError::Io)?;
+    info!(path = %input.display(), "Parsing source file");
+    let mut ast = pipeline.parse_source_public(&source, Some(input))?;
+    let base_path = None;
 
     let prep_options = TranspilePreparationOptions {
         run_const_eval: args.const_eval,
         save_intermediates: false,
         base_path,
     };
-    if !is_cargo_manifest && !is_wit_input && !is_typescript_input {
+    if !is_wit_input && !is_typescript_input {
         pipeline.prepare_for_transpile(&mut ast, &prep_options)?;
     }
 
     // Resolve target using shared backend mapping
     let target = crate::languages::backend::parse_language_target(&args.target)?;
     let wit_options = if matches!(target, crate::languages::backend::LanguageTarget::Wit) {
-        Some(build_wit_options(
-            input,
-            package_info.as_ref(),
-            args.single_world,
-        ))
+        Some(build_wit_options(input, args.single_world))
     } else {
         None
     };
@@ -368,49 +264,13 @@ fn syntax_transpile_node(
     }
 }
 
-#[derive(Debug, Clone)]
-struct PackageInfo {
-    name: String,
-    root: PathBuf,
-}
-
-fn find_package_info(input: &Path) -> Option<PackageInfo> {
-    let mut current = input.parent();
-    while let Some(dir) = current {
-        let manifest = dir.join("package.json");
-        if manifest.exists() {
-            if let Ok(contents) = std::fs::read_to_string(&manifest) {
-                if let Ok(json) = serde_json::from_str::<JsonValue>(&contents) {
-                    if let Some(name) = json.get("name").and_then(|value| value.as_str()) {
-                        return Some(PackageInfo {
-                            name: name.to_string(),
-                            root: dir.to_path_buf(),
-                        });
-                    }
-                }
-            }
-        }
-        current = dir.parent();
-    }
-    None
-}
-
-fn build_wit_options(
-    input: &Path,
-    package_info: Option<&PackageInfo>,
-    single_world: bool,
-) -> WitOptions {
-    let namespace = package_info
-        .map(|info| sanitize_wit_component(&info.name))
+fn build_wit_options(input: &Path, single_world: bool) -> WitOptions {
+    let namespace = input
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|os| os.to_str())
+        .map(sanitize_wit_component)
         .filter(|name| !name.is_empty())
-        .or_else(|| {
-            input
-                .parent()
-                .and_then(|dir| dir.file_name())
-                .and_then(|os| os.to_str())
-                .map(sanitize_wit_component)
-                .filter(|name| !name.is_empty())
-        })
         .unwrap_or_else(|| "ferrophase".to_string());
 
     let interface = input
@@ -456,86 +316,22 @@ fn sanitize_wit_component(raw: &str) -> String {
     result
 }
 
-fn sanitize_module_segment(raw: &str) -> String {
-    let mut ident = String::new();
-    for ch in raw.chars() {
-        match ch {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' => ident.push(ch),
-            '-' | '.' | '@' | ' ' => ident.push('_'),
-            _ => ident.push('_'),
-        }
-    }
-    if ident.is_empty() {
-        ident.push('_');
-    }
-    if ident
-        .chars()
-        .next()
-        .map(|ch| ch.is_ascii_digit())
+fn is_package_manifest(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            matches!(lower.as_str(), "cargo.toml" | "package.json" | "magnet.toml")
+        })
         .unwrap_or(false)
-    {
-        ident.insert(0, '_');
-    }
-    ident
 }
 
-fn canonicalize_path(path: &Path) -> PathBuf {
-    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
-}
-
-fn module_ident_from_path(root: &Path, module_path: &Path) -> Ident {
-    let module = canonicalize_path(module_path);
-    let relative = diff_paths(&module, root).unwrap_or(module.clone());
-    let mut segments = Vec::new();
-    let mut components = relative.components().peekable();
-
-    while let Some(component) = components.next() {
-        match component {
-            Component::Normal(os_component) => {
-                let is_last = components.peek().is_none();
-                let raw = os_component.to_string_lossy();
-                let segment = if is_last {
-                    Path::new(raw.as_ref())
-                        .file_stem()
-                        .and_then(|stem| stem.to_str())
-                        .map(sanitize_module_segment)
-                        .unwrap_or_else(|| sanitize_module_segment(raw.as_ref()))
-                } else {
-                    sanitize_module_segment(raw.as_ref())
-                };
-                if !segment.is_empty() {
-                    segments.push(segment);
-                }
-            }
-            Component::ParentDir => segments.push("super".to_string()),
-            Component::CurDir => {}
-            Component::RootDir | Component::Prefix(_) => {}
-        }
-    }
-
-    if segments.is_empty() {
-        Ident::new("module")
-    } else {
-        Ident::new(segments.join("_"))
-    }
-}
-
-fn merge_module_items(
-    bucket: &mut BTreeMap<String, (Ident, Vec<Item>)>,
-    ident: Ident,
-    mut items: Vec<Item>,
-) {
-    let key = ident.as_str().to_string();
-    let entry = bucket
-        .entry(key)
-        .or_insert_with(|| (ident.clone(), Vec::new()));
-    entry.1.append(&mut items);
-}
-
-fn build_module_item(ident: Ident, items: Vec<Item>) -> Item {
-    Item::from(AstModule {
-        name: ident,
-        items,
-        visibility: Visibility::Public,
-    })
+fn is_tsconfig(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower == "tsconfig.json" || lower.ends_with(".tsconfig.json")
+        })
+        .unwrap_or(false)
 }

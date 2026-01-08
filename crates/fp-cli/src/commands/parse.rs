@@ -1,19 +1,12 @@
 use crate::{Result, cli::CliConfig, pipeline::Pipeline};
 use clap::{ArgAction, Args, ValueEnum, ValueHint};
-use fp_core::{
-    ast::{File, Item, ItemKind, Module, Node},
-    package::provider::{ModuleSource, PackageProvider},
-    pretty::{PrettyOptions, pretty},
-    workspace::WorkspaceDocument,
-};
-use fp_rust::{parser::RustParser, workspace::summarize_cargo_workspace};
-use fp_typescript::{frontend::TsParseMode, package::TypeScriptPackageProvider};
-use pathdiff::diff_paths;
-use serde_json::{self, to_value};
-use std::collections::HashMap;
+use fp_core::pretty::{PrettyOptions, pretty};
+use fp_typescript::frontend::TsParseMode;
+use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
-use tracing::warn;
+#[cfg(any(test, feature = "bootstrap"))]
+use fp_core::ast::{File, Item, ItemKind, Module, Node};
 
 /// Remove un-serializable raw macro definition items (e.g., `macro_rules!`) from a Rust file AST.
 ///
@@ -394,54 +387,12 @@ fn parse_path(
     resolve_imports: bool,
     snapshot: Option<PathBuf>,
 ) -> Result<()> {
-    if is_cargo_manifest(path) {
-        if resolve_imports {
-            return Err(crate::CliError::Compilation(
-                "--snapshot of a Cargo workspace does not support import resolution".to_string(),
-            ));
-        }
-        parse_cargo_workspace_manifest(path, snapshot)
-    } else if is_tsconfig(path) {
-        if snapshot.is_some() {
-            return Err(crate::CliError::Compilation(
-                "--snapshot is only supported for direct source files".to_string(),
-            ));
-        }
-        parse_tsconfig(path, pipeline, mode)
-    } else if is_typescript_package_manifest(path) {
-        if snapshot.is_some() {
-            return Err(crate::CliError::Compilation(
-                "--snapshot is only supported for direct source files".to_string(),
-            ));
-        }
-        parse_typescript_package(path, pipeline, mode)
-    } else {
-        parse_file(path, pipeline, mode, resolve_imports, snapshot)
+    if is_package_manifest(path) || is_tsconfig(path) {
+        return Err(crate::CliError::Compilation(
+            "fp parse only accepts source files; use magnet for package manifests".to_string(),
+        ));
     }
-}
-
-fn is_typescript_package_manifest(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name == "package.json")
-        .unwrap_or(false)
-}
-
-fn is_cargo_manifest(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name.eq_ignore_ascii_case("Cargo.toml"))
-        .unwrap_or(false)
-}
-
-fn is_tsconfig(path: &Path) -> bool {
-    path.file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| {
-            let lower = name.to_ascii_lowercase();
-            lower == "tsconfig.json" || lower.ends_with(".tsconfig.json")
-        })
-        .unwrap_or(false)
+    parse_file(path, pipeline, mode, resolve_imports, snapshot)
 }
 
 fn parse_file(
@@ -484,330 +435,11 @@ fn parse_file(
     }
 
     if resolve_imports {
-        if let Some(frontend) = pipeline.typescript_frontend() {
-            let outcome = frontend
-                .parse_dependencies(path, &source, true)
-                .map_err(|err| crate::CliError::Compilation(err.to_string()))?;
-
-            for warning in &outcome.warnings {
-                eprintln!("{warning}");
-            }
-
-            if !outcome.modules.is_empty() {
-                let anchor = path
-                    .parent()
-                    .map(Path::to_path_buf)
-                    .unwrap_or_else(|| PathBuf::from("."));
-                let count = outcome.modules.len();
-                for (module_path, node) in outcome.modules {
-                    let display_path = display_relative(&module_path, &anchor);
-                    println!("File {} (resolved import):", display_path);
-                    println!("{}", pretty(&node, pretty_opts.clone()));
-                }
-                println!(
-                    "Resolved {count} imported module{} for {}",
-                    if count == 1 { "" } else { "s" },
-                    path.display()
-                );
-            }
-        }
+        return Err(crate::CliError::Compilation(
+            "--resolve is not supported in fp parse; use magnet for import resolution".to_string(),
+        ));
     }
     Ok(())
-}
-
-fn parse_tsconfig(path: &Path, pipeline: &mut Pipeline, mode: TsParseMode) -> Result<()> {
-    let config_root = path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let manifest = config_root.join("package.json");
-
-    if manifest.exists() {
-        println!(
-            "Detected package manifest at {} – using package module discovery.",
-            manifest.display()
-        );
-        return parse_typescript_package(&manifest, pipeline, mode);
-    }
-
-    Err(crate::CliError::Compilation(format!(
-        "TypeScript parsing from tsconfig currently requires a package manifest at {}",
-        manifest.display()
-    )))
-}
-
-fn parse_cargo_workspace_manifest(path: &Path, snapshot: Option<PathBuf>) -> Result<()> {
-    let mut document = summarize_cargo_workspace(path).map_err(|err| {
-        crate::CliError::Compilation(format!(
-            "Failed to parse Cargo workspace {}: {err}",
-            path.display()
-        ))
-    })?;
-
-    let workspace_root = path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    if let Some(snapshot_path) = snapshot.as_ref() {
-        let module_dir = snapshot_path.with_extension("modules");
-        if let Some(parent) = module_dir.parent() {
-            fs::create_dir_all(parent).map_err(|err| {
-                crate::CliError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!(
-                        "Failed to create snapshot directory {}: {err}",
-                        parent.display()
-                    ),
-                ))
-            })?;
-        }
-        fs::create_dir_all(&module_dir).map_err(|err| {
-            crate::CliError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to create module snapshot directory {}: {err}",
-                    module_dir.display()
-                ),
-            ))
-        })?;
-
-        let snapshot_root = snapshot_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| PathBuf::from("."));
-
-        let mut parser = RustParser::new();
-        let mut module_cache: HashMap<PathBuf, Vec<Item>> = HashMap::new();
-
-        for package in &mut document.packages {
-            for module in &mut package.modules {
-                let module_source = PathBuf::from(&module.path);
-                let absolute_path = if module_source.is_absolute() {
-                    module_source
-                } else {
-                    workspace_root.join(&module_source)
-                };
-
-                let source = fs::read_to_string(&absolute_path).map_err(|err| {
-                    crate::CliError::Io(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("Failed to read module {}: {err}", absolute_path.display()),
-                    ))
-                })?;
-
-                let mut file = parser.parse_file(&source, &absolute_path).map_err(|err| {
-                    crate::CliError::Compilation(format!(
-                        "Failed to parse module {}: {err}",
-                        absolute_path.display()
-                    ))
-                })?;
-
-                expand_rust_modules(&mut parser, &mut file, &absolute_path, &mut module_cache)?;
-                let module_node = Node::file(file);
-                let module_name = sanitize_module_filename(&module.id);
-                let module_snapshot_path = module_dir.join(format!("{module_name}.ast.json"));
-                write_node_snapshot(&module_snapshot_path, &module_node)?;
-
-                let relative_snapshot = module_snapshot_path
-                    .strip_prefix(&snapshot_root)
-                    .unwrap_or(&module_snapshot_path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                module.snapshot = Some(relative_snapshot);
-                let embedded_ast = to_value(&module_node).map_err(|err| {
-                    crate::CliError::Compilation(format!(
-                        "Failed to serialize module AST for {}: {err}",
-                        absolute_path.display()
-                    ))
-                })?;
-                module.ast = Some(embedded_ast);
-            }
-        }
-    }
-
-    let node = fp_core::ast::Node::workspace(document.clone());
-
-    let print_ast = snapshot.is_none();
-    persist_snapshot(&node, snapshot.as_deref())?;
-
-    if print_ast {
-        print_workspace_summary(path, &document);
-    }
-
-    Ok(())
-}
-
-fn print_workspace_summary(manifest: &Path, document: &WorkspaceDocument) {
-    println!("Workspace {}:", manifest.display());
-    if document.packages.is_empty() {
-        println!("  (no packages discovered)");
-        return;
-    }
-    for package in &document.packages {
-        let version = package
-            .version
-            .as_deref()
-            .map(|v| format!(" {}", v))
-            .unwrap_or_default();
-        println!("  - {}{}", package.name, version);
-        println!("    manifest: {}", package.manifest_path);
-        println!("    root: {}", package.root);
-        if !package.modules.is_empty() {
-            println!("    modules:");
-            for module in &package.modules {
-                println!("      * {} ({})", module.id, module.path);
-            }
-        }
-        if !package.features.is_empty() {
-            println!("    features: {}", package.features.join(", "));
-        }
-        if !package.dependencies.is_empty() {
-            let rendered_deps = package
-                .dependencies
-                .iter()
-                .map(|dep| {
-                    dep.kind
-                        .as_deref()
-                        .map(|kind| format!("{} ({kind})", dep.name))
-                        .unwrap_or_else(|| dep.name.clone())
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            println!("    dependencies: {}", rendered_deps);
-        }
-    }
-}
-
-fn parse_typescript_package(path: &Path, pipeline: &mut Pipeline, mode: TsParseMode) -> Result<()> {
-    let package_root = path
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let provider = TypeScriptPackageProvider::new(package_root.clone());
-    provider.refresh().map_err(|err| {
-        crate::CliError::Compilation(format!("Failed to load TypeScript package: {err}"))
-    })?;
-
-    let package_ids = provider.list_packages().map_err(|err| {
-        crate::CliError::Compilation(format!("Failed to enumerate TypeScript packages: {err}"))
-    })?;
-
-    if package_ids.is_empty() {
-        println!(
-            "No TypeScript modules found in package {}",
-            package_root.display()
-        );
-        return Ok(());
-    }
-
-    let package_id = &package_ids[0];
-    let module_ids = provider.modules_for_package(package_id).map_err(|err| {
-        crate::CliError::Compilation(format!("Failed to list TypeScript modules: {err}"))
-    })?;
-
-    if module_ids.is_empty() {
-        println!(
-            "No TypeScript modules found in package {}",
-            package_root.display()
-        );
-        return Ok(());
-    }
-
-    let mut pretty_opts = PrettyOptions::default();
-    pretty_opts.show_types = false;
-    pretty_opts.show_spans = false;
-
-    let mut parsed = 0usize;
-    for module_id in module_ids {
-        let descriptor = provider.load_module_descriptor(&module_id).map_err(|err| {
-            crate::CliError::Compilation(format!("Failed to load module descriptor: {err}"))
-        })?;
-
-        let mut disk_path = descriptor.source.to_path_buf();
-        if !disk_path.is_absolute() {
-            disk_path = package_root.join(disk_path);
-        }
-
-        let source = fs::read_to_string(&disk_path).map_err(|err| {
-            crate::CliError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!("Failed to read module {}: {err}", disk_path.display()),
-            ))
-        })?;
-
-        let ast = match pipeline.parse_source_public(&source, Some(disk_path.as_path())) {
-            Ok(ast) => ast,
-            Err(err) => {
-                if matches!(mode, TsParseMode::Loose) {
-                    eprintln!(
-                        "Warning: failed to parse module {} ({}). Skipping.",
-                        descriptor.id.as_str(),
-                        err
-                    );
-                    continue;
-                }
-                return Err(err);
-            }
-        };
-        println!("Module {} ({}):", descriptor.id.as_str(), descriptor.source);
-        println!("{}", pretty(&ast, pretty_opts.clone()));
-        parsed += 1;
-    }
-
-    println!(
-        "Parsed {parsed} TypeScript modules from package {}",
-        package_root.display()
-    );
-
-    Ok(())
-}
-
-fn display_relative(path: &Path, anchor: &Path) -> String {
-    diff_paths(path, anchor)
-        .unwrap_or_else(|| path.to_path_buf())
-        .to_string_lossy()
-        .to_string()
-}
-
-fn write_node_snapshot(path: &Path, node: &Node) -> Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|err| {
-            crate::CliError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                format!(
-                    "Failed to create snapshot directory {}: {err}",
-                    parent.display()
-                ),
-            ))
-        })?;
-    }
-    let json = serde_json::to_string_pretty(node).map_err(|err| {
-        crate::CliError::Compilation(format!("Failed to serialize AST to JSON: {err}"))
-    })?;
-    fs::write(path, json).map_err(|err| {
-        crate::CliError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!("Failed to write snapshot {}: {err}", path.display()),
-        ))
-    })?;
-    Ok(())
-}
-
-fn sanitize_module_filename(id: &str) -> String {
-    let mut name = String::with_capacity(id.len());
-    for ch in id.chars() {
-        if ch.is_ascii_alphanumeric() {
-            name.push(ch);
-        } else {
-            name.push('_');
-        }
-    }
-    if name.is_empty() {
-        name.push_str("module");
-    }
-    name
 }
 
 fn persist_snapshot(ast: &fp_core::ast::Node, snapshot: Option<&Path>) -> Result<()> {
@@ -837,97 +469,22 @@ fn persist_snapshot(ast: &fp_core::ast::Node, snapshot: Option<&Path>) -> Result
     Ok(())
 }
 
-fn expand_rust_modules(
-    parser: &mut RustParser,
-    file: &mut File,
-    file_path: &Path,
-    cache: &mut HashMap<PathBuf, Vec<Item>>,
-) -> Result<()> {
-    let canonical = file_path
-        .canonicalize()
-        .unwrap_or_else(|_| file_path.to_path_buf());
-    let base_dir = canonical
-        .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    expand_item_chunk(parser, &mut file.items, &base_dir, cache)
+fn is_package_manifest(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            matches!(lower.as_str(), "cargo.toml" | "package.json" | "magnet.toml")
+        })
+        .unwrap_or(false)
 }
 
-fn expand_item_chunk(
-    parser: &mut RustParser,
-    items: &mut Vec<Item>,
-    base_dir: &Path,
-    cache: &mut HashMap<PathBuf, Vec<Item>>,
-) -> Result<()> {
-    for item in items.iter_mut() {
-        if let ItemKind::Module(module) = item.kind_mut() {
-            expand_module(parser, module, base_dir, cache)?;
-        }
-    }
-    Ok(())
-}
-
-fn expand_module(
-    parser: &mut RustParser,
-    module: &mut Module,
-    base_dir: &Path,
-    cache: &mut HashMap<PathBuf, Vec<Item>>,
-) -> Result<()> {
-    if module.items.is_empty() {
-        if let Some(module_path) = resolve_module_path(base_dir, module.name.as_str()) {
-            let canonical = module_path
-                .canonicalize()
-                .unwrap_or_else(|_| module_path.clone());
-
-            if let Some(cached) = cache.get(&canonical) {
-                module.items = cached.clone();
-                return Ok(());
-            }
-
-            let source = fs::read_to_string(&module_path).map_err(|err| {
-                crate::CliError::Io(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    format!("Failed to read module {}: {err}", module_path.display()),
-                ))
-            })?;
-
-            let mut file = parser.parse_file(&source, &canonical).map_err(|err| {
-                crate::CliError::Compilation(format!(
-                    "Failed to parse module {}: {err}",
-                    canonical.display()
-                ))
-            })?;
-
-            let next_base = canonical
-                .parent()
-                .map(Path::to_path_buf)
-                .unwrap_or_else(|| base_dir.to_path_buf());
-
-            expand_item_chunk(parser, &mut file.items, &next_base, cache)?;
-            cache.insert(canonical, file.items.clone());
-            module.items = file.items;
-            return Ok(());
-        } else {
-            warn!(
-                module = %module.name.as_str(),
-                base = %base_dir.display(),
-                "Rust module declaration has no corresponding file"
-            );
-            return Ok(());
-        }
-    }
-
-    expand_item_chunk(parser, &mut module.items, base_dir, cache)
-}
-
-fn resolve_module_path(base_dir: &Path, module_name: &str) -> Option<PathBuf> {
-    let direct = base_dir.join(format!("{module_name}.rs"));
-    if direct.exists() {
-        return Some(direct);
-    }
-    let nested = base_dir.join(module_name).join("mod.rs");
-    if nested.exists() {
-        return Some(nested);
-    }
-    None
+fn is_tsconfig(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower == "tsconfig.json" || lower.ends_with(".tsconfig.json")
+        })
+        .unwrap_or(false)
 }

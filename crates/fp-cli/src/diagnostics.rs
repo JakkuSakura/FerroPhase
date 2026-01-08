@@ -95,7 +95,7 @@ pub enum FerroPhaseError {
         not(feature = "bootstrap"),
         diagnostic(
             code(ferrophase::config_error),
-            help("Check your Ferrophase.toml file for correct syntax and values")
+            help("Check your configuration file or use magnet for package manifests")
         )
     )]
     ConfigError {

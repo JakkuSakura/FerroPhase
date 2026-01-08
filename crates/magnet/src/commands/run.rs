@@ -21,19 +21,30 @@ pub struct RunOptions {
     pub entry: Option<PathBuf>,
     pub mode: RunMode,
     pub resolver: String,
+    pub example: Option<String>,
+    pub release: bool,
 }
 
 pub fn run(options: &RunOptions) -> Result<()> {
-    let start_dir = resolve_start_dir(&options.path)?;
+    let run_path = resolve_run_path(options)?;
+    let start_dir = resolve_start_dir(&run_path)?;
     let (root, manifest) = find_furthest_manifest(&start_dir)?;
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
-    let entry = resolve_entry(&options.path, &package, options.entry.as_deref())?;
+    let entry = resolve_entry(&run_path, &package, options.entry.as_deref())?;
     let sources = collect_sources(&package, &entry)?;
-    let graph_path = write_package_graph(&root, &package)?;
+    let output_dir = build_output_dir(&package, options.release);
+    let graph_path = write_package_graph(&root, &package, &output_dir)?;
 
     match options.mode {
         RunMode::Compile => {
-            run_compile(&package, &entry, &sources, &graph_path, &options.resolver)
+            run_compile(
+                &package,
+                &entry,
+                &sources,
+                &graph_path,
+                &options.resolver,
+                &output_dir,
+            )
         }
         RunMode::Interpret => run_interpret(&package, &sources, &graph_path, &options.resolver),
     }
@@ -45,9 +56,9 @@ fn run_compile(
     sources: &[PathBuf],
     graph_path: &Path,
     resolver: &str,
+    output_dir: &Path,
 ) -> Result<()> {
     let fp_bin = resolve_fp_binary()?;
-    let output_dir = package.root_path.join("target").join("magnet");
     let entry_output = output_path_for_entry(entry, &output_dir);
 
     let mut command = Command::new(&fp_bin);
@@ -125,6 +136,20 @@ fn resolve_start_dir(path: &Path) -> Result<PathBuf> {
     } else {
         Ok(path)
     }
+}
+
+fn resolve_run_path(options: &RunOptions) -> Result<PathBuf> {
+    if let Some(example) = options.example.as_ref() {
+        let cwd = std::env::current_dir()
+            .map_err(|err| eyre::eyre!("Failed to resolve cwd: {err}"))?;
+        let path = cwd.join("examples").join(example);
+        if !path.exists() {
+            bail!("Example '{}' not found at {}", example, path.display());
+        }
+        return Ok(path);
+    }
+
+    Ok(options.path.clone())
 }
 
 pub(crate) fn resolve_package(
@@ -211,10 +236,13 @@ pub(crate) fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf 
     output_dir.join(format!("{}.{}", stem, ext))
 }
 
-fn write_package_graph(manifest_root: &Path, package: &PackageModel) -> Result<PathBuf> {
+fn write_package_graph(
+    manifest_root: &Path,
+    package: &PackageModel,
+    output_dir: &Path,
+) -> Result<PathBuf> {
     let mut graph = PackageGraph::from_path(manifest_root)?;
     graph.selected_package = Some(package.name.clone());
-    let output_dir = package.root_path.join("target").join("magnet");
     fs::create_dir_all(&output_dir).with_context(|| {
         format!(
             "Failed to create output directory at {}",
@@ -227,6 +255,11 @@ fn write_package_graph(manifest_root: &Path, package: &PackageModel) -> Result<P
     fs::write(&graph_path, payload)
         .with_context(|| format!("Failed to write {}", graph_path.display()))?;
     Ok(graph_path)
+}
+
+fn build_output_dir(package: &PackageModel, release: bool) -> PathBuf {
+    let profile = if release { "release" } else { "debug" };
+    package.root_path.join("target").join(profile).join("magnet")
 }
 
 fn resolve_fp_binary() -> Result<PathBuf> {

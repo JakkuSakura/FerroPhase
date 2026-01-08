@@ -10,9 +10,6 @@ pub struct CliConfig {
     /// Compilation settings
     pub compilation: CompilationConfig,
 
-    /// Project settings
-    pub project: ProjectConfig,
-
     /// Development settings
     pub dev: DevConfig,
 
@@ -39,33 +36,6 @@ pub struct CompilationConfig {
 
     /// Custom optimization passes
     pub optimization_passes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectConfig {
-    /// Default project template
-    pub default_template: String,
-
-    /// Automatically initialize git repository
-    pub auto_git: bool,
-
-    /// Default project structure
-    pub default_structure: ProjectStructure,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectStructure {
-    /// Source directory name
-    pub src_dir: String,
-
-    /// Tests directory name
-    pub tests_dir: String,
-
-    /// Examples directory name
-    pub examples_dir: String,
-
-    /// Documentation directory name
-    pub docs_dir: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -146,16 +116,6 @@ impl Default for CliConfig {
                     "const_eval".to_string(),
                 ],
             },
-            project: ProjectConfig {
-                default_template: "basic".to_string(),
-                auto_git: true,
-                default_structure: ProjectStructure {
-                    src_dir: "src".to_string(),
-                    tests_dir: "tests".to_string(),
-                    examples_dir: "examples".to_string(),
-                    docs_dir: "docs".to_string(),
-                },
-            },
             dev: DevConfig {
                 auto_watch: false,
                 repl: ReplConfig {
@@ -191,12 +151,6 @@ impl CliConfig {
         } else {
             // Try to find config in standard locations
             let mut config = Self::default();
-
-            // Try current directory
-            let local_path = Path::new("ferrophase.toml");
-            if local_path.exists() {
-                config = config.merge(Self::load_from_file(local_path)?);
-            }
 
             // Try home directory
             if let Some(home_dir) = dirs::home_dir() {
@@ -281,7 +235,6 @@ mod tests {
         let config = CliConfig::default();
         assert_eq!(config.compilation.default_target, "rust");
         assert_eq!(config.compilation.default_opt_level, 2);
-        assert_eq!(config.project.default_template, "basic");
     }
 
     #[test]

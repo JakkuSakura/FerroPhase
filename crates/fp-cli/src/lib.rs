@@ -12,7 +12,6 @@ pub mod config;
 pub mod diagnostics;
 pub mod languages;
 pub mod pipeline;
-pub mod project;
 pub mod utils;
 
 // Re-export core types for convenience, avoiding conflicts
