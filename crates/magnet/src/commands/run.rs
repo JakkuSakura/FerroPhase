@@ -23,6 +23,8 @@ pub struct RunOptions {
     pub resolver: String,
     pub example: Option<String>,
     pub release: bool,
+    pub profile: Option<String>,
+    pub build_options: Vec<String>,
 }
 
 pub fn run(options: &RunOptions) -> Result<()> {
@@ -32,8 +34,10 @@ pub fn run(options: &RunOptions) -> Result<()> {
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
     let entry = resolve_entry(&run_path, &package, options.entry.as_deref())?;
     let sources = collect_sources(&package, &entry)?;
-    let output_dir = build_output_dir(&package, options.release);
-    let graph_path = write_package_graph(&root, &package, &output_dir)?;
+    let profile = resolve_profile(options);
+    let output_dir = build_output_dir(&package, &profile);
+    let build_options = parse_build_options(&options.build_options)?;
+    let graph_path = write_package_graph(&root, &package, &output_dir, build_options)?;
 
     match options.mode {
         RunMode::Compile => {
@@ -44,6 +48,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
                 &graph_path,
                 &options.resolver,
                 &output_dir,
+                &options.build_options,
             )
         }
         RunMode::Interpret => run_interpret(&package, &sources, &graph_path, &options.resolver),
@@ -57,6 +62,7 @@ fn run_compile(
     graph_path: &Path,
     resolver: &str,
     output_dir: &Path,
+    build_options: &[String],
 ) -> Result<()> {
     let fp_bin = resolve_fp_binary()?;
     let entry_output = output_path_for_entry(entry, &output_dir);
@@ -70,6 +76,9 @@ fn run_compile(
     command.arg("--output").arg(&output_dir);
     command.arg("--package-graph").arg(graph_path);
     command.arg("--resolver").arg(resolver);
+    for option in build_options {
+        command.arg("--build-option").arg(option);
+    }
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
@@ -240,9 +249,11 @@ fn write_package_graph(
     manifest_root: &Path,
     package: &PackageModel,
     output_dir: &Path,
+    build_options: std::collections::HashMap<String, String>,
 ) -> Result<PathBuf> {
     let mut graph = PackageGraph::from_path(manifest_root)?;
     graph.selected_package = Some(package.name.clone());
+    graph.build_options = build_options;
     fs::create_dir_all(&output_dir).with_context(|| {
         format!(
             "Failed to create output directory at {}",
@@ -257,9 +268,32 @@ fn write_package_graph(
     Ok(graph_path)
 }
 
-fn build_output_dir(package: &PackageModel, release: bool) -> PathBuf {
-    let profile = if release { "release" } else { "debug" };
+fn build_output_dir(package: &PackageModel, profile: &str) -> PathBuf {
     package.root_path.join("target").join(profile).join("magnet")
+}
+
+fn resolve_profile(options: &RunOptions) -> String {
+    if let Some(profile) = options.profile.as_ref() {
+        return profile.clone();
+    }
+    if options.release {
+        return "release".to_string();
+    }
+    "debug".to_string()
+}
+
+fn parse_build_options(options: &[String]) -> Result<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+    for option in options {
+        let mut iter = option.splitn(2, '=');
+        let key = iter.next().unwrap_or("").trim();
+        let value = iter.next().unwrap_or("").trim();
+        if key.is_empty() {
+            bail!("Invalid build option '{}'; expected key=value", option);
+        }
+        map.insert(key.to_string(), value.to_string());
+    }
+    Ok(map)
 }
 
 fn resolve_fp_binary() -> Result<PathBuf> {

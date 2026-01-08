@@ -10,6 +10,7 @@ pub struct TestOptions {
     pub path: PathBuf,
     pub package: Option<String>,
     pub release: bool,
+    pub profile: Option<String>,
 }
 
 pub fn test(options: &TestOptions) -> Result<()> {
@@ -26,7 +27,9 @@ pub fn test(options: &TestOptions) -> Result<()> {
 
     let mut command = Command::new("cargo");
     command.arg("test").arg("--manifest-path").arg(&cargo_path);
-    if options.release {
+    if let Some(profile) = options.profile.as_ref() {
+        command.arg("--profile").arg(profile);
+    } else if options.release {
         command.arg("--release");
     }
     command.current_dir(&package.root_path);

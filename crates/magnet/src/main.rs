@@ -88,6 +88,8 @@ fn main() -> Result<()> {
             resolver,
             example,
             release,
+            profile,
+            build_options,
         }) => {
             let options = RunOptions {
                 path,
@@ -97,6 +99,8 @@ fn main() -> Result<()> {
                 resolver,
                 example,
                 release,
+                profile,
+                build_options,
             };
             commands::run(&options)
         }
@@ -104,11 +108,13 @@ fn main() -> Result<()> {
             path,
             package,
             release,
+            profile,
         }) => {
             let options = TestOptions {
                 path,
                 package,
                 release,
+                profile,
             };
             commands::test(&options)
         }
@@ -240,6 +246,14 @@ enum Commands {
         /// Use release profile output paths
         #[arg(long)]
         release: bool,
+
+        /// Cargo-style profile name (overrides --release)
+        #[arg(long)]
+        profile: Option<String>,
+
+        /// Build options forwarded to fp (key=value)
+        #[arg(long = "build-option")]
+        build_options: Vec<String>,
     },
     /// Run cargo tests for a package
     Test {
@@ -254,6 +268,10 @@ enum Commands {
         /// Run tests in release mode
         #[arg(long)]
         release: bool,
+
+        /// Cargo-style profile name (overrides --release)
+        #[arg(long)]
+        profile: Option<String>,
     },
     /// Manage git submodules
     Submodule {

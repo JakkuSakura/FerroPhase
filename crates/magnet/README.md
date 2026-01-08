@@ -50,13 +50,13 @@ magnet list [--config Magnet.toml]
 ### Run a FerroPhase package via fp-cli
 
 ```bash
-magnet run [path] [--package name] [--entry src/main.fp] [--mode compile|interpret] [--resolver ferrophase] [--example name] [--release]
+magnet run [path] [--package name] [--entry src/main.fp] [--mode compile|interpret] [--resolver ferrophase] [--example name] [--release] [--profile name] [--build-option key=value]
 ```
 
 ### Run tests
 
 ```bash
-magnet test [path] [--package name] [--release]
+magnet test [path] [--package name] [--release] [--profile name]
 ```
 
 ## Example Magnet.toml

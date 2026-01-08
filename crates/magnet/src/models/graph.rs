@@ -17,6 +17,8 @@ pub struct PackageGraph {
     pub packages: Vec<PackageNode>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_package: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub build_options: HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -72,6 +74,7 @@ impl PackageGraph {
             root,
             packages,
             selected_package: None,
+            build_options: HashMap::new(),
         })
     }
 
@@ -172,6 +175,7 @@ impl PackageGraph {
             root,
             packages,
             selected_package: None,
+            build_options: HashMap::new(),
         })
     }
 
@@ -226,6 +230,7 @@ impl PackageGraph {
             root,
             packages,
             selected_package: None,
+            build_options: HashMap::new(),
         })
     }
 
@@ -256,6 +261,7 @@ impl PackageGraph {
             root,
             packages: vec![node],
             selected_package: None,
+            build_options: HashMap::new(),
         })
     }
 
@@ -299,6 +305,7 @@ impl PackageGraph {
             root,
             packages: vec![node],
             selected_package: None,
+            build_options: HashMap::new(),
         })
     }
 }
