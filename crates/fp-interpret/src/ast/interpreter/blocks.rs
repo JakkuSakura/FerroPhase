@@ -312,19 +312,55 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
-            ExprKind::Any(_)
-            | ExprKind::Id(_)
-            | ExprKind::UnOp(_)
-            | ExprKind::BinOp(_)
-            | ExprKind::Dereference(_)
-            | ExprKind::Index(_)
-            | ExprKind::Range(_)
-            | ExprKind::Tuple(_)
-            | ExprKind::Array(_)
-            | ExprKind::Struct(_)
-            | ExprKind::Structural(_)
-            | ExprKind::Splat(_)
-            | ExprKind::SplatDict(_) => {}
+            ExprKind::UnOp(unop) => self.evaluate_function_body(unop.val.as_mut()),
+            ExprKind::BinOp(binop) => {
+                self.evaluate_function_body(binop.lhs.as_mut());
+                self.evaluate_function_body(binop.rhs.as_mut());
+            }
+            ExprKind::Dereference(deref) => self.evaluate_function_body(deref.referee.as_mut()),
+            ExprKind::Index(index) => {
+                self.evaluate_function_body(index.obj.as_mut());
+                self.evaluate_function_body(index.index.as_mut());
+            }
+            ExprKind::Range(range) => {
+                if let Some(start) = range.start.as_mut() {
+                    self.evaluate_function_body(start.as_mut());
+                }
+                if let Some(end) = range.end.as_mut() {
+                    self.evaluate_function_body(end.as_mut());
+                }
+                if let Some(step) = range.step.as_mut() {
+                    self.evaluate_function_body(step.as_mut());
+                }
+            }
+            ExprKind::Tuple(tuple) => {
+                for value in tuple.values.iter_mut() {
+                    self.evaluate_function_body(value);
+                }
+            }
+            ExprKind::Array(array) => {
+                for value in array.values.iter_mut() {
+                    self.evaluate_function_body(value);
+                }
+            }
+            ExprKind::Struct(strukt) => {
+                self.evaluate_function_body(strukt.name.as_mut());
+                for field in strukt.fields.iter_mut() {
+                    if let Some(value) = field.value.as_mut() {
+                        self.evaluate_function_body(value);
+                    }
+                }
+            }
+            ExprKind::Structural(structural) => {
+                for field in structural.fields.iter_mut() {
+                    if let Some(value) = field.value.as_mut() {
+                        self.evaluate_function_body(value);
+                    }
+                }
+            }
+            ExprKind::Splat(splat) => self.evaluate_function_body(splat.iter.as_mut()),
+            ExprKind::SplatDict(splat) => self.evaluate_function_body(splat.dict.as_mut()),
+            ExprKind::Any(_) | ExprKind::Id(_) => {}
         }
 
         if let Some(ty) = updated_expr_ty {
