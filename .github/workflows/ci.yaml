@@ -22,7 +22,11 @@ jobs:
 
       # Install LLVM 21 for llvm-sys 210; required by fp-cli/fp-optimize dependencies.
       - name: Install LLVM 21
-        run: sudo apt-get update && sudo apt-get install -y llvm-21-dev clang-21 libpolly-21-dev
+        run: |
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 21
+          sudo apt-get install -y libpolly-21-dev
 
       # Point llvm-sys to the installed LLVM toolchain.
       - name: Set LLVM env
