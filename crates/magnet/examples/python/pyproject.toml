@@ -1,0 +1,4 @@
+[project]
+name = "py-demo"
+version = "0.1.0"
+dependencies = ["requests>=2.0"]

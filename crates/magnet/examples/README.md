@@ -110,6 +110,18 @@ ferrophase/
 Key features demonstrated:
 - `magnet run` driving fp-cli with a package-local entrypoint
 
+### JavaScript Example
+
+The `javascript/` example shows a minimal package graph from `package.json`.
+
+### Python Example
+
+The `python/` example shows a minimal package graph from `pyproject.toml`.
+
+### Rust Example
+
+The `rust/` example shows a minimal package graph from `Cargo.toml`.
+
 ### Import From Cargo Example
 
 The `from-cargo/` example shows how to import a Cargo manifest:
