@@ -69,11 +69,10 @@ ast::File {
                           then:
                             block (1 stmt)
                               expr_stmt ;
-                                intrinsic return
-                                  args:
-                                    select .value [unknown]
-                                      object:
-                                        locator entry
+                                return
+                                  select .value [unknown]
+                                    object:
+                                      locator entry
                       expr_stmt ;
                         assign
                           target:
@@ -89,16 +88,178 @@ ast::File {
                   block (0 stmts)
         }
       }
+      pub module test {
+        pub struct TestCase {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values]
+        pub struct TestReport {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts)
+            let tests
+              init:
+                locator REGISTRY
+            let mut passed
+              init:
+                value 0
+            let mut failed
+              init:
+                value 0
+            let mut idx
+              init:
+                value 0
+            expr_stmt (value)
+              while
+                cond:
+                  binop <
+                    lhs:
+                      locator idx
+                    rhs:
+                      invoke
+                        target: tests.len
+                body:
+                  block (4 stmts)
+                    let test
+                      init:
+                        index
+                          value:
+                            locator tests
+                          index:
+                            locator idx
+                    let ok
+                      init:
+                        intrinsic catch_unwind
+                          args:
+                            closure ()
+                              invoke
+                                target: test.run
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator passed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator passed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                template: "  {} ... ok" test.name
+                        else:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator failed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator failed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                template: "  {} ... FAILED" test.name
+                    expr_stmt ;
+                      assign
+                        target:
+                          locator idx
+                        value:
+                          binop +
+                            lhs:
+                              locator idx
+                            rhs:
+                              value 1
+            let total
+              init:
+                binop +
+                  lhs:
+                    locator passed
+                  rhs:
+                    locator failed
+            expr_stmt ;
+              intrinsic println
+                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+            expr_stmt (value)
+              struct TestReport
+                total:
+                  locator total
+                passed:
+                  locator passed
+                failed:
+                  locator failed
+        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (1 stmt)
+            expr_stmt (value)
+              invoke
+                target: run_tests
+      }
     }
     pub import std::collections::HashMap
-    pub const PRIMES: Vec<i64>
-      value [6 values]
-    pub const ZERO_BUFFER: Vec<i64>
-      value [16 values]
+    pub const PRIMES: Vec<any>
+      const_block
+        block (1 stmt)
+          expr_stmt (value)
+            const_block
+              invoke
+                target: Vec::from
+                args:
+                  array (6 values)
+                    value 2
+                    value 3
+                    value 5
+                    value 7
+                    value 11
+                    value 13
+    pub const ZERO_BUFFER: Vec<any>
+      const_block
+        block (1 stmt)
+          expr_stmt (value)
+            const_block
+              invoke
+                target: Vec::from
+                args:
+                  array_repeat
+                    elem:
+                      value 0
+                    len:
+                      value 16
     pub const HTTP_STATUSES: HashMap{entries: Vec<Expr(HashMapEntry<K
 , V
 >)>}
-      value {4 entries}
+      const_block
+        block (1 stmt)
+          expr_stmt (value)
+            const_block
+              invoke
+                target: HashMap::from
+                args:
+                  array (4 values)
+                    tuple (2 values)
+                      value "ok"
+                      value 200
+                    tuple (2 values)
+                      value "created"
+                      value 201
+                    tuple (2 values)
+                      value "accepted"
+                      value 202
+                    tuple (2 values)
+                      value "not_found"
+                      value 404
     pub fn main() -> () : fn() -> ()
       block (14 stmts)
         expr_stmt ;

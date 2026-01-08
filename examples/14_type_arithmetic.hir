@@ -1,4 +1,13 @@
 hir::Program {
+    struct __Closure0 {
+        pub test: TestCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.test.run()
+    }
+
     pub struct std::collections::HashMapEntry<K, V> {
         pub key: K,
         pub value: V,
@@ -40,6 +49,54 @@ hir::Program {
                     {
                     }
             }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
         }
     }
 

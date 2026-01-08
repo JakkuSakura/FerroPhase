@@ -79,11 +79,10 @@ ast::File {
                           then:
                             block (1 stmt) : ()
                               expr_stmt ;
-                                intrinsic return : !
-                                  args:
-                                    select .value [unknown] : any
-                                      object:
-                                        locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                                return : !
+                                  select .value [unknown] : any
+                                    object:
+                                      locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
                       expr_stmt ;
                         assign : i64
                           target:
@@ -99,6 +98,125 @@ ast::File {
                   block (0 stmts) : ()
         }
       }
+      pub module test : () {
+        pub struct TestCase : TestCase{name: Expr(str), run: fn() -> ()} {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}> : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values] : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            let tests
+              init:
+                locator REGISTRY : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+            let mut passed
+              init:
+                value 0 : i64
+            let mut failed
+              init:
+                value 0 : i64
+            let mut idx
+              init:
+                value 0 : i64
+            expr_stmt (value)
+              while : ()
+                cond:
+                  binop < : bool
+                    lhs:
+                      locator idx : i64
+                    rhs:
+                      invoke : i64
+                        target: tests.len
+                body:
+                  block (4 stmts) : ()
+                    let test
+                      init:
+                        index : TestCase{name: Expr(str), run: fn() -> ()}
+                          value:
+                            locator tests : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+                          index:
+                            locator idx : i64
+                    let ok
+                      init:
+                        intrinsic catch_unwind : bool
+                          args:
+                            closure () : fn() -> ()
+                              invoke : ()
+                                target: test.run
+                    expr_stmt (value)
+                      if : ()
+                        cond:
+                          locator ok : bool
+                        then:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator passed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator passed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... ok" test.name
+                        else:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator failed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator failed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... FAILED" test.name
+                    expr_stmt ;
+                      assign : i64
+                        target:
+                          locator idx : i64
+                        value:
+                          binop + : i64
+                            lhs:
+                              locator idx : i64
+                            rhs:
+                              value 1 : i64
+            let total
+              init:
+                binop + : i64
+                  lhs:
+                    locator passed : i64
+                  rhs:
+                    locator failed : i64
+            expr_stmt ;
+              intrinsic println : ()
+                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+            expr_stmt (value)
+              struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                total:
+                  locator total : i64
+                passed:
+                  locator passed : i64
+                failed:
+                  locator failed : i64
+        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (1 stmt) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            expr_stmt (value)
+              invoke : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                target: run_tests
+      }
     }
     pub struct Point3D : Point3D{x: Expr(i64), y: Expr(i64), z: Expr(i64)} {
       x: Expr(i64)
@@ -109,7 +227,7 @@ ast::File {
     pub const _GENERATED: () : ()
       value () : ()
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (32 stmts) : ()
+      block (34 stmts) : ()
         expr_stmt ;
           intrinsic println : ()
             template: "📘 Tutorial: 08_metaprogramming_patterns.fp"
@@ -195,11 +313,15 @@ ast::File {
         expr_stmt ;
           intrinsic println : ()
             template: "expr splice => {}" score
+        pub const fn_token: Quote<item:fn> : Quote<item:fn>
+          value quote<item> : Quote<item:fn>
         pub const fn_name: &string : &string
           value "inspected" : &string
         expr_stmt ;
           intrinsic println : ()
             template: "quote<fn> inspect => name={}" fn_name
+        pub const fn_group: [Quote<item:fn>] : [Quote<item:fn>]
+          value quote<item> : [Quote<item:fn>]
         pub const fn_count: i64 : i64
           value 2 : i64
         expr_stmt ;

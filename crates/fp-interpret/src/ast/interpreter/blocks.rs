@@ -455,11 +455,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.evaluate_function_body(expr_stmt.expr.as_mut());
                         new_stmts.push(stmt);
                     }
-                }
-                BlockStmt::Item(item) => {
-                    self.evaluate_item(item.as_mut());
+            }
+            BlockStmt::Item(item) => {
+                self.evaluate_item(item.as_mut());
+                if matches!(self.mode, InterpreterMode::CompileTime)
+                    && is_quote_only_item(item.as_ref())
+                {
+                    self.mark_mutated();
+                } else {
                     new_stmts.push(stmt);
                 }
+            }
                 BlockStmt::Let(let_stmt) => {
                     self.evaluate_function_let_stmt(let_stmt);
                     new_stmts.push(stmt);

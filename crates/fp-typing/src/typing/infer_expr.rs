@@ -1267,6 +1267,34 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             continue;
                         }
                     }
+                    if let ExprKind::Tuple(tuple_expr) = entry.kind_mut() {
+                        if tuple_expr.values.len() == 2 {
+                            let key = self.infer_expr(&mut tuple_expr.values[0])?;
+                            let value = self.infer_expr(&mut tuple_expr.values[1])?;
+                            if idx == 0 {
+                                key_var = key;
+                                value_var = value;
+                            } else {
+                                let _ = self.unify(key_var, key);
+                                let _ = self.unify(value_var, value);
+                            }
+                            continue;
+                        }
+                    }
+                    if let ExprKind::Array(array_expr) = entry.kind_mut() {
+                        if array_expr.values.len() == 2 {
+                            let key = self.infer_expr(&mut array_expr.values[0])?;
+                            let value = self.infer_expr(&mut array_expr.values[1])?;
+                            if idx == 0 {
+                                key_var = key;
+                                value_var = value;
+                            } else {
+                                let _ = self.unify(key_var, key);
+                                let _ = self.unify(value_var, value);
+                            }
+                            continue;
+                        }
+                    }
                     let _ = self.infer_expr(entry)?;
                     self.emit_error("HashMap::from expects HashMapEntry { key, value } entries");
                 }

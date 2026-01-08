@@ -4978,7 +4978,13 @@ impl<'a> BodyBuilder<'a> {
                 let tuple_ty = Ty {
                     kind: TyKind::Tuple(payloads.iter().cloned().map(Box::new).collect()),
                 };
-                tuple_ty == *payload_ty
+                if tuple_ty == *payload_ty {
+                    true
+                } else if let Some(layout) = self.lowering.struct_layout_for_ty(payload_ty) {
+                    layout.field_tys == *payloads
+                } else {
+                    false
+                }
             };
 
             if matches {
@@ -4990,7 +4996,11 @@ impl<'a> BodyBuilder<'a> {
         let payload_len = match &payload_ty.kind {
             TyKind::Tuple(fields) => fields.len(),
             _ if MirLowering::is_unit_ty(payload_ty) => 0,
-            _ => 1,
+            _ => self
+                .lowering
+                .struct_layout_for_ty(payload_ty)
+                .map(|layout| layout.field_tys.len())
+                .unwrap_or(1),
         };
         let mut len_matches = layout
             .variant_payloads

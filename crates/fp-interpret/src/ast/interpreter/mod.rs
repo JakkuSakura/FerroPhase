@@ -675,10 +675,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     value,
                     Value::Undefined(_) | Value::Unit(_) | Value::Any(_)
                 );
+                let is_const_block_expr = matches!(def.value.kind(), ExprKind::ConstBlock(_));
                 if is_mutable && !matches!(value, Value::Undefined(_) | Value::Any(_)) {
                     should_replace = true;
                 }
-                if !is_mutable {
+                if is_const_block_expr && !matches!(value, Value::Undefined(_) | Value::Any(_)) {
+                    // Const blocks must not reach AST→HIR; materialize their evaluated value.
+                    should_replace = true;
+                }
+                if !is_mutable && !is_const_block_expr {
                     if matches!(value, Value::Map(_)) {
                         should_replace = false;
                     }
@@ -3777,6 +3782,28 @@ fn is_quote_only_item(item: &Item) -> bool {
         ItemKind::DeclFunction(func) => {
             func.sig.quote_kind.is_some()
                 || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
+        }
+        ItemKind::DefConst(def) => {
+            let has_quote_ty = def
+                .ty_annotation()
+                .or_else(|| def.ty.as_ref())
+                .map(|ty| matches!(ty, Ty::Quote(_)))
+                .unwrap_or(false);
+            let has_quote_value = match def.value.kind() {
+                ExprKind::Value(value) => match value.as_ref() {
+                    Value::QuoteToken(_) => true,
+                    Value::List(list) => {
+                        !list.values.is_empty()
+                            && list
+                                .values
+                                .iter()
+                                .all(|value| matches!(value, Value::QuoteToken(_)))
+                    }
+                    _ => false,
+                },
+                _ => false,
+            };
+            has_quote_ty || has_quote_value
         }
         _ => false,
     }
