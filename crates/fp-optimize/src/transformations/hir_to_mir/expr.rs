@@ -7166,6 +7166,35 @@ impl<'a> BodyBuilder<'a> {
                         ty: unit_ty,
                     });
                 }
+                if call.kind == IntrinsicCallKind::Format {
+                    let (format, args) = self.prepare_format_call(call, expr.span)?;
+                    let string_ty = Ty {
+                        kind: TyKind::RawPtr(TypeAndMut {
+                            ty: Box::new(Ty {
+                                kind: TyKind::Int(IntTy::I8),
+                            }),
+                            mutbl: Mutability::Not,
+                        }),
+                    };
+                    let local_id = self.allocate_temp(string_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: IntrinsicCallKind::Format,
+                                format,
+                                args,
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: string_ty,
+                    });
+                }
                 if call.kind == IntrinsicCallKind::Panic {
                     self.emit_panic_intrinsic(call, expr.span)?;
                     let unit_ty = MirLowering::unit_ty();
@@ -7272,42 +7301,6 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo {
                         operand: mir::Operand::copy(local_place),
                         ty: len_ty,
-                    });
-                }
-                if call.kind == IntrinsicCallKind::ConstBlock {
-                    if let IntrinsicCallPayload::Args { args } = &call.payload {
-                        if let Some(arg) = args.first() {
-                            let ty = expected.cloned().unwrap_or_else(|| Ty {
-                                kind: TyKind::Tuple(Vec::new()),
-                            });
-                            let local_id = self.allocate_temp(ty.clone(), expr.span);
-                            let place = mir::Place::from_local(local_id);
-                            self.lower_expr_into_place(arg, place.clone(), &ty)?;
-                            if let Some(struct_def) = self.struct_def_from_ty(&ty) {
-                                self.local_structs.insert(local_id, struct_def);
-                            }
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::copy(place),
-                                ty,
-                            });
-                        }
-                    }
-                    self.lowering
-                        .emit_warning(expr.span, "const block intrinsic expects an argument");
-                    let unit_ty = MirLowering::unit_ty();
-                    let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
-                    let local_place = mir::Place::from_local(local_id);
-                    let statement = mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            local_place.clone(),
-                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
-                        ),
-                    };
-                    self.push_statement(statement);
-                    return Ok(OperandInfo {
-                        operand: mir::Operand::copy(local_place),
-                        ty: unit_ty,
                     });
                 }
                 if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
@@ -7733,6 +7726,100 @@ impl<'a> BodyBuilder<'a> {
             },
         });
         Ok(())
+    }
+
+    fn prepare_format_call(
+        &mut self,
+        call: &hir::IntrinsicCallExpr,
+        span: Span,
+    ) -> Result<(String, Vec<mir::Operand>)> {
+        let template = match &call.payload {
+            IntrinsicCallPayload::Format { template } => template,
+            IntrinsicCallPayload::Args { .. } => {
+                self.lowering
+                    .emit_error(span, "format intrinsic requires format payload");
+                return Ok((String::new(), Vec::new()));
+            }
+        };
+
+        if !template.kwargs.is_empty() {
+            self.lowering
+                .emit_error(span, "named arguments are not supported in format lowering");
+            return Ok((String::new(), Vec::new()));
+        }
+
+        let mut lowered_args = Vec::with_capacity(template.args.len());
+        for arg in &template.args {
+            if let Some(formatted) = self.try_format_const_expr_for_printf(arg, span) {
+                lowered_args.push(formatted);
+            } else {
+                lowered_args.push(self.lower_operand(arg, None)?);
+            }
+        }
+
+        let mut prepared_args = Vec::with_capacity(lowered_args.len());
+        for arg in lowered_args {
+            prepared_args.push(self.prepare_printf_arg(arg, span)?);
+        }
+
+        let mut format = String::new();
+        let mut implicit_index = 0usize;
+
+        for part in &template.parts {
+            match part {
+                hir::FormatTemplatePart::Literal(text) => format.push_str(text),
+                hir::FormatTemplatePart::Placeholder(placeholder) => {
+                    let arg_index = match &placeholder.arg_ref {
+                        hir::FormatArgRef::Implicit => {
+                            let current = implicit_index;
+                            implicit_index += 1;
+                            current
+                        }
+                        hir::FormatArgRef::Positional(index) => *index,
+                        hir::FormatArgRef::Named(name) => {
+                            self.lowering.emit_error(
+                                span,
+                                format!("named argument '{name}' is not supported"),
+                            );
+                            return Ok((String::new(), Vec::new()));
+                        }
+                    };
+
+                    let Some((_, _, spec)) = prepared_args.get(arg_index) else {
+                        self.lowering.emit_error(
+                            span,
+                            format!(
+                                "format placeholder references missing argument at index {}",
+                                arg_index
+                            ),
+                        );
+                        return Ok((String::new(), Vec::new()));
+                    };
+
+                    if let Some(explicit) = &placeholder.format_spec {
+                        let trimmed = explicit.trim();
+                        if trimmed.starts_with('%') {
+                            format.push_str(explicit);
+                        } else {
+                            format.push('%');
+                            format.push_str(trimmed);
+                            if !trimmed.chars().any(|c| c.is_ascii_alphabetic()) {
+                                format.push_str(spec.trim_start_matches('%'));
+                            }
+                        }
+                    } else {
+                        format.push_str(spec);
+                    }
+                }
+            }
+        }
+
+        let mut operands = Vec::with_capacity(prepared_args.len());
+        for (operand, _ty, _spec) in prepared_args {
+            operands.push(operand);
+        }
+
+        Ok((format, operands))
     }
 
     fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
@@ -8983,24 +9070,6 @@ impl<'a> BodyBuilder<'a> {
                 self.lower_match_expr(expr.span, scrutinee, arms, place, expected_ty)?;
             }
             hir::ExprKind::IntrinsicCall(call) => match call.kind {
-                IntrinsicCallKind::ConstBlock => {
-                    if let IntrinsicCallPayload::Args { args } = &call.payload {
-                        if let Some(arg) = args.first() {
-                            self.lower_expr_into_place(arg, place, expected_ty)?;
-                            return Ok(());
-                        }
-                    }
-                    self.lowering
-                        .emit_warning(expr.span, "const block intrinsic expects an argument");
-                    let unit_assign = mir::Statement {
-                        source_info: expr.span,
-                        kind: mir::StatementKind::Assign(
-                            place.clone(),
-                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
-                        ),
-                    };
-                    self.push_statement(unit_assign);
-                }
                 IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                     self.emit_printf_call(call, expr.span)?;
                     let statement = mir::Statement {
@@ -9014,6 +9083,22 @@ impl<'a> BodyBuilder<'a> {
                     if (place.local as usize) < self.locals.len() {
                         self.locals[place.local as usize].ty = MirLowering::unit_ty();
                     }
+                    return Ok(());
+                }
+                IntrinsicCallKind::Format => {
+                    let (format, args) = self.prepare_format_call(call, expr.span)?;
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: IntrinsicCallKind::Format,
+                                format,
+                                args,
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
                     return Ok(());
                 }
                 IntrinsicCallKind::Panic => {

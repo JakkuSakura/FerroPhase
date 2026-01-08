@@ -21,45 +21,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 RuntimeFlow::Value(Value::unit())
             }
+            IntrinsicCallKind::Format => {
+                match self.render_intrinsic_call_runtime(call) {
+                    Ok(output) => RuntimeFlow::Value(Value::string(output)),
+                    Err(err) => {
+                        self.emit_error(err);
+                        RuntimeFlow::Value(Value::string(String::new()))
+                    }
+                }
+            }
             IntrinsicCallKind::DebugAssertions => RuntimeFlow::Value(Value::bool(self.debug_assertions)),
-            IntrinsicCallKind::Break => {
-                if let IntrinsicCallPayload::Args { args } = &mut call.payload {
-                    if args.len() > 1 {
-                        self.emit_error("`break` accepts at most one value");
-                    }
-                    let value = if let Some(expr) = args.first_mut() {
-                        let flow = self.eval_expr_runtime(expr);
-                        Some(self.finish_runtime_flow(flow))
-                    } else {
-                        None
-                    };
-                    return RuntimeFlow::Break(value);
-                }
-                RuntimeFlow::Break(None)
-            }
-            IntrinsicCallKind::Continue => {
-                if let IntrinsicCallPayload::Args { args } = &mut call.payload {
-                    if !args.is_empty() {
-                        self.emit_error("`continue` does not accept a value");
-                    }
-                }
-                RuntimeFlow::Continue
-            }
-            IntrinsicCallKind::Return => {
-                if let IntrinsicCallPayload::Args { args } = &mut call.payload {
-                    if args.len() > 1 {
-                        self.emit_error("`return` accepts at most one value");
-                    }
-                    let value = if let Some(expr) = args.first_mut() {
-                        let flow = self.eval_expr_runtime(expr);
-                        Some(self.finish_runtime_flow(flow))
-                    } else {
-                        None
-                    };
-                    return RuntimeFlow::Return(value);
-                }
-                RuntimeFlow::Return(None)
-            }
             IntrinsicCallKind::Panic => {
                 let message = self.intrinsic_panic_message(call);
                 self.stdout.push(format!("panic: {}", message));
@@ -89,18 +60,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                     other => RuntimeFlow::Value(Value::bool(matches!(other, RuntimeFlow::Value(_)))),
                 }
             }
-            IntrinsicCallKind::ConstBlock => {
-                if let IntrinsicCallPayload::Args { args } = &mut call.payload {
-                    if let Some(expr) = args.first_mut() {
-                        self.enter_const_region();
-                        let flow = self.eval_expr_runtime(expr);
-                        self.exit_const_region();
-                        return flow;
-                    }
-                }
-                self.emit_error("const block requires an argument");
-                RuntimeFlow::Value(Value::undefined())
-            }
             _ => RuntimeFlow::Value(self.eval_intrinsic(call)),
         }
     }
@@ -125,7 +84,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 | IntrinsicCallKind::HasMethod
                 | IntrinsicCallKind::MethodCount
                 | IntrinsicCallKind::ReflectFields
-                | IntrinsicCallKind::ConstBlock
         )
     }
 
@@ -148,44 +106,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 Value::unit()
             }
+            IntrinsicCallKind::Format => match self.render_intrinsic_call(call) {
+                Ok(output) => Value::string(output),
+                Err(err) => {
+                    self.emit_error(err);
+                    Value::string(String::new())
+                }
+            },
             IntrinsicCallKind::DebugAssertions => Value::bool(self.debug_assertions),
-            IntrinsicCallKind::Break => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
-                {
-                    if args.len() > 1 {
-                        self.emit_error("`break` accepts at most one value in const evaluation");
-                    }
-                    if let Some(expr) = args.first_mut() {
-                        return self.eval_expr(expr);
-                    }
-                }
-                Value::unit()
-            }
-            IntrinsicCallKind::Continue => {
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
-                {
-                    if !args.is_empty() {
-                        self.emit_error("`continue` does not accept a value in const evaluation");
-                    }
-                }
-                Value::unit()
-            }
-            IntrinsicCallKind::ConstBlock => {
-                if matches!(self.mode, InterpreterMode::RunTime) {
-                    return Value::unit();
-                }
-                if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &mut call.payload
-                {
-                    if let Some(expr) = args.first_mut() {
-                        self.enter_const_region();
-                        let value = self.eval_expr(expr);
-                        self.exit_const_region();
-                        return value;
-                    }
-                }
-                self.emit_error("const block requires an argument");
-                Value::undefined()
-            }
             IntrinsicCallKind::Panic | IntrinsicCallKind::CatchUnwind => {
                 self.emit_error(format!(
                     "intrinsic {:?} is not supported during const evaluation",

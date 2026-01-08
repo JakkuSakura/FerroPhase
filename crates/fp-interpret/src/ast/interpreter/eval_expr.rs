@@ -308,6 +308,31 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.bind_pattern(&expr_let.pat, value.clone());
                 RuntimeFlow::Value(value)
             }
+            ExprKind::Return(ret) => {
+                let value = if let Some(expr) = ret.value.as_mut() {
+                    let flow = self.eval_expr_runtime(expr);
+                    Some(self.finish_runtime_flow(flow))
+                } else {
+                    None
+                };
+                RuntimeFlow::Return(value)
+            }
+            ExprKind::Break(brk) => {
+                let value = if let Some(expr) = brk.value.as_mut() {
+                    let flow = self.eval_expr_runtime(expr);
+                    Some(self.finish_runtime_flow(flow))
+                } else {
+                    None
+                };
+                RuntimeFlow::Break(value)
+            }
+            ExprKind::Continue(_) => RuntimeFlow::Continue,
+            ExprKind::ConstBlock(const_block) => {
+                self.enter_const_region();
+                let result = self.eval_expr(const_block.expr.as_mut());
+                self.exit_const_region();
+                RuntimeFlow::Value(result)
+            }
             ExprKind::Invoke(invoke) => self.eval_invoke_runtime_flow(invoke),
             ExprKind::Macro(macro_expr) => {
                 self.emit_error(format!(
@@ -680,6 +705,24 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Let(expr_let) => {
                 let value = self.eval_expr(expr_let.expr.as_mut());
                 self.bind_pattern(&expr_let.pat, value.clone());
+                value
+            }
+            ExprKind::Return(_) => {
+                self.emit_error("`return` is not supported during const evaluation");
+                Value::undefined()
+            }
+            ExprKind::Break(_) => {
+                self.emit_error("`break` is not supported during const evaluation");
+                Value::undefined()
+            }
+            ExprKind::Continue(_) => {
+                self.emit_error("`continue` is not supported during const evaluation");
+                Value::undefined()
+            }
+            ExprKind::ConstBlock(const_block) => {
+                self.enter_const_region();
+                let value = self.eval_expr(const_block.expr.as_mut());
+                self.exit_const_region();
                 value
             }
             ExprKind::Invoke(invoke) => {

@@ -217,6 +217,14 @@ fn summarize_statement(stmt: &Statement, _ctx: &PrettyCtx<'_>) -> String {
 fn summarize_rvalue(rvalue: &Rvalue) -> String {
     match rvalue {
         Rvalue::Use(op) => summarize_operand(op),
+        Rvalue::IntrinsicCall { kind, format, args } => {
+            let args = args
+                .iter()
+                .map(summarize_operand)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("intrinsic {:?} \"{}\" [{}]", kind, escape_str(format), args)
+        }
         Rvalue::Repeat(op, len) => format!("repeat({}, {})", summarize_operand(op), len),
         Rvalue::Ref(_, kind, place) => format!("ref({:?}, {})", kind, format_place(place)),
         Rvalue::AddressOf(mutability, place) => {

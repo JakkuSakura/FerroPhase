@@ -1,10 +1,11 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprKind,
-    ExprUnOp, Ident, StmtLet, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprFormatString, ExprIf,
+    ExprIntrinsicCall, ExprKind, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
+    Ident, StmtLet, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{
-    IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload, IntrinsicNormalizer, NormalizeOutcome,
+    IntrinsicCallKind, IntrinsicCallPayload, IntrinsicNormalizer, NormalizeOutcome,
 };
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_rust::normalization::RustIntrinsicNormalizer;
@@ -86,6 +87,44 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let replacement = panic_macro(args).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
+            if name.as_str() == "format" {
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                if args.is_empty() {
+                    return Err(fp_core::error::Error::from(
+                        "format! requires at least one argument",
+                    ));
+                }
+                let template = match args[0].kind() {
+                    ExprKind::Value(value) => match value.as_ref() {
+                        Value::String(string) => {
+                            let parts = parse_format_template(&string.value)?;
+                            ExprFormatString {
+                                parts,
+                                args: args[1..].to_vec(),
+                                kwargs: Vec::new(),
+                            }
+                        }
+                        _ => {
+                            return Err(fp_core::error::Error::from(
+                                "format! expects a string literal as the first argument",
+                            ));
+                        }
+                    },
+                    ExprKind::FormatString(format) => ExprFormatString {
+                        parts: format.parts.clone(),
+                        args: format.args.clone(),
+                        kwargs: format.kwargs.clone(),
+                    },
+                    _ => {
+                        return Err(fp_core::error::Error::from(
+                            "format! expects a string literal as the first argument",
+                        ));
+                    }
+                };
+
+                let replacement = Expr::from_parts(ty_slot.clone(), ExprKind::FormatString(template));
+                return Ok(NormalizeOutcome::Normalized(replacement));
+            }
         }
 
         let fallback = Expr::from_parts(ty_slot, ExprKind::Macro(macro_expr));
@@ -136,6 +175,128 @@ fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
         idx += consumed;
     }
     Ok(args)
+}
+
+fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>> {
+    let mut parts = Vec::new();
+    let mut current_literal = String::new();
+    let mut chars = template.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            if matches!(chars.peek(), Some('{')) {
+                chars.next();
+                current_literal.push('{');
+                continue;
+            }
+            if !current_literal.is_empty() {
+                parts.push(FormatTemplatePart::Literal(current_literal.clone()));
+                current_literal.clear();
+            }
+            if matches!(chars.peek(), Some('}')) {
+                chars.next();
+                parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                    arg_ref: FormatArgRef::Implicit,
+                    format_spec: None,
+                }));
+                continue;
+            }
+            let mut placeholder_content = String::new();
+            while let Some(inner_ch) = chars.next() {
+                if inner_ch == '}' {
+                    break;
+                }
+                placeholder_content.push(inner_ch);
+            }
+            let placeholder = parse_placeholder_content(&placeholder_content)?;
+            parts.push(FormatTemplatePart::Placeholder(placeholder));
+            continue;
+        }
+        if ch == '}' {
+            if matches!(chars.peek(), Some('}')) {
+                chars.next();
+                current_literal.push('}');
+                continue;
+            }
+            current_literal.push('}');
+            continue;
+        }
+        if ch == '%' {
+            if matches!(chars.peek(), Some('%')) {
+                chars.next();
+                current_literal.push('%');
+                continue;
+            }
+
+            if !current_literal.is_empty() {
+                parts.push(FormatTemplatePart::Literal(current_literal.clone()));
+                current_literal.clear();
+            }
+
+            let mut spec = String::new();
+            while let Some(&next) = chars.peek() {
+                spec.push(next);
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            if spec.is_empty() {
+                spec.push('s');
+            }
+            parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                arg_ref: FormatArgRef::Implicit,
+                format_spec: Some(format!("%{}", spec)),
+            }));
+            continue;
+        }
+
+        current_literal.push(ch);
+    }
+
+    if !current_literal.is_empty() {
+        parts.push(FormatTemplatePart::Literal(current_literal));
+    }
+
+    Ok(parts)
+}
+
+fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {
+    if content.is_empty() {
+        return Ok(FormatPlaceholder {
+            arg_ref: FormatArgRef::Implicit,
+            format_spec: None,
+        });
+    }
+
+    if let Some(colon_pos) = content.find(':') {
+        let arg_part = &content[..colon_pos];
+        let format_spec = &content[colon_pos + 1..];
+
+        let arg_ref = if arg_part.is_empty() {
+            FormatArgRef::Implicit
+        } else if let Ok(index) = arg_part.parse::<usize>() {
+            FormatArgRef::Positional(index)
+        } else {
+            FormatArgRef::Named(arg_part.to_string())
+        };
+
+        Ok(FormatPlaceholder {
+            arg_ref,
+            format_spec: Some(format_spec.to_string()),
+        })
+    } else {
+        let arg_ref = if let Ok(index) = content.parse::<usize>() {
+            FormatArgRef::Positional(index)
+        } else {
+            FormatArgRef::Named(content.to_string())
+        };
+
+        Ok(FormatPlaceholder {
+            arg_ref,
+            format_spec: None,
+        })
+    }
 }
 
 fn assert_macro(cond: Expr, message: &str) -> Expr {

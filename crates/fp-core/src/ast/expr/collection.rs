@@ -1,10 +1,9 @@
 use crate::ast::{
-    BExpr, Expr, ExprArray, ExprArrayRepeat, ExprBlock, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprTuple, Ident, Locator, Path,
+    BExpr, Expr, ExprArray, ExprArrayRepeat, ExprBlock, ExprConstBlock, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprTuple, Ident, Locator, Path,
 };
 use crate::common_enum;
 use crate::common_struct;
-use crate::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 
 common_struct! {
     pub struct ExprIntrinsicContainerEntry {
@@ -167,12 +166,9 @@ impl ExprIntrinsicContainer {
 
 fn make_const_collection_call(expr: Expr) -> Expr {
     let block = ExprBlock::new_expr(expr);
-    ExprKind::IntrinsicCall(IntrinsicCall::new(
-        IntrinsicCallKind::ConstBlock,
-        IntrinsicCallPayload::Args {
-            args: vec![Expr::block(block)],
-        },
-    ))
+    ExprKind::ConstBlock(ExprConstBlock {
+        expr: Expr::block(block).into(),
+    })
     .into()
 }
 

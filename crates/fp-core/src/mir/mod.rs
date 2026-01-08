@@ -179,6 +179,11 @@ pub struct SwitchTargets {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Rvalue {
     Use(Operand),
+    IntrinsicCall {
+        kind: IntrinsicCallKind,
+        format: String,
+        args: Vec<Operand>,
+    },
     Repeat(Operand, u64),
     Ref(Region, BorrowKind, Place),
     ThreadLocalRef(DefId),

@@ -327,12 +327,7 @@ fn cst_printer_can_reconstruct_source() {
 fn items_contain_const_block(items: &[Item]) -> bool {
     fn expr_contains_const_block(expr: &Expr) -> bool {
         match expr.kind() {
-            ExprKind::IntrinsicCall(call) => {
-                matches!(
-                    call.kind,
-                    fp_core::intrinsics::IntrinsicCallKind::ConstBlock
-                )
-            }
+            ExprKind::ConstBlock(_) => true,
             ExprKind::Block(block) => block.stmts.iter().any(|stmt| match stmt {
                 BlockStmt::Expr(e) => expr_contains_const_block(&e.expr),
                 BlockStmt::Let(l) => l.init.as_ref().is_some_and(expr_contains_const_block),

@@ -4,11 +4,11 @@ use std::sync::RwLock;
 
 use eyre::eyre;
 use fp_core::ast::{
-    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Ident, Item, Locator, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
-    TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
-    ValueTuple,
+    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprFormatString,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, FormatArgRef,
+    FormatTemplatePart, FunctionParam, Ident, Item, Locator, Node, NodeKind, Pattern, Ty,
+    TypeEnum, TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap,
+    ValueMapEntry, ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
@@ -593,7 +593,18 @@ impl ScriptEmitter {
                     self.emit_for_stmt(for_expr)?;
                     return Ok(());
                 }
-                if let ExprKind::IntrinsicCall(call) = expr.kind() {
+                if let ExprKind::Return(ret) = expr.kind() {
+                    if let Some(value) = &ret.value {
+                        let rendered = self.render_expr(value)?;
+                        self.push_line(&format!("return {};", rendered));
+                    } else {
+                        self.push_line("return;");
+                    }
+                } else if let ExprKind::Break(_) = expr.kind() {
+                    self.push_line("break;");
+                } else if let ExprKind::Continue(_) = expr.kind() {
+                    self.push_line("continue;");
+                } else if let ExprKind::IntrinsicCall(call) = expr.kind() {
                     self.emit_intrinsic_statement(call)?;
                 } else if let ExprKind::Block(block_expr) = expr.kind() {
                     self.emit_block(block_expr, false)?;
@@ -632,30 +643,6 @@ impl ScriptEmitter {
                 };
                 let joined = rendered_args.join(", ");
                 self.push_line(&format!("console.log({});", joined));
-                Ok(())
-            }
-            IntrinsicCallKind::Return => match &call.payload {
-                IntrinsicCallPayload::Args { args } if args.is_empty() => {
-                    self.push_line("return;");
-                    Ok(())
-                }
-                IntrinsicCallPayload::Args { args } => {
-                    let value = args
-                        .get(0)
-                        .map(|expr| self.render_expr(expr))
-                        .transpose()?
-                        .unwrap_or_else(|| "undefined".to_string());
-                    self.push_line(&format!("return {value};"));
-                    Ok(())
-                }
-                _ => Err(eyre!("return intrinsic expects args payload").into()),
-            },
-            IntrinsicCallKind::Break => {
-                self.push_line("break;");
-                Ok(())
-            }
-            IntrinsicCallKind::Continue => {
-                self.push_line("continue;");
                 Ok(())
             }
             _ => {
@@ -729,6 +716,7 @@ impl ScriptEmitter {
                     .collect::<Result<Vec<_>>>()?;
                 Ok(format!("[{}]", values.join(", ")))
             }
+            ExprKind::ConstBlock(block) => self.render_const_block_expr(block),
             ExprKind::IntrinsicCall(call) => self.render_intrinsic_expr(call),
             ExprKind::Paren(paren) => Ok(format!("({})", self.render_expr(paren.expr.as_ref())?)),
             ExprKind::Reference(reference) => self.render_expr(reference.referee.as_ref()),
@@ -799,30 +787,17 @@ impl ScriptEmitter {
 
     fn render_intrinsic_expr(&mut self, call: &ExprIntrinsicCall) -> Result<String> {
         match call.kind() {
+            IntrinsicCallKind::Format => match &call.payload {
+                IntrinsicCallPayload::Format { template } => self.render_format_string(template),
+                IntrinsicCallPayload::Args { .. } => {
+                    Err(eyre!("format intrinsic expects format payload").into())
+                }
+            },
             IntrinsicCallKind::Len => match &call.payload {
                 IntrinsicCallPayload::Args { args } if !args.is_empty() => {
                     Ok(format!("{}.length", self.render_expr(&args[0])?))
                 }
                 _ => Err(eyre!("len intrinsic expects an argument").into()),
-            },
-            IntrinsicCallKind::ConstBlock => match &call.payload {
-                IntrinsicCallPayload::Args { args } if args.len() == 1 => {
-                    let expr = &args[0];
-                    match expr.kind() {
-                        ExprKind::Block(block) => {
-                            if let Some(tail) = Self::block_tail_value_expr(block) {
-                                self.render_expr(tail)
-                            } else {
-                                Err(eyre!(
-                                    "const block needs a trailing expression for script targets"
-                                )
-                                .into())
-                            }
-                        }
-                        _ => self.render_expr(expr),
-                    }
-                }
-                _ => Err(eyre!("const_block intrinsic expects a single argument").into()),
             },
             IntrinsicCallKind::SizeOf => match &call.payload {
                 IntrinsicCallPayload::Args { args } if args.len() == 1 => {
@@ -862,6 +837,19 @@ impl ScriptEmitter {
             },
             IntrinsicCallKind::MethodCount => Ok("0".to_string()),
             _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind()).into()),
+        }
+    }
+
+    fn render_const_block_expr(&mut self, block: &ExprConstBlock) -> Result<String> {
+        match block.expr.kind() {
+            ExprKind::Block(expr_block) => {
+                if let Some(tail) = Self::block_tail_value_expr(expr_block) {
+                    self.render_expr(tail)
+                } else {
+                    Err(eyre!("const block requires a trailing expression").into())
+                }
+            }
+            _ => self.render_expr(block.expr.as_ref()),
         }
     }
 

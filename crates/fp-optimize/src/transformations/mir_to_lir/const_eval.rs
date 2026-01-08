@@ -91,6 +91,7 @@ impl LirGenerator {
                     Ok(None)
                 }
             }
+            mir::Rvalue::IntrinsicCall { .. } => Ok(None),
             _ => Ok(None),
         }
     }

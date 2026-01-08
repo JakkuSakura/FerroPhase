@@ -637,37 +637,21 @@ impl<'a> ExprParser<'a> {
 
     fn parse_expr_break(&self, b: syn::ExprBreak) -> Result<Expr> {
         let value = b.expr.map(|e| self.parse_expr(*e)).transpose()?;
-        let args = if let Some(val) = value {
-            vec![val]
-        } else {
-            Vec::new()
-        };
-        Ok(ExprIntrinsicCall::new(
-            IntrinsicCallKind::Break,
-            IntrinsicCallPayload::Args { args },
-        )
+        Ok(ExprKind::Break(ExprBreak {
+            value: value.map(Box::new),
+        })
         .into())
     }
 
     fn parse_expr_continue(&self) -> Result<Expr> {
-        Ok(ExprIntrinsicCall::new(
-            IntrinsicCallKind::Continue,
-            IntrinsicCallPayload::Args { args: Vec::new() },
-        )
-        .into())
+        Ok(ExprKind::Continue(ExprContinue {}).into())
     }
 
     fn parse_expr_return(&self, r: syn::ExprReturn) -> Result<Expr> {
         let value = r.expr.map(|e| self.parse_expr(*e)).transpose()?;
-        let args = if let Some(val) = value {
-            vec![val]
-        } else {
-            Vec::new()
-        };
-        Ok(ExprIntrinsicCall::new(
-            IntrinsicCallKind::Return,
-            IntrinsicCallPayload::Args { args },
-        )
+        Ok(ExprKind::Return(ExprReturn {
+            value: value.map(Box::new),
+        })
         .into())
     }
 
@@ -859,16 +843,30 @@ impl<'a> ExprParser<'a> {
             .map(|arg| self.parse_expr(arg))
             .collect::<Result<Vec<_>>>()?;
 
-        let path = Path::new(vec![
-            Ident::new("std"),
-            Ident::new("fmt"),
-            Ident::new("format"),
-        ]);
+        if !args.is_empty() {
+            if let ExprKind::Value(value) = args[0].kind() {
+                if let Value::String(format_str) = &**value {
+                    let format_args = args[1..].to_vec();
+                    let parts = parse_format_template(&format_str.value)?;
+                    let format = ExprFormatString {
+                        parts,
+                        args: format_args,
+                        kwargs: Vec::new(),
+                    };
 
-        Ok(ExprInvoke {
-            target: ExprInvokeTarget::expr(Expr::path(path)),
-            args,
+                    return Ok(ExprIntrinsicCall::new(
+                        IntrinsicCallKind::Format,
+                        IntrinsicCallPayload::Format { template: format },
+                    )
+                    .into());
+                }
+            }
         }
+
+        Ok(ExprIntrinsicCall::new(
+            IntrinsicCallKind::Format,
+            IntrinsicCallPayload::Args { args },
+        )
         .into())
     }
 
@@ -1079,12 +1077,9 @@ impl<'a> ExprParser<'a> {
 
     fn parse_expr_const_block(&self, block: syn::Block) -> Result<Expr> {
         let block = self.parse_block(block)?;
-        Ok(ExprIntrinsicCall::new(
-            IntrinsicCallKind::ConstBlock,
-            IntrinsicCallPayload::Args {
-                args: vec![Expr::block(block)],
-            },
-        )
+        Ok(ExprKind::ConstBlock(ExprConstBlock {
+            expr: Expr::block(block).into(),
+        })
         .into())
     }
 

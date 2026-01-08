@@ -7,20 +7,14 @@ pub enum IntrinsicCallKind {
     Println,
     /// `std::io::print` variants (no trailing newline).
     Print,
+    /// Build a formatted string at runtime.
+    Format,
     /// Length query for collections/strings.
     Len,
-    /// Compile-time const block expression.
-    ConstBlock,
     /// Debug assertions state (mapped from build profile).
     DebugAssertions,
     /// Input prompt/read intrinsic.
     Input,
-    /// Break from loop with optional value.
-    Break,
-    /// Continue to next loop iteration.
-    Continue,
-    /// Early return from function with optional value.
-    Return,
     /// Abort execution with a panic payload.
     Panic,
     /// Execute a callable and catch panic flows, returning success state.

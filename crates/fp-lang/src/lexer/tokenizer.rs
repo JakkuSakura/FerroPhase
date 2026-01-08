@@ -290,6 +290,8 @@ fn token_parser<'a>() -> impl Parser<&'a str, TokenKind, ContextError> {
         raw_byte_string_token,
         raw_string_token,
         byte_string_token,
+        f_string_token,
+        t_string_token,
         string_token,
         raw_identifier_token,
         number_token,
@@ -304,6 +306,14 @@ fn string_token(input: &mut &str) -> ModalResult<TokenKind> {
 
 fn byte_string_token(input: &mut &str) -> ModalResult<TokenKind> {
     parse_cooked_string_literal(input, "b").map(|_| TokenKind::StringLiteral)
+}
+
+fn f_string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_cooked_string_literal(input, "f").map(|_| TokenKind::StringLiteral)
+}
+
+fn t_string_token(input: &mut &str) -> ModalResult<TokenKind> {
+    parse_cooked_string_literal(input, "t").map(|_| TokenKind::StringLiteral)
 }
 
 fn raw_string_token(input: &mut &str) -> ModalResult<TokenKind> {

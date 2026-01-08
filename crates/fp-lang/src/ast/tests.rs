@@ -1,7 +1,6 @@
 use super::*;
 use crate::syntax::SyntaxPrinter;
 use fp_core::ast::{BlockStmt, ExprKind, ItemKind, MacroDelimiter};
-use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::BinOpKind;
 
 #[test]
@@ -247,10 +246,7 @@ fn parse_expr_ast_lowers_const_block() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("const { 1 + 2 }").unwrap();
-    assert!(matches!(
-        expr.kind(),
-        ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::ConstBlock
-    ));
+    assert!(matches!(expr.kind(), ExprKind::ConstBlock(_)));
 }
 
 #[test]
@@ -265,10 +261,7 @@ fn parses_const_block_with_for_tuple_pattern() {
             }
         "#;
     let expr = parser.parse_expr_ast(src).unwrap();
-    assert!(matches!(
-        expr.kind(),
-        ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::ConstBlock
-    ));
+    assert!(matches!(expr.kind(), ExprKind::ConstBlock(_)));
 }
 
 #[test]

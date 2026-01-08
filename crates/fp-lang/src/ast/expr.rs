@@ -1,22 +1,25 @@
 use crate::ast::items::LowerItemsError;
 use crate::lexer::tokenizer::strip_number_suffix;
+use crate::lexer::tokenizer::lex_lexemes;
+use crate::lexer::lexeme::LexemeKind;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
-    ExprBlock, ExprClosure, ExprField, ExprFor, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget,
-    ExprKind, ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprSelect,
-    ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile, Ident,
-    ImplTraits, Locator, MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment,
-    Path, Pattern, PatternBind, PatternIdent, PatternKind, PatternQuote, PatternStruct,
-    PatternQuotePlural, PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct,
-    PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet,
-    StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction,
-    TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone,
-    ValueString,
+    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
+    ExprFormatString, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop,
+    ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
+    ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
+    FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, ImplTraits, Locator, MacroDelimiter,
+    MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent,
+    PatternKind, PatternQuote, PatternStruct, PatternQuotePlural, PatternStructField,
+    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
+    PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField, Ty, TypeArray,
+    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuote, TypeReference, TypeSlice,
+    TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
-use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::{BinOpKind, UnOpKind};
+use crate::cst::parse_expr_lexemes_prefix_to_cst;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LowerError {
@@ -26,6 +29,8 @@ pub enum LowerError {
     MissingOperator,
     #[error("invalid number literal: {0}")]
     InvalidNumber(String),
+    #[error("unsupported feature: {0}")]
+    Unsupported(String),
     #[error("failed to lower item: {0}")]
     Item(#[from] LowerItemsError),
 }
@@ -464,13 +469,10 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .find(|n| n.kind == SyntaxKind::ExprBlock)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprConstBlock))?;
             let block = lower_block_from_cst(block_node)?;
-            let payload = IntrinsicCallPayload::Args {
-                args: vec![ExprKind::Block(block).into()],
-            };
-            Ok(
-                ExprKind::IntrinsicCall(IntrinsicCall::new(IntrinsicCallKind::ConstBlock, payload))
-                    .into(),
-            )
+            Ok(ExprKind::ConstBlock(ExprConstBlock {
+                expr: Box::new(ExprKind::Block(block).into()),
+            })
+            .into())
         }
         SyntaxKind::ExprIf => {
             let mut expr_nodes = node_children_exprs(node);
@@ -614,12 +616,23 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             })
             .into())
         }
-        SyntaxKind::ExprReturn => Ok(control_flow_call_from_cst(node, IntrinsicCallKind::Return)?),
-        SyntaxKind::ExprBreak => Ok(control_flow_call_from_cst(node, IntrinsicCallKind::Break)?),
-        SyntaxKind::ExprContinue => Ok(control_flow_call_from_cst(
-            node,
-            IntrinsicCallKind::Continue,
-        )?),
+        SyntaxKind::ExprReturn => {
+            let value = node_children_exprs(node)
+                .next()
+                .map(lower_expr_from_cst)
+                .transpose()?
+                .map(Box::new);
+            Ok(ExprKind::Return(ExprReturn { value }).into())
+        }
+        SyntaxKind::ExprBreak => {
+            let value = node_children_exprs(node)
+                .next()
+                .map(lower_expr_from_cst)
+                .transpose()?
+                .map(Box::new);
+            Ok(ExprKind::Break(ExprBreak { value }).into())
+        }
+        SyntaxKind::ExprContinue => Ok(ExprKind::Continue(ExprContinue {}).into()),
         SyntaxKind::ExprName => {
             let name = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?;
@@ -676,9 +689,18 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         SyntaxKind::ExprString => {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprString))?;
-            let decoded = decode_string_literal(&raw).unwrap_or(raw);
-            // String literals should lower to borrowed `&'static str` equivalents by default.
-            Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
+            if raw.starts_with("f\"") {
+                let format = parse_f_string_literal(&raw)?;
+                Ok(ExprKind::FormatString(format).into())
+            } else if raw.starts_with("t\"") {
+                Err(LowerError::Unsupported(
+                    "t-strings are not supported yet".to_string(),
+                ))
+            } else {
+                let decoded = decode_string_literal(&raw).unwrap_or(raw);
+                // String literals should lower to borrowed `&'static str` equivalents by default.
+                Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
+            }
         }
         SyntaxKind::ExprUnary => {
             let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
@@ -1170,20 +1192,6 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
     Ok(BlockStmt::Let(stmt))
 }
 
-fn control_flow_call_from_cst(
-    node: &SyntaxNode,
-    kind: IntrinsicCallKind,
-) -> Result<Expr, LowerError> {
-    let expr = node_children_exprs(node)
-        .next()
-        .map(lower_expr_from_cst)
-        .transpose()?;
-    let payload = IntrinsicCallPayload::Args {
-        args: expr.into_iter().collect(),
-    };
-    Ok(ExprKind::IntrinsicCall(IntrinsicCall::new(kind, payload)).into())
-}
-
 fn split_match_arm<'a>(
     arm: &'a SyntaxNode,
 ) -> Result<(&'a SyntaxNode, Option<&'a SyntaxNode>, &'a SyntaxNode), LowerError> {
@@ -1456,6 +1464,122 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     // Keep the contents as-is.
     let _ = prefix;
     Some(inner.to_string())
+}
+
+fn parse_f_string_literal(raw: &str) -> Result<ExprFormatString, LowerError> {
+    let Some(decoded) = strip_string_prefix(raw, "f") else {
+        return Err(LowerError::Unsupported(
+            "invalid f-string literal".to_string(),
+        ));
+    };
+    parse_f_string_template(&decoded)
+}
+
+fn strip_string_prefix(raw: &str, prefix: &str) -> Option<String> {
+    if !raw.starts_with(prefix) {
+        return None;
+    }
+    let rest = &raw[prefix.len()..];
+    decode_string_literal(rest)
+}
+
+fn parse_f_string_template(input: &str) -> Result<ExprFormatString, LowerError> {
+    let mut parts = Vec::new();
+    let mut args = Vec::new();
+    let mut current_literal = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            if matches!(chars.peek(), Some('{')) {
+                chars.next();
+                current_literal.push('{');
+                continue;
+            }
+
+            if !current_literal.is_empty() {
+                parts.push(FormatTemplatePart::Literal(current_literal.clone()));
+                current_literal.clear();
+            }
+
+            let mut placeholder = String::new();
+            let mut found_end = false;
+            while let Some(inner) = chars.next() {
+                if inner == '}' {
+                    found_end = true;
+                    break;
+                }
+                placeholder.push(inner);
+            }
+            if !found_end {
+                return Err(LowerError::Unsupported(
+                    "unterminated f-string placeholder".to_string(),
+                ));
+            }
+            let trimmed = placeholder.trim();
+            if trimmed.is_empty() {
+                return Err(LowerError::Unsupported(
+                    "empty f-string placeholder".to_string(),
+                ));
+            }
+            let (expr_src, format_spec) = match trimmed.split_once(':') {
+                Some((expr_part, spec_part)) => (expr_part.trim(), Some(spec_part.trim())),
+                None => (trimmed, None),
+            };
+            let expr = parse_f_string_expr(expr_src)?;
+            args.push(expr);
+            parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                arg_ref: FormatArgRef::Implicit,
+                format_spec: format_spec
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string()),
+            }));
+            continue;
+        }
+
+        if ch == '}' {
+            if matches!(chars.peek(), Some('}')) {
+                chars.next();
+                current_literal.push('}');
+                continue;
+            }
+            current_literal.push('}');
+            continue;
+        }
+
+        current_literal.push(ch);
+    }
+
+    if !current_literal.is_empty() {
+        parts.push(FormatTemplatePart::Literal(current_literal));
+    }
+
+    Ok(ExprFormatString {
+        parts,
+        args,
+        kwargs: Vec::new(),
+    })
+}
+
+fn parse_f_string_expr(src: &str) -> Result<Expr, LowerError> {
+    let lexemes = lex_lexemes(src).map_err(|err| {
+        LowerError::Unsupported(format!("failed to tokenize f-string expression: {err}"))
+    })?;
+    let (cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
+        LowerError::Unsupported(format!(
+            "failed to parse f-string expression: {}",
+            err
+        ))
+    })?;
+    if lexemes[consumed..]
+        .iter()
+        .any(|lex| lex.kind == LexemeKind::Token)
+    {
+        return Err(LowerError::Unsupported(
+            "f-string expression contains trailing tokens".to_string(),
+        ));
+    }
+    lower_expr_from_cst(&cst)
 }
 
 fn lower_closure_from_cst(node: &SyntaxNode) -> Result<(Vec<Pattern>, Expr), LowerError> {

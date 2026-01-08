@@ -69,6 +69,23 @@ impl RustPrinter {
             ExprKind::Closured(n) => self.print_expr(&n.expr),
             ExprKind::Paren(n) => self.print_paren(n),
             ExprKind::Loop(n) => self.print_loop(n),
+            ExprKind::Return(ret) => {
+                if let Some(value) = &ret.value {
+                    let value = self.print_expr(value)?;
+                    Ok(quote!(return #value))
+                } else {
+                    Ok(quote!(return))
+                }
+            }
+            ExprKind::Break(brk) => {
+                if let Some(value) = &brk.value {
+                    let value = self.print_expr(value)?;
+                    Ok(quote!(break #value))
+                } else {
+                    Ok(quote!(break))
+                }
+            }
+            ExprKind::Continue(_) => Ok(quote!(continue)),
             ExprKind::Range(n) => self.print_range(n),
             ExprKind::Tuple(n) => self.print_expr_tuple(n),
             ExprKind::Try(n) => self.print_expr_try(&n.expr),
@@ -80,6 +97,15 @@ impl RustPrinter {
             ExprKind::Await(n) => self.print_expr_await(n),
             ExprKind::Async(n) => self.print_expr(&n.expr),
             ExprKind::For(n) => self.print_expr_for(n),
+            ExprKind::ConstBlock(block) => {
+                if matches!(block.expr.kind(), ExprKind::Block(_)) {
+                    let expr = self.print_expr(block.expr.as_ref())?;
+                    Ok(quote!(const #expr))
+                } else {
+                    let expr = self.print_expr(block.expr.as_ref())?;
+                    Ok(quote!(const { #expr }))
+                }
+            }
             ExprKind::IntrinsicContainer(n) => self.print_intrinsic_container(n),
             ExprKind::IntrinsicCall(n) => self.print_intrinsic_call(n),
             ExprKind::Quote(_n) => Ok(quote!({ /* quote */ })),
@@ -691,6 +717,7 @@ impl RustPrinter {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 self.print_print_intrinsic(call)
             }
+            IntrinsicCallKind::Format => self.print_format_intrinsic(call),
             IntrinsicCallKind::SizeOf
             | IntrinsicCallKind::FieldCount
             | IntrinsicCallKind::MethodCount
@@ -748,58 +775,7 @@ impl RustPrinter {
                     _ => unreachable!(),
                 }
             }
-            IntrinsicCallKind::ConstBlock => {
-                let args = match &call.payload {
-                    IntrinsicCallPayload::Args { args } => args,
-                    IntrinsicCallPayload::Format { .. } => {
-                        bail!("const_block intrinsic expects args payload")
-                    }
-                };
-                if args.len() != 1 {
-                    bail!("const_block intrinsic expects exactly 1 argument")
-                }
-                let arg = &args[0];
-                if matches!(arg.kind(), ExprKind::Block(_)) {
-                    let block = self.print_expr(arg)?;
-                    Ok(quote!(const #block))
-                } else {
-                    let expr = self.print_expr(arg)?;
-                    Ok(quote!(const { #expr }))
-                }
-            }
-            IntrinsicCallKind::Break => {
-                let args = match &call.payload {
-                    IntrinsicCallPayload::Args { args } => args,
-                    IntrinsicCallPayload::Format { .. } => {
-                        bail!("break intrinsic expects args payload")
-                    }
-                };
-                match args.as_slice() {
-                    [] => Ok(quote!(break)),
-                    [value] => {
-                        let value = self.print_expr(value)?;
-                        Ok(quote!(break #value))
-                    }
-                    _ => bail!("break intrinsic accepts at most one argument"),
-                }
-            }
-            IntrinsicCallKind::Continue => Ok(quote!(continue)),
             IntrinsicCallKind::DebugAssertions => Ok(quote!(cfg!(debug_assertions))),
-            IntrinsicCallKind::Return => {
-                let args: Vec<_> = match &call.payload {
-                    IntrinsicCallPayload::Args { args } => {
-                        args.iter().map(|arg| self.print_expr(arg)).try_collect()?
-                    }
-                    IntrinsicCallPayload::Format { .. } => {
-                        bail!("return intrinsic expects args payload")
-                    }
-                };
-                match args.as_slice() {
-                    [] => Ok(quote!(return)),
-                    [value] => Ok(quote!(return #value)),
-                    _ => bail!("return intrinsic accepts at most one argument"),
-                }
-            }
             _ => self.print_generic_intrinsic(call),
         }
     }
@@ -823,6 +799,19 @@ impl RustPrinter {
             let args_iter = args.iter();
             quote!(#macro_ident!(#literal #(, #args_iter)* ))
         })
+    }
+
+    fn print_format_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
+        let template = match &call.payload {
+            IntrinsicCallPayload::Format { template } => template,
+            IntrinsicCallPayload::Args { .. } => {
+                bail!("format intrinsic expects format payloads")
+            }
+        };
+
+        let (literal, args) = self.prepare_format_args(template)?;
+        let args_iter = args.iter();
+        Ok(quote!(format!(#literal #(, #args_iter)* )))
     }
 
     fn print_generic_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
@@ -849,13 +838,12 @@ impl RustPrinter {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 unreachable!("print intrinsics handled separately")
             }
+            IntrinsicCallKind::Format => {
+                unreachable!("format intrinsic handled separately")
+            }
             IntrinsicCallKind::Len => quote!(len),
-            IntrinsicCallKind::ConstBlock => quote!(intrinsic_const_block),
             IntrinsicCallKind::DebugAssertions => quote!(intrinsic_debug_assertions),
             IntrinsicCallKind::Input => quote!(intrinsic_input),
-            IntrinsicCallKind::Break => quote!(intrinsic_break),
-            IntrinsicCallKind::Continue => quote!(intrinsic_continue),
-            IntrinsicCallKind::Return => quote!(intrinsic_return),
             IntrinsicCallKind::Panic => quote!(intrinsic_panic),
             IntrinsicCallKind::CatchUnwind => quote!(intrinsic_catch_unwind),
             IntrinsicCallKind::SizeOf => quote!(intrinsic_size_of),

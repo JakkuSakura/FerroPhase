@@ -130,7 +130,7 @@ fn block_contains_return(block: &ExprBlock) -> bool {
 
 fn expr_contains_return(expr: &Expr) -> bool {
     match expr.kind() {
-        ExprKind::IntrinsicCall(call) => matches!(call.kind, IntrinsicCallKind::Return),
+        ExprKind::Return(_) => true,
         ExprKind::Block(block) => block_contains_return(block),
         ExprKind::If(expr_if) => {
             expr_contains_return(expr_if.cond.as_ref())
@@ -462,6 +462,44 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprKind::Match(match_expr) => self.infer_match(match_expr)?,
             ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
+            ExprKind::Return(ret) => {
+                if let Some(value) = ret.value.as_mut() {
+                    self.infer_expr(value)?;
+                }
+                // Diverging expression.
+                self.nothing_type_var()
+            }
+            ExprKind::Break(brk) => {
+                let value_var = if let Some(value) = brk.value.as_mut() {
+                    self.infer_expr(value)?
+                } else {
+                    self.unit_type_var()
+                };
+                let loop_var = if let Some(context) = self.loop_stack.last_mut() {
+                    context.saw_break = true;
+                    Some(context.result_var)
+                } else {
+                    None
+                };
+                if let Some(result_var) = loop_var {
+                    self.unify(result_var, value_var)?;
+                    result_var
+                } else {
+                    self.emit_error("`break` used outside of a loop");
+                    self.error_type_var()
+                }
+            }
+            ExprKind::Continue(_) => {
+                if self.loop_stack.is_empty() {
+                    self.emit_error("`continue` used outside of a loop");
+                    self.error_type_var()
+                } else {
+                    self.nothing_type_var()
+                }
+            }
+            ExprKind::ConstBlock(const_block) => {
+                self.infer_expr(const_block.expr.as_mut())?
+            }
             ExprKind::For(for_expr) => {
                 let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
                 let iter_var = self.infer_expr(for_expr.iter.as_mut())?;
@@ -770,56 +808,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         match call.kind {
-            IntrinsicCallKind::ConstBlock => {
-                if let Some(&body_var) = arg_vars.first() {
-                    return Ok(body_var);
-                }
-                self.emit_error("const block intrinsic expects a body expression");
-                return Ok(self.error_type_var());
-            }
-            IntrinsicCallKind::Break => {
-                if arg_vars.len() > 1 {
-                    self.emit_error("`break` accepts at most one value");
-                }
-                let value_var = if let Some(&var) = arg_vars.first() {
-                    var
-                } else {
-                    self.unit_type_var()
-                };
-
-                let loop_var = if let Some(context) = self.loop_stack.last_mut() {
-                    context.saw_break = true;
-                    Some(context.result_var)
-                } else {
-                    None
-                };
-
-                if let Some(result_var) = loop_var {
-                    self.unify(result_var, value_var)?;
-                    return Ok(result_var);
-                }
-
-                self.emit_error("`break` used outside of a loop");
-                return Ok(self.error_type_var());
-            }
-            IntrinsicCallKind::Continue => {
-                if !arg_vars.is_empty() {
-                    self.emit_error("`continue` does not accept a value");
-                }
-                if self.loop_stack.is_empty() {
-                    self.emit_error("`continue` used outside of a loop");
-                    return Ok(self.error_type_var());
-                }
-                return Ok(self.nothing_type_var());
-            }
-            IntrinsicCallKind::Return => {
-                // Treat `return` as diverging for typing purposes. Backends are
-                // responsible for lowering it into their native control-flow.
-                if arg_vars.len() > 1 {
-                    self.emit_error("`return` accepts at most one value");
-                }
-                return Ok(self.nothing_type_var());
-            }
             IntrinsicCallKind::Panic => {
                 if arg_vars.len() > 1 {
                     self.emit_error("panic expects at most one argument");
@@ -833,6 +821,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 self.bind(result_var, TypeTerm::Unit);
+            }
+            IntrinsicCallKind::Format => {
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
             }
             IntrinsicCallKind::Len
             | IntrinsicCallKind::SizeOf

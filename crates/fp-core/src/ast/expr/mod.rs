@@ -31,6 +31,9 @@ common_enum! {
         If(ExprIf),
         Loop(ExprLoop),
         While(ExprWhile),
+        Return(ExprReturn),
+        Break(ExprBreak),
+        Continue(ExprContinue),
         Invoke(ExprInvoke),
         BinOp(ExprBinOp),
         UnOp(ExprUnOp),
@@ -50,6 +53,7 @@ common_enum! {
         Closure(ExprClosure),
         Array(ExprArray),
         ArrayRepeat(ExprArrayRepeat),
+        ConstBlock(ExprConstBlock),
         IntrinsicContainer(ExprIntrinsicContainer),
         IntrinsicCall(ExprIntrinsicCall),
         /// quote keyword – capture code as data at compile time

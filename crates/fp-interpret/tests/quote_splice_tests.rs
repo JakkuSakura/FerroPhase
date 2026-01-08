@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
-use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::ops::BinOpKind;
 use fp_core::Result;
 use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions};
@@ -111,13 +110,10 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
 #[test]
 fn splice_stmt_expands_inside_const_block() -> Result<()> {
     // Build: fn demo() -> i32 { const { splice quote { return 42; }; } 0 }
-    // Return token (as intrinsic return)
-    let ret_expr = Expr::from(ExprKind::IntrinsicCall(IntrinsicCall::new(
-        IntrinsicCallKind::Return,
-        IntrinsicCallPayload::Args {
-            args: vec![Expr::value(Value::int(42))],
-        },
-    )));
+    // Return token
+    let ret_expr = Expr::from(ExprKind::Return(ExprReturn {
+        value: Some(Expr::value(Value::int(42)).into()),
+    }));
 
     let quoted_block =
         ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(ret_expr.clone()))]);
@@ -133,12 +129,9 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         .with_semicolon(true),
     );
 
-    let const_block_expr = Expr::from(ExprKind::IntrinsicCall(IntrinsicCall::new(
-        IntrinsicCallKind::ConstBlock,
-        IntrinsicCallPayload::Args {
-            args: vec![Expr::block(ExprBlock::new_stmts(vec![splice_stmt]))],
-        },
-    )));
+    let const_block_expr = Expr::from(ExprKind::ConstBlock(ExprConstBlock {
+        expr: Expr::block(ExprBlock::new_stmts(vec![splice_stmt])).into(),
+    }));
 
     let fn_body = ExprBlock::new_stmts(vec![
         BlockStmt::Expr(BlockStmtExpr::new(const_block_expr).with_semicolon(true)),
@@ -187,19 +180,12 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
 
     let saw_return_42 = block.stmts.iter().any(|stmt| match stmt {
         BlockStmt::Expr(expr_stmt) => match expr_stmt.expr.kind() {
-            ExprKind::IntrinsicCall(call) if call.kind == IntrinsicCallKind::Return => {
-                match &call.payload {
-                    IntrinsicCallPayload::Args { args } => match args.get(0) {
-                        Some(arg) => match arg.kind() {
-                            ExprKind::Value(v) => {
-                                matches!(v.as_ref(), Value::Int(i) if i.value == 42)
-                            }
-                            _ => false,
-                        },
-                        None => false,
-                    },
+            ExprKind::Return(ret) => match ret.value.as_ref() {
+                Some(arg) => match arg.kind() {
+                    ExprKind::Value(v) => matches!(v.as_ref(), Value::Int(i) if i.value == 42),
                     _ => false,
                 }
+                None => false,
             }
             _ => false,
         },
@@ -378,14 +364,12 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         token: Box::new(invoke),
     })
     .into();
-    let const_block = ExprKind::IntrinsicCall(IntrinsicCall::new(
-        IntrinsicCallKind::ConstBlock,
-        IntrinsicCallPayload::Args {
-            args: vec![Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
-                BlockStmtExpr::new(splice_expr).with_semicolon(true),
-            )]))],
-        },
-    ))
+    let const_block = ExprKind::ConstBlock(ExprConstBlock {
+        expr: Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
+            BlockStmtExpr::new(splice_expr).with_semicolon(true),
+        )]))
+        .into(),
+    })
     .into();
 
     let file = File {

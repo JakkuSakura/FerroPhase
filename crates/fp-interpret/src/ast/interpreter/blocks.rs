@@ -63,6 +63,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(for_expr.iter.as_mut());
                 self.evaluate_function_body(for_expr.body.as_mut());
             }
+            ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_mut() {
+                    self.evaluate_function_body(value);
+                }
+            }
+            ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_mut() {
+                    self.evaluate_function_body(value);
+                }
+            }
+            ExprKind::Continue(_) => {}
             ExprKind::Match(match_expr) => {
                 for case in match_expr.cases.iter_mut() {
                     self.evaluate_function_body(case.cond.as_mut());
@@ -227,20 +238,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                     macro_expr.invocation.path
                 ));
             }
-            ExprKind::IntrinsicCall(call) => {
-                if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
-                    let kind = call.kind;
-                    let value = self.eval_intrinsic(call);
-                    if self.should_replace_intrinsic_with_value(kind, &value) {
-                        let mut replacement = Expr::value(value.clone());
-                        if let Some(ty) = expr_ty_snapshot.clone() {
-                            replacement.ty = Some(ty);
-                        }
-                        *expr = replacement;
-                        self.mark_mutated();
-                    }
-                    return;
+            ExprKind::ConstBlock(const_block) => {
+                let mut value_expr = const_block.expr.as_ref().clone();
+                self.enter_const_region();
+                let value = self.eval_expr(&mut value_expr);
+                self.exit_const_region();
+                let mut replacement = Expr::value(value.clone());
+                if let Some(ty) = expr_ty_snapshot.clone() {
+                    replacement.ty = Some(ty);
                 }
+                *expr = replacement;
+                self.mark_mutated();
+                return;
+            }
+            ExprKind::IntrinsicCall(call) => {
                 if self.should_replace_intrinsic_with_value(call.kind, &Value::unit()) {
                     let value = self.eval_intrinsic(call);
                     if !matches!(value, Value::Undefined(_)) {
@@ -372,39 +383,33 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 }
                             }
                         }
-                    } else if let ExprKind::IntrinsicCall(call) = expr_stmt.expr.kind_mut() {
-                        if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
-                            // Evaluate const { ... } and splice generated statements into the block.
-                            if let IntrinsicCallPayload::Args { args } = &mut call.payload {
-                                if let Some(body_expr) = args.first_mut() {
-                                    if let ExprKind::Block(inner_block) = body_expr.kind_mut() {
-                                        self.pending_stmt_splices.push(Vec::new());
-                                        self.enter_const_region();
-                                        let flow = self.eval_block_runtime(inner_block);
-                                        self.exit_const_region();
-                                        let pending = self
-                                            .pending_stmt_splices
-                                            .pop()
-                                            .unwrap_or_default();
-                                        match flow {
-                                            RuntimeFlow::Value(_) => {}
-                                            RuntimeFlow::Break(_)
-                                            | RuntimeFlow::Continue
-                                            | RuntimeFlow::Return(_)
-                                            | RuntimeFlow::Panic(_) => {
-                                                self.emit_error(
-                                                    "control flow is not allowed at top-level of const blocks",
-                                                );
-                                            }
-                                        }
-                                        if !pending.is_empty() {
-                                            new_stmts.extend(pending);
-                                        }
-                                        self.mark_mutated();
-                                        continue;
-                                    }
+                    } else if let ExprKind::ConstBlock(const_block) = expr_stmt.expr.kind_mut() {
+                        // Evaluate const { ... } and splice generated statements into the block.
+                        if let ExprKind::Block(inner_block) = const_block.expr.kind_mut() {
+                            self.pending_stmt_splices.push(Vec::new());
+                            self.enter_const_region();
+                            let flow = self.eval_block_runtime(inner_block);
+                            self.exit_const_region();
+                            let pending = self
+                                .pending_stmt_splices
+                                .pop()
+                                .unwrap_or_default();
+                            match flow {
+                                RuntimeFlow::Value(_) => {}
+                                RuntimeFlow::Break(_)
+                                | RuntimeFlow::Continue
+                                | RuntimeFlow::Return(_)
+                                | RuntimeFlow::Panic(_) => {
+                                    self.emit_error(
+                                        "control flow is not allowed at top-level of const blocks",
+                                    );
                                 }
                             }
+                            if !pending.is_empty() {
+                                new_stmts.extend(pending);
+                            }
+                            self.mark_mutated();
+                            continue;
                         }
                         // Generic case
                         self.evaluate_function_body(expr_stmt.expr.as_mut());

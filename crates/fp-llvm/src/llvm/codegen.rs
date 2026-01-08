@@ -838,22 +838,72 @@ impl<'a> LirCodegen<'a> {
                 )));
                 call_args.extend(args.into_iter());
 
-                let call_site = match kind {
+                match kind {
                     lir::LirIntrinsicKind::Print | lir::LirIntrinsicKind::Println => {
-                        self.lower_call_instruction(
+                        let call_site = self.lower_call_instruction(
                             instr_id,
                             ty_hint.clone(),
                             lir::LirValue::Function("printf".to_string()),
                             call_args,
                             lir::CallingConvention::C,
                             false,
-                        )?
-                    }
-                };
+                        )?;
 
-                if let ValueKind::Basic(result) = call_site.try_as_basic_value() {
-                    if let Some(hint) = ty_hint {
-                        self.record_result(instr_id, Some(hint), result);
+                        if let ValueKind::Basic(result) = call_site.try_as_basic_value() {
+                            if let Some(hint) = ty_hint {
+                                self.record_result(instr_id, Some(hint), result);
+                            }
+                        }
+                    }
+                    lir::LirIntrinsicKind::Format => {
+                        let ptr_ty = self
+                            .llvm_ctx
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default());
+                        let alloca = self
+                            .llvm_ctx
+                            .builder
+                            .build_alloca(ptr_ty, "fmt_buf_ptr")
+                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+                        let mut llvm_args = Vec::with_capacity(call_args.len() + 1);
+                        llvm_args.push(alloca.into());
+                        for arg in call_args {
+                            let value = self.convert_lir_value_to_basic_value(arg)?;
+                            llvm_args.push(value.into());
+                        }
+
+                        let asprintf = self
+                            .llvm_ctx
+                            .module
+                            .get_function("asprintf")
+                            .unwrap_or_else(|| {
+                                let fn_type = self
+                                    .llvm_ctx
+                                    .context
+                                    .i32_type()
+                                    .fn_type(&[ptr_ty.into(), ptr_ty.into()], true);
+                                self.llvm_ctx.module.add_function(
+                                    "asprintf",
+                                    fn_type,
+                                    Some(inkwell::module::Linkage::External),
+                                )
+                            });
+
+                        self.llvm_ctx
+                            .builder
+                            .build_call(asprintf, &llvm_args, "asprintf_call")
+                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+                        let loaded = self
+                            .llvm_ctx
+                            .builder
+                            .build_load(ptr_ty, alloca, "fmt_buf")
+                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+
+                        if let Some(hint) = ty_hint {
+                            self.record_result(instr_id, Some(hint), loaded);
+                        }
                     }
                 }
             }

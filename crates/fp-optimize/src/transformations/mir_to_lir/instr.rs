@@ -744,6 +744,11 @@ impl LirGenerator {
                 let lir_kind = match kind {
                     IntrinsicCallKind::Print => lir::LirIntrinsicKind::Print,
                     IntrinsicCallKind::Println => lir::LirIntrinsicKind::Println,
+                    IntrinsicCallKind::Format => {
+                        return Err(fp_core::error::Error::from(
+                            "format intrinsic must be assigned to a place".to_string(),
+                        ))
+                    }
                     _ => {
                         return Err(fp_core::error::Error::from(format!(
                             "unsupported MIR intrinsic in LIR lowering: {:?}",
@@ -866,6 +871,41 @@ impl LirGenerator {
                     result_value = Some(value);
                 }
             },
+            mir::Rvalue::IntrinsicCall { kind, format, args } => {
+                let lir_kind = match kind {
+                    IntrinsicCallKind::Format => lir::LirIntrinsicKind::Format,
+                    IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
+                        return Err(fp_core::error::Error::from(
+                            "print/println must be emitted as statements".to_string(),
+                        ))
+                    }
+                    _ => {
+                        return Err(fp_core::error::Error::from(format!(
+                            "unsupported intrinsic in assignment: {:?}",
+                            kind
+                        )))
+                    }
+                };
+                let mut lir_args = Vec::with_capacity(args.len());
+                for arg in args {
+                    let value = self.transform_operand(arg)?;
+                    instructions.extend(self.take_queued_instructions());
+                    lir_args.push(value);
+                }
+
+                let instr_id = self.next_id();
+                instructions.push(lir::LirInstruction {
+                    id: instr_id,
+                    kind: lir::LirInstructionKind::IntrinsicCall {
+                        kind: lir_kind,
+                        format: format.clone(),
+                        args: lir_args,
+                    },
+                    type_hint: destination_lir_ty.clone(),
+                    debug_info: None,
+                });
+                result_value = Some(lir::LirValue::Register(instr_id));
+            }
             mir::Rvalue::BinaryOp(bin_op, lhs, rhs) => {
                 let lhs_value = self.transform_operand(lhs)?;
                 instructions.extend(self.take_queued_instructions());

@@ -2370,6 +2370,20 @@ impl ClosureLowering {
                 self.rewrite_in_expr(expr_while.cond.as_mut())?;
                 self.rewrite_in_expr(expr_while.body.as_mut())?;
             }
+            ast::ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_mut() {
+                    self.rewrite_in_expr(value)?;
+                }
+            }
+            ast::ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_mut() {
+                    self.rewrite_in_expr(value)?;
+                }
+            }
+            ast::ExprKind::Continue(_) => {}
+            ast::ExprKind::ConstBlock(const_block) => {
+                self.rewrite_in_expr(const_block.expr.as_mut())?;
+            }
             ast::ExprKind::Match(expr_match) => {
                 for case in &mut expr_match.cases {
                     self.rewrite_in_expr(case.cond.as_mut())?;
@@ -2773,6 +2787,20 @@ impl CaptureCollector {
                 self.visit(expr_while.cond.as_ref());
                 self.visit(expr_while.body.as_ref());
             }
+            ast::ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_ref() {
+                    self.visit(value.as_ref());
+                }
+            }
+            ast::ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_ref() {
+                    self.visit(value.as_ref());
+                }
+            }
+            ast::ExprKind::Continue(_) => {}
+            ast::ExprKind::ConstBlock(const_block) => {
+                self.visit(const_block.expr.as_ref());
+            }
             ast::ExprKind::For(expr_for) => {
                 self.visit(expr_for.iter.as_ref());
                 self.visit(expr_for.body.as_ref());
@@ -2977,6 +3005,20 @@ impl CaptureReplacer {
             ast::ExprKind::While(expr_while) => {
                 self.visit(expr_while.cond.as_mut());
                 self.visit(expr_while.body.as_mut());
+            }
+            ast::ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_mut() {
+                    self.visit(value.as_mut());
+                }
+            }
+            ast::ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_mut() {
+                    self.visit(value.as_mut());
+                }
+            }
+            ast::ExprKind::Continue(_) => {}
+            ast::ExprKind::ConstBlock(const_block) => {
+                self.visit(const_block.expr.as_mut());
             }
             ast::ExprKind::Match(expr_match) => {
                 for case in &mut expr_match.cases {

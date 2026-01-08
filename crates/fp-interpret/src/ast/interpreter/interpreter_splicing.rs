@@ -258,6 +258,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.materialize_quote_expr(for_expr.body.as_mut());
             }
             ExprKind::Loop(loop_expr) => self.materialize_quote_expr(loop_expr.body.as_mut()),
+            ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_mut() {
+                    self.materialize_quote_expr(value);
+                }
+            }
+            ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_mut() {
+                    self.materialize_quote_expr(value);
+                }
+            }
+            ExprKind::Continue(_) => {}
+            ExprKind::ConstBlock(const_block) => {
+                self.materialize_quote_expr(const_block.expr.as_mut());
+            }
             ExprKind::Match(match_expr) => {
                 for case in match_expr.cases.iter_mut() {
                     self.materialize_quote_expr(case.cond.as_mut());

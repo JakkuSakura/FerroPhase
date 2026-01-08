@@ -1,6 +1,6 @@
 use eyre::Result;
 use fp_core::ast::{BlockStmt, ExprBlock, ExprIntrinsicCall, ExprKind};
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 
 use super::ZigEmitter;
 
@@ -59,6 +59,30 @@ impl ZigEmitter {
             }
             BlockStmt::Expr(expr_stmt) => {
                 let expr = expr_stmt.expr.as_ref();
+                if let ExprKind::Return(ret) = expr.kind() {
+                    if let Some(value) = &ret.value {
+                        if let Some(rendered) = self.render_expr(value) {
+                            if rendered.is_empty() {
+                                self.push_line("return;");
+                            } else {
+                                self.push_line(&format!("return {};", rendered));
+                            }
+                        } else {
+                            self.push_line("return;");
+                        }
+                    } else {
+                        self.push_line("return;");
+                    }
+                    return Ok(true);
+                }
+                if let ExprKind::Break(_) = expr.kind() {
+                    self.push_line("break;");
+                    return Ok(true);
+                }
+                if let ExprKind::Continue(_) = expr.kind() {
+                    self.push_line("continue;");
+                    return Ok(true);
+                }
                 if let ExprKind::IntrinsicCall(call) = expr.kind() {
                     if self.emit_intrinsic_statement(call)? {
                         return Ok(true);
@@ -108,24 +132,6 @@ impl ZigEmitter {
                 let newline = matches!(call.kind(), IntrinsicCallKind::Println);
                 if let Some(rendered) = self.render_print_call(call, newline) {
                     self.push_line(&rendered);
-                    return Ok(true);
-                }
-            }
-            IntrinsicCallKind::Return => {
-                if let IntrinsicCallPayload::Args { args } = &call.payload {
-                    if let Some(expr) = args.first() {
-                        if let Some(rendered) = self.render_expr(expr) {
-                            if rendered.is_empty() {
-                                self.push_line("return;");
-                            } else {
-                                self.push_line(&format!("return {};", rendered));
-                            }
-                        } else {
-                            self.push_line("return;");
-                        }
-                    } else {
-                        self.push_line("return;");
-                    }
                     return Ok(true);
                 }
             }

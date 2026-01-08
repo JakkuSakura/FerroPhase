@@ -253,12 +253,9 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 args: invoke.args.clone(),
             },
         )),
-        IntrinsicCallKind::ConstBlock
-        | IntrinsicCallKind::DebugAssertions
+        IntrinsicCallKind::Format => None,
+        IntrinsicCallKind::DebugAssertions
         | IntrinsicCallKind::Input
-        | IntrinsicCallKind::Break
-        | IntrinsicCallKind::Continue
-        | IntrinsicCallKind::Return
         | IntrinsicCallKind::Panic
         | IntrinsicCallKind::SizeOf
         | IntrinsicCallKind::ReflectFields
@@ -438,6 +435,26 @@ common_struct! {
     pub struct ExprWhile {
         pub cond: BExpr,
         pub body: BExpr,
+    }
+}
+common_struct! {
+    pub struct ExprReturn {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub value: Option<BExpr>,
+    }
+}
+common_struct! {
+    pub struct ExprBreak {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub value: Option<BExpr>,
+    }
+}
+common_struct! {
+    pub struct ExprContinue {}
+}
+common_struct! {
+    pub struct ExprConstBlock {
+        pub expr: BExpr,
     }
 }
 common_struct! {

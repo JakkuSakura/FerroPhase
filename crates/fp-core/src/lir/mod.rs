@@ -231,6 +231,7 @@ pub enum LirInstructionKind {
 pub enum LirIntrinsicKind {
     Print,
     Println,
+    Format,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -279,6 +279,27 @@ impl PrettyPrintable for ast::Expr {
                 )?;
                 ctx.with_indent(|ctx| cast.expr.fmt_pretty(f, ctx))
             }
+            ast::ExprKind::Return(ret) => {
+                ctx.writeln(f, format!("return{}", suffix))?;
+                if let Some(value) = &ret.value {
+                    ctx.with_indent(|ctx| value.fmt_pretty(f, ctx))
+                } else {
+                    Ok(())
+                }
+            }
+            ast::ExprKind::Break(brk) => {
+                ctx.writeln(f, format!("break{}", suffix))?;
+                if let Some(value) = &brk.value {
+                    ctx.with_indent(|ctx| value.fmt_pretty(f, ctx))
+                } else {
+                    Ok(())
+                }
+            }
+            ast::ExprKind::Continue(_) => ctx.writeln(f, format!("continue{}", suffix)),
+            ast::ExprKind::ConstBlock(block) => {
+                ctx.writeln(f, format!("const_block{}", suffix))?;
+                ctx.with_indent(|ctx| block.expr.fmt_pretty(f, ctx))
+            }
             ast::ExprKind::IntrinsicCall(call) => {
                 ctx.writeln(
                     f,
@@ -1258,6 +1279,10 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             format!("{}..{}", start, end)
         }
         ast::ExprKind::FormatString(template) => render_format_template(template),
+        ast::ExprKind::Return(_) => "return <expr>".into(),
+        ast::ExprKind::Break(_) => "break <expr>".into(),
+        ast::ExprKind::Continue(_) => "continue".into(),
+        ast::ExprKind::ConstBlock(_) => "const { ... }".into(),
         ast::ExprKind::Async(_) => "async <expr>".into(),
         ast::ExprKind::For(_) => "for <expr>".into(),
         ast::ExprKind::Macro(mac) => format!("macro {}", mac.invocation.path),
@@ -1502,13 +1527,10 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
     match kind {
         IntrinsicCallKind::Println => "println",
         IntrinsicCallKind::Print => "print",
+        IntrinsicCallKind::Format => "format",
         IntrinsicCallKind::Len => "len",
-        IntrinsicCallKind::ConstBlock => "const_block",
         IntrinsicCallKind::DebugAssertions => "debug_assertions",
         IntrinsicCallKind::Input => "input",
-        IntrinsicCallKind::Break => "break",
-        IntrinsicCallKind::Continue => "continue",
-        IntrinsicCallKind::Return => "return",
         IntrinsicCallKind::Panic => "panic",
         IntrinsicCallKind::CatchUnwind => "catch_unwind",
         IntrinsicCallKind::SizeOf => "size_of",

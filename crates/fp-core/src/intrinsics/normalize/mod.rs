@@ -170,6 +170,20 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
                 normalize_expr(expr_while.cond.as_mut(), strategy)?;
                 normalize_expr(expr_while.body.as_mut(), strategy)?;
             }
+            ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_mut() {
+                    normalize_expr(value.as_mut(), strategy)?;
+                }
+            }
+            ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_mut() {
+                    normalize_expr(value.as_mut(), strategy)?;
+                }
+            }
+            ExprKind::Continue(_) => {}
+            ExprKind::ConstBlock(const_block) => {
+                normalize_expr(const_block.expr.as_mut(), strategy)?;
+            }
             ExprKind::Match(expr_match) => {
                 for case in &mut expr_match.cases {
                     normalize_expr(case.cond.as_mut(), strategy)?;

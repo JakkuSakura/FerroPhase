@@ -229,6 +229,30 @@ impl HirGenerator {
             ExprKind::FormatString(format_str) => {
                 self.transform_format_string_to_hir(format_str)?
             }
+            ExprKind::Return(ret) => {
+                let value = ret
+                    .value
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?
+                    .map(Box::new);
+                hir::ExprKind::Return(value)
+            }
+            ExprKind::Break(brk) => {
+                let value = brk
+                    .value
+                    .as_ref()
+                    .map(|expr| self.transform_expr_to_hir(expr.as_ref()))
+                    .transpose()?
+                    .map(Box::new);
+                hir::ExprKind::Break(value)
+            }
+            ExprKind::Continue(_) => hir::ExprKind::Continue,
+            ExprKind::ConstBlock(_const_block) => {
+                return Err(crate::error::optimization_error(
+                    "const block must be evaluated before AST→HIR lowering",
+                ));
+            }
             ExprKind::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
             ExprKind::Reference(reference) => {
                 return self.transform_expr_to_hir(reference.referee.as_ref());
@@ -1637,7 +1661,7 @@ impl HirGenerator {
         format_str: &ast::ExprFormatString,
     ) -> Result<hir::ExprKind> {
         let call = ast::ExprIntrinsicCall::new(
-            fp_core::intrinsics::IntrinsicCallKind::Println,
+            fp_core::intrinsics::IntrinsicCallKind::Format,
             fp_core::intrinsics::IntrinsicCallPayload::Format {
                 template: format_str.clone(),
             },
@@ -1649,35 +1673,7 @@ impl HirGenerator {
         &mut self,
         call: &ast::ExprIntrinsicCall,
     ) -> Result<hir::ExprKind> {
-        use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-
-        // Handle control flow intrinsics specially
-        match call.kind {
-            IntrinsicCallKind::Break => {
-                if let IntrinsicCallPayload::Args { args } = &call.payload {
-                    let value = if args.is_empty() {
-                        None
-                    } else {
-                        Some(Box::new(self.transform_expr_to_hir(&args[0])?))
-                    };
-                    return Ok(hir::ExprKind::Break(value));
-                }
-            }
-            IntrinsicCallKind::Continue => {
-                return Ok(hir::ExprKind::Continue);
-            }
-            IntrinsicCallKind::Return => {
-                if let IntrinsicCallPayload::Args { args } = &call.payload {
-                    let value = if args.is_empty() {
-                        None
-                    } else {
-                        Some(Box::new(self.transform_expr_to_hir(&args[0])?))
-                    };
-                    return Ok(hir::ExprKind::Return(value));
-                }
-            }
-            _ => {}
-        }
+        use fp_core::intrinsics::IntrinsicCallPayload;
 
         let payload = match &call.payload {
             IntrinsicCallPayload::Format { template } => {

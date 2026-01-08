@@ -2939,19 +2939,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             Ty::Expr(expr) => {
-                if let ExprKind::IntrinsicCall(call) = expr.kind() {
-                    if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
-                        let value = self.eval_expr(expr.as_mut());
-                        match value {
-                            Value::Type(resolved_ty) => {
-                                *ty = resolved_ty;
-                            }
-                            other => {
-                                self.emit_error(format!(
-                                    "type expression must evaluate to a type, found {}",
-                                    other
-                                ));
-                            }
+                if let ExprKind::ConstBlock(_) = expr.kind() {
+                    let value = self.eval_expr(expr.as_mut());
+                    match value {
+                        Value::Type(resolved_ty) => {
+                            *ty = resolved_ty;
+                        }
+                        other => {
+                            self.emit_error(format!(
+                                "type expression must evaluate to a type, found {}",
+                                other
+                            ));
                         }
                     }
                 }
@@ -3277,11 +3275,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         let Ty::Expr(mut expr) = ty else {
             return ty;
         };
-        if let ExprKind::IntrinsicCall(call) = expr.kind() {
-            if matches!(call.kind, IntrinsicCallKind::ConstBlock) {
-                if let Value::Type(resolved) = self.eval_expr(expr.as_mut()) {
-                    return resolved;
-                }
+        if let ExprKind::ConstBlock(_) = expr.kind() {
+            if let Value::Type(resolved) = self.eval_expr(expr.as_mut()) {
+                return resolved;
             }
         }
         Ty::Expr(expr)
