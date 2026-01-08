@@ -242,12 +242,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             let allow_any_item = quote.item.is_none() && token.kind == QuoteFragmentKind::Item;
 
             for field in &quote.fields {
-                let Some(field_value) = self.quote_item_field_value(
-                    item,
-                    quote,
-                    field.name.as_str(),
-                    allow_any_item,
-                ) else {
+                let Some(field_value) =
+                    self.quote_item_field_value(item, quote, field.name.as_str(), allow_any_item)
+                else {
                     return false;
                 };
                 if let Some(rename) = field.rename.as_ref() {
@@ -316,10 +313,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                     Ident::new("name"),
                                     Value::string(param.name.name.clone()),
                                 ),
-                                ValueField::new(
-                                    Ident::new("ty"),
-                                    Value::Type(param.ty.clone()),
-                                ),
+                                ValueField::new(Ident::new("ty"), Value::Type(param.ty.clone())),
                             ];
                             params.push(Value::Structural(ValueStructural::new(fields)));
                         }
@@ -440,7 +434,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         let QuoteTokenValue::Items(items) = &token.value else {
             return false;
         };
-        if !items.iter().all(|item| self.item_matches_quote_plural(item, quote.fragment)) {
+        if !items
+            .iter()
+            .all(|item| self.item_matches_quote_plural(item, quote.fragment))
+        {
             return false;
         }
         let values = items
@@ -468,19 +465,23 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn item_matches_quote_plural(&self, item: &Item, kind: QuoteFragmentKind) -> bool {
-        matches!(kind, QuoteFragmentKind::Item) && matches!(item.kind(), ItemKind::DefFunction(_)
-            | ItemKind::DefStruct(_)
-            | ItemKind::DefStructural(_)
-            | ItemKind::DefEnum(_)
-            | ItemKind::DefTrait(_)
-            | ItemKind::Impl(_)
-            | ItemKind::DefConst(_)
-            | ItemKind::DeclConst(_)
-            | ItemKind::DefStatic(_)
-            | ItemKind::DeclStatic(_)
-            | ItemKind::Module(_)
-            | ItemKind::Import(_)
-            | ItemKind::Macro(_))
+        matches!(kind, QuoteFragmentKind::Item)
+            && matches!(
+                item.kind(),
+                ItemKind::DefFunction(_)
+                    | ItemKind::DefStruct(_)
+                    | ItemKind::DefStructural(_)
+                    | ItemKind::DefEnum(_)
+                    | ItemKind::DefTrait(_)
+                    | ItemKind::Impl(_)
+                    | ItemKind::DefConst(_)
+                    | ItemKind::DeclConst(_)
+                    | ItemKind::DefStatic(_)
+                    | ItemKind::DeclStatic(_)
+                    | ItemKind::Module(_)
+                    | ItemKind::Import(_)
+                    | ItemKind::Macro(_)
+            )
     }
 
     // removed unused: take_pending_closure

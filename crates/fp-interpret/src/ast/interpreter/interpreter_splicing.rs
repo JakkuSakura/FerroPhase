@@ -9,8 +9,12 @@ impl<'ctx> AstInterpreter<'ctx> {
     ) -> Value {
         let (default_kind, value) = match fragment {
             QuotedFragment::Expr(expr) => (QuoteFragmentKind::Expr, QuoteTokenValue::Expr(expr)),
-            QuotedFragment::Stmts(stmts) => (QuoteFragmentKind::Stmt, QuoteTokenValue::Stmts(stmts)),
-            QuotedFragment::Items(items) => (QuoteFragmentKind::Item, QuoteTokenValue::Items(items)),
+            QuotedFragment::Stmts(stmts) => {
+                (QuoteFragmentKind::Stmt, QuoteTokenValue::Stmts(stmts))
+            }
+            QuotedFragment::Items(items) => {
+                (QuoteFragmentKind::Item, QuoteTokenValue::Items(items))
+            }
             QuotedFragment::Type(ty) => (QuoteFragmentKind::Type, QuoteTokenValue::Type(ty)),
         };
         let Some(kind) = kind else {
@@ -53,9 +57,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             QuoteFragmentKind::Expr | QuoteFragmentKind::Stmt | QuoteFragmentKind::Type => {
                 let block = body.clone().into_block();
                 let fragment = match kind {
-                    QuoteFragmentKind::Expr => {
-                        QuotedFragment::Expr(block.into_expr())
-                    }
+                    QuoteFragmentKind::Expr => QuotedFragment::Expr(block.into_expr()),
                     QuoteFragmentKind::Stmt => QuotedFragment::Stmts(block.stmts),
                     QuoteFragmentKind::Type => {
                         let mut block_expr = Expr::block(block);
@@ -95,8 +97,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.materialize_quote_block(&mut block);
                     QuotedFragment::Stmts(block.stmts)
                 }
-                QuoteFragmentKind::Item
-                => match self.collect_items_from_block(&quote.block) {
+                QuoteFragmentKind::Item => match self.collect_items_from_block(&quote.block) {
                     Some(items) => {
                         if self.items_match_kind(&items, kind) {
                             QuotedFragment::Items(items)
@@ -173,8 +174,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.emit_error("splice is only supported during const evaluation");
                             continue;
                         }
-                        let Some(fragments) =
-                            self.resolve_splice_fragments(splice.token.as_mut())
+                        let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut())
                         else {
                             continue;
                         };
@@ -411,8 +411,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("splice is only supported during const evaluation");
                     return;
                 }
-                let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut())
-                else {
+                let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut()) else {
                     return;
                 };
                 if fragments.len() != 1 {

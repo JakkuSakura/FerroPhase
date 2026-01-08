@@ -88,5 +88,5 @@ pub struct PackageDescriptor {
     pub modules: Vec<ModuleId>,
 }
 
-pub mod provider;
 pub mod graph;
+pub mod provider;

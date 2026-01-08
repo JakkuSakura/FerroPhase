@@ -13,11 +13,11 @@ pub use nexus::*;
 pub use package::*;
 pub use workspace::*;
 
+use crate::models::PatchMap;
 use eyre::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use crate::models::PatchMap;
 
 /// Type of Magnet.toml configuration file
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]

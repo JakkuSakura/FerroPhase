@@ -580,14 +580,11 @@ impl HirGenerator {
                     .iter()
                     .map(|seg| seg.name.as_str().to_string())
                     .collect::<Vec<_>>();
-                let alias = self
-                    .lookup_type_alias(&segments)
-                    .cloned()
-                    .ok_or_else(|| {
-                        crate::error::optimization_error(
-                            "struct update requires a resolved struct definition",
-                        )
-                    })?;
+                let alias = self.lookup_type_alias(&segments).cloned().ok_or_else(|| {
+                    crate::error::optimization_error(
+                        "struct update requires a resolved struct definition",
+                    )
+                })?;
                 self.struct_fields_from_type(&alias, Span::new(self.current_file, 0, 0))?
             }
         };
@@ -899,14 +896,14 @@ impl HirGenerator {
             crate::error::optimization_error("`for` loop range missing end expression")
         })?;
 
-        let cmp_op = if inclusive { hir::BinOp::Le } else { hir::BinOp::Lt };
+        let cmp_op = if inclusive {
+            hir::BinOp::Le
+        } else {
+            hir::BinOp::Lt
+        };
         let cond_expr = hir::Expr {
             hir_id: self.next_id(),
-            kind: hir::ExprKind::Binary(
-                cmp_op,
-                Box::new(loop_var.clone()),
-                Box::new(end_expr),
-            ),
+            kind: hir::ExprKind::Binary(cmp_op, Box::new(loop_var.clone()), Box::new(end_expr)),
             span: Span::new(self.current_file, 0, 0),
         };
 
@@ -991,11 +988,9 @@ impl HirGenerator {
             ast::ExprInvokeTarget::Function(locator) => match locator {
                 ast::Locator::Path(path) => path.segments.clone(),
                 ast::Locator::Ident(ident) => vec![ident.clone()],
-                ast::Locator::ParameterPath(path) => path
-                    .segments
-                    .iter()
-                    .map(|seg| seg.ident.clone())
-                    .collect(),
+                ast::Locator::ParameterPath(path) => {
+                    path.segments.iter().map(|seg| seg.ident.clone()).collect()
+                }
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
@@ -1077,11 +1072,9 @@ impl HirGenerator {
             ast::ExprInvokeTarget::Function(locator) => match locator {
                 ast::Locator::Path(path) => path.segments.clone(),
                 ast::Locator::Ident(ident) => vec![ident.clone()],
-                ast::Locator::ParameterPath(path) => path
-                    .segments
-                    .iter()
-                    .map(|seg| seg.ident.clone())
-                    .collect(),
+                ast::Locator::ParameterPath(path) => {
+                    path.segments.iter().map(|seg| seg.ident.clone()).collect()
+                }
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
@@ -1504,12 +1497,9 @@ impl HirGenerator {
             ast::ExprKind::Locator(locator) => match locator {
                 ast::Locator::Path(path) => Some(path.segments.clone()),
                 ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
-                ast::Locator::ParameterPath(path) => Some(
-                    path.segments
-                        .iter()
-                        .map(|seg| seg.ident.clone())
-                        .collect(),
-                ),
+                ast::Locator::ParameterPath(path) => {
+                    Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
+                }
             },
             ast::ExprKind::Invoke(invoke) => {
                 // Permit no-arg method chains like `xs.iter().enumerate()` to be treated as a path.
@@ -1521,12 +1511,9 @@ impl HirGenerator {
                     ast::ExprInvokeTarget::Function(locator) => match locator {
                         ast::Locator::Path(path) => Some(path.segments.clone()),
                         ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
-                        ast::Locator::ParameterPath(path) => Some(
-                            path.segments
-                                .iter()
-                                .map(|seg| seg.ident.clone())
-                                .collect(),
-                        ),
+                        ast::Locator::ParameterPath(path) => {
+                            Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
+                        }
                     },
                     ast::ExprInvokeTarget::Method(select) => {
                         let mut base = self.path_segments_from_expr(&select.obj)?;

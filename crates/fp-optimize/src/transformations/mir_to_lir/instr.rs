@@ -357,8 +357,7 @@ impl LirGenerator {
                     let elem_lir_ty = self.lir_type_from_ty(elem_ty);
                     let slice_ty = self.slice_lir_type(&elem_lir_ty);
                     let ptr_const = lir::LirConstant::String(value.clone());
-                    let len_const =
-                        lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
+                    let len_const = lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
                     lir::LirConstant::Struct(vec![ptr_const, len_const], slice_ty)
                 } else {
                     lir::LirConstant::String(value.clone())
@@ -368,12 +367,10 @@ impl LirGenerator {
             mir::ConstantKind::Val(value, value_ty) => {
                 self.const_value_to_lir_constant(value, value_ty)?
             }
-            mir::ConstantKind::Fn(name, _ty) => {
-                lir::LirConstant::FunctionRef(
-                    lir::Name::new(name.as_str().to_string()),
-                    target_ty.clone(),
-                )
-            }
+            mir::ConstantKind::Fn(name, _ty) => lir::LirConstant::FunctionRef(
+                lir::Name::new(name.as_str().to_string()),
+                target_ty.clone(),
+            ),
             mir::ConstantKind::Global(name, _ty) => lir::LirConstant::GlobalRef(
                 lir::Name::new(name.as_str().to_string()),
                 target_ty.clone(),
@@ -402,25 +399,21 @@ impl LirGenerator {
                 Ok(lir::LirConstant::Undef(lir_ty))
             }
             mir::ConstValue::Bool(value) => Ok(lir::LirConstant::Bool(*value)),
-            mir::ConstValue::Int(value) => Ok(lir::LirConstant::Int(
-                *value,
-                self.lir_type_from_ty(ty),
-            )),
-            mir::ConstValue::UInt(value) => Ok(lir::LirConstant::UInt(
-                *value,
-                self.lir_type_from_ty(ty),
-            )),
-            mir::ConstValue::Float(value) => Ok(lir::LirConstant::Float(
-                *value,
-                self.lir_type_from_ty(ty),
-            )),
+            mir::ConstValue::Int(value) => {
+                Ok(lir::LirConstant::Int(*value, self.lir_type_from_ty(ty)))
+            }
+            mir::ConstValue::UInt(value) => {
+                Ok(lir::LirConstant::UInt(*value, self.lir_type_from_ty(ty)))
+            }
+            mir::ConstValue::Float(value) => {
+                Ok(lir::LirConstant::Float(*value, self.lir_type_from_ty(ty)))
+            }
             mir::ConstValue::Str(value) => {
                 if let TyKind::Slice(elem_ty) = &ty.kind {
                     let elem_lir_ty = self.lir_type_from_ty(elem_ty);
                     let slice_ty = self.slice_lir_type(&elem_lir_ty);
                     let ptr_const = lir::LirConstant::String(value.clone());
-                    let len_const =
-                        lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
+                    let len_const = lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
                     return Ok(lir::LirConstant::Struct(
                         vec![ptr_const, len_const],
                         slice_ty,
@@ -463,7 +456,10 @@ impl LirGenerator {
             }
             mir::ConstValue::Struct(fields) => {
                 let lir_ty = self.lir_type_from_ty(ty);
-                let lir::LirType::Struct { fields: lir_fields, .. } = &lir_ty else {
+                let lir::LirType::Struct {
+                    fields: lir_fields, ..
+                } = &lir_ty
+                else {
                     return Err(fp_core::error::Error::from(
                         "struct constant requires a struct layout in LIR",
                     ));
@@ -483,10 +479,9 @@ impl LirGenerator {
                             fp_core::error::Error::from("struct constant field type missing")
                         })?
                         .clone();
-                    lowered.push(self.const_value_to_lir_constant_with_lir_type(
-                        field,
-                        &field_lir_ty,
-                    )?);
+                    lowered.push(
+                        self.const_value_to_lir_constant_with_lir_type(field, &field_lir_ty)?,
+                    );
                 }
                 Ok(lir::LirConstant::Struct(lowered, lir_ty))
             }
@@ -496,16 +491,12 @@ impl LirGenerator {
                 for element in elements {
                     lowered.push(self.const_value_to_lir_constant(element, elem_ty)?);
                 }
-                let data_global = self.allocate_const_array_global(
-                    elem_lir_ty.clone(),
-                    lowered,
-                );
+                let data_global = self.allocate_const_array_global(elem_lir_ty.clone(), lowered);
                 let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
                 let ptr_const =
                     lir::LirConstant::GlobalRef(data_global.name.clone(), ptr_ty, vec![0, 0]);
                 let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                let len_const =
-                    lir::LirConstant::UInt(elements.len() as u64, lir::LirType::I64);
+                let len_const = lir::LirConstant::UInt(elements.len() as u64, lir::LirType::I64);
                 Ok(lir::LirConstant::Struct(
                     vec![ptr_const, len_const],
                     slice_ty,
@@ -532,16 +523,13 @@ impl LirGenerator {
                         entry_lir_ty.clone(),
                     ));
                 }
-                let data_global = self.allocate_const_array_global(
-                    entry_lir_ty.clone(),
-                    lowered_entries,
-                );
+                let data_global =
+                    self.allocate_const_array_global(entry_lir_ty.clone(), lowered_entries);
                 let ptr_ty = lir::LirType::Ptr(Box::new(entry_lir_ty.clone()));
                 let ptr_const =
                     lir::LirConstant::GlobalRef(data_global.name.clone(), ptr_ty, vec![0, 0]);
                 let slice_ty = self.slice_lir_type(&entry_lir_ty);
-                let len_const =
-                    lir::LirConstant::UInt(entries.len() as u64, lir::LirType::I64);
+                let len_const = lir::LirConstant::UInt(entries.len() as u64, lir::LirType::I64);
                 Ok(lir::LirConstant::Struct(
                     vec![ptr_const, len_const],
                     slice_ty,
@@ -558,15 +546,9 @@ impl LirGenerator {
         match value {
             mir::ConstValue::Unit => Ok(lir::LirConstant::Undef(lir_ty.clone())),
             mir::ConstValue::Bool(value) => Ok(lir::LirConstant::Bool(*value)),
-            mir::ConstValue::Int(value) => {
-                Ok(lir::LirConstant::Int(*value, lir_ty.clone()))
-            }
-            mir::ConstValue::UInt(value) => {
-                Ok(lir::LirConstant::UInt(*value, lir_ty.clone()))
-            }
-            mir::ConstValue::Float(value) => {
-                Ok(lir::LirConstant::Float(*value, lir_ty.clone()))
-            }
+            mir::ConstValue::Int(value) => Ok(lir::LirConstant::Int(*value, lir_ty.clone())),
+            mir::ConstValue::UInt(value) => Ok(lir::LirConstant::UInt(*value, lir_ty.clone())),
+            mir::ConstValue::Float(value) => Ok(lir::LirConstant::Float(*value, lir_ty.clone())),
             mir::ConstValue::Str(value) => {
                 if let lir::LirType::Struct { fields, .. } = lir_ty {
                     if fields.len() == 2
@@ -597,10 +579,9 @@ impl LirGenerator {
                 };
                 let mut lowered = Vec::with_capacity(elements.len());
                 for element in elements {
-                    lowered.push(self.const_value_to_lir_constant_with_lir_type(
-                        element,
-                        elem_ty.as_ref(),
-                    )?);
+                    lowered.push(
+                        self.const_value_to_lir_constant_with_lir_type(element, elem_ty.as_ref())?,
+                    );
                 }
                 Ok(lir::LirConstant::Array(lowered, lir_ty.clone()))
             }
@@ -625,10 +606,8 @@ impl LirGenerator {
                             fp_core::error::Error::from("struct constant field type missing")
                         })?
                         .clone();
-                    lowered.push(self.const_value_to_lir_constant_with_lir_type(
-                        element,
-                        &field_ty,
-                    )?);
+                    lowered
+                        .push(self.const_value_to_lir_constant_with_lir_type(element, &field_ty)?);
                 }
                 Ok(lir::LirConstant::Struct(lowered, lir_ty.clone()))
             }
@@ -646,10 +625,13 @@ impl LirGenerator {
         let name = lir::Name::new(format!("__const_data_{}", self.const_global_counter));
         self.const_global_counter += 1;
         let array_ty = lir::LirType::Array(Box::new(elem_ty), elements.len() as u64);
-        let initializer = lir::LirConstant::Array(elements, match &array_ty {
-            lir::LirType::Array(elem, _) => *elem.clone(),
-            _ => lir::LirType::I8,
-        });
+        let initializer = lir::LirConstant::Array(
+            elements,
+            match &array_ty {
+                lir::LirType::Array(elem, _) => *elem.clone(),
+                _ => lir::LirType::I8,
+            },
+        );
         let align = Self::alignment_for_lir_type(&array_ty);
         let global = lir::LirGlobal {
             name,
@@ -763,10 +745,11 @@ impl LirGenerator {
                     instructions.extend(self.take_queued_instructions());
                     let adjusted = match arg {
                         mir::Operand::Move(place) | mir::Operand::Copy(place) => {
-                            let slice_elem = self.lookup_place_type(place).and_then(|ty| match ty.kind {
-                                TyKind::Slice(elem) => Some(*elem),
-                                _ => None,
-                            });
+                            let slice_elem =
+                                self.lookup_place_type(place).and_then(|ty| match ty.kind {
+                                    TyKind::Slice(elem) => Some(*elem),
+                                    _ => None,
+                                });
                             if let Some(elem_ty) = slice_elem {
                                 let elem_lir = self.lir_type_from_ty(&elem_ty);
                                 let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir));
@@ -814,9 +797,7 @@ impl LirGenerator {
         instructions.extend(self.take_queued_instructions());
         let assign_whole_place = place.projection.is_empty();
         let place_ty = self.lookup_place_type(place);
-        let destination_lir_ty = place_ty
-            .as_ref()
-            .map(|ty| self.lir_type_from_ty(ty));
+        let destination_lir_ty = place_ty.as_ref().map(|ty| self.lir_type_from_ty(ty));
         let mut result_value: Option<lir::LirValue> = None;
 
         match rvalue {
@@ -942,11 +923,8 @@ impl LirGenerator {
                 for _ in 0..*len {
                     fields.push(operand.clone());
                 }
-                let (mut aggregate_insts, aggregate_value) = self.handle_aggregate(
-                    place,
-                    &mir::AggregateKind::Array(elem_ty),
-                    &fields,
-                )?;
+                let (mut aggregate_insts, aggregate_value) =
+                    self.handle_aggregate(place, &mir::AggregateKind::Array(elem_ty), &fields)?;
                 instructions.append(&mut aggregate_insts);
                 result_value = aggregate_value;
             }
@@ -982,10 +960,8 @@ impl LirGenerator {
                 let len = self.container_len(kind);
                 let align = Self::alignment_for_lir_type(&elem_lir_ty);
                 let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
-                let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
-                    len as i64,
-                    lir::LirType::I32,
-                ));
+                let size_value =
+                    lir::LirValue::Constant(lir::LirConstant::Int(len as i64, lir::LirType::I32));
 
                 let alloca_id = self.next_id();
                 instructions.push(lir::LirInstruction {
@@ -1012,8 +988,12 @@ impl LirGenerator {
                         idx as u64,
                         lir::LirType::I64,
                     ));
-                    let elem_ptr =
-                        self.element_ptr_at(array_ptr.clone(), &elem_lir_ty, index_value, &mut instructions);
+                    let elem_ptr = self.element_ptr_at(
+                        array_ptr.clone(),
+                        &elem_lir_ty,
+                        index_value,
+                        &mut instructions,
+                    );
                     instructions.push(lir::LirInstruction {
                         id: self.next_id(),
                         kind: lir::LirInstructionKind::Store {
@@ -1027,22 +1007,16 @@ impl LirGenerator {
                     });
                 }
 
-                result_value = Some(self.build_slice_value(
-                    array_ptr,
-                    len,
-                    &elem_lir_ty,
-                    &mut instructions,
-                ));
+                result_value =
+                    Some(self.build_slice_value(array_ptr, len, &elem_lir_ty, &mut instructions));
             }
             mir::Rvalue::ContainerMapLiteral { kind, entries } => {
                 let entry_lir_ty = self.container_element_lir_type(kind);
                 let len = self.container_len(kind);
                 let align = Self::alignment_for_lir_type(&entry_lir_ty);
                 let ptr_ty = lir::LirType::Ptr(Box::new(entry_lir_ty.clone()));
-                let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
-                    len as i64,
-                    lir::LirType::I32,
-                ));
+                let size_value =
+                    lir::LirValue::Constant(lir::LirConstant::Int(len as i64, lir::LirType::I32));
 
                 let alloca_id = self.next_id();
                 instructions.push(lir::LirInstruction {
@@ -1060,14 +1034,8 @@ impl LirGenerator {
                     lir::LirType::Struct { fields, .. } => fields.clone(),
                     _ => vec![lir::LirType::I64, lir::LirType::I64],
                 };
-                let key_ty = entry_fields
-                    .get(0)
-                    .cloned()
-                    .unwrap_or(lir::LirType::I64);
-                let value_ty = entry_fields
-                    .get(1)
-                    .cloned()
-                    .unwrap_or(lir::LirType::I64);
+                let key_ty = entry_fields.get(0).cloned().unwrap_or(lir::LirType::I64);
+                let value_ty = entry_fields.get(1).cloned().unwrap_or(lir::LirType::I64);
 
                 for (idx, (key_op, value_op)) in entries.iter().enumerate() {
                     let key_val = self.transform_operand(key_op)?;
@@ -1119,8 +1087,12 @@ impl LirGenerator {
                         idx as u64,
                         lir::LirType::I64,
                     ));
-                    let entry_ptr =
-                        self.element_ptr_at(array_ptr.clone(), &entry_lir_ty, index_value, &mut instructions);
+                    let entry_ptr = self.element_ptr_at(
+                        array_ptr.clone(),
+                        &entry_lir_ty,
+                        index_value,
+                        &mut instructions,
+                    );
                     instructions.push(lir::LirInstruction {
                         id: self.next_id(),
                         kind: lir::LirInstructionKind::Store {
@@ -1134,12 +1106,8 @@ impl LirGenerator {
                     });
                 }
 
-                result_value = Some(self.build_slice_value(
-                    array_ptr,
-                    len,
-                    &entry_lir_ty,
-                    &mut instructions,
-                ));
+                result_value =
+                    Some(self.build_slice_value(array_ptr, len, &entry_lir_ty, &mut instructions));
             }
             mir::Rvalue::ContainerLen { kind, .. } => {
                 let len = self.container_len(kind);
@@ -1168,8 +1136,12 @@ impl LirGenerator {
                     mir::ContainerKind::List { .. } => {
                         let idx_value = self.transform_operand(key)?;
                         instructions.extend(self.take_queued_instructions());
-                        let elem_ptr =
-                            self.element_ptr_at(slice_ptr, &elem_lir_ty, idx_value, &mut instructions);
+                        let elem_ptr = self.element_ptr_at(
+                            slice_ptr,
+                            &elem_lir_ty,
+                            idx_value,
+                            &mut instructions,
+                        );
                         let load_id = self.next_id();
                         instructions.push(lir::LirInstruction {
                             id: load_id,
@@ -1183,7 +1155,11 @@ impl LirGenerator {
                         });
                         result_value = Some(lir::LirValue::Register(load_id));
                     }
-                    mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                    mir::ContainerKind::Map {
+                        key_ty,
+                        value_ty,
+                        len,
+                    } => {
                         let query_value = self.transform_operand(key)?;
                         instructions.extend(self.take_queued_instructions());
                         let key_lir_ty = self.lir_type_from_ty(key_ty);
@@ -1249,10 +1225,7 @@ impl LirGenerator {
                             let cmp_id = self.next_id();
                             instructions.push(lir::LirInstruction {
                                 id: cmp_id,
-                                kind: lir::LirInstructionKind::Eq(
-                                    entry_key,
-                                    query_value.clone(),
-                                ),
+                                kind: lir::LirInstructionKind::Eq(entry_key, query_value.clone()),
                                 type_hint: Some(lir::LirType::I1),
                                 debug_info: None,
                             });
@@ -1429,9 +1402,7 @@ impl LirGenerator {
                     return Ok(instructions);
                 }
 
-                if let Some(const_value) =
-                    self.cast_constant_value(&operand_value, &target_ty)
-                {
+                if let Some(const_value) = self.cast_constant_value(&operand_value, &target_ty) {
                     result_value = Some(const_value);
                     return Ok(instructions);
                 }
@@ -1453,9 +1424,9 @@ impl LirGenerator {
                         let ptr_id = self.next_id();
                         instructions.push(lir::LirInstruction {
                             id: ptr_id,
-                            kind: lir::LirInstructionKind::IntToPtr(
-                                lir::LirValue::Register(fp_to_int_id),
-                            ),
+                            kind: lir::LirInstructionKind::IntToPtr(lir::LirValue::Register(
+                                fp_to_int_id,
+                            )),
                             type_hint: Some(target_ty.clone()),
                             debug_info: None,
                         });
@@ -1662,9 +1633,7 @@ impl LirGenerator {
                         return Ok(lir::LirValue::Function(mapped_name));
                     }
                     if let Some(runtime_target) = (self.runtime_symbol_map)(&mapped_name) {
-                        return Ok(lir::LirValue::Function(
-                            runtime_target.as_str().to_string(),
-                        ));
+                        return Ok(lir::LirValue::Function(runtime_target.as_str().to_string()));
                     }
                     Ok(lir::LirValue::Global(
                         mapped_name,
@@ -1816,8 +1785,7 @@ impl LirGenerator {
                     packed: false,
                     name: None,
                 };
-                let value =
-                    lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), empty_ty));
+                let value = lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), empty_ty));
                 self.register_map.insert(place.local, value.clone());
                 return Ok(value);
             }
@@ -2232,10 +2200,7 @@ impl LirGenerator {
             let cast_id = self.next_id();
             self.queued_instructions.push(lir::LirInstruction {
                 id: cast_id,
-                kind: lir::LirInstructionKind::SextOrTrunc(
-                    index_value.clone(),
-                    lir::LirType::I64,
-                ),
+                kind: lir::LirInstructionKind::SextOrTrunc(index_value.clone(), lir::LirType::I64),
                 type_hint: Some(lir::LirType::I64),
                 debug_info: None,
             });
@@ -2317,9 +2282,7 @@ impl LirGenerator {
         match kind {
             mir::ContainerKind::List { elem_ty, .. } => self.lir_type_from_ty(elem_ty),
             mir::ContainerKind::Map {
-                key_ty,
-                value_ty,
-                ..
+                key_ty, value_ty, ..
             } => {
                 let key_lir = self.lir_type_from_ty(key_ty);
                 let value_lir = self.lir_type_from_ty(value_ty);
@@ -2344,7 +2307,9 @@ impl LirGenerator {
         value: lir::LirValue,
         instructions: &mut Vec<lir::LirInstruction>,
     ) -> lir::LirValue {
-        let current_ty = self.infer_lir_value_type(&value).unwrap_or(lir::LirType::I64);
+        let current_ty = self
+            .infer_lir_value_type(&value)
+            .unwrap_or(lir::LirType::I64);
         if current_ty == lir::LirType::I64 {
             return value;
         }
@@ -2604,12 +2569,7 @@ impl LirGenerator {
             if let (Some(elem_lir_ty), lir::LirType::Array(_, len)) =
                 (Self::slice_element_type(expected), source_lir_ty)
             {
-                return self.build_slice_from_array_value(
-                    value,
-                    elem_lir_ty,
-                    *len,
-                    block,
-                );
+                return self.build_slice_from_array_value(value, elem_lir_ty, *len, block);
             }
             if matches!(expected, lir::LirType::Ptr(_)) {
                 if let lir::LirValue::Constant(constant) = &value {
@@ -2684,8 +2644,7 @@ impl LirGenerator {
             debug_info: None,
         });
 
-        let len_value =
-            lir::LirValue::Constant(lir::LirConstant::UInt(len, lir::LirType::I64));
+        let len_value = lir::LirValue::Constant(lir::LirConstant::UInt(len, lir::LirType::I64));
         let insert_len_id = self.next_id();
         block.instructions.push(lir::LirInstruction {
             id: insert_len_id,
@@ -2792,9 +2751,7 @@ impl LirGenerator {
             return lir::LirValue::Register(fp_id);
         }
         let id = self.next_id();
-        let kind = if matches!(from_ty, lir::LirType::Ptr(_))
-            && self.is_integral_type(&target_ty)
-        {
+        let kind = if matches!(from_ty, lir::LirType::Ptr(_)) && self.is_integral_type(&target_ty) {
             lir::LirInstructionKind::PtrToInt(value.clone())
         } else if self.is_integral_type(&from_ty) && matches!(target_ty, lir::LirType::Ptr(_)) {
             lir::LirInstructionKind::IntToPtr(value.clone())
@@ -2843,14 +2800,10 @@ impl LirGenerator {
             lir::LirValue::Constant(constant) => {
                 if matches!(target_ty, lir::LirType::Ptr(_)) {
                     match constant {
-                        lir::LirConstant::Int(val, _)
-                            if *val == 0 =>
-                        {
+                        lir::LirConstant::Int(val, _) if *val == 0 => {
                             return Some(lir::LirValue::Null(target_ty.clone()));
                         }
-                        lir::LirConstant::UInt(val, _)
-                            if *val == 0 =>
-                        {
+                        lir::LirConstant::UInt(val, _) if *val == 0 => {
                             return Some(lir::LirValue::Null(target_ty.clone()));
                         }
                         _ => {}
@@ -2885,9 +2838,9 @@ impl LirGenerator {
             (lir::LirConstant::UInt(value, _), ty) if self.is_integral_type(ty) => {
                 Some(lir::LirConstant::UInt(*value, ty.clone()))
             }
-            (lir::LirConstant::Bool(value), ty) if self.is_integral_type(ty) => {
-                Some(lir::LirConstant::Int(if *value { 1 } else { 0 }, ty.clone()))
-            }
+            (lir::LirConstant::Bool(value), ty) if self.is_integral_type(ty) => Some(
+                lir::LirConstant::Int(if *value { 1 } else { 0 }, ty.clone()),
+            ),
             (lir::LirConstant::Float(value, _), ty) if self.is_integral_type(ty) => {
                 Some(lir::LirConstant::Int(*value as i64, ty.clone()))
             }
@@ -2897,9 +2850,9 @@ impl LirGenerator {
             (lir::LirConstant::UInt(value, _), ty) if self.is_float_type(ty) => {
                 Some(lir::LirConstant::Float(*value as f64, ty.clone()))
             }
-            (lir::LirConstant::Bool(value), ty) if self.is_float_type(ty) => {
-                Some(lir::LirConstant::Float(if *value { 1.0 } else { 0.0 }, ty.clone()))
-            }
+            (lir::LirConstant::Bool(value), ty) if self.is_float_type(ty) => Some(
+                lir::LirConstant::Float(if *value { 1.0 } else { 0.0 }, ty.clone()),
+            ),
             (lir::LirConstant::Float(value, _), ty) if self.is_float_type(ty) => {
                 Some(lir::LirConstant::Float(*value, ty.clone()))
             }
@@ -3053,9 +3006,9 @@ impl LirGenerator {
                     lir::LirType::Struct { .. } => {
                         lir::LirValue::Constant(lir::LirConstant::Struct(Vec::new(), lir_ty))
                     }
-                    lir::LirType::Array(elem, _len) => lir::LirValue::Constant(
-                        lir::LirConstant::Array(Vec::new(), *elem),
-                    ),
+                    lir::LirType::Array(elem, _len) => {
+                        lir::LirValue::Constant(lir::LirConstant::Array(Vec::new(), *elem))
+                    }
                     _ => {
                         // Non-aggregate zero-field values should not emit struct constants.
                         return Ok((instructions, None));
@@ -3080,68 +3033,72 @@ impl LirGenerator {
 
         // Choose an aggregate type suitable for InsertValue construction.
         // Prefer a real struct/array type; otherwise synthesize a struct from expected fields.
-        let agg_construction_ty: Option<lir::LirType> = if matches!(kind, mir::AggregateKind::Array(_)) {
-            match aggregate_ty.clone() {
-                Some(lir::LirType::Array(elem, _n)) => {
-                    Some(lir::LirType::Array(elem, raw_values.len() as u64))
-                }
-                _ => {
-                    let elem_ty = expected_field_tys
-                        .get(0)
-                        .cloned()
-                        .unwrap_or(lir::LirType::I64);
-                    Some(lir::LirType::Array(Box::new(elem_ty), raw_values.len() as u64))
-                }
-            }
-        } else {
-            match aggregate_ty.clone() {
-                Some(lir::LirType::Struct {
-                    fields,
-                    packed,
-                    name,
-                }) => {
-                    if fields.len() == raw_values.len() {
-                        Some(lir::LirType::Struct {
-                            fields,
-                            packed,
-                            name,
-                        })
-                    } else {
-                        Some(lir::LirType::Struct {
-                            fields: expected_field_tys.clone(),
-                            packed: false,
-                            name: None,
-                        })
+        let agg_construction_ty: Option<lir::LirType> =
+            if matches!(kind, mir::AggregateKind::Array(_)) {
+                match aggregate_ty.clone() {
+                    Some(lir::LirType::Array(elem, _n)) => {
+                        Some(lir::LirType::Array(elem, raw_values.len() as u64))
+                    }
+                    _ => {
+                        let elem_ty = expected_field_tys
+                            .get(0)
+                            .cloned()
+                            .unwrap_or(lir::LirType::I64);
+                        Some(lir::LirType::Array(
+                            Box::new(elem_ty),
+                            raw_values.len() as u64,
+                        ))
                     }
                 }
-                Some(lir::LirType::Array(elem, _n)) => {
-                    Some(lir::LirType::Array(elem, raw_values.len() as u64))
-                }
-                Some(_other) => {
-                    // Not an aggregate; synthesize a struct if multiple fields; if single field, just return it below
-                    if raw_values.len() > 1 {
-                        Some(lir::LirType::Struct {
-                            fields: expected_field_tys.clone(),
-                            packed: false,
-                            name: None,
-                        })
-                    } else {
-                        None
+            } else {
+                match aggregate_ty.clone() {
+                    Some(lir::LirType::Struct {
+                        fields,
+                        packed,
+                        name,
+                    }) => {
+                        if fields.len() == raw_values.len() {
+                            Some(lir::LirType::Struct {
+                                fields,
+                                packed,
+                                name,
+                            })
+                        } else {
+                            Some(lir::LirType::Struct {
+                                fields: expected_field_tys.clone(),
+                                packed: false,
+                                name: None,
+                            })
+                        }
+                    }
+                    Some(lir::LirType::Array(elem, _n)) => {
+                        Some(lir::LirType::Array(elem, raw_values.len() as u64))
+                    }
+                    Some(_other) => {
+                        // Not an aggregate; synthesize a struct if multiple fields; if single field, just return it below
+                        if raw_values.len() > 1 {
+                            Some(lir::LirType::Struct {
+                                fields: expected_field_tys.clone(),
+                                packed: false,
+                                name: None,
+                            })
+                        } else {
+                            None
+                        }
+                    }
+                    None => {
+                        if raw_values.len() > 1 {
+                            Some(lir::LirType::Struct {
+                                fields: expected_field_tys.clone(),
+                                packed: false,
+                                name: None,
+                            })
+                        } else {
+                            None
+                        }
                     }
                 }
-                None => {
-                    if raw_values.len() > 1 {
-                        Some(lir::LirType::Struct {
-                            fields: expected_field_tys.clone(),
-                            packed: false,
-                            name: None,
-                        })
-                    } else {
-                        None
-                    }
-                }
-            }
-        };
+            };
 
         if let Some(agg_ty) = agg_construction_ty {
             let mut current_value =
@@ -3269,7 +3226,9 @@ impl LirGenerator {
         target_ty: lir::LirType,
         instructions: &mut Vec<lir::LirInstruction>,
     ) -> lir::LirValue {
-        let current_ty = source_ty.cloned().or_else(|| self.infer_lir_value_type(&value));
+        let current_ty = source_ty
+            .cloned()
+            .or_else(|| self.infer_lir_value_type(&value));
         if let Some(current_ty) = current_ty {
             if current_ty == target_ty {
                 return value;
@@ -3399,7 +3358,9 @@ impl LirGenerator {
                 lir::LirType::F64 => lir::LirConstant::Float(value, target_ty.clone()),
                 _ => lir::LirConstant::Float(value, target_ty.clone()),
             },
-            lir::LirConstant::GlobalRef(name, _, indices) if matches!(target_ty, lir::LirType::Ptr(_)) => {
+            lir::LirConstant::GlobalRef(name, _, indices)
+                if matches!(target_ty, lir::LirType::Ptr(_)) =>
+            {
                 lir::LirConstant::GlobalRef(name, target_ty.clone(), indices)
             }
             lir::LirConstant::Struct(fields, _) => {
@@ -3456,10 +3417,9 @@ impl LirGenerator {
                 match access {
                     PlaceAccess::Address(addr) => {
                         if let Some(expected) = expected_ty {
-                            if let (Some(elem_lir_ty), TyKind::Array(_, len)) = (
-                                Self::slice_element_type(expected),
-                                &addr.ty.kind,
-                            ) {
+                            if let (Some(elem_lir_ty), TyKind::Array(_, len)) =
+                                (Self::slice_element_type(expected), &addr.ty.kind)
+                            {
                                 let length = self.array_length_from_const(len);
                                 return Ok(self.build_slice_from_array_ptr(
                                     addr.ptr,
@@ -4115,14 +4075,10 @@ impl LirGenerator {
         match cast_kind {
             mir::CastKind::Misc => {
                 if let Some(src_ty) = source_ty {
-                    if matches!(src_ty, lir::LirType::Ptr(_))
-                        && self.is_integral_type(&target_ty)
-                    {
+                    if matches!(src_ty, lir::LirType::Ptr(_)) && self.is_integral_type(&target_ty) {
                         return lir::LirInstructionKind::PtrToInt(source);
                     }
-                    if self.is_integral_type(&src_ty)
-                        && matches!(target_ty, lir::LirType::Ptr(_))
-                    {
+                    if self.is_integral_type(&src_ty) && matches!(target_ty, lir::LirType::Ptr(_)) {
                         return lir::LirInstructionKind::IntToPtr(source);
                     }
                     if self.is_integral_type(&src_ty) && self.is_integral_type(&target_ty) {

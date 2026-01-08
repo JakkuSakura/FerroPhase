@@ -161,10 +161,8 @@ impl HirGenerator {
                 ))
             }
             PatternKind::Variant(variant) => {
-                let (hir_pat, ty, mutable) = self.transform_variant_pattern(
-                    &variant.name,
-                    variant.pattern.as_deref(),
-                )?;
+                let (hir_pat, ty, mutable) =
+                    self.transform_variant_pattern(&variant.name, variant.pattern.as_deref())?;
                 Ok((hir_pat, ty, mutable))
             }
             other => Err(crate::error::optimization_error(format!(

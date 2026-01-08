@@ -268,13 +268,19 @@ fn summarize_rvalue(rvalue: &Rvalue) -> String {
         Rvalue::ContainerMapLiteral { kind, entries } => {
             let entries = entries
                 .iter()
-                .map(|(key, value)| format!("({}, {})", summarize_operand(key), summarize_operand(value)))
+                .map(|(key, value)| {
+                    format!("({}, {})", summarize_operand(key), summarize_operand(value))
+                })
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("container_map_literal({:?}; [{}])", kind, entries)
         }
         Rvalue::ContainerLen { kind, container } => {
-            format!("container_len({:?}; {})", kind, summarize_operand(container))
+            format!(
+                "container_len({:?}; {})",
+                kind,
+                summarize_operand(container)
+            )
         }
         Rvalue::ContainerGet {
             kind,

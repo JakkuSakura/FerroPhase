@@ -3,7 +3,9 @@
 //! This module handles workspace discovery, relationship management,
 //! and tracking crates across projects in a nexus.
 
-use crate::models::{DependencyModel, DependencyModelMap, ManifestModel, PackageModel, WorkspaceModel};
+use crate::models::{
+    DependencyModel, DependencyModelMap, ManifestModel, PackageModel, WorkspaceModel,
+};
 use crate::utils::{diff_path, find_furthest_manifest};
 use eyre::{Result, bail};
 use std::path::{Path, PathBuf};

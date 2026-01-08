@@ -7,8 +7,8 @@ mod dependency;
 mod graph;
 mod nexus;
 mod package;
-mod workspace;
 mod patch;
+mod workspace;
 
 use crate::configs::ManifestConfig;
 pub use crate_::*;
@@ -16,8 +16,8 @@ pub use dependency::*;
 pub use graph::*;
 pub use nexus::*;
 pub use package::*;
-pub use workspace::*;
 pub use patch::*;
+pub use workspace::*;
 
 /// a valid manifest model is either:
 /// - a NexusModel

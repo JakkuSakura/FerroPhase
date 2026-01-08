@@ -1,0 +1,339 @@
+mir::Program {
+    items:
+        fn __closure0_call(arg0: (<??>)) -> () [body: body0]
+
+        static <static>: <??> = const <<??>>
+
+        fn std::test::run_tests() -> (i64, i64, i64) [body: body1]
+
+        fn std::test::run() -> (i64, i64, i64) [body: body2]
+
+        fn describe(arg0: <??>) -> <??> [body: body3]
+
+        fn classify(arg0: i64) -> <??> [body: body4]
+
+        fn unwrap_or(arg0: (isize, i64), arg1: i64) -> i64 [body: body5]
+
+        fn main() -> () [body: body6]
+
+        fn TestCase::run(arg0: <??>) -> () [body: body7]
+    bodies:
+        body0 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+            blocks:
+                bb0:
+                    terminator: call fn TestCase::run(copy _1[Field(0, Ty { kind: Adt(AdtDef { did: 1, variants: [VariantDef { def_id: 2, ctor_def_id: None, ident: Symbol { name: "TestCase" }, discr: Relative(0), fields: [], ctor_kind: Const, is_recovered: false }], flags: AdtFlags(IS_STRUCT), repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags(0x0), field_shuffle_seed: 0 } }, []) })]) -> _0 then bb1
+                bb1:
+                    terminator: return
+        body1 { arg_count: 0, locals: 22 }
+            return_local: _0
+            locals:
+                _0: (i64, i64, i64)
+                _1: <??>
+                _2: <??>
+                _3: <??>
+                _4: i64
+                _5: i64
+                _6: i64
+                _7: bool
+                _8: usize
+                _9: (<??>, <??>)
+                _10: i64
+                _11: i64
+                _12: bool
+                _13: ()
+                _14: bool
+                _15: ()
+                _16: ()
+                _17: i32
+                _18: i32
+                _19: i64
+                _20: i64
+                _21: i32
+            blocks:
+                bb0:
+                    s0: _2 = aggregate(array [(<??>, <??>)]; [])
+                    s1: _3 = aggregate(array [(<??>, <??>)]; [])
+                    s2: _1 = copy _3
+                    s3: _4 = 0
+                    s4: _5 = 0
+                    s5: _6 = 0
+                    terminator: goto -> bb1
+                bb1:
+                    s0: _8 = 0u
+                    s1: _7 = Lt(copy _6, copy _8)
+                    terminator: switch copy _7 [1 -> bb2] otherwise -> bb3
+                bb2:
+                    s0: _10 = copy _6
+                    s1: _11 = copy _6
+                    s2: _9 = copy _1[Index(11)]
+                    s3: _13 = aggregate(tuple; [copy _9])
+                    terminator: call fn __closure0_call(copy _13) -> _15 then bb4, cleanup -> bb5
+                bb3:
+                    s0: _20 = Add(copy _4, copy _5)
+                    s1: _19 = copy _20
+                    terminator: call global printf("test result: %lld passed; %lld failed; %lld total\n", copy _4, copy _5, copy _19) -> _21 then bb12
+                bb4:
+                    s0: _14 = true
+                    terminator: goto -> bb6
+                bb5 (cleanup):
+                    s0: _14 = false
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _12 = copy _14
+                    terminator: switch copy _12 [1 -> bb7] otherwise -> bb8
+                bb7:
+                    s0: _4 = Add(copy _4, 1)
+                    terminator: call global printf("  %s ... ok\n", copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]) -> _17 then bb10
+                bb8:
+                    s0: _5 = Add(copy _5, 1)
+                    terminator: call global printf("  %s ... FAILED\n", copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]) -> _18 then bb11
+                bb9:
+                    s0: _6 = Add(copy _6, 1)
+                    terminator: goto -> bb1
+                bb10:
+                    s0: _16 = aggregate(tuple; [])
+                    terminator: goto -> bb9
+                bb11:
+                    s0: _16 = aggregate(tuple; [])
+                    terminator: goto -> bb9
+                bb12:
+                    s0: _0 = aggregate(tuple; [copy _19, copy _4, copy _5])
+                    terminator: return
+        body2 { arg_count: 0, locals: 1 }
+            return_local: _0
+            locals:
+                _0: (i64, i64, i64)
+            blocks:
+                bb0:
+                    terminator: call fn std::test::run_tests() -> _0 then bb1
+                bb1:
+                    terminator: return
+        body3 { arg_count: 1, locals: 10 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: <??>
+                _2: <??>
+                _3: bool
+                _4: bool
+                _5: bool
+                _6: bool
+                _7: u8
+                _8: u8
+                _9: u8
+            blocks:
+                bb0:
+                    s0: _2 = copy _1
+                    s1: _3 = Eq(copy _2[Deref, Field(0, Ty { kind: Int(Isize) })], 0)
+                    terminator: switch copy _3 [1 -> bb2] otherwise -> bb3
+                bb1:
+                    terminator: <none>
+                bb2:
+                    s0: _0 = "red"
+                    terminator: goto -> bb1
+                bb3:
+                    s0: _4 = Eq(copy _2[Deref, Field(0, Ty { kind: Int(Isize) })], 1)
+                    terminator: switch copy _4 [1 -> bb4] otherwise -> bb5
+                bb4:
+                    s0: _0 = "green"
+                    terminator: goto -> bb1
+                bb5:
+                    s0: _5 = Eq(copy _2[Deref, Field(0, Ty { kind: Int(Isize) })], 2)
+                    terminator: switch copy _5 [1 -> bb6] otherwise -> bb7
+                bb6:
+                    s0: _0 = "red rgb"
+                    terminator: goto -> bb1
+                bb7:
+                    s0: _6 = Eq(copy _2[Deref, Field(0, Ty { kind: Int(Isize) })], 2)
+                    terminator: switch copy _6 [1 -> bb8] otherwise -> bb9
+                bb8:
+                    s0: _7 = copy _2[Deref, Field(1, Ty { kind: Uint(U8) })]
+                    s1: _8 = copy _2[Deref, Field(2, Ty { kind: Uint(U8) })]
+                    s2: _9 = copy _2[Deref, Field(3, Ty { kind: Uint(U8) })]
+                    s3: _0 = "custom rgb"
+                    terminator: goto -> bb1
+                bb9:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb1
+        body4 { arg_count: 1, locals: 9 }
+            return_local: _0
+            locals:
+                _0: <??>
+                _1: i64
+                _2: i64
+                _3: bool
+                _4: i64
+                _5: bool
+                _6: i64
+                _7: bool
+                _8: i64
+            blocks:
+                bb0:
+                    s0: _2 = copy _1
+                    s1: _3 = Eq(copy _2, 0)
+                    terminator: switch copy _3 [1 -> bb2] otherwise -> bb3
+                bb1:
+                    terminator: <none>
+                bb2:
+                    s0: _0 = "zero"
+                    terminator: goto -> bb1
+                bb3:
+                    terminator: goto -> bb4
+                bb4:
+                    s0: _4 = copy _2
+                    s1: _5 = Lt(copy _4, 0)
+                    terminator: switch copy _5 [1 -> bb6] otherwise -> bb5
+                bb5:
+                    terminator: goto -> bb7
+                bb6:
+                    s0: _0 = "negative"
+                    terminator: goto -> bb1
+                bb7:
+                    s0: _6 = copy _2
+                    s1: _8 = Rem(copy _6, 2)
+                    s2: _7 = Eq(copy _8, 0)
+                    terminator: switch copy _7 [1 -> bb9] otherwise -> bb8
+                bb8:
+                    terminator: goto -> bb10
+                bb9:
+                    s0: _0 = "even"
+                    terminator: goto -> bb1
+                bb10:
+                    s0: _0 = "odd"
+                    terminator: goto -> bb1
+                bb11:
+                    terminator: return
+        body5 { arg_count: 2, locals: 7 }
+            return_local: _0
+            locals:
+                _0: i64
+                _1: (isize, i64)
+                _2: i64
+                _3: (isize, i64)
+                _4: bool
+                _5: i64
+                _6: bool
+            blocks:
+                bb0:
+                    s0: _3 = copy _1
+                    s1: _4 = Eq(copy _3[Field(0, Ty { kind: Int(Isize) })], 0)
+                    terminator: switch copy _4 [1 -> bb2] otherwise -> bb3
+                bb1:
+                    terminator: <none>
+                bb2:
+                    s0: _5 = copy _3[Field(1, Ty { kind: Int(I64) })]
+                    s1: _0 = copy _5
+                    terminator: goto -> bb1
+                bb3:
+                    s0: _6 = Eq(copy _3[Field(0, Ty { kind: Int(Isize) })], 1)
+                    terminator: switch copy _6 [1 -> bb4] otherwise -> bb5
+                bb4:
+                    s0: _0 = copy _2
+                    terminator: goto -> bb1
+                bb5:
+                    s0: _0 = aggregate(tuple; [])
+                    terminator: goto -> bb1
+        body6 { arg_count: 0, locals: 32 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i32
+                _2: i32
+                _3: i32
+                _4: i32
+                _5: i32
+                _6: (isize, u8, u8, u8)
+                _7: (isize, u8, u8, u8)
+                _8: (isize, u8, u8, u8)
+                _9: <??>
+                _10: <??>
+                _11: i32
+                _12: <??>
+                _13: <??>
+                _14: i32
+                _15: <??>
+                _16: i64
+                _17: i32
+                _18: <??>
+                _19: i32
+                _20: <??>
+                _21: i32
+                _22: <??>
+                _23: i32
+                _24: i64
+                _25: (isize, i64)
+                _26: i32
+                _27: i64
+                _28: (isize, i64)
+                _29: i32
+                _30: i64
+                _31: i32
+            blocks:
+                bb0:
+                    terminator: call global printf("📘 Tutorial: 12_pattern_matching.fp\n") -> _1 then bb1
+                bb1:
+                    terminator: call global printf("🧭 Focus: Pattern matching: match expressions with guards and destructuring\n") -> _2 then bb2
+                bb2:
+                    terminator: call global printf("🧪 What to look for: labeled outputs below\n") -> _3 then bb3
+                bb3:
+                    terminator: call global printf("✅ Expectation: outputs match labels\n") -> _4 then bb4
+                bb4:
+                    terminator: call global printf("\n") -> _5 then bb5
+                bb5:
+                    s0: _7 = aggregate(tuple; [0, 0u, 0u, 0u])
+                    s1: _6 = copy _7
+                    s2: _8 = aggregate(tuple; [2, 128u, 64u, 32u])
+                    s3: _10 = ref(Shared, _6)
+                    terminator: call fn describe(copy _10) -> _9 then bb6
+                bb6:
+                    terminator: call global printf("describe(red) = %s\n", copy _9) -> _11 then bb7
+                bb7:
+                    s0: _13 = ref(Shared, _8)
+                    terminator: call fn describe(copy _13) -> _12 then bb8
+                bb8:
+                    terminator: call global printf("describe(rgb) = %s\n", copy _12) -> _14 then bb9
+                bb9:
+                    s0: _16 = Neg(5)
+                    terminator: call fn classify(copy _16) -> _15 then bb10
+                bb10:
+                    terminator: call global printf("classify(-5) = %s\n", copy _15) -> _17 then bb11
+                bb11:
+                    terminator: call fn classify(0) -> _18 then bb12
+                bb12:
+                    terminator: call global printf("classify(0) = %s\n", copy _18) -> _19 then bb13
+                bb13:
+                    terminator: call fn classify(4) -> _20 then bb14
+                bb14:
+                    terminator: call global printf("classify(4) = %s\n", copy _20) -> _21 then bb15
+                bb15:
+                    terminator: call fn classify(7) -> _22 then bb16
+                bb16:
+                    terminator: call global printf("classify(7) = %s\n", copy _22) -> _23 then bb17
+                bb17:
+                    s0: _25 = aggregate(tuple; [0, 42])
+                    terminator: call fn unwrap_or(copy _25, 0) -> _24 then bb18
+                bb18:
+                    terminator: call global printf("unwrap_or(Some(42), 0) = %lld\n", copy _24) -> _26 then bb19
+                bb19:
+                    s0: _28 = aggregate(tuple; [1, 0])
+                    terminator: call fn unwrap_or(copy _28, 99) -> _27 then bb20
+                bb20:
+                    terminator: call global printf("unwrap_or(None, 99) = %lld\n", copy _27) -> _29 then bb21
+                bb21:
+                    s0: _30 = 0
+                    terminator: call global printf("0x%06X\n", copy _30) -> _31 then bb22
+                bb22:
+                    terminator: return
+        body7 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+            blocks:
+                bb0:
+                    terminator: return
+}

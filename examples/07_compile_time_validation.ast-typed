@@ -1,0 +1,301 @@
+ast::File {
+  items:
+    pub module std : () {
+      pub module collections : () {
+        pub struct HashMapEntry : HashMapEntry{key: Expr(K), value: Expr(V)} {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>} {
+          entries: Vec<Expr(HashMapEntry<K
+, V
+>)>
+        }
+        impl HashMap<K
+, V
+> : () {
+          pub fn from(entries: Vec<Expr(HashMapEntry<K
+, V
+>)>) -> Expr(HashMap<K
+, V
+>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+              expr_stmt (value)
+                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+                  entries:
+                    locator entries : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
+          pub fn len(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
+            block (1 stmt) : i64
+              expr_stmt (value)
+                invoke : i64
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any : fn(any) -> any
+            block (3 stmts) : !
+              let mut idx
+                init:
+                  value 0 : i64
+              expr_stmt (value)
+                while : ()
+                  cond:
+                    binop < : bool
+                      lhs:
+                        locator idx : i64
+                      rhs:
+                        invoke : i64
+                          target: self.entries.len
+                  body:
+                    block (3 stmts) : ()
+                      let entry
+                        init:
+                          index : HashMapEntry{key: Expr(K), value: Expr(V)}
+                            value:
+                              select .entries [unknown] : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
+                                object:
+                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+                            index:
+                              locator idx : i64
+                      expr_stmt (value)
+                        if : ()
+                          cond:
+                            binop == : bool
+                              lhs:
+                                select .key [unknown] : any
+                                  object:
+                                    locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                              rhs:
+                                locator key : any
+                          then:
+                            block (1 stmt) : ()
+                              expr_stmt ;
+                                return : !
+                                  select .value [unknown] : any
+                                    object:
+                                      locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                      expr_stmt ;
+                        assign : i64
+                          target:
+                            locator idx : i64
+                          value:
+                            binop + : i64
+                              lhs:
+                                locator idx : i64
+                              rhs:
+                                value 1 : i64
+              expr_stmt (value)
+                loop : !
+                  block (0 stmts) : ()
+        }
+      }
+      pub module test : () {
+        pub struct TestCase : TestCase{name: Expr(str), run: fn() -> ()} {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}> : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values] : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            let tests
+              init:
+                locator REGISTRY : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+            let mut passed
+              init:
+                value 0 : i64
+            let mut failed
+              init:
+                value 0 : i64
+            let mut idx
+              init:
+                value 0 : i64
+            expr_stmt (value)
+              while : ()
+                cond:
+                  binop < : bool
+                    lhs:
+                      locator idx : i64
+                    rhs:
+                      invoke : i64
+                        target: tests.len
+                body:
+                  block (4 stmts) : ()
+                    let test
+                      init:
+                        index : TestCase{name: Expr(str), run: fn() -> ()}
+                          value:
+                            locator tests : Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+                          index:
+                            locator idx : i64
+                    let ok
+                      init:
+                        intrinsic catch_unwind : bool
+                          args:
+                            closure () : fn() -> ()
+                              invoke : ()
+                                target: test.run
+                    expr_stmt (value)
+                      if : ()
+                        cond:
+                          locator ok : bool
+                        then:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator passed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator passed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... ok" test.name
+                        else:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator failed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator failed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                template: "  {} ... FAILED" test.name
+                    expr_stmt ;
+                      assign : i64
+                        target:
+                          locator idx : i64
+                        value:
+                          binop + : i64
+                            lhs:
+                              locator idx : i64
+                            rhs:
+                              value 1 : i64
+            let total
+              init:
+                binop + : i64
+                  lhs:
+                    locator passed : i64
+                  rhs:
+                    locator failed : i64
+            expr_stmt ;
+              intrinsic println : ()
+                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+            expr_stmt (value)
+              struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                total:
+                  locator total : i64
+                passed:
+                  locator passed : i64
+                failed:
+                  locator failed : i64
+        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (1 stmt) : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            expr_stmt (value)
+              invoke : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                target: run_tests
+      }
+    }
+    pub fn main() -> () : fn() -> () : fn() -> ()
+      block (30 stmts) : ()
+        expr_stmt ;
+          intrinsic println : ()
+            template: "📘 Tutorial: 07_compile_time_validation.fp"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧭 Focus: Compile-time validation using const expressions and introspection"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println : ()
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println : ()
+            template: ""
+        pub struct Data : Data{a: Expr(i64), b: Expr(i64), c: [Expr(u8); 16]} {
+          a: Expr(i64)
+          b: Expr(i64)
+          c: [Expr(u8); 16]
+        }
+        pub struct Header : Header{magic: Expr(i64), version: Expr(u8), flags: Expr(u8), pad: [Expr(u8); 6]} {
+          magic: Expr(i64)
+          version: Expr(u8)
+          flags: Expr(u8)
+          pad: [Expr(u8); 6]
+        }
+        pub const DATA_SIZE: u64 : u64
+          value 24 : u64
+        pub const DATA_FIELDS: u64 : u64
+          value 3 : u64
+        pub const DATA_HAS_A: bool : bool
+          value true : bool
+        pub const DATA_HAS_X: bool : bool
+          value false : bool
+        pub const HEADER_SIZE: u64 : u64
+          value 32 : u64
+        pub const HEADER_FIELDS: u64 : u64
+          value 4 : u64
+        pub const HEADER_HAS_VERSION: bool : bool
+          value true : bool
+        expr_stmt ;
+          intrinsic println : ()
+            template: "data: sizeof={}, fields={}" DATA_SIZE, DATA_FIELDS
+        expr_stmt ;
+          intrinsic println : ()
+            template: "data: has_a={}, has_x={}" DATA_HAS_A, DATA_HAS_X
+        expr_stmt ;
+          intrinsic println : ()
+            template: "header: sizeof={}, fields={}, has_version={}" HEADER_SIZE, HEADER_FIELDS, HEADER_HAS_VERSION
+        pub const DATA_TYPE_NAME: &string : &string
+          value "struct Data" : &string
+        pub const DATA_FIELD_A_TYPE: &string : &string
+          value "i64\n" : &string
+        pub const HEADER_FIELD_VERSION_TYPE: &string : &string
+          value "u8\n" : &string
+        pub const HAS_TO_STRING: bool : bool
+          value true : bool
+        expr_stmt ;
+          intrinsic println : ()
+            template: "types: data='{}' a='{}' version='{}'" DATA_TYPE_NAME, DATA_FIELD_A_TYPE, HEADER_FIELD_VERSION_TYPE
+        expr_stmt ;
+          intrinsic println : ()
+            template: "data has to_string: {}" HAS_TO_STRING
+        pub const MAX_SIZE: u64 : u64
+          value 64 : u64
+        pub const DATA_OK: bool : bool
+          value true : bool
+        pub const HEADER_OK: bool : bool
+          value true : bool
+        pub const TOTAL_SIZE: u64 : u64
+          value 56 : u64
+        pub const TOTAL_OK: bool : bool
+          value true : bool
+        expr_stmt ;
+          intrinsic println : ()
+            template: "layout: data_ok={}, header_ok={}, total_ok={}, total_size={}" DATA_OK, HEADER_OK, TOTAL_OK, TOTAL_SIZE
+        pub const _WARN: () : ()
+          value () : ()
+}

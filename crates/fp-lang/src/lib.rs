@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
 mod normalization;
+use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::ast::{Expr, ExprKind, Node};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use crate::normalization::FerroIntrinsicNormalizer;
 use fp_rust::printer::RustPrinter;
 
 /// Canonical identifier for the FerroPhase source language.
@@ -109,11 +109,8 @@ impl LanguageFrontend for FerroFrontend {
             let diagnostics = self.ferro.diagnostics();
             let last = Node::expr(expr.clone());
             let mut ast = last.clone();
-            fp_core::intrinsics::normalize_intrinsics_with(
-                &mut ast,
-                intrinsic_normalizer.as_ref(),
-            )
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            fp_core::intrinsics::normalize_intrinsics_with(&mut ast, intrinsic_normalizer.as_ref())
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             return Ok(FrontendResult {
                 last,
                 ast,

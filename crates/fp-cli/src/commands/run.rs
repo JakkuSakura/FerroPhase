@@ -24,7 +24,10 @@ pub struct RunArgs {
 }
 
 pub async fn run_command(args: RunArgs, _config: &CliConfig) -> Result<()> {
-    info!("Delegating run to magnet for file '{}'", args.file.display());
+    info!(
+        "Delegating run to magnet for file '{}'",
+        args.file.display()
+    );
 
     crate::commands::validate_paths_exist(&[args.file.clone()], true, "run")?;
 

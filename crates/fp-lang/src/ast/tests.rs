@@ -94,9 +94,7 @@ fn parse_expr_ast_supports_typed_quote_fragments() {
         other => panic!("expected quote expr, got {:?}", other),
     }
 
-    let expr = parser
-        .parse_expr_ast("quote<expr> { 1 + 2 }")
-        .unwrap();
+    let expr = parser.parse_expr_ast("quote<expr> { 1 + 2 }").unwrap();
     match expr.kind() {
         ExprKind::Quote(quote) => assert_eq!(quote.kind, Some(QuoteFragmentKind::Expr)),
         other => panic!("expected quote expr, got {:?}", other),

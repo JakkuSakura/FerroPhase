@@ -20,17 +20,17 @@ jobs:
           components: rustfmt, clippy
           override: true
 
-      # Install LLVM 19 for llvm-sys 191; required by fp-cli/fp-optimize dependencies.
-      - name: Install LLVM 19
-        run: sudo apt-get update && sudo apt-get install -y llvm-19-dev clang-19 libpolly-19-dev
+      # Install LLVM 21 for llvm-sys 210; required by fp-cli/fp-optimize dependencies.
+      - name: Install LLVM 21
+        run: sudo apt-get update && sudo apt-get install -y llvm-21-dev clang-21 libpolly-21-dev
 
       # Point llvm-sys to the installed LLVM toolchain.
       - name: Set LLVM env
         run: |
-          echo "LLVM_SYS_191_PREFIX=/usr/lib/llvm-19" >> $GITHUB_ENV
-          echo "LLVM_CONFIG_PATH=/usr/bin/llvm-config-19" >> $GITHUB_ENV
+          echo "LLVM_SYS_210_PREFIX=/usr/lib/llvm-21" >> $GITHUB_ENV
+          echo "LLVM_CONFIG_PATH=/usr/bin/llvm-config-21" >> $GITHUB_ENV
           # Polly may be unavailable on some runners; ignore if missing.
-          echo "LLVM_SYS_191_IGNORE_POLLY=1" >> $GITHUB_ENV
+          echo "LLVM_SYS_210_IGNORE_POLLY=1" >> $GITHUB_ENV
 
       - name: Cache rust build
         uses: Swatinem/rust-cache@v2
@@ -46,3 +46,6 @@ jobs:
 
       - name: Example snapshots
         run: scripts/run_example_snapshots.sh
+
+      - name: Example compile/exec
+        run: scripts/run_examples_exec.sh

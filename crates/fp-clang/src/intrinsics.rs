@@ -61,7 +61,10 @@ fn void() -> lir::LirType {
 static RUNTIME_DECLS: LazyLock<HashMap<&'static str, IntrinsicSignature>> = LazyLock::new(|| {
     let mut map: HashMap<&'static str, IntrinsicSignature> = HashMap::new();
 
-    map.insert("puts", IntrinsicSignature::new("puts", vec![ptr()], i32(), false));
+    map.insert(
+        "puts",
+        IntrinsicSignature::new("puts", vec![ptr()], i32(), false),
+    );
     map.insert(
         "printf",
         IntrinsicSignature::new("printf", vec![ptr()], i32(), true),
@@ -83,7 +86,10 @@ static RUNTIME_DECLS: LazyLock<HashMap<&'static str, IntrinsicSignature>> = Lazy
         "malloc",
         IntrinsicSignature::new("malloc", vec![i64()], ptr(), false),
     );
-    map.insert("free", IntrinsicSignature::new("free", vec![ptr()], void(), false));
+    map.insert(
+        "free",
+        IntrinsicSignature::new("free", vec![ptr()], void(), false),
+    );
     map.insert(
         "realloc",
         IntrinsicSignature::new("realloc", vec![ptr(), i64()], ptr(), false),
@@ -130,15 +136,30 @@ static RUNTIME_DECLS: LazyLock<HashMap<&'static str, IntrinsicSignature>> = Lazy
         IntrinsicSignature::new("strstr", vec![ptr(), ptr()], ptr(), false),
     );
 
-    map.insert("sin", IntrinsicSignature::new("sin", vec![f64()], f64(), false));
-    map.insert("cos", IntrinsicSignature::new("cos", vec![f64()], f64(), false));
-    map.insert("tan", IntrinsicSignature::new("tan", vec![f64()], f64(), false));
+    map.insert(
+        "sin",
+        IntrinsicSignature::new("sin", vec![f64()], f64(), false),
+    );
+    map.insert(
+        "cos",
+        IntrinsicSignature::new("cos", vec![f64()], f64(), false),
+    );
+    map.insert(
+        "tan",
+        IntrinsicSignature::new("tan", vec![f64()], f64(), false),
+    );
     map.insert(
         "sqrt",
         IntrinsicSignature::new("sqrt", vec![f64()], f64(), false),
     );
-    map.insert("log", IntrinsicSignature::new("log", vec![f64()], f64(), false));
-    map.insert("exp", IntrinsicSignature::new("exp", vec![f64()], f64(), false));
+    map.insert(
+        "log",
+        IntrinsicSignature::new("log", vec![f64()], f64(), false),
+    );
+    map.insert(
+        "exp",
+        IntrinsicSignature::new("exp", vec![f64()], f64(), false),
+    );
 
     map.insert(
         "sinf",
@@ -182,8 +203,14 @@ static RUNTIME_DECLS: LazyLock<HashMap<&'static str, IntrinsicSignature>> = Lazy
         IntrinsicSignature::new("fabsf", vec![f32()], f32(), false),
     );
 
-    map.insert("exit", IntrinsicSignature::new("exit", vec![i32()], void(), false));
-    map.insert("abort", IntrinsicSignature::new("abort", vec![], void(), false));
+    map.insert(
+        "exit",
+        IntrinsicSignature::new("exit", vec![i32()], void(), false),
+    );
+    map.insert(
+        "abort",
+        IntrinsicSignature::new("abort", vec![], void(), false),
+    );
     map.insert(
         "atexit",
         IntrinsicSignature::new("atexit", vec![ptr()], i32(), false),

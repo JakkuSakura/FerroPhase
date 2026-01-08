@@ -630,7 +630,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ItemImportTree::Root => self.expand_import_segments(rest, Vec::new()),
             ItemImportTree::SelfMod => self.expand_import_segments(rest, self.module_path.clone()),
-            ItemImportTree::SuperMod => self.expand_import_segments(rest, self.parent_module_path()),
+            ItemImportTree::SuperMod => {
+                self.expand_import_segments(rest, self.parent_module_path())
+            }
             ItemImportTree::Crate => self.expand_import_segments(rest, Vec::new()),
             ItemImportTree::Glob => Err(typing_error("glob imports are not yet supported")),
         }
@@ -1502,7 +1504,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if let Some(first) = path.segments.first() {
                 if let Some(module_path) = self.lookup_module_alias(first.as_str()) {
                     let mut qualified = module_path;
-                    qualified.extend(path.segments.iter().skip(1).map(|seg| seg.as_str().to_string()));
+                    qualified.extend(
+                        path.segments
+                            .iter()
+                            .skip(1)
+                            .map(|seg| seg.as_str().to_string()),
+                    );
                     let qualified = qualified.join("::");
                     if let Some(var) = self.lookup_env_var(&qualified) {
                         return Ok(var);

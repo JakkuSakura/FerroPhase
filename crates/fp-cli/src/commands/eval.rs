@@ -69,7 +69,10 @@ async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -
         print_ast: args.print_ast,
         print_passes: args.print_passes,
         target: "eval".to_string(),
-        runtime: args.runtime.clone().unwrap_or_else(|| "literal".to_string()),
+        runtime: args
+            .runtime
+            .clone()
+            .unwrap_or_else(|| "literal".to_string()),
     };
 
     let mut pipeline = Pipeline::new();
@@ -85,7 +88,10 @@ async fn eval_files(args: &EvalArgs) -> Result<()> {
         print_ast: args.print_ast,
         print_passes: args.print_passes,
         target: "eval".to_string(),
-        runtime: args.runtime.clone().unwrap_or_else(|| "literal".to_string()),
+        runtime: args
+            .runtime
+            .clone()
+            .unwrap_or_else(|| "literal".to_string()),
     };
 
     for file in &args.file {

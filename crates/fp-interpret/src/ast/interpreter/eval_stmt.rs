@@ -25,9 +25,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             QuotedFragment::Stmts(stmts) => pending_stmts.extend(stmts),
                             QuotedFragment::Expr(expr) => pending_exprs.push(expr),
                             QuotedFragment::Type(_) => {
-                                self.emit_error(
-                                    "splice<type> is not valid in statement position",
-                                );
+                                self.emit_error("splice<type> is not valid in statement position");
                                 return None;
                             }
                         }

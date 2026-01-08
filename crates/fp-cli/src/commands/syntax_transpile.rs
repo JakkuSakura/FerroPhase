@@ -321,7 +321,10 @@ fn is_package_manifest(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| {
             let lower = name.to_ascii_lowercase();
-            matches!(lower.as_str(), "cargo.toml" | "package.json" | "magnet.toml")
+            matches!(
+                lower.as_str(),
+                "cargo.toml" | "package.json" | "magnet.toml"
+            )
         })
         .unwrap_or(false)
 }

@@ -1,11 +1,11 @@
 use crate::context::LlvmContext;
 use crate::intrinsics::{CRuntimeIntrinsics, IntrinsicSignature};
 use fp_core::diagnostics::report_error_with_context;
+use fp_core::tracing::debug;
 use fp_core::{
     error::{Error, Result},
     lir,
 };
-use fp_core::tracing::debug;
 use inkwell::builder::BuilderError;
 use inkwell::llvm_sys::core::LLVMConstArray2;
 use inkwell::llvm_sys::LLVMCallConv;
@@ -13,8 +13,8 @@ use inkwell::types::{
     AnyTypeEnum, AsTypeRef, BasicType, BasicTypeEnum, FloatType, FunctionType, IntType,
 };
 use inkwell::values::{
-    AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum,
-    FloatValue, FunctionValue, IntValue, PointerValue, ValueKind,
+    AggregateValueEnum, AsValueRef, BasicMetadataValueEnum, BasicValue, BasicValueEnum, FloatValue,
+    FunctionValue, IntValue, PointerValue, ValueKind,
 };
 use inkwell::{AddressSpace, FloatPredicate, GlobalVisibility, IntPredicate};
 use std::collections::{HashMap, HashSet};
@@ -70,7 +70,9 @@ impl<'a> LirCodegen<'a> {
         global_const_map: HashMap<String, lir::LirConstant>,
         allow_unresolved_globals: bool,
     ) -> Self {
-        let prefix = Self::sanitize_symbol_component(&llvm_ctx.module.get_name().to_str().unwrap_or("module"));
+        let prefix = Self::sanitize_symbol_component(
+            &llvm_ctx.module.get_name().to_str().unwrap_or("module"),
+        );
         Self {
             llvm_ctx,
             register_map: HashMap::new(),
@@ -93,7 +95,12 @@ impl<'a> LirCodegen<'a> {
         }
     }
 
-    fn record_result(&mut self, instr_id: u32, ty_hint: Option<lir::LirType>, value: BasicValueEnum<'static>) {
+    fn record_result(
+        &mut self,
+        instr_id: u32,
+        ty_hint: Option<lir::LirType>,
+        value: BasicValueEnum<'static>,
+    ) {
         let ty = ty_hint.unwrap_or(lir::LirType::I32);
         self.register_map.insert(instr_id, (value, ty));
     }
@@ -130,20 +137,14 @@ impl<'a> LirCodegen<'a> {
         // Predeclare globals so constant initializers can reference later globals.
         for global in &globals {
             self.declare_global(global).map_err(|err| {
-                self.attach_context(
-                    err,
-                    format!("while declaring global '{}'", global.name),
-                )
+                self.attach_context(err, format!("while declaring global '{}'", global.name))
             })?;
         }
 
         // Predeclare functions so constant initializers can reference them.
         for function in &functions {
             self.declare_function_stub(function).map_err(|err| {
-                self.attach_context(
-                    err,
-                    format!("while declaring function '{}'", function.name),
-                )
+                self.attach_context(err, format!("while declaring function '{}'", function.name))
             })?;
         }
 
@@ -194,10 +195,10 @@ impl<'a> LirCodegen<'a> {
             return Ok(());
         }
         let global_ty = self.llvm_basic_type(&global.ty)?;
-        let gvar = self
-            .llvm_ctx
-            .module
-            .add_global(global_ty, Some(AddressSpace::default()), &llvm_name);
+        let gvar =
+            self.llvm_ctx
+                .module
+                .add_global(global_ty, Some(AddressSpace::default()), &llvm_name);
 
         let linkage = self.convert_linkage(global.linkage.clone());
         gvar.set_linkage(linkage);
@@ -246,16 +247,9 @@ impl<'a> LirCodegen<'a> {
 
     fn define_global_initializer(&mut self, global: lir::LirGlobal) -> Result<()> {
         let llvm_name = self.llvm_symbol_for(&global.name);
-        let gvar = self
-            .llvm_ctx
-            .module
-            .get_global(&llvm_name)
-            .ok_or_else(|| {
-                report_error_with_context(
-                    LOG_AREA,
-                    format!("Global '{}' was not declared", llvm_name),
-                )
-            })?;
+        let gvar = self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
+            report_error_with_context(LOG_AREA, format!("Global '{}' was not declared", llvm_name))
+        })?;
 
         if let Some(init) = global.initializer {
             let value = self.convert_lir_constant_to_value(init)?;
@@ -291,7 +285,8 @@ impl<'a> LirCodegen<'a> {
             )
         };
 
-        function.set_call_conventions(self.convert_calling_convention(&lir_func.calling_convention));
+        function
+            .set_call_conventions(self.convert_calling_convention(&lir_func.calling_convention));
         if is_main {
             function.set_linkage(inkwell::module::Linkage::External);
         } else {
@@ -415,33 +410,38 @@ impl<'a> LirCodegen<'a> {
                 self.record_result(instr_id, ty_hint, result);
             }
             lir::LirInstructionKind::And(lhs, rhs) => {
-                let result = self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
-                    builder.build_and(l, r, name)
-                })?;
+                let result =
+                    self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
+                        builder.build_and(l, r, name)
+                    })?;
                 self.record_result(instr_id, ty_hint, result);
             }
             lir::LirInstructionKind::Or(lhs, rhs) => {
-                let result = self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
-                    builder.build_or(l, r, name)
-                })?;
+                let result =
+                    self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
+                        builder.build_or(l, r, name)
+                    })?;
                 self.record_result(instr_id, ty_hint, result);
             }
             lir::LirInstructionKind::Xor(lhs, rhs) => {
-                let result = self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
-                    builder.build_xor(l, r, name)
-                })?;
+                let result =
+                    self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
+                        builder.build_xor(l, r, name)
+                    })?;
                 self.record_result(instr_id, ty_hint, result);
             }
             lir::LirInstructionKind::Shl(lhs, rhs) => {
-                let result = self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
-                    builder.build_left_shift(l, r, name)
-                })?;
+                let result =
+                    self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
+                        builder.build_left_shift(l, r, name)
+                    })?;
                 self.record_result(instr_id, ty_hint, result);
             }
             lir::LirInstructionKind::Shr(lhs, rhs) => {
-                let result = self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
-                    builder.build_right_shift(l, r, false, name)
-                })?;
+                let result =
+                    self.lower_int_binary_op(instr_id, lhs, rhs, |builder, l, r, name| {
+                        builder.build_right_shift(l, r, false, name)
+                    })?;
                 self.record_result(instr_id, ty_hint, result);
             }
             lir::LirInstructionKind::Not(value) => {
@@ -491,7 +491,12 @@ impl<'a> LirCodegen<'a> {
                 let result = self
                     .llvm_ctx
                     .builder
-                    .build_select(cond_int, true_value, false_value, &format!("select_{}", instr_id))
+                    .build_select(
+                        cond_int,
+                        true_value,
+                        false_value,
+                        &format!("select_{}", instr_id),
+                    )
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 self.record_result(instr_id, ty_hint, result);
             }
@@ -533,10 +538,15 @@ impl<'a> LirCodegen<'a> {
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 let _ = store.set_volatile(volatile);
                 if let Some(align) = alignment {
-                    store.set_alignment(align).map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                    store
+                        .set_alignment(align)
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                 }
             }
-            lir::LirInstructionKind::Alloca { size, alignment: _alignment } => {
+            lir::LirInstructionKind::Alloca {
+                size,
+                alignment: _alignment,
+            } => {
                 let element_lir_type = match ty_hint.clone() {
                     Some(lir::LirType::Ptr(inner)) => *inner,
                     _ => lir::LirType::I8,
@@ -563,7 +573,11 @@ impl<'a> LirCodegen<'a> {
                     let array_alloca = self
                         .llvm_ctx
                         .builder
-                        .build_array_alloca(llvm_element_type, count, &format!("alloca_count_{}", instr_id))
+                        .build_array_alloca(
+                            llvm_element_type,
+                            count,
+                            &format!("alloca_count_{}", instr_id),
+                        )
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                     if let Some(block) = saved_block {
                         self.llvm_ctx.builder.position_at_end(block);
@@ -714,23 +728,19 @@ impl<'a> LirCodegen<'a> {
 
                 let gep = unsafe {
                     if inbounds {
-                        self.llvm_ctx
-                            .builder
-                            .build_in_bounds_gep(
-                                llvm_element_ty,
-                                ptr_value,
-                                &llvm_indices,
-                                &format!("gep_{}", instr_id),
-                            )
+                        self.llvm_ctx.builder.build_in_bounds_gep(
+                            llvm_element_ty,
+                            ptr_value,
+                            &llvm_indices,
+                            &format!("gep_{}", instr_id),
+                        )
                     } else {
-                        self.llvm_ctx
-                            .builder
-                            .build_gep(
-                                llvm_element_ty,
-                                ptr_value,
-                                &llvm_indices,
-                                &format!("gep_{}", instr_id),
-                            )
+                        self.llvm_ctx.builder.build_gep(
+                            llvm_element_ty,
+                            ptr_value,
+                            &llvm_indices,
+                            &format!("gep_{}", instr_id),
+                        )
                     }
                 }
                 .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
@@ -749,21 +759,30 @@ impl<'a> LirCodegen<'a> {
                 let aggregate_value = self.convert_lir_value_to_basic_value(aggregate)?;
                 let element_value = self.convert_lir_value_to_basic_value(element)?;
 
-                let index = indices
-                    .get(0)
-                    .copied()
-                    .ok_or_else(|| report_error_with_context(LOG_AREA, "InsertValue missing index"))?;
+                let index = indices.get(0).copied().ok_or_else(|| {
+                    report_error_with_context(LOG_AREA, "InsertValue missing index")
+                })?;
 
                 let result = match aggregate_value {
                     BasicValueEnum::ArrayValue(array) => self
                         .llvm_ctx
                         .builder
-                        .build_insert_value(array, element_value, index, &format!("insertvalue_{}", instr_id))
+                        .build_insert_value(
+                            array,
+                            element_value,
+                            index,
+                            &format!("insertvalue_{}", instr_id),
+                        )
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                     BasicValueEnum::StructValue(strct) => self
                         .llvm_ctx
                         .builder
-                        .build_insert_value(strct, element_value, index, &format!("insertvalue_{}", instr_id))
+                        .build_insert_value(
+                            strct,
+                            element_value,
+                            index,
+                            &format!("insertvalue_{}", instr_id),
+                        )
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                     _ => {
                         return Err(report_error_with_context(
@@ -782,12 +801,9 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirInstructionKind::ExtractValue { aggregate, indices } => {
                 let aggregate_value = self.convert_lir_value_to_basic_value(aggregate)?;
-                let index = indices
-                    .get(0)
-                    .copied()
-                    .ok_or_else(|| {
-                        report_error_with_context(LOG_AREA, "ExtractValue missing index")
-                    })?;
+                let index = indices.get(0).copied().ok_or_else(|| {
+                    report_error_with_context(LOG_AREA, "ExtractValue missing index")
+                })?;
 
                 let result = match aggregate_value {
                     BasicValueEnum::ArrayValue(array) => self
@@ -1003,9 +1019,7 @@ impl<'a> LirCodegen<'a> {
                     }
                 }
 
-                let return_ref = return_value
-                    .as_ref()
-                    .map(|value| value as &dyn BasicValue);
+                let return_ref = return_value.as_ref().map(|value| value as &dyn BasicValue);
                 self.llvm_ctx
                     .builder
                     .build_return(return_ref)
@@ -1029,10 +1043,16 @@ impl<'a> LirCodegen<'a> {
                 let bool_value = self.cast_condition_to_bool(condition_value)?;
 
                 let true_bb = self.block_map.get(&if_true).ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, format!("Unknown branch target {}", if_true))
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown branch target {}", if_true),
+                    )
                 })?;
                 let false_bb = self.block_map.get(&if_false).ok_or_else(|| {
-                    report_error_with_context(LOG_AREA, format!("Unknown branch target {}", if_false))
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown branch target {}", if_false),
+                    )
                 })?;
 
                 self.llvm_ctx
@@ -1071,24 +1091,13 @@ impl<'a> LirCodegen<'a> {
                     Callee::Direct(func) => self
                         .llvm_ctx
                         .builder
-                        .build_invoke(
-                            func,
-                            &call_args,
-                            *normal_bb,
-                            *unwind_bb,
-                            "invoke",
-                        )
+                        .build_invoke(func, &call_args, *normal_bb, *unwind_bb, "invoke")
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                     Callee::Indirect(ptr, fn_ty) => self
                         .llvm_ctx
                         .builder
                         .build_indirect_invoke(
-                            fn_ty,
-                            ptr,
-                            &call_args,
-                            *normal_bb,
-                            *unwind_bb,
-                            "invoke",
+                            fn_ty, ptr, &call_args, *normal_bb, *unwind_bb, "invoke",
                         )
                         .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
                 };
@@ -1164,10 +1173,11 @@ impl<'a> LirCodegen<'a> {
 
                 if let Some(signature) = self.function_signatures.get(name).cloned() {
                     let fn_type = self.function_type_from_signature(signature)?;
-                    let func = self
-                        .llvm_ctx
-                        .module
-                        .add_function(&llvm_name, fn_type, Some(inkwell::module::Linkage::External));
+                    let func = self.llvm_ctx.module.add_function(
+                        &llvm_name,
+                        fn_type,
+                        Some(inkwell::module::Linkage::External),
+                    );
                     return Ok(Callee::Direct(func));
                 }
 
@@ -1183,16 +1193,20 @@ impl<'a> LirCodegen<'a> {
                         return_type,
                         is_variadic,
                     })?;
-                    let func = self
-                        .llvm_ctx
-                        .module
-                        .add_function(name, fn_type, Some(inkwell::module::Linkage::External));
+                    let func = self.llvm_ctx.module.add_function(
+                        name,
+                        fn_type,
+                        Some(inkwell::module::Linkage::External),
+                    );
                     return Ok(Callee::Direct(func));
                 }
 
                 Err(report_error_with_context(
                     LOG_AREA,
-                    format!("Unknown function reference '{}' encountered during codegen", name),
+                    format!(
+                        "Unknown function reference '{}' encountered during codegen",
+                        name
+                    ),
                 ))
             }
             lir::LirValue::Local(local_id) | lir::LirValue::Register(local_id) => {
@@ -1200,7 +1214,11 @@ impl<'a> LirCodegen<'a> {
                     .register_map
                     .get(local_id)
                     .map(|(val, ty)| (*val, ty.clone()))
-                    .or_else(|| self.local_map.get(local_id).map(|(val, ty)| (*val, ty.clone())))
+                    .or_else(|| {
+                        self.local_map
+                            .get(local_id)
+                            .map(|(val, ty)| (*val, ty.clone()))
+                    })
                     .ok_or_else(|| {
                         report_error_with_context(
                             LOG_AREA,
@@ -1209,17 +1227,15 @@ impl<'a> LirCodegen<'a> {
                     })?;
 
                 let ptr = self.coerce_to_pointer(value)?;
-                let fn_ty = self
-                    .function_type_from_lir_type(&lir_ty)
-                    .ok_or_else(|| {
-                        report_error_with_context(
-                            LOG_AREA,
-                            format!(
-                                "Value {} is not a callable function pointer (type={:?})",
-                                local_id, lir_ty
-                            ),
-                        )
-                    })?;
+                let fn_ty = self.function_type_from_lir_type(&lir_ty).ok_or_else(|| {
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!(
+                            "Value {} is not a callable function pointer (type={:?})",
+                            local_id, lir_ty
+                        ),
+                    )
+                })?;
                 Ok(Callee::Indirect(ptr, fn_ty))
             }
             other => Err(report_error_with_context(
@@ -1234,15 +1250,12 @@ impl<'a> LirCodegen<'a> {
         if let Some(func) = self.llvm_ctx.module.get_function(name) {
             return Ok(func);
         }
-        let fn_type = self
-            .llvm_ctx
-            .context
-            .i32_type()
-            .fn_type(&[], true);
-        Ok(self
-            .llvm_ctx
-            .module
-            .add_function(name, fn_type, Some(inkwell::module::Linkage::External)))
+        let fn_type = self.llvm_ctx.context.i32_type().fn_type(&[], true);
+        Ok(self.llvm_ctx.module.add_function(
+            name,
+            fn_type,
+            Some(inkwell::module::Linkage::External),
+        ))
     }
 
     fn populate_argument_operands(
@@ -1305,15 +1318,25 @@ impl<'a> LirCodegen<'a> {
             let float_ty = self.llvm_float_type(&result_ty)?;
             let lhs_float = self.coerce_to_float(lhs_value, float_ty)?;
             let rhs_float = self.coerce_to_float(rhs_value, float_ty)?;
-            let result = float_op(&self.llvm_ctx.builder, lhs_float, rhs_float, &format!("fop_{}", instr_id))
-                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            let result = float_op(
+                &self.llvm_ctx.builder,
+                lhs_float,
+                rhs_float,
+                &format!("fop_{}", instr_id),
+            )
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             Ok(result.into())
         } else {
             let int_ty = self.default_int_type();
             let lhs_int = self.coerce_to_int(lhs_value, int_ty)?;
             let rhs_int = self.coerce_to_int(rhs_value, int_ty)?;
-            let result = int_op(&self.llvm_ctx.builder, lhs_int, rhs_int, &format!("iop_{}", instr_id))
-                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+            let result = int_op(
+                &self.llvm_ctx.builder,
+                lhs_int,
+                rhs_int,
+                &format!("iop_{}", instr_id),
+            )
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             Ok(result.into())
         }
     }
@@ -1338,8 +1361,13 @@ impl<'a> LirCodegen<'a> {
         let int_ty = self.default_int_type();
         let lhs_int = self.coerce_to_int(lhs_value, int_ty)?;
         let rhs_int = self.coerce_to_int(rhs_value, int_ty)?;
-        let result = op(&self.llvm_ctx.builder, lhs_int, rhs_int, &format!("iop_{}", instr_id))
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        let result = op(
+            &self.llvm_ctx.builder,
+            lhs_int,
+            rhs_int,
+            &format!("iop_{}", instr_id),
+        )
+        .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         Ok(result.into())
     }
 
@@ -1363,7 +1391,12 @@ impl<'a> LirCodegen<'a> {
             let rhs_float = self.coerce_to_float(rhs_value, float_ty)?;
             self.llvm_ctx
                 .builder
-                .build_float_compare(float_pred, lhs_float, rhs_float, &format!("fcmp_{}", instr_id))
+                .build_float_compare(
+                    float_pred,
+                    lhs_float,
+                    rhs_float,
+                    &format!("fcmp_{}", instr_id),
+                )
                 .map_err(|e| fp_core::error::Error::from(e.to_string()))?
         } else {
             let int_ty = self.default_int_type();
@@ -1401,12 +1434,11 @@ impl<'a> LirCodegen<'a> {
                     .build_float_compare(FloatPredicate::ONE, float_val, zero, "cond_bool")
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))
             }
-            BasicValueEnum::PointerValue(ptr_val) => {
-                self.llvm_ctx
-                    .builder
-                    .build_is_not_null(ptr_val, "cond_bool")
-                    .map_err(|e| fp_core::error::Error::from(e.to_string()))
-            }
+            BasicValueEnum::PointerValue(ptr_val) => self
+                .llvm_ctx
+                .builder
+                .build_is_not_null(ptr_val, "cond_bool")
+                .map_err(|e| fp_core::error::Error::from(e.to_string())),
             _ => Err(report_error_with_context(
                 LOG_AREA,
                 "Unsupported condition type for branch",
@@ -1443,13 +1475,11 @@ impl<'a> LirCodegen<'a> {
                         .module
                         .get_function(&llvm_name)
                         .unwrap_or_else(|| {
-                            self.llvm_ctx
-                                .module
-                                .add_function(
-                                    &llvm_name,
-                                    fn_type,
-                                    Some(inkwell::module::Linkage::External),
-                                )
+                            self.llvm_ctx.module.add_function(
+                                &llvm_name,
+                                fn_type,
+                                Some(inkwell::module::Linkage::External),
+                            )
                         });
                     return Ok(fn_value.as_global_value().as_pointer_value().into());
                 }
@@ -1488,13 +1518,15 @@ impl<'a> LirCodegen<'a> {
                     .get_function(&llvm_name)
                     .or_else(|| {
                         self.function_signatures.get(&name).and_then(|sig| {
-                            self.function_type_from_signature(sig.clone()).ok().map(|fn_type| {
-                                self.llvm_ctx.module.add_function(
-                                    &llvm_name,
-                                    fn_type,
-                                    Some(inkwell::module::Linkage::External),
-                                )
-                            })
+                            self.function_type_from_signature(sig.clone())
+                                .ok()
+                                .map(|fn_type| {
+                                    self.llvm_ctx.module.add_function(
+                                        &llvm_name,
+                                        fn_type,
+                                        Some(inkwell::module::Linkage::External),
+                                    )
+                                })
                         })
                     })
                     .or_else(|| {
@@ -1533,9 +1565,13 @@ impl<'a> LirCodegen<'a> {
 
                 Ok(function.as_global_value().as_pointer_value().into())
             }
-            lir::LirValue::Local(local_id) => self.argument_operands.get(&local_id).copied().ok_or_else(|| {
-                report_error_with_context(LOG_AREA, format!("Unknown local: {}", local_id))
-            }),
+            lir::LirValue::Local(local_id) => self
+                .argument_operands
+                .get(&local_id)
+                .copied()
+                .ok_or_else(|| {
+                    report_error_with_context(LOG_AREA, format!("Unknown local: {}", local_id))
+                }),
             lir::LirValue::StackSlot(slot_id) => self
                 .stack_slot_map
                 .get(&slot_id)
@@ -1554,7 +1590,10 @@ impl<'a> LirCodegen<'a> {
         }
     }
 
-    fn convert_lir_constant_to_value(&mut self, lir_const: lir::LirConstant) -> Result<BasicValueEnum<'static>> {
+    fn convert_lir_constant_to_value(
+        &mut self,
+        lir_const: lir::LirConstant,
+    ) -> Result<BasicValueEnum<'static>> {
         match lir_const {
             lir::LirConstant::Int(value, ty) => {
                 let int_ty = self.llvm_int_type(&ty)?;
@@ -1593,10 +1632,8 @@ impl<'a> LirCodegen<'a> {
                 }
 
                 let array_value = unsafe {
-                    let mut raw_values: Vec<_> = llvm_values
-                        .iter()
-                        .map(|v| v.as_value_ref())
-                        .collect();
+                    let mut raw_values: Vec<_> =
+                        llvm_values.iter().map(|v| v.as_value_ref()).collect();
                     let value_ref = LLVMConstArray2(
                         elem_ty.as_type_ref(),
                         raw_values.as_mut_ptr(),
@@ -1608,16 +1645,12 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirConstant::GlobalRef(name, ty, indices) => {
                 let llvm_name = self.llvm_symbol_for(&name);
-                let global = self
-                    .llvm_ctx
-                    .module
-                    .get_global(&llvm_name)
-                    .ok_or_else(|| {
-                        report_error_with_context(
-                            LOG_AREA,
-                            format!("Unknown global referenced in constant: {}", name),
-                        )
-                    })?;
+                let global = self.llvm_ctx.module.get_global(&llvm_name).ok_or_else(|| {
+                    report_error_with_context(
+                        LOG_AREA,
+                        format!("Unknown global referenced in constant: {}", name),
+                    )
+                })?;
                 let mut ptr = global.as_pointer_value();
                 if !indices.is_empty() {
                     let mut idx_values: Vec<_> = Vec::with_capacity(indices.len());
@@ -1645,7 +1678,10 @@ impl<'a> LirCodegen<'a> {
                 }
                 let target_ptr_ty = match self.llvm_basic_type(&ty)? {
                     BasicTypeEnum::PointerType(ptr_ty) => ptr_ty,
-                    _other => self.llvm_ctx.context.ptr_type(inkwell::AddressSpace::default()),
+                    _other => self
+                        .llvm_ctx
+                        .context
+                        .ptr_type(inkwell::AddressSpace::default()),
                 };
                 Ok(ptr.const_cast(target_ptr_ty).into())
             }
@@ -1664,7 +1700,10 @@ impl<'a> LirCodegen<'a> {
                 let ptr = func.as_global_value().as_pointer_value();
                 let target_ptr_ty = match self.llvm_basic_type(&ty)? {
                     BasicTypeEnum::PointerType(ptr_ty) => ptr_ty,
-                    _other => self.llvm_ctx.context.ptr_type(inkwell::AddressSpace::default()),
+                    _other => self
+                        .llvm_ctx
+                        .context
+                        .ptr_type(inkwell::AddressSpace::default()),
                 };
                 Ok(ptr.const_cast(target_ptr_ty).into())
             }
@@ -1692,10 +1731,11 @@ impl<'a> LirCodegen<'a> {
         self.next_string_id += 1;
 
         let const_str = self.llvm_ctx.context.const_string(value.as_bytes(), true);
-        let global = self
-            .llvm_ctx
-            .module
-            .add_global(const_str.get_type(), Some(AddressSpace::default()), &name);
+        let global = self.llvm_ctx.module.add_global(
+            const_str.get_type(),
+            Some(AddressSpace::default()),
+            &name,
+        );
         global.set_initializer(&const_str);
         global.set_constant(true);
         let ptr = global.as_pointer_value();
@@ -1764,7 +1804,11 @@ impl<'a> LirCodegen<'a> {
                 for field in fields {
                     element_types.push(self.llvm_basic_type(field)?);
                 }
-                Ok(self.llvm_ctx.context.struct_type(&element_types, *packed).into())
+                Ok(self
+                    .llvm_ctx
+                    .context
+                    .struct_type(&element_types, *packed)
+                    .into())
             }
             lir::LirType::Function { .. } => Ok(self.llvm_ctx.ptr_type().into()),
             lir::LirType::Void => Err(report_error_with_context(

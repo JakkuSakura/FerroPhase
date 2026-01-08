@@ -45,22 +45,17 @@ int main() {
 
     // Display module information
     println!("\n=== LLVM Module Information ===");
-    println!("Module name: {}", module.module.get_name().to_str().unwrap_or(""));
+    println!(
+        "Module name: {}",
+        module.module.get_name().to_str().unwrap_or("")
+    );
     println!(
         "Target triple: {}",
-        module
-            .module
-            .get_target_triple()
-            .as_str()
-            .to_string_lossy()
+        module.module.get_target_triple().as_str().to_string_lossy()
     );
     println!(
         "Data layout: {}",
-        module
-            .module
-            .get_data_layout()
-            .as_str()
-            .to_string_lossy()
+        module.module.get_data_layout().as_str().to_string_lossy()
     );
 
     println!("\n=== Functions ===");

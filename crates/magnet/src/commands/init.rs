@@ -24,8 +24,10 @@ fn init_template(path: &Path) -> Result<()> {
         .unwrap_or("magnet-project")
         .to_string();
 
-    fs::create_dir_all(&root_dir)
-        .context(format!("Failed to create directory at {}", root_dir.display()))?;
+    fs::create_dir_all(&root_dir).context(format!(
+        "Failed to create directory at {}",
+        root_dir.display()
+    ))?;
 
     let workspace_toml = r#"[workspace]
 members = ["crates/*"]
@@ -83,9 +85,7 @@ fn init_from_cargo(path: &Path) -> Result<()> {
     let has_package = value.get("package").is_some();
 
     if has_workspace && has_package {
-        bail!(
-            "Cargo.toml contains both [workspace] and [package]; split it before importing"
-        );
+        bail!("Cargo.toml contains both [workspace] and [package]; split it before importing");
     }
 
     if !has_workspace && !has_package {
@@ -104,10 +104,7 @@ fn init_from_cargo(path: &Path) -> Result<()> {
 
 fn resolve_root_dir(path: &Path) -> Result<PathBuf> {
     if path.is_file() {
-        Ok(path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .to_path_buf())
+        Ok(path.parent().unwrap_or(Path::new(".")).to_path_buf())
     } else {
         Ok(path.to_path_buf())
     }
@@ -123,20 +120,17 @@ fn resolve_cargo_paths(path: &Path) -> Result<(PathBuf, PathBuf)> {
         return Ok((cargo_path, target_path));
     }
 
-    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
     if file_name == "Cargo.toml" {
-        let target_path = path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("Magnet.toml");
+        let target_path = path.parent().unwrap_or(Path::new(".")).join("Magnet.toml");
         return Ok((path.to_path_buf(), target_path));
     }
 
     if file_name == "Magnet.toml" {
-        let cargo_path = path
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("Cargo.toml");
+        let cargo_path = path.parent().unwrap_or(Path::new(".")).join("Cargo.toml");
         if !cargo_path.exists() {
             bail!("Cargo.toml not found next to {}", path.display());
         }

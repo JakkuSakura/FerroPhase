@@ -1,5 +1,7 @@
+use crate::module::resolver::{
+    ExportMap, LanguageResolver, ModuleImport, ResolvedSymbol, ResolverError,
+};
 use crate::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
-use crate::module::resolver::{ExportMap, LanguageResolver, ModuleImport, ResolvedSymbol, ResolverError};
 use crate::package::graph::PackageGraph;
 
 #[derive(Debug, Default, Clone)]
@@ -9,7 +11,9 @@ impl FerroResolver {
     fn parse_import(spec: &str) -> Result<FerroImportPath, ResolverError> {
         let trimmed = spec.trim();
         if trimmed.is_empty() {
-            return Err(ResolverError::InvalidImport("empty import spec".to_string()));
+            return Err(ResolverError::InvalidImport(
+                "empty import spec".to_string(),
+            ));
         }
 
         let mut has_root = false;
@@ -117,7 +121,10 @@ impl FerroResolver {
             .module(&module_id)
             .cloned()
             .ok_or_else(|| ResolverError::ModuleNotFound(import.spec.clone()))?;
-        if !matches!(module.language, ModuleLanguage::Ferro | ModuleLanguage::Rust) {
+        if !matches!(
+            module.language,
+            ModuleLanguage::Ferro | ModuleLanguage::Rust
+        ) {
             return Err(ResolverError::Other(format!(
                 "module {} is not a Ferro/Rust module",
                 module.id
@@ -215,7 +222,9 @@ impl TranspileResolver {
     fn parse_spec(&self, spec: &str) -> Result<Vec<String>, ResolverError> {
         let trimmed = spec.trim();
         if trimmed.is_empty() {
-            return Err(ResolverError::InvalidImport("empty import spec".to_string()));
+            return Err(ResolverError::InvalidImport(
+                "empty import spec".to_string(),
+            ));
         }
         let segments = if trimmed.contains("::") {
             trimmed.split("::").collect::<Vec<_>>()

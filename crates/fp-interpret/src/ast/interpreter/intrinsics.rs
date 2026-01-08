@@ -21,16 +21,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 RuntimeFlow::Value(Value::unit())
             }
-            IntrinsicCallKind::Format => {
-                match self.render_intrinsic_call_runtime(call) {
-                    Ok(output) => RuntimeFlow::Value(Value::string(output)),
-                    Err(err) => {
-                        self.emit_error(err);
-                        RuntimeFlow::Value(Value::string(String::new()))
-                    }
+            IntrinsicCallKind::Format => match self.render_intrinsic_call_runtime(call) {
+                Ok(output) => RuntimeFlow::Value(Value::string(output)),
+                Err(err) => {
+                    self.emit_error(err);
+                    RuntimeFlow::Value(Value::string(String::new()))
                 }
+            },
+            IntrinsicCallKind::DebugAssertions => {
+                RuntimeFlow::Value(Value::bool(self.debug_assertions))
             }
-            IntrinsicCallKind::DebugAssertions => RuntimeFlow::Value(Value::bool(self.debug_assertions)),
             IntrinsicCallKind::Panic => {
                 let message = self.intrinsic_panic_message(call);
                 self.stdout.push(format!("panic: {}", message));
@@ -57,7 +57,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let flow = self.invoke_runtime_callable(value, Vec::new());
                 match flow {
                     RuntimeFlow::Panic(_) => RuntimeFlow::Value(Value::bool(false)),
-                    other => RuntimeFlow::Value(Value::bool(matches!(other, RuntimeFlow::Value(_)))),
+                    other => {
+                        RuntimeFlow::Value(Value::bool(matches!(other, RuntimeFlow::Value(_))))
+                    }
                 }
             }
             _ => RuntimeFlow::Value(self.eval_intrinsic(call)),
@@ -385,11 +387,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                         FormatArgRef::Named(name) => named.get(name),
                     };
                     if let Some(value) = value {
-                        let rendered = format_value_with_spec(
-                            value,
-                            placeholder.format_spec.as_deref(),
-                        )
-                        .map_err(|err| err.to_string())?;
+                        let rendered =
+                            format_value_with_spec(value, placeholder.format_spec.as_deref())
+                                .map_err(|err| err.to_string())?;
                         output.push_str(&rendered);
                     } else {
                         return Err("format placeholder out of range".to_string());

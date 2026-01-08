@@ -30,13 +30,14 @@ impl std::error::Error for ItemParseMessage {}
 
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn cut_message<T>(input: &mut &[Token], message: impl Into<String>) -> ModalResult<T> {
-    Err(ErrMode::Cut(
-        <ContextError as FromExternalError<&[Token], _>>::from_external_error(
-            input,
-            ErrorKind::Verify,
-            ItemParseMessage(message.into()),
-        ),
-    ))
+    Err(ErrMode::Cut(<ContextError as FromExternalError<
+        &[Token],
+        _,
+    >>::from_external_error(
+        input,
+        ErrorKind::Verify,
+        ItemParseMessage(message.into()),
+    )))
 }
 
 impl From<ErrMode<ContextError>> for ItemParseError {

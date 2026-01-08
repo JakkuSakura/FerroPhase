@@ -267,25 +267,23 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             ExprKind::IntrinsicCall(call) => {
                 normalize_intrinsic_call(call, strategy)?;
             }
-            ExprKind::IntrinsicContainer(collection) => {
-                match collection {
-                    ExprIntrinsicContainer::VecElements { elements } => {
-                        for element in elements {
-                            normalize_expr(element, strategy)?;
-                        }
-                    }
-                    ExprIntrinsicContainer::VecRepeat { elem, len } => {
-                        normalize_expr(elem.as_mut(), strategy)?;
-                        normalize_expr(len.as_mut(), strategy)?;
-                    }
-                    ExprIntrinsicContainer::HashMapEntries { entries } => {
-                        for entry in entries {
-                            normalize_expr(&mut entry.key, strategy)?;
-                            normalize_expr(&mut entry.value, strategy)?;
-                        }
+            ExprKind::IntrinsicContainer(collection) => match collection {
+                ExprIntrinsicContainer::VecElements { elements } => {
+                    for element in elements {
+                        normalize_expr(element, strategy)?;
                     }
                 }
-            }
+                ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                    normalize_expr(elem.as_mut(), strategy)?;
+                    normalize_expr(len.as_mut(), strategy)?;
+                }
+                ExprIntrinsicContainer::HashMapEntries { entries } => {
+                    for entry in entries {
+                        normalize_expr(&mut entry.key, strategy)?;
+                        normalize_expr(&mut entry.value, strategy)?;
+                    }
+                }
+            },
             ExprKind::Range(range) => {
                 if let Some(start) = range.start.as_mut() {
                     normalize_expr(start, strategy)?;
@@ -478,8 +476,8 @@ fn normalize_intrinsic_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::intrinsics::normalize::bootstrap as b;
     use crate::ast::{FormatTemplatePart, Ident, Locator, Path};
+    use crate::intrinsics::normalize::bootstrap as b;
 
     #[test]
     fn test_convert_print_args_to_format() {

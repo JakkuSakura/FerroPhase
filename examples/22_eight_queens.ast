@@ -1,0 +1,614 @@
+ast::File {
+  items:
+    pub module std {
+      pub module collections {
+        pub struct HashMapEntry {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap {
+          entries: Vec<Expr(HashMapEntry<K
+, V
+>)>
+        }
+        impl HashMap<K
+, V
+> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<K
+, V
+>)>) -> Expr(HashMap<K
+, V
+>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+            block (1 stmt)
+              expr_stmt (value)
+                struct HashMap
+                  entries:
+                    locator entries
+          pub fn len(&self) -> Expr(i64) : fn() -> i64
+            block (1 stmt)
+              expr_stmt (value)
+                invoke
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any
+            block (3 stmts)
+              let mut idx
+                init:
+                  value 0
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        invoke
+                          target: self.entries.len
+                  body:
+                    block (3 stmts)
+                      let entry
+                        init:
+                          index
+                            value:
+                              select .entries [unknown]
+                                object:
+                                  locator self
+                            index:
+                              locator idx
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                select .key [unknown]
+                                  object:
+                                    locator entry
+                              rhs:
+                                locator key
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                return
+                                  select .value [unknown]
+                                    object:
+                                      locator entry
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                loop
+                  block (0 stmts)
+        }
+      }
+      pub module test {
+        pub struct TestCase {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values]
+        pub struct TestReport {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts)
+            let tests
+              init:
+                locator REGISTRY
+            let mut passed
+              init:
+                value 0
+            let mut failed
+              init:
+                value 0
+            let mut idx
+              init:
+                value 0
+            expr_stmt (value)
+              while
+                cond:
+                  binop <
+                    lhs:
+                      locator idx
+                    rhs:
+                      invoke
+                        target: tests.len
+                body:
+                  block (4 stmts)
+                    let test
+                      init:
+                        index
+                          value:
+                            locator tests
+                          index:
+                            locator idx
+                    let ok
+                      init:
+                        intrinsic catch_unwind
+                          args:
+                            closure ()
+                              invoke
+                                target: test.run
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator passed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator passed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                template: "  {} ... ok" test.name
+                        else:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator failed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator failed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                template: "  {} ... FAILED" test.name
+                    expr_stmt ;
+                      assign
+                        target:
+                          locator idx
+                        value:
+                          binop +
+                            lhs:
+                              locator idx
+                            rhs:
+                              value 1
+            let total
+              init:
+                binop +
+                  lhs:
+                    locator passed
+                  rhs:
+                    locator failed
+            expr_stmt ;
+              intrinsic println
+                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+            expr_stmt (value)
+              struct TestReport
+                total:
+                  locator total
+                passed:
+                  locator passed
+                failed:
+                  locator failed
+        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (1 stmt)
+            expr_stmt (value)
+              invoke
+                target: run_tests
+      }
+    }
+    pub fn solve(row: Expr(i64), cols: &mut [Expr(i64); 8], diag1: &mut [Expr(i64); 15], diag2: &mut [Expr(i64); 15], positions: &mut [Expr(i64); 8], first_solution: &mut [Expr(i64); 8], found_first: &mut Expr(bool)) -> Expr(i64) : fn(i64, &[i64; 8], &[i64; 15], &[i64; 15], &[i64; 8], &[i64; 8], &bool) -> i64
+      block (4 stmts)
+        expr_stmt (value)
+          if
+            cond:
+              binop ==
+                lhs:
+                  locator row
+                rhs:
+                  value 8
+            then:
+              block (2 stmts)
+                expr_stmt (value)
+                  if
+                    cond:
+                      unop !
+                        value:
+                          deref
+                            locator found_first
+                    then:
+                      block (2 stmts)
+                        expr_stmt (value)
+                          for
+                            iter:
+                              range [exclusive]
+                                start:
+                                  value 0
+                                end:
+                                  value 8
+                            body:
+                              block (1 stmt)
+                                expr_stmt ;
+                                  assign
+                                    target:
+                                      index
+                                        value:
+                                          locator first_solution
+                                        index:
+                                          locator r
+                                    value:
+                                      index
+                                        value:
+                                          locator positions
+                                        index:
+                                          locator r
+                        expr_stmt ;
+                          assign
+                            target:
+                              deref
+                                locator found_first
+                            value:
+                              value true
+                expr_stmt ;
+                  return
+                    value 1
+        let mut count
+          init:
+            value 0
+        expr_stmt (value)
+          for
+            iter:
+              range [exclusive]
+                start:
+                  value 0
+                end:
+                  value 8
+            body:
+              block (3 stmts)
+                let d1
+                  init:
+                    binop +
+                      lhs:
+                        locator row
+                      rhs:
+                        locator col
+                let d2
+                  init:
+                    binop +
+                      lhs:
+                        binop -
+                          lhs:
+                            locator row
+                          rhs:
+                            locator col
+                      rhs:
+                        value 7
+                expr_stmt (value)
+                  if
+                    cond:
+                      binop &&
+                        lhs:
+                          binop &&
+                            lhs:
+                              binop ==
+                                lhs:
+                                  index
+                                    value:
+                                      locator cols
+                                    index:
+                                      locator col
+                                rhs:
+                                  value 0
+                            rhs:
+                              binop ==
+                                lhs:
+                                  index
+                                    value:
+                                      locator diag1
+                                    index:
+                                      locator d1
+                                rhs:
+                                  value 0
+                        rhs:
+                          binop ==
+                            lhs:
+                              index
+                                value:
+                                  locator diag2
+                                index:
+                                  locator d2
+                            rhs:
+                              value 0
+                    then:
+                      block (9 stmts)
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator cols
+                                index:
+                                  locator col
+                            value:
+                              value 1
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator diag1
+                                index:
+                                  locator d1
+                            value:
+                              value 1
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator diag2
+                                index:
+                                  locator d2
+                            value:
+                              value 1
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator positions
+                                index:
+                                  locator row
+                            value:
+                              locator col
+                        expr_stmt ;
+                          assign
+                            target:
+                              locator count
+                            value:
+                              binop +
+                                lhs:
+                                  locator count
+                                rhs:
+                                  invoke
+                                    target: solve
+                                    args:
+                                      binop +
+                                        lhs:
+                                          locator row
+                                        rhs:
+                                          value 1
+                                      locator cols
+                                      locator diag1
+                                      locator diag2
+                                      locator positions
+                                      locator first_solution
+                                      locator found_first
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator cols
+                                index:
+                                  locator col
+                            value:
+                              value 0
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator diag1
+                                index:
+                                  locator d1
+                            value:
+                              value 0
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator diag2
+                                index:
+                                  locator d2
+                            value:
+                              value 0
+                        expr_stmt ;
+                          assign
+                            target:
+                              index
+                                value:
+                                  locator positions
+                                index:
+                                  locator row
+                            value:
+                              unop -
+                                value:
+                                  value 1
+        expr_stmt (value)
+          locator count
+    pub fn print_board(positions: &[Expr(i64); 8]) -> () : fn(&[i64; 8]) -> ()
+      block (2 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "First solution:"
+        expr_stmt (value)
+          for
+            iter:
+              range [exclusive]
+                start:
+                  value 0
+                end:
+                  value 8
+            body:
+              block (2 stmts)
+                expr_stmt (value)
+                  for
+                    iter:
+                      range [exclusive]
+                        start:
+                          value 0
+                        end:
+                          value 8
+                    body:
+                      block (1 stmt)
+                        expr_stmt (value)
+                          if
+                            cond:
+                              binop ==
+                                lhs:
+                                  index
+                                    value:
+                                      locator positions
+                                    index:
+                                      locator r
+                                rhs:
+                                  locator c
+                            then:
+                              block (1 stmt)
+                                expr_stmt ;
+                                  intrinsic print
+                                    template: "Q "
+                            else:
+                              block (1 stmt)
+                                expr_stmt ;
+                                  intrinsic print
+                                    template: ". "
+                expr_stmt ;
+                  intrinsic println
+                    template: ""
+    pub fn main() -> () : fn() -> ()
+      block (14 stmts)
+        expr_stmt ;
+          intrinsic println
+            template: "📘 Tutorial: 22_eight_queens.fp"
+        expr_stmt ;
+          intrinsic println
+            template: "🧭 Focus: Classic 8-queens solver using recursive backtracking."
+        expr_stmt ;
+          intrinsic println
+            template: "🧪 What to look for: labeled outputs below"
+        expr_stmt ;
+          intrinsic println
+            template: "✅ Expectation: outputs match labels"
+        expr_stmt ;
+          intrinsic println
+            template: ""
+        let cols: [Expr(i64); 8]
+          init:
+            array_repeat
+              elem:
+                value 0
+              len:
+                value 8
+        let diag1: [Expr(i64); 15]
+          init:
+            array_repeat
+              elem:
+                value 0
+              len:
+                value 15
+        let diag2: [Expr(i64); 15]
+          init:
+            array_repeat
+              elem:
+                value 0
+              len:
+                value 15
+        let positions: [Expr(i64); 8]
+          init:
+            array (8 values)
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+        let first_solution: [Expr(i64); 8]
+          init:
+            array (8 values)
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+              unop -
+                value:
+                  value 1
+        let mut found_first
+          init:
+            value false
+        let total
+          init:
+            invoke
+              target: solve
+              args:
+                value 0
+                reference (mutable: mut)
+                  locator cols
+                reference (mutable: mut)
+                  locator diag1
+                reference (mutable: mut)
+                  locator diag2
+                reference (mutable: mut)
+                  locator positions
+                reference (mutable: mut)
+                  locator first_solution
+                reference (mutable: mut)
+                  locator found_first
+        expr_stmt ;
+          invoke
+            target: print_board
+            args:
+              reference (mutable: unspecified)
+                locator first_solution
+        expr_stmt ;
+          intrinsic println
+            template: "Total solutions: {}" total
+}

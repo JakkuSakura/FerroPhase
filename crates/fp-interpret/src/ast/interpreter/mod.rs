@@ -3,17 +3,18 @@ use std::sync::{Arc, Mutex};
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
+use fp_core::ast::DecimalType;
 use fp_core::ast::Pattern;
 use fp_core::ast::{
     AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
-    FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction, ItemImport, ItemImportTree,
-    ItemKind, Node, NodeKind, Path, StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind,
-    TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice, TypeStruct, TypeStructural,
-    TypeTuple, TypeUnit, TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct,
-    ValueStructural, ValueTuple, QuoteFragmentKind, QuoteTokenValue, TypeQuote,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
+    ExprRangeLimit, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
+    ItemImport, ItemImportTree, ItemKind, Node, NodeKind, Path, QuoteFragmentKind, QuoteTokenValue,
+    StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
+    TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple,
+    TypeUnit, TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
+    ValueTuple,
 };
-use fp_core::ast::DecimalType;
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
@@ -21,8 +22,8 @@ use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
-use fp_core::package::graph::PackageGraph;
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
+use fp_core::package::graph::PackageGraph;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
 mod blocks;
@@ -372,10 +373,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    let pending = self
-                        .pending_items
-                        .last_mut()
-                        .and_then(|items| if items.is_empty() { None } else { Some(std::mem::take(items)) });
+                    let pending = self.pending_items.last_mut().and_then(|items| {
+                        if items.is_empty() {
+                            None
+                        } else {
+                            Some(std::mem::take(items))
+                        }
+                    });
                     if let Some(pending) = pending {
                         let insert_at = idx + 1;
                         let count = pending.len();
@@ -440,7 +444,10 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn in_std_module(&self) -> bool {
-        self.module_stack.first().map(|m| m == "std").unwrap_or(false)
+        self.module_stack
+            .first()
+            .map(|m| m == "std")
+            .unwrap_or(false)
     }
 
     fn append_pending_items(&mut self, items: Vec<Item>) {
@@ -535,10 +542,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return true;
             };
             if !function.sig.is_const {
-                self.emit_error(format!(
-                    "attribute function `{}` must be const",
-                    locator
-                ));
+                self.emit_error(format!("attribute function `{}` must be const", locator));
                 return true;
             }
             invoke.target = ExprInvokeTarget::Function(locator);
@@ -610,8 +614,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let qualified = self.qualified_name(&format!("{}::{}", def.name, variant.name));
                     self.evaluated_constants
                         .insert(qualified, Value::int(next_discriminant));
-                    let enum_key =
-                        self.qualified_name(&format!("{}::{}", def.name, variant.name));
+                    let enum_key = self.qualified_name(&format!("{}::{}", def.name, variant.name));
                     self.enum_variants.insert(
                         enum_key,
                         EnumVariantInfo {
@@ -671,10 +674,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                 // Preserve unevaluated placeholders (e.g., closures) so later lowering
                 // can still see the original expression shape.
-                let mut should_replace = !matches!(
-                    value,
-                    Value::Undefined(_) | Value::Unit(_) | Value::Any(_)
-                );
+                let mut should_replace =
+                    !matches!(value, Value::Undefined(_) | Value::Unit(_) | Value::Any(_));
                 let is_const_block_expr = matches!(def.value.kind(), ExprKind::ConstBlock(_));
                 if is_mutable && !matches!(value, Value::Undefined(_) | Value::Any(_)) {
                     should_replace = true;
@@ -771,10 +772,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    let pending = self
-                        .pending_items
-                        .last_mut()
-                        .and_then(|items| if items.is_empty() { None } else { Some(std::mem::take(items)) });
+                    let pending = self.pending_items.last_mut().and_then(|items| {
+                        if items.is_empty() {
+                            None
+                        } else {
+                            Some(std::mem::take(items))
+                        }
+                    });
                     if let Some(pending) = pending {
                         let insert_at = idx + 1;
                         let count = pending.len();
@@ -827,10 +831,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.mark_mutated();
                         continue;
                     }
-                    let pending = self
-                        .pending_items
-                        .last_mut()
-                        .and_then(|items| if items.is_empty() { None } else { Some(std::mem::take(items)) });
+                    let pending = self.pending_items.last_mut().and_then(|items| {
+                        if items.is_empty() {
+                            None
+                        } else {
+                            Some(std::mem::take(items))
+                        }
+                    });
                     if let Some(pending) = pending {
                         let insert_at = idx + 1;
                         let count = pending.len();
@@ -908,8 +915,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Expr(expr) => {
                 if matches!(self.mode, InterpreterMode::CompileTime) {
                     if let ExprKind::Splice(splice) = expr.kind_mut() {
-                        let Some(fragments) =
-                            self.resolve_splice_fragments(splice.token.as_mut())
+                        let Some(fragments) = self.resolve_splice_fragments(splice.token.as_mut())
                         else {
                             return;
                         };
@@ -2045,10 +2051,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 else {
                                     continue;
                                 };
-                                if fragments.iter().any(|fragment| {
-                                    matches!(fragment, QuotedFragment::Type(_))
-                                }) {
-                                    self.emit_error("splice<type> is not valid in statement position");
+                                if fragments
+                                    .iter()
+                                    .any(|fragment| matches!(fragment, QuotedFragment::Type(_)))
+                                {
+                                    self.emit_error(
+                                        "splice<type> is not valid in statement position",
+                                    );
                                     continue;
                                 }
                                 let mut to_append = Vec::new();
@@ -2156,10 +2165,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return RuntimeFlow::Value(value);
                     }
                 }
-                self.emit_error(format!(
-                    "assignment target '{}' is not mutable",
-                    locator
-                ));
+                self.emit_error(format!("assignment target '{}' is not mutable", locator));
                 RuntimeFlow::Value(Value::undefined())
             }
             ExprKind::Select(select) => {
@@ -2278,10 +2284,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let values = match iter_value {
             Value::List(list) => list.values,
             other => {
-                self.emit_error(format!(
-                    "for loop expects iterable list, found {}",
-                    other
-                ));
+                self.emit_error(format!("for loop expects iterable list, found {}", other));
                 return RuntimeFlow::Value(Value::undefined());
             }
         };
@@ -2407,7 +2410,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         );
 
         match struct_ty {
-            StructLiteralType::Struct(struct_ty) => Value::Struct(ValueStruct::new(struct_ty, fields)),
+            StructLiteralType::Struct(struct_ty) => {
+                Value::Struct(ValueStruct::new(struct_ty, fields))
+            }
             StructLiteralType::Structural(_) => Value::Structural(ValueStructural::new(fields)),
         }
     }
@@ -2455,10 +2460,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         "missing initializer for field '{}' in struct literal",
                         expected_name
                     ));
-                    value_fields.push(ValueField::new(
-                        expected_name.clone(),
-                        Value::undefined(),
-                    ));
+                    value_fields.push(ValueField::new(expected_name.clone(), Value::undefined()));
                 }
             }
             for field in fields.iter() {
@@ -2606,10 +2608,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::List(ValueList::new(values))
             }
             other => {
-                self.emit_error(format!(
-                    "cannot apply range index to value {}",
-                    other
-                ));
+                self.emit_error(format!("cannot apply range index to value {}", other));
                 Value::undefined()
             }
         }
@@ -2793,7 +2792,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         match struct_ty {
-            StructLiteralType::Struct(struct_ty) => Value::Struct(ValueStruct::new(struct_ty, fields)),
+            StructLiteralType::Struct(struct_ty) => {
+                Value::Struct(ValueStruct::new(struct_ty, fields))
+            }
             StructLiteralType::Structural(_) => Value::Structural(ValueStructural::new(fields)),
         }
     }
@@ -2826,12 +2827,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let rhs = self.resolve_structural_fields(op.rhs.as_ref(), visiting)?;
                 match op.kind {
                     TypeBinaryOpKind::Add => Some(self.merge_structural_fields(lhs, rhs)),
-                    TypeBinaryOpKind::Intersect => {
-                        Some(self.intersect_structural_fields(lhs, rhs))
-                    }
-                    TypeBinaryOpKind::Subtract => {
-                        Some(self.subtract_structural_fields(lhs, rhs))
-                    }
+                    TypeBinaryOpKind::Intersect => Some(self.intersect_structural_fields(lhs, rhs)),
+                    TypeBinaryOpKind::Subtract => Some(self.subtract_structural_fields(lhs, rhs)),
                     TypeBinaryOpKind::Union => None,
                 }
             }
@@ -3028,9 +3025,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             body: func.body.clone(),
                         }),
                         _ => {
-                            self.emit_error(
-                                "quote<item> function access requires a function item",
-                            );
+                            self.emit_error("quote<item> function access requires a function item");
                             Value::undefined()
                         }
                     },
@@ -3198,8 +3193,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Index(index_expr) => {
-                if let Some(value) =
-                    self.lookup_const_collection_from_expr(index_expr.obj.as_ref())
+                if let Some(value) = self.lookup_const_collection_from_expr(index_expr.obj.as_ref())
                 {
                     let Some(key) = self.const_fold_expr_value(index_expr.index.as_ref()) else {
                         return false;
@@ -3318,14 +3312,14 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for directive in self.expand_import_tree(&import.tree) {
             let module_spec = ModuleImport::new(directive.module_spec.clone());
-            let module_id = match resolver.resolve_module(&module_spec, current_module, &context.graph)
-            {
-                Ok(module_id) => module_id,
-                Err(err) => {
-                    self.emit_resolver_error("import", err);
-                    continue;
-                }
-            };
+            let module_id =
+                match resolver.resolve_module(&module_spec, current_module, &context.graph) {
+                    Ok(module_id) => module_id,
+                    Err(err) => {
+                        self.emit_resolver_error("import", err);
+                        continue;
+                    }
+                };
             let Some(module) = context.graph.module(&module_id) else {
                 self.emit_error(format!("import resolved to unknown module {}", module_id));
                 continue;
@@ -3333,7 +3327,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
             match directive.binding {
                 ImportBinding::Module { alias } => {
-                    let name = alias.or_else(|| self.module_alias_from_spec(&directive.module_spec));
+                    let name =
+                        alias.or_else(|| self.module_alias_from_spec(&directive.module_spec));
                     let Some(name) = name else {
                         self.emit_error(format!(
                             "cannot import module '{}' without a binding name",
@@ -3392,9 +3387,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemImportTree::SelfMod => self.push_segment(prefix, ImportSegment::SelfMod, out),
             ItemImportTree::SuperMod => self.push_segment(prefix, ImportSegment::Super, out),
             ItemImportTree::Crate => self.push_segment(prefix, ImportSegment::Crate, out),
-            ItemImportTree::Ident(ident) => {
-                self.push_segment(prefix, ImportSegment::Ident(ident.as_str().to_string()), out)
-            }
+            ItemImportTree::Ident(ident) => self.push_segment(
+                prefix,
+                ImportSegment::Ident(ident.as_str().to_string()),
+                out,
+            ),
             ItemImportTree::Rename(rename) => {
                 let module_spec = self.render_import_path(&prefix);
                 out.push(ImportDirective {
@@ -3454,7 +3451,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                             cursor.push(ImportSegment::Ident(ident.as_str().to_string()))
                         }
                         ItemImportTree::Path(inner) => {
-                            self.collect_import_tree(cursor.clone(), &ItemImportTree::Path(inner.clone()), out);
+                            self.collect_import_tree(
+                                cursor.clone(),
+                                &ItemImportTree::Path(inner.clone()),
+                                out,
+                            );
                             return;
                         }
                     }
@@ -3523,12 +3524,21 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn module_alias_from_spec(&self, spec: &str) -> Option<String> {
-        spec.rsplit("::")
-            .next()
-            .and_then(|segment| if segment.is_empty() { None } else { Some(segment.to_string()) })
+        spec.rsplit("::").next().and_then(|segment| {
+            if segment.is_empty() {
+                None
+            } else {
+                Some(segment.to_string())
+            }
+        })
     }
 
-    fn register_imported_symbol(&mut self, name: String, module: ModuleId, symbol: SymbolDescriptor) {
+    fn register_imported_symbol(
+        &mut self,
+        name: String,
+        module: ModuleId,
+        symbol: SymbolDescriptor,
+    ) {
         if matches!(
             symbol.symbol_kind,
             SymbolKind::Struct | SymbolKind::Enum | SymbolKind::Trait | SymbolKind::Type
@@ -3595,17 +3605,17 @@ impl<'ctx> AstInterpreter<'ctx> {
             .ok()?;
         let module = context.graph.module(&module_id)?;
         match resolver.resolve_symbol(module, name, &context.graph) {
-            Ok(ResolvedSymbol::Symbol(symbol_desc)) => Some(Value::Any(AnyBox::new(
-                ImportedSymbol {
+            Ok(ResolvedSymbol::Symbol(symbol_desc)) => {
+                Some(Value::Any(AnyBox::new(ImportedSymbol {
                     module: module_id,
                     symbol: symbol_desc,
-                },
-            ))),
-            Ok(ResolvedSymbol::Module(symbol_module)) => Some(Value::Any(AnyBox::new(
-                ImportedModule {
+                })))
+            }
+            Ok(ResolvedSymbol::Module(symbol_module)) => {
+                Some(Value::Any(AnyBox::new(ImportedModule {
                     module: symbol_module,
-                },
-            ))),
+                })))
+            }
             Err(_) => None,
         }
     }
@@ -3776,12 +3786,10 @@ impl<'ctx> AstInterpreter<'ctx> {
 fn is_quote_only_item(item: &Item) -> bool {
     match item.kind() {
         ItemKind::DefFunction(func) => {
-            func.sig.quote_kind.is_some()
-                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
+            func.sig.quote_kind.is_some() || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
         }
         ItemKind::DeclFunction(func) => {
-            func.sig.quote_kind.is_some()
-                || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
+            func.sig.quote_kind.is_some() || matches!(func.sig.ret_ty.as_ref(), Some(Ty::Quote(_)))
         }
         ItemKind::DefConst(def) => {
             let has_quote_ty = def

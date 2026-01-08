@@ -1,5 +1,5 @@
-use super::super::*;
 use super::super::artifacts::{LirArtifacts, MirArtifacts};
+use super::super::*;
 use fp_core::mir;
 
 impl Pipeline {

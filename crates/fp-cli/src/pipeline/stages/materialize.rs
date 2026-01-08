@@ -32,7 +32,6 @@ impl Pipeline {
     }
 }
 
-
 struct IntrinsicsMaterializer {
     strategy: Box<dyn IntrinsicMaterializer>,
 }
@@ -72,7 +71,10 @@ fn materialize_node(node: Node, strategy: &dyn IntrinsicMaterializer) -> CoreRes
     Ok(Node { ty, kind: new_kind })
 }
 
-fn materialize_file(mut file: ast::File, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::File> {
+fn materialize_file(
+    mut file: ast::File,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::File> {
     strategy.prepare_file(&mut file);
     let mut items = Vec::with_capacity(file.items.len());
     for item in file.items {
@@ -82,7 +84,10 @@ fn materialize_file(mut file: ast::File, strategy: &dyn IntrinsicMaterializer) -
     Ok(file)
 }
 
-fn materialize_item(item: ast::Item, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::Item> {
+fn materialize_item(
+    item: ast::Item,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::Item> {
     let ast::Item { ty, kind } = item;
     let new_kind = match kind {
         ast::ItemKind::Macro(item) => ast::ItemKind::Macro(item),
@@ -114,9 +119,7 @@ fn materialize_item(item: ast::Item, strategy: &dyn IntrinsicMaterializer) -> Co
             def.value = Box::new(materialize_expr(*def.value, strategy)?);
             ast::ItemKind::DefStatic(def)
         }
-        ast::ItemKind::Expr(expr) => {
-            ast::ItemKind::Expr(materialize_expr(expr, strategy)?)
-        }
+        ast::ItemKind::Expr(expr) => ast::ItemKind::Expr(materialize_expr(expr, strategy)?),
         ast::ItemKind::DefStruct(_)
         | ast::ItemKind::DefStructural(_)
         | ast::ItemKind::DefEnum(_)
@@ -132,7 +135,10 @@ fn materialize_item(item: ast::Item, strategy: &dyn IntrinsicMaterializer) -> Co
     Ok(ast::Item { ty, kind: new_kind })
 }
 
-fn materialize_block(block: ast::ExprBlock, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::ExprBlock> {
+fn materialize_block(
+    block: ast::ExprBlock,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::ExprBlock> {
     let mut stmts = Vec::with_capacity(block.stmts.len());
     for stmt in block.stmts {
         stmts.push(materialize_stmt(stmt, strategy)?);
@@ -140,7 +146,10 @@ fn materialize_block(block: ast::ExprBlock, strategy: &dyn IntrinsicMaterializer
     Ok(ast::ExprBlock { stmts, ..block })
 }
 
-fn materialize_stmt(stmt: ast::BlockStmt, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::BlockStmt> {
+fn materialize_stmt(
+    stmt: ast::BlockStmt,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::BlockStmt> {
     match stmt {
         ast::BlockStmt::Expr(mut expr_stmt) => {
             expr_stmt.expr = Box::new(materialize_expr(*expr_stmt.expr, strategy)?);
@@ -155,15 +164,18 @@ fn materialize_stmt(stmt: ast::BlockStmt, strategy: &dyn IntrinsicMaterializer) 
             }
             Ok(ast::BlockStmt::Let(stmt_let))
         }
-        ast::BlockStmt::Item(item) => {
-            Ok(ast::BlockStmt::Item(Box::new(materialize_item(*item, strategy)?)))
-        }
+        ast::BlockStmt::Item(item) => Ok(ast::BlockStmt::Item(Box::new(materialize_item(
+            *item, strategy,
+        )?))),
         ast::BlockStmt::Noop => Ok(ast::BlockStmt::Noop),
         ast::BlockStmt::Any(stmt) => Ok(ast::BlockStmt::Any(stmt)),
     }
 }
 
-fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::Expr> {
+fn materialize_expr(
+    expr: ast::Expr,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::Expr> {
     let ast::Expr { ty, kind } = expr;
     let expr_ty = ty.clone();
     let new_expr = match kind {
@@ -328,17 +340,16 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
             }
             format.args = args;
             for kwarg in &mut format.kwargs {
-                let value = std::mem::replace(
-                    &mut kwarg.value,
-                    ast::Expr::value(ast::Value::unit()),
-                );
+                let value =
+                    std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
                 kwarg.value = materialize_expr(value, strategy)?;
             }
             ast::Expr::with_ty(ast::ExprKind::FormatString(format), ty)
         }
-        ast::ExprKind::Item(item) => {
-            ast::Expr::with_ty(ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)), ty)
-        }
+        ast::ExprKind::Item(item) => ast::Expr::with_ty(
+            ast::ExprKind::Item(Box::new(materialize_item(*item, strategy)?)),
+            ty,
+        ),
         ast::ExprKind::Value(value) => {
             let value = materialize_value(*value, strategy)?;
             ast::Expr::with_ty(ast::ExprKind::Value(Box::new(value)), ty)
@@ -384,23 +395,17 @@ fn materialize_expr(expr: ast::Expr, strategy: &dyn IntrinsicMaterializer) -> Co
                     *elements = next;
                 }
                 ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
-                    let elem_value = std::mem::replace(
-                        elem,
-                        Box::new(ast::Expr::value(ast::Value::unit())),
-                    );
-                    let len_value = std::mem::replace(
-                        len,
-                        Box::new(ast::Expr::value(ast::Value::unit())),
-                    );
+                    let elem_value =
+                        std::mem::replace(elem, Box::new(ast::Expr::value(ast::Value::unit())));
+                    let len_value =
+                        std::mem::replace(len, Box::new(ast::Expr::value(ast::Value::unit())));
                     *elem = Box::new(materialize_expr(*elem_value, strategy)?);
                     *len = Box::new(materialize_expr(*len_value, strategy)?);
                 }
                 ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
                     for entry in entries.iter_mut() {
-                        let key = std::mem::replace(
-                            &mut entry.key,
-                            ast::Expr::value(ast::Value::unit()),
-                        );
+                        let key =
+                            std::mem::replace(&mut entry.key, ast::Expr::value(ast::Value::unit()));
                         let value = std::mem::replace(
                             &mut entry.value,
                             ast::Expr::value(ast::Value::unit()),
@@ -508,9 +513,14 @@ fn build_hashmap_from_entries(
     ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
 }
 
-fn materialize_value(value: ast::Value, strategy: &dyn IntrinsicMaterializer) -> CoreResult<ast::Value> {
+fn materialize_value(
+    value: ast::Value,
+    strategy: &dyn IntrinsicMaterializer,
+) -> CoreResult<ast::Value> {
     match value {
-        ast::Value::Expr(expr) => Ok(ast::Value::Expr(Box::new(materialize_expr(*expr, strategy)?))),
+        ast::Value::Expr(expr) => Ok(ast::Value::Expr(Box::new(materialize_expr(
+            *expr, strategy,
+        )?))),
         ast::Value::Function(mut func) => {
             func.body = Box::new(materialize_expr(*func.body, strategy)?);
             Ok(ast::Value::Function(func))
@@ -528,9 +538,9 @@ fn materialize_invoke_target(
             select.obj = Box::new(materialize_expr(*select.obj, strategy)?);
             Ok(ast::ExprInvokeTarget::Method(select))
         }
-        ast::ExprInvokeTarget::Expr(expr) => {
-            Ok(ast::ExprInvokeTarget::Expr(Box::new(materialize_expr(*expr, strategy)?)))
-        }
+        ast::ExprInvokeTarget::Expr(expr) => Ok(ast::ExprInvokeTarget::Expr(Box::new(
+            materialize_expr(*expr, strategy)?,
+        ))),
         ast::ExprInvokeTarget::Closure(mut closure) => {
             closure.body = Box::new(materialize_expr(*closure.body, strategy)?);
             Ok(ast::ExprInvokeTarget::Closure(closure))

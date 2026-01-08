@@ -106,10 +106,8 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
             Ty::Expr(expr_ty) => {
                 if let ExprKind::Locator(locator) = expr_ty.kind() {
                     if let Locator::Ident(ident) = locator {
-                        let known = matches!(
-                            ident.as_str(),
-                            "Int" | "Bool" | "String" | "Str" | "Char"
-                        );
+                        let known =
+                            matches!(ident.as_str(), "Int" | "Bool" | "String" | "Str" | "Char");
                         return !known;
                     }
                 }
@@ -123,11 +121,7 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
     match expr.kind() {
         ExprKind::Value(value) => !matches!(
             value.as_ref(),
-            Value::Int(_)
-                | Value::Decimal(_)
-                | Value::Bool(_)
-                | Value::Char(_)
-                | Value::String(_)
+            Value::Int(_) | Value::Decimal(_) | Value::Bool(_) | Value::Char(_) | Value::String(_)
         ),
         ExprKind::Cast(_) => false,
         ExprKind::Select(select) => select
@@ -208,7 +202,9 @@ fn build_printf_format(
 }
 
 fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, Option<Expr>)> {
-    let ty = expr.ty().filter(|ty| !matches!(ty, Ty::Any(_) | Ty::Unknown(_)));
+    let ty = expr
+        .ty()
+        .filter(|ty| !matches!(ty, Ty::Any(_) | Ty::Unknown(_)));
     if let Some(ty) = ty {
         if let Ty::Reference(reference) = ty {
             let inner = reference.ty.as_ref();

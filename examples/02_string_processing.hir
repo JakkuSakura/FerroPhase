@@ -1,0 +1,161 @@
+hir::Program {
+    struct __Closure0 {
+        pub test: TestCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.test.run()
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            printf("📘 Tutorial: 02_string_processing.fp\n");
+            printf("🧭 Focus: Compile-time string operations and intrinsics\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            pub const NAME: &str =
+                "FerroPhase";
+            pub const VERSION: &str =
+                "0.1.0";
+            pub const NAME_LEN: usize =
+                10;
+            pub const VERSION_LEN: usize =
+                5;
+            pub const PREFIX_OK: bool =
+                true;
+            pub const SUFFIX_OK: bool =
+                true;
+            pub const HAS_PHASE: bool =
+                true;
+            pub const SHORT: &str =
+                "Ferro";
+            pub const TAIL: &str =
+                "Phase";
+            printf("name='%s' len=%llu\n", NAME, NAME_LEN);
+            printf("version='%s' len=%llu\n", VERSION, VERSION_LEN);
+            printf("prefix_ok=%d, suffix_ok=%d, contains_phase=%d\n", PREFIX_OK, SUFFIX_OK, HAS_PHASE);
+            printf("slices: short='%s' tail='%s'\n", SHORT, TAIL);
+            pub const WORDS: [&str; 4] =
+                ["alpha", "beta", "gamma", "delta"];
+            pub const WORD_LENGTHS: [usize; 4] =
+                [5, 4, 5, 5];
+            pub const TOTAL_WORD_LEN: usize =
+                19;
+            printf("words:\n");
+            {
+                let mut i = 0;
+                while ((i < 4))
+                    {
+                        std::Println(2 args);
+                        i = (i + 1);
+                    }
+            }
+            printf("total word length=%llu\n", TOTAL_WORD_LEN);
+            pub const IS_EMPTY: bool =
+                false;
+            pub const IS_LONG: bool =
+                true;
+            pub const BANNER: &str =
+                "FerroPhase v0.1.0";
+            printf("empty=%d, long=%d\n", IS_EMPTY, IS_LONG);
+            printf("banner='%s'\n", BANNER);
+            pub const BUFFER_SIZE: usize =
+                256;
+            printf("buffer_size=%llu\n", BUFFER_SIZE);
+        }
+    }
+}

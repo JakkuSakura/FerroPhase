@@ -1,14 +1,14 @@
 use crate::models::{DependencyModel, ManifestModel, PackageModel};
 use eyre::Result;
-use fp_core::package::provider::{ModuleProvider, ModuleSource, PackageProvider};
 use fp_core::package::DependencyDescriptor;
+use fp_core::package::provider::{ModuleProvider, ModuleSource, PackageProvider};
 use fp_rust::package::{CargoPackageProvider, RustModuleProvider};
 use fp_typescript::TypeScriptPackageProvider;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use std::path::PathBuf;
-use std::path::Path;
 use std::collections::HashMap;
+use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageGraph {
@@ -104,7 +104,10 @@ impl PackageGraph {
             ));
         }
 
-        let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("");
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("");
         match file_name {
             "Magnet.toml" => {
                 let root = path.parent().unwrap_or(Path::new("."));
@@ -314,11 +317,7 @@ fn package_to_node(package: PackageModel) -> PackageNode {
     let module_root = package.root_path.join("src");
     let entry = {
         let path = module_root.join("main.fp");
-        if path.exists() {
-            Some(path)
-        } else {
-            None
-        }
+        if path.exists() { Some(path) } else { None }
     };
 
     PackageNode {
@@ -383,16 +382,14 @@ struct PackageJsonManifest {
 }
 
 fn read_package_json(path: &Path) -> Result<PackageJsonManifest> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
-    let manifest: PackageJsonManifest = serde_json::from_str(&contents)
-        .map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
+    let contents =
+        std::fs::read_to_string(path).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
+    let manifest: PackageJsonManifest =
+        serde_json::from_str(&contents).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
     Ok(manifest)
 }
 
-fn flatten_package_json_dependencies(
-    manifest: &PackageJsonManifest,
-) -> Vec<DependencyEdge> {
+fn flatten_package_json_dependencies(manifest: &PackageJsonManifest) -> Vec<DependencyEdge> {
     let mut deps = Vec::new();
     deps.extend(dependencies_from_map(&manifest.dependencies));
     deps.extend(dependencies_from_map(&manifest.dev_dependencies));
@@ -400,21 +397,16 @@ fn flatten_package_json_dependencies(
     deps
 }
 
-fn dependencies_from_map(
-    map: &Option<HashMap<String, serde_json::Value>>,
-) -> Vec<DependencyEdge> {
+fn dependencies_from_map(map: &Option<HashMap<String, serde_json::Value>>) -> Vec<DependencyEdge> {
     let mut deps = Vec::new();
     if let Some(values) = map {
         for (name, value) in values {
-            let version = value
-                .as_str()
-                .map(|v| v.to_string())
-                .or_else(|| {
-                    value
-                        .as_object()
-                        .and_then(|obj| obj.get("version").and_then(|v| v.as_str()))
-                        .map(|v| v.to_string())
-                });
+            let version = value.as_str().map(|v| v.to_string()).or_else(|| {
+                value
+                    .as_object()
+                    .and_then(|obj| obj.get("version").and_then(|v| v.as_str()))
+                    .map(|v| v.to_string())
+            });
             deps.push(DependencyEdge {
                 name: name.clone(),
                 package: None,
@@ -447,10 +439,10 @@ struct PyDependency {
 }
 
 fn read_pyproject(path: &Path) -> Result<PyProjectManifest> {
-    let contents = std::fs::read_to_string(path)
-        .map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
-    let value: toml::Value = toml::from_str(&contents)
-        .map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
+    let contents =
+        std::fs::read_to_string(path).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
+    let value: toml::Value =
+        toml::from_str(&contents).map_err(|err| eyre::eyre!("{}: {err}", path.display()))?;
     let project = value
         .get("project")
         .and_then(|p| p.as_table())
@@ -460,7 +452,10 @@ fn read_pyproject(path: &Path) -> Result<PyProjectManifest> {
         .and_then(|v| v.as_str())
         .ok_or_else(|| eyre::eyre!("{}: missing project.name", path.display()))?
         .to_string();
-    let version = project.get("version").and_then(|v| v.as_str()).map(|v| v.to_string());
+    let version = project
+        .get("version")
+        .and_then(|v| v.as_str())
+        .map(|v| v.to_string());
     let dependencies = project
         .get("dependencies")
         .and_then(|v| v.as_array())
@@ -539,7 +534,11 @@ fn default_module_roots(root: &Path) -> Vec<PathBuf> {
 
 fn detect_entry(root: &Path, extensions: &[&str]) -> Option<PathBuf> {
     let src = root.join("src");
-    let candidates = if src.is_dir() { vec![src] } else { vec![root.to_path_buf()] };
+    let candidates = if src.is_dir() {
+        vec![src]
+    } else {
+        vec![root.to_path_buf()]
+    };
     for base in candidates {
         for stem in ["main", "index", "lib"] {
             for ext in extensions {
@@ -656,10 +655,7 @@ edition = "2021"
         let graph = PackageGraph::from_package_json(&root.join("package.json"))?;
         assert_eq!(graph.packages.len(), 1);
         assert_eq!(graph.packages[0].name, "js-demo");
-        assert_eq!(
-            graph.packages[0].language.as_deref(),
-            Some("javascript")
-        );
+        assert_eq!(graph.packages[0].language.as_deref(), Some("javascript"));
         Ok(())
     }
 
@@ -730,10 +726,7 @@ shared = { path = "../shared" }
             .iter()
             .find(|pkg| pkg.name == "app")
             .expect("missing app package");
-        assert!(app
-            .dependencies
-            .iter()
-            .any(|dep| dep.name == "shared"));
+        assert!(app.dependencies.iter().any(|dep| dep.name == "shared"));
         Ok(())
     }
 }

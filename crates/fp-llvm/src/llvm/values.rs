@@ -21,7 +21,9 @@ impl LlvmContext {
     }
 
     pub fn const_bool(&self, value: bool) -> IntValue<'static> {
-        self.context.bool_type().const_int(if value { 1 } else { 0 }, false)
+        self.context
+            .bool_type()
+            .const_int(if value { 1 } else { 0 }, false)
     }
 
     pub fn const_null_ptr(&self) -> PointerValue<'static> {

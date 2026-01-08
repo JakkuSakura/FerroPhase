@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 // Use local utils module instead of common crate
-use magnet::commands::{self, generate::GenerateOptions, RunMode, RunOptions, TestOptions};
+use magnet::commands::{self, RunMode, RunOptions, TestOptions, generate::GenerateOptions};
 use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point

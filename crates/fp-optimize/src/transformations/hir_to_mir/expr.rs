@@ -496,16 +496,8 @@ impl MirLowering {
             .map(|body| body.value.span)
             .unwrap_or(item.span);
 
-        let mir_body = BodyBuilder::new(
-            self,
-            program,
-            function,
-            sig,
-            span,
-            None,
-            substs,
-        )
-        .lower()?;
+        let mir_body =
+            BodyBuilder::new(self, program, function, sig, span, None, substs).lower()?;
 
         let mir_function = mir::Function {
             name: mir::Symbol::new(name_override),
@@ -540,8 +532,13 @@ impl MirLowering {
             .iter()
             .map(|param| param.name.as_str().to_string())
             .collect::<Vec<_>>();
-        let substs =
-            self.build_substs_from_args(&generics, &function.sig.inputs, explicit_args, arg_types, span)?;
+        let substs = self.build_substs_from_args(
+            &generics,
+            &function.sig.inputs,
+            explicit_args,
+            arg_types,
+            span,
+        )?;
         let args_in_order = generics
             .iter()
             .filter_map(|name| substs.get(name).cloned())
@@ -600,8 +597,13 @@ impl MirLowering {
             .map(|param| param.name.as_str().to_string());
         let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
 
-        let substs =
-            self.build_substs_from_args(&generics, &def.function.sig.inputs, explicit_args, arg_types, span)?;
+        let substs = self.build_substs_from_args(
+            &generics,
+            &def.function.sig.inputs,
+            explicit_args,
+            arg_types,
+            span,
+        )?;
         let args_in_order = generics
             .iter()
             .filter_map(|name| substs.get(name).cloned())
@@ -626,8 +628,11 @@ impl MirLowering {
             None
         };
 
-        let sig =
-            self.lower_function_sig_with_substs(&def.function.sig, method_context.as_ref(), &substs);
+        let sig = self.lower_function_sig_with_substs(
+            &def.function.sig,
+            method_context.as_ref(),
+            &substs,
+        );
         let suffix = self.specialization_suffix(&args_in_order);
         let name = format!("{}__{}", def.method_name, suffix);
         let fn_ty = self.function_pointer_ty(&sig);
@@ -704,14 +709,14 @@ impl MirLowering {
                 .inputs
                 .iter()
                 .map(|param| {
-                    self.lower_type_expr_with_context_and_substs(
-                        &param.ty,
-                        method_context,
-                        substs,
-                    )
+                    self.lower_type_expr_with_context_and_substs(&param.ty, method_context, substs)
                 })
                 .collect(),
-            output: self.lower_type_expr_with_context_and_substs(&sig.output, method_context, substs),
+            output: self.lower_type_expr_with_context_and_substs(
+                &sig.output,
+                method_context,
+                substs,
+            ),
         }
     }
 
@@ -764,13 +769,7 @@ impl MirLowering {
         }
 
         for (param, actual_ty) in params.iter().zip(arg_types.iter()) {
-            self.infer_generic_from_type_expr(
-                &param.ty,
-                actual_ty,
-                generics,
-                &mut substs,
-                span,
-            )?;
+            self.infer_generic_from_type_expr(&param.ty, actual_ty, generics, &mut substs, span)?;
         }
 
         for name in generics {
@@ -807,10 +806,7 @@ impl MirLowering {
                     .last()
                     .map(|seg| seg.name.as_str())
                     .unwrap_or("");
-                let is_generic = path
-                    .segments
-                    .iter()
-                    .all(|seg| seg.args.is_none())
+                let is_generic = path.segments.iter().all(|seg| seg.args.is_none())
                     && generics.iter().any(|g| g == name);
                 if is_generic {
                     let actual_is_opaque = self.is_opaque_ty(actual_ty);
@@ -977,11 +973,7 @@ impl MirLowering {
                         }
                         for (expected, actual) in fn_ptr.inputs.iter().zip(sig.inputs.iter()) {
                             self.infer_generic_from_type_expr(
-                                expected,
-                                actual,
-                                generics,
-                                substs,
-                                span,
+                                expected, actual, generics, substs, span,
                             )?;
                         }
                         self.infer_generic_from_type_expr(
@@ -1097,7 +1089,12 @@ impl MirLowering {
         let ty = self.lower_type_expr(&konst.ty);
         let container_args = self.container_args_from_type_expr(&konst.ty);
         let init_constant = self
-            .lower_const_expr(program, &konst.body.value, Some(&ty), container_args.as_ref())
+            .lower_const_expr(
+                program,
+                &konst.body.value,
+                Some(&ty),
+                container_args.as_ref(),
+            )
             .unwrap_or_else(|| self.error_constant(konst.body.value.span));
         let init = mir::Operand::Constant(init_constant.clone());
 
@@ -1245,11 +1242,7 @@ impl MirLowering {
         id
     }
 
-    fn lower_structural_type_expr(
-        &mut self,
-        structural: &hir::TypeStructural,
-        span: Span,
-    ) -> Ty {
+    fn lower_structural_type_expr(&mut self, structural: &hir::TypeStructural, span: Span) -> Ty {
         let mut entries_ty: Option<&hir::TypeExpr> = None;
         if structural.fields.len() == 1 {
             if let Some(field) = structural.fields.first() {
@@ -1342,9 +1335,7 @@ impl MirLowering {
                     _ => {}
                 }
 
-                if let (Some(key_ty_expr), Some(value_ty_expr)) =
-                    (key_ty_expr, value_ty_expr)
-                {
+                if let (Some(key_ty_expr), Some(value_ty_expr)) = (key_ty_expr, value_ty_expr) {
                     let key_ty = self.lower_type_expr(key_ty_expr);
                     let value_ty = self.lower_type_expr(value_ty_expr);
                     return Ty {
@@ -1377,10 +1368,7 @@ impl MirLowering {
             let mut field_index = HashMap::new();
             for (idx, field) in fields.iter().enumerate() {
                 if field_index.insert(field.name.clone(), idx).is_some() {
-                    self.emit_error(
-                        span,
-                        format!("duplicate structural field `{}`", field.name),
-                    );
+                    self.emit_error(span, format!("duplicate structural field `{}`", field.name));
                 }
             }
 
@@ -1403,15 +1391,9 @@ impl MirLowering {
             .unwrap_or_else(|| self.error_ty())
     }
 
-    fn lower_type_binary_op_expr(
-        &mut self,
-        type_op: &hir::TypeBinaryOp,
-        span: Span,
-    ) -> Ty {
+    fn lower_type_binary_op_expr(&mut self, type_op: &hir::TypeBinaryOp, span: Span) -> Ty {
         match type_op.kind {
-            TypeBinaryOpKind::Union => {
-                self.lower_union_type_expr(&type_op.lhs, &type_op.rhs, span)
-            }
+            TypeBinaryOpKind::Union => self.lower_union_type_expr(&type_op.lhs, &type_op.rhs, span),
             TypeBinaryOpKind::Add | TypeBinaryOpKind::Intersect | TypeBinaryOpKind::Subtract => {
                 let lhs = self.structural_fields_for_type_expr(&type_op.lhs, span);
                 let rhs = self.structural_fields_for_type_expr(&type_op.rhs, span);
@@ -1425,12 +1407,8 @@ impl MirLowering {
 
                 let combined = match type_op.kind {
                     TypeBinaryOpKind::Add => self.merge_structural_fields(span, lhs, rhs),
-                    TypeBinaryOpKind::Intersect => {
-                        self.intersect_structural_fields(span, lhs, rhs)
-                    }
-                    TypeBinaryOpKind::Subtract => {
-                        self.subtract_structural_fields(span, lhs, rhs)
-                    }
+                    TypeBinaryOpKind::Intersect => self.intersect_structural_fields(span, lhs, rhs),
+                    TypeBinaryOpKind::Subtract => self.subtract_structural_fields(span, lhs, rhs),
                     TypeBinaryOpKind::Union => unreachable!("union handled above"),
                 };
                 let fields = combined
@@ -1474,7 +1452,9 @@ impl MirLowering {
                 None
             }
             hir::TypeExprKind::TypeBinaryOp(type_op) => match type_op.kind {
-                TypeBinaryOpKind::Add | TypeBinaryOpKind::Intersect | TypeBinaryOpKind::Subtract => {
+                TypeBinaryOpKind::Add
+                | TypeBinaryOpKind::Intersect
+                | TypeBinaryOpKind::Subtract => {
                     let lhs = self.structural_fields_for_type_expr(&type_op.lhs, span)?;
                     let rhs = self.structural_fields_for_type_expr(&type_op.rhs, span)?;
                     Some(match type_op.kind {
@@ -1526,18 +1506,20 @@ impl MirLowering {
     ) -> Vec<StructFieldDef> {
         lhs.into_iter()
             .filter_map(|field| {
-                rhs.iter().find(|rhs_field| rhs_field.name == field.name).map(|rhs_field| {
-                    if !self.type_exprs_equivalent(&rhs_field.ty, &field.ty) {
-                        self.emit_error(
-                            span,
-                            format!(
-                                "conflicting field types for `{}` in structural intersect",
-                                field.name
-                            ),
-                        );
-                    }
-                    field.clone()
-                })
+                rhs.iter()
+                    .find(|rhs_field| rhs_field.name == field.name)
+                    .map(|rhs_field| {
+                        if !self.type_exprs_equivalent(&rhs_field.ty, &field.ty) {
+                            self.emit_error(
+                                span,
+                                format!(
+                                    "conflicting field types for `{}` in structural intersect",
+                                    field.name
+                                ),
+                            );
+                        }
+                        field.clone()
+                    })
             })
             .collect()
     }
@@ -1712,10 +1694,7 @@ impl MirLowering {
                         def.fields.iter().zip(structural.fields.iter()).all(
                             |(def_field, struct_field)| {
                                 def_field.name == struct_field.name.as_str()
-                                    && self.type_exprs_equivalent(
-                                        &def_field.ty,
-                                        &struct_field.ty,
-                                    )
+                                    && self.type_exprs_equivalent(&def_field.ty, &struct_field.ty)
                             },
                         )
                     })
@@ -1844,16 +1823,14 @@ impl MirLowering {
                     self.error_ty()
                 }
             },
-            TypePrimitive::String => {
-                Ty {
-                    kind: TyKind::RawPtr(TypeAndMut {
-                        ty: Box::new(Ty {
-                            kind: TyKind::Int(IntTy::I8),
-                        }),
-                        mutbl: Mutability::Not,
+            TypePrimitive::String => Ty {
+                kind: TyKind::RawPtr(TypeAndMut {
+                    ty: Box::new(Ty {
+                        kind: TyKind::Int(IntTy::I8),
                     }),
-                }
-            }
+                    mutbl: Mutability::Not,
+                }),
+            },
             TypePrimitive::List => {
                 self.emit_warning(
                     span,
@@ -2201,7 +2178,6 @@ impl MirLowering {
             self.enum_variant_names
                 .entry(variant.name.as_str().to_string())
                 .or_insert(variant.def_id);
-
         }
 
         self.enum_defs.insert(
@@ -2439,10 +2415,7 @@ impl MirLowering {
             match arg {
                 hir::GenericArg::Type(ty) => lowered.push(self.lower_type_expr(ty)),
                 hir::GenericArg::Const(_) => {
-                    self.emit_warning(
-                        span,
-                        "const generics are ignored during MIR lowering",
-                    );
+                    self.emit_warning(span, "const generics are ignored during MIR lowering");
                 }
             }
         }
@@ -2613,7 +2586,9 @@ impl MirLowering {
                     }),
                 }
             }
-            hir::TypeExprKind::Never => Ty { kind: TyKind::Never },
+            hir::TypeExprKind::Never => Ty {
+                kind: TyKind::Never,
+            },
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
         }
@@ -2816,8 +2791,7 @@ impl MirLowering {
                         struct_def,
                     };
 
-                    self.method_lookup
-                        .insert(fn_name.clone(), info.clone());
+                    self.method_lookup.insert(fn_name.clone(), info.clone());
                     self.method_lookup
                         .insert(format!("{}::{}", struct_name, impl_item.name), info.clone());
                     self.struct_methods
@@ -3000,14 +2974,23 @@ impl MirLowering {
             }
             hir::ExprKind::Array(elements) => {
                 if let Some(container_args) = container_args {
-                    return self.lower_container_const(program, expr.span, elements, container_args);
+                    return self.lower_container_const(
+                        program,
+                        expr.span,
+                        elements,
+                        container_args,
+                    );
                 }
                 let TyKind::Array(elem_ty, _len) = expected_ty.map(|ty| &ty.kind)? else {
                     return None;
                 };
                 let mut lowered = Vec::with_capacity(elements.len());
                 for element in elements {
-                    lowered.push(self.lower_const_value(program, element, Some(elem_ty.as_ref()))?);
+                    lowered.push(self.lower_const_value(
+                        program,
+                        element,
+                        Some(elem_ty.as_ref()),
+                    )?);
                 }
                 let ty = expected_ty.cloned().unwrap_or_else(Self::unit_ty);
                 Some(mir::Constant {
@@ -3057,8 +3040,7 @@ impl MirLowering {
                 let hir::ItemKind::Function(function) = &item.kind else {
                     return None;
                 };
-                let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) =
-                    expected_ty.map(|ty| &ty.kind)?
+                let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) = expected_ty.map(|ty| &ty.kind)?
                 else {
                     return None;
                 };
@@ -3096,7 +3078,11 @@ impl MirLowering {
                 };
                 let mut lowered = Vec::with_capacity(elements.len());
                 for element in elements {
-                    lowered.push(self.lower_const_value(program, element, Some(elem_ty.as_ref()))?);
+                    lowered.push(self.lower_const_value(
+                        program,
+                        element,
+                        Some(elem_ty.as_ref()),
+                    )?);
                 }
                 Some(mir::ConstValue::Array(lowered))
             }
@@ -3131,10 +3117,7 @@ impl MirLowering {
                     let Some(expr) = field_map.get(&field_def.name) else {
                         self.emit_error(
                             expr.span,
-                            format!(
-                                "missing field `{}` in const struct literal",
-                                field_def.name
-                            ),
+                            format!("missing field `{}` in const struct literal", field_def.name),
                         );
                         return None;
                     };
@@ -3151,8 +3134,7 @@ impl MirLowering {
                 let hir::ItemKind::Function(function) = &item.kind else {
                     return None;
                 };
-                let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) =
-                    expected_ty.map(|ty| &ty.kind)?
+                let (TyKind::FnDef(_, _) | TyKind::FnPtr(_)) = expected_ty.map(|ty| &ty.kind)?
                 else {
                     return None;
                 };
@@ -3207,9 +3189,7 @@ impl MirLowering {
                 let mut entries = Vec::with_capacity(elements.len());
                 for element in elements {
                     let (key_expr, value_expr) = match &element.kind {
-                        hir::ExprKind::Array(pair) if pair.len() == 2 => {
-                            (&pair[0], &pair[1])
-                        }
+                        hir::ExprKind::Array(pair) if pair.len() == 2 => (&pair[0], &pair[1]),
                         _ => {
                             self.emit_error(
                                 span,
@@ -3277,7 +3257,10 @@ impl MirLowering {
         }
     }
 
-    fn container_args_from_type_expr(&mut self, ty_expr: &hir::TypeExpr) -> Option<ConstContainerArgs> {
+    fn container_args_from_type_expr(
+        &mut self,
+        ty_expr: &hir::TypeExpr,
+    ) -> Option<ConstContainerArgs> {
         match &ty_expr.kind {
             hir::TypeExprKind::Path(path) => {
                 let tail = path.segments.last()?;
@@ -3437,7 +3420,14 @@ impl MirLowering {
                 let constant = self.const_value_to_constant(span, value, elem_ty);
                 Some((constant, elem_ty.clone()))
             }
-            mir::ConstantKind::Val(mir::ConstValue::Map { entries, key_ty: _, value_ty }, _) => {
+            mir::ConstantKind::Val(
+                mir::ConstValue::Map {
+                    entries,
+                    key_ty: _,
+                    value_ty,
+                },
+                _,
+            ) => {
                 let (_, value) = entries
                     .iter()
                     .find(|(entry_key, _)| self.const_value_matches(entry_key, &key))?;
@@ -4474,7 +4464,8 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             _ => {
-                self.lowering.emit_error(span, "unsupported pattern in match condition");
+                self.lowering
+                    .emit_error(span, "unsupported pattern in match condition");
                 mir::Operand::Constant(self.lowering.error_constant(span))
             }
         };
@@ -4518,11 +4509,7 @@ impl<'a> BodyBuilder<'a> {
             source_info: span,
             kind: mir::StatementKind::Assign(
                 place.clone(),
-                mir::Rvalue::BinaryOp(
-                    mir::BinOp::Eq,
-                    scrutinee_operand,
-                    literal,
-                ),
+                mir::Rvalue::BinaryOp(mir::BinOp::Eq, scrutinee_operand, literal),
             ),
         };
         self.push_statement(assign);
@@ -4563,10 +4550,8 @@ impl<'a> BodyBuilder<'a> {
                             .get(&variant.def_id)
                             .cloned()
                             .unwrap_or_else(|| {
-                                self.lowering.emit_error(
-                                    span,
-                                    "enum variant payload layout not registered",
-                                );
+                                self.lowering
+                                    .emit_error(span, "enum variant payload layout not registered");
                                 Vec::new()
                             });
                         for (idx, part) in parts.iter().enumerate() {
@@ -4575,10 +4560,9 @@ impl<'a> BodyBuilder<'a> {
                             }
                             let field_ty = payload_tys[idx].clone();
                             let mut field_place = scrutinee_place.clone();
-                            field_place.projection.push(mir::PlaceElem::Field(
-                                idx + 1,
-                                field_ty.clone(),
-                            ));
+                            field_place
+                                .projection
+                                .push(mir::PlaceElem::Field(idx + 1, field_ty.clone()));
                             self.bind_match_pattern(part, &field_place, &field_ty, span);
                         }
                         return;
@@ -4591,10 +4575,8 @@ impl<'a> BodyBuilder<'a> {
                             .get(&variant.def_id)
                             .cloned()
                             .unwrap_or_else(|| {
-                                self.lowering.emit_error(
-                                    span,
-                                    "enum variant payload layout not registered",
-                                );
+                                self.lowering
+                                    .emit_error(span, "enum variant payload layout not registered");
                                 Vec::new()
                             });
                         for (idx, field) in fields.iter().enumerate() {
@@ -4603,10 +4585,9 @@ impl<'a> BodyBuilder<'a> {
                             }
                             let field_ty = payload_tys[idx].clone();
                             let mut field_place = scrutinee_place.clone();
-                            field_place.projection.push(mir::PlaceElem::Field(
-                                idx + 1,
-                                field_ty.clone(),
-                            ));
+                            field_place
+                                .projection
+                                .push(mir::PlaceElem::Field(idx + 1, field_ty.clone()));
                             self.bind_match_pattern(&field.pat, &field_place, &field_ty, span);
                         }
                         return;
@@ -4705,7 +4686,8 @@ impl<'a> BodyBuilder<'a> {
                         let layout = if args.is_empty() {
                             self.lowering.enum_layout_for_def(*def_id, init_span)
                         } else {
-                            self.lowering.enum_layout_for_instance(*def_id, &args, init_span)
+                            self.lowering
+                                .enum_layout_for_instance(*def_id, &args, init_span)
                         };
                         if let Some(layout) = layout {
                             declared_ty = Some(layout.enum_ty);
@@ -4893,8 +4875,10 @@ impl<'a> BodyBuilder<'a> {
             let expected_ty = annotated_ty
                 .cloned()
                 .or_else(|| Some(self.locals[local_id as usize].ty.clone()));
-            if let (Some(expected_ty), hir::ExprKind::Array(_) | hir::ExprKind::ArrayRepeat { .. }) =
-                (expected_ty.as_ref(), &expr.kind)
+            if let (
+                Some(expected_ty),
+                hir::ExprKind::Array(_) | hir::ExprKind::ArrayRepeat { .. },
+            ) = (expected_ty.as_ref(), &expr.kind)
             {
                 if self.is_list_container(expected_ty) || self.is_map_container(expected_ty) {
                     let place = mir::Place::from_local(local_id);
@@ -5007,7 +4991,11 @@ impl<'a> BodyBuilder<'a> {
             .iter()
             .filter(|(_, payloads)| payloads.len() == payload_len)
             .filter_map(|(def_id, _)| self.lowering.enum_variants.get(def_id))
-            .filter(|info| enum_def.map(|def_id| info.enum_def == def_id).unwrap_or(true));
+            .filter(|info| {
+                enum_def
+                    .map(|def_id| info.enum_def == def_id)
+                    .unwrap_or(true)
+            });
         let first = len_matches.next().cloned();
         if first.is_some() && len_matches.next().is_some() {
             self.lowering.emit_error(
@@ -5021,14 +5009,9 @@ impl<'a> BodyBuilder<'a> {
         }
         let payload_struct_def = payload_def.or_else(|| self.struct_def_from_ty(payload_ty));
         if let (Some(enum_def), Some(payload_struct_def)) = (enum_def, payload_struct_def) {
-            if let Some(info) = self
-                .lowering
-                .enum_variants
-                .values()
-                .find(|info| {
-                    info.enum_def == enum_def && info.payload_def == Some(payload_struct_def)
-                })
-            {
+            if let Some(info) = self.lowering.enum_variants.values().find(|info| {
+                info.enum_def == enum_def && info.payload_def == Some(payload_struct_def)
+            }) {
                 return Some((info.clone(), layout));
             }
         }
@@ -5048,10 +5031,8 @@ impl<'a> BodyBuilder<'a> {
             .get(&variant.def_id)
             .cloned()
             .unwrap_or_else(|| {
-                self.lowering.emit_error(
-                    span,
-                    "enum variant payload layout not registered",
-                );
+                self.lowering
+                    .emit_error(span, "enum variant payload layout not registered");
                 Vec::new()
             });
 
@@ -5110,10 +5091,8 @@ impl<'a> BodyBuilder<'a> {
             .get(&variant.def_id)
             .cloned()
             .unwrap_or_else(|| {
-                self.lowering.emit_error(
-                    span,
-                    "enum variant payload layout not registered",
-                );
+                self.lowering
+                    .emit_error(span, "enum variant payload layout not registered");
                 Vec::new()
             });
 
@@ -5191,10 +5170,7 @@ impl<'a> BodyBuilder<'a> {
             annotated_ty,
             self.enum_variant_info_from_path(&resolved_path),
         ) {
-            if let Some(layout) = self
-                .lowering
-                .enum_layout_for_def(variant.enum_def, span)
-            {
+            if let Some(layout) = self.lowering.enum_layout_for_def(variant.enum_def, span) {
                 if layout.enum_ty == *expected_ty {
                     let payload_args: Vec<hir::Expr> =
                         fields.iter().map(|field| field.expr.clone()).collect();
@@ -5350,10 +5326,7 @@ impl<'a> BodyBuilder<'a> {
             let Some(field_ty) = layout.field_tys.get(idx) else {
                 self.lowering.emit_error(
                     span,
-                    format!(
-                        "struct layout missing field type for `{}`",
-                        field.name
-                    ),
+                    format!("struct layout missing field type for `{}`", field.name),
                 );
                 return Ok(());
             };
@@ -5363,21 +5336,16 @@ impl<'a> BodyBuilder<'a> {
             });
         }
 
-        if let (Some(expected_ty), Some(struct_info)) = (
-            annotated_ty,
-            self.lowering.struct_defs.get(&def_id),
-        ) {
-            let enum_layout = self
-                .lowering
-                .enum_layouts
-                .iter()
-                .find_map(|(key, layout)| {
-                    if layout.enum_ty == *expected_ty {
-                        Some((key.def_id, layout.clone()))
-                    } else {
-                        None
-                    }
-                });
+        if let (Some(expected_ty), Some(struct_info)) =
+            (annotated_ty, self.lowering.struct_defs.get(&def_id))
+        {
+            let enum_layout = self.lowering.enum_layouts.iter().find_map(|(key, layout)| {
+                if layout.enum_ty == *expected_ty {
+                    Some((key.def_id, layout.clone()))
+                } else {
+                    None
+                }
+            });
             if let Some((enum_def_id, layout)) = enum_layout {
                 if let Some(enum_def) = self.lowering.enum_defs.get(&enum_def_id) {
                     if let Some(variant_def) = enum_def
@@ -5603,9 +5571,7 @@ impl<'a> BodyBuilder<'a> {
                                         _ => {}
                                     }
                                 }
-                                if let (Some(key_expr), Some(value_expr)) =
-                                    (key_expr, value_expr)
-                                {
+                                if let (Some(key_expr), Some(value_expr)) = (key_expr, value_expr) {
                                     let key_operand = self.lower_operand(key_expr, None)?;
                                     let value_operand = self.lower_operand(value_expr, None)?;
                                     if key_ty.is_none() {
@@ -5664,10 +5630,8 @@ impl<'a> BodyBuilder<'a> {
                 let (place, expected_ty) = match destination.as_ref() {
                     Some((place, expected_ty)) => (place.clone(), expected_ty.clone()),
                     None => {
-                        self.lowering.emit_error(
-                            expr.span,
-                            "HashMap::get_unchecked requires a destination",
-                        );
+                        self.lowering
+                            .emit_error(expr.span, "HashMap::get_unchecked requires a destination");
                         return Ok(None);
                     }
                 };
@@ -5711,8 +5675,11 @@ impl<'a> BodyBuilder<'a> {
                                     if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
                                         const_body_len = Some(elements.len() as u64);
                                     }
-                                    self.lowering
-                                        .register_const_value(self.program, *def_id, konst);
+                                    self.lowering.register_const_value(
+                                        self.program,
+                                        *def_id,
+                                        konst,
+                                    );
                                     if let Some(info) = self.lowering.const_values.get(def_id) {
                                         const_info = Some(info.clone());
                                         break;
@@ -5724,10 +5691,12 @@ impl<'a> BodyBuilder<'a> {
 
                     if let Some(const_info) = const_info {
                         if let mir::ConstantKind::Val(value, _) = &const_info.value.literal {
-                            if let Some((constant, ty)) = self
-                                .lowering
-                                .const_index_value(self.program, expr.span, &const_info.value, &args[1])
-                            {
+                            if let Some((constant, ty)) = self.lowering.const_index_value(
+                                self.program,
+                                expr.span,
+                                &const_info.value,
+                                &args[1],
+                            ) {
                                 self.push_statement(mir::Statement {
                                     source_info: expr.span,
                                     kind: mir::StatementKind::Assign(
@@ -5771,10 +5740,8 @@ impl<'a> BodyBuilder<'a> {
                                         if let TyKind::Tuple(fields) = &elem_ty.kind {
                                             if fields.len() == 2 {
                                                 map_len = Some(elements.len() as u64);
-                                                map_key_ty =
-                                                    Some((*fields[0].clone()).clone());
-                                                map_value_ty =
-                                                    Some((*fields[1].clone()).clone());
+                                                map_key_ty = Some((*fields[0].clone()).clone());
+                                                map_value_ty = Some((*fields[1].clone()).clone());
                                             }
                                         }
                                     }
@@ -5869,7 +5836,11 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(container_kind) = self.container_locals.get(&local_id).cloned()
                         {
                             match container_kind {
-                                mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                mir::ContainerKind::Map {
+                                    key_ty,
+                                    value_ty,
+                                    len,
+                                } => {
                                     map_len = Some(len);
                                     map_key_ty = Some(key_ty);
                                     map_value_ty = Some(value_ty);
@@ -5893,7 +5864,11 @@ impl<'a> BodyBuilder<'a> {
                             self.container_locals.get(&place.local).cloned()
                         {
                             match container_kind {
-                                mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                mir::ContainerKind::Map {
+                                    key_ty,
+                                    value_ty,
+                                    len,
+                                } => {
                                     map_len = Some(len);
                                     map_key_ty = Some(key_ty);
                                     map_value_ty = Some(value_ty);
@@ -5983,11 +5958,15 @@ impl<'a> BodyBuilder<'a> {
                         .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
                         .unwrap_or_default();
                     if !args.is_empty() {
+                        layout = self.lowering.enum_layout_for_instance(
+                            variant.enum_def,
+                            &args,
+                            expr.span,
+                        );
+                    } else {
                         layout = self
                             .lowering
-                            .enum_layout_for_instance(variant.enum_def, &args, expr.span);
-                    } else {
-                        layout = self.lowering.enum_layout_for_def(variant.enum_def, expr.span);
+                            .enum_layout_for_def(variant.enum_def, expr.span);
                     }
                 }
 
@@ -5999,13 +5978,7 @@ impl<'a> BodyBuilder<'a> {
                             let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
                             mir::Place::from_local(local_id)
                         });
-                    self.assign_enum_variant(
-                        place.clone(),
-                        &variant,
-                        &layout,
-                        args,
-                        expr.span,
-                    )?;
+                    self.assign_enum_variant(place.clone(), &variant, &layout, args, expr.span)?;
                     if (place.local as usize) < self.locals.len() {
                         self.locals[place.local as usize].ty = layout.enum_ty.clone();
                     }
@@ -6020,14 +5993,10 @@ impl<'a> BodyBuilder<'a> {
                 }
 
                 if !args.is_empty() {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "enum variant does not accept payload values",
-                    );
+                    self.lowering
+                        .emit_error(expr.span, "enum variant does not accept payload values");
                 }
-                if let Some(const_info) =
-                    self.lowering.const_values.get(&variant.def_id).cloned()
-                {
+                if let Some(const_info) = self.lowering.const_values.get(&variant.def_id).cloned() {
                     if let Some((place, _)) = destination {
                         self.push_statement(mir::Statement {
                             source_info: expr.span,
@@ -6134,7 +6103,9 @@ impl<'a> BodyBuilder<'a> {
                                 path.segments
                                     .first()
                                     .filter(|_| path.segments.len() == 1)
-                                    .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied())
+                                    .and_then(|seg| {
+                                        self.fallback_locals.get(seg.name.as_str()).copied()
+                                    })
                             }
                         }
                         _ => None,
@@ -6578,10 +6549,7 @@ impl<'a> BodyBuilder<'a> {
 
         self.lowering.emit_error(
             callee.span,
-            format!(
-                "unresolved call target `{}` during MIR lowering",
-                name
-            ),
+            format!("unresolved call target `{}` during MIR lowering", name),
         );
         let sig = self.lowering.placeholder_function_sig(&name);
         let fn_ty = self.lowering.function_pointer_ty(&sig);
@@ -6596,11 +6564,8 @@ impl<'a> BodyBuilder<'a> {
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
         if let Some(place) = self.lower_place(expr)? {
             if let Some(expected_ty) = expected {
-                if let Some((variant, layout)) = self.enum_variant_for_payload(
-                    expected_ty,
-                    &place.ty,
-                    place.struct_def,
-                )
+                if let Some((variant, layout)) =
+                    self.enum_variant_for_payload(expected_ty, &place.ty, place.struct_def)
                 {
                     let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
                     let enum_place = mir::Place::from_local(local_id);
@@ -6637,7 +6602,11 @@ impl<'a> BodyBuilder<'a> {
                         expected_ty.clone()
                     } else {
                         Ty {
-                            kind: TyKind::Ref(region.clone(), Box::new(resolved_inner), *mutability),
+                            kind: TyKind::Ref(
+                                region.clone(),
+                                Box::new(resolved_inner),
+                                *mutability,
+                            ),
                         }
                     };
                     let borrow_kind = match mutability {
@@ -6747,37 +6716,39 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                     if let Some(variant) = self.lowering.enum_variants.get(def_id).cloned() {
-                    let mut layout = expected
-                        .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned());
-                    if layout.is_none() {
-                        let args = resolved_path
-                            .segments
-                            .last()
-                            .and_then(|segment| segment.args.as_ref())
-                            .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
-                            .unwrap_or_default();
-                        if !args.is_empty() {
-                            layout = self
-                                .lowering
-                                .enum_layout_for_instance(variant.enum_def, &args, expr.span);
-                        } else {
-                            layout = self
-                                .lowering
-                                .enum_layout_for_def(variant.enum_def, expr.span);
+                        let mut layout =
+                            expected.and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned());
+                        if layout.is_none() {
+                            let args = resolved_path
+                                .segments
+                                .last()
+                                .and_then(|segment| segment.args.as_ref())
+                                .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
+                                .unwrap_or_default();
+                            if !args.is_empty() {
+                                layout = self.lowering.enum_layout_for_instance(
+                                    variant.enum_def,
+                                    &args,
+                                    expr.span,
+                                );
+                            } else {
+                                layout = self
+                                    .lowering
+                                    .enum_layout_for_def(variant.enum_def, expr.span);
+                            }
                         }
-                    }
-                    if let Some(layout) = layout {
-                        return self.lower_enum_variant_value(
-                            &variant,
-                            &layout,
-                            &[],
+                        if let Some(layout) = layout {
+                            return self.lower_enum_variant_value(
+                                &variant,
+                                &layout,
+                                &[],
+                                expr.span,
+                            );
+                        }
+                        self.lowering.emit_error(
                             expr.span,
+                            "unable to resolve enum layout for variant value",
                         );
-                    }
-                    self.lowering.emit_error(
-                        expr.span,
-                        "unable to resolve enum layout for variant value",
-                    );
                     }
                     if let Some(const_info) = self.lowering.const_values.get(def_id) {
                         return Ok(OperandInfo {
@@ -6846,24 +6817,16 @@ impl<'a> BodyBuilder<'a> {
                             if konst.name.as_str() == name {
                                 self.lowering
                                     .register_const_value(self.program, *def_id, konst);
-                                if let Some(const_info) =
-                                    self.lowering.const_values.get(def_id)
-                                {
+                                if let Some(const_info) = self.lowering.const_values.get(def_id) {
                                     return Ok(OperandInfo {
-                                        operand: mir::Operand::Constant(
-                                            const_info.value.clone(),
-                                        ),
+                                        operand: mir::Operand::Constant(const_info.value.clone()),
                                         ty: const_info.ty.clone(),
                                     });
                                 }
                                 let ty = self.lower_type_expr(&konst.ty);
                                 let local_id = self.allocate_temp(ty.clone(), expr.span);
                                 let place = mir::Place::from_local(local_id);
-                                self.lower_expr_into_place(
-                                    &konst.body.value,
-                                    place.clone(),
-                                    &ty,
-                                )?;
+                                self.lower_expr_into_place(&konst.body.value, place.clone(), &ty)?;
                                 if let Some(struct_def) = self.struct_def_from_ty(&ty) {
                                     self.local_structs.insert(local_id, struct_def);
                                 }
@@ -6968,13 +6931,13 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Index(base, index) => {
                 if let hir::ExprKind::Path(path) = &base.kind {
                     if let Some(hir::Res::Def(def_id)) = &path.res {
-                        if let Some(const_info) =
-                            self.lowering.const_values.get(def_id).cloned()
-                        {
-                            if let Some((constant, ty)) = self
-                                .lowering
-                                .const_index_value(self.program, expr.span, &const_info.value, index)
-                            {
+                        if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
+                            if let Some((constant, ty)) = self.lowering.const_index_value(
+                                self.program,
+                                expr.span,
+                                &const_info.value,
+                                index,
+                            ) {
                                 return Ok(OperandInfo {
                                     operand: mir::Operand::Constant(constant),
                                     ty,
@@ -6983,14 +6946,18 @@ impl<'a> BodyBuilder<'a> {
                         }
                         if let Some(konst) = self.const_items.get(def_id).cloned() {
                             let ty = self.lowering.lower_type_expr(&konst.ty);
-                            if let Some(constant) =
-                                self.lowering
-                                    .lower_const_expr(self.program, &konst.body.value, Some(&ty), None)
-                            {
-                                if let Some((constant, ty)) = self
-                                    .lowering
-                                    .const_index_value(self.program, expr.span, &constant, index)
-                                {
+                            if let Some(constant) = self.lowering.lower_const_expr(
+                                self.program,
+                                &konst.body.value,
+                                Some(&ty),
+                                None,
+                            ) {
+                                if let Some((constant, ty)) = self.lowering.const_index_value(
+                                    self.program,
+                                    expr.span,
+                                    &constant,
+                                    index,
+                                ) {
                                     return Ok(OperandInfo {
                                         operand: mir::Operand::Constant(constant),
                                         ty,
@@ -7050,80 +7017,83 @@ impl<'a> BodyBuilder<'a> {
                         len: 0,
                     };
                     if let Some(local_id) = self.local_id_from_expr(base) {
-                if let Some(container_kind) = self.container_locals.get(&local_id) {
+                        if let Some(container_kind) = self.container_locals.get(&local_id) {
+                            if let mir::ContainerKind::Map {
+                                key_ty,
+                                value_ty: entry_value_ty,
+                                len,
+                            } = container_kind
+                            {
+                                kind = mir::ContainerKind::Map {
+                                    key_ty: key_ty.clone(),
+                                    value_ty: entry_value_ty.clone(),
+                                    len: *len,
+                                };
+                                value_ty = entry_value_ty.clone();
+                            }
+                        }
+                    }
                     if let mir::ContainerKind::Map {
                         key_ty,
                         value_ty: entry_value_ty,
                         len,
-                    } = container_kind
+                    } = &mut kind
                     {
-                        kind = mir::ContainerKind::Map {
-                            key_ty: key_ty.clone(),
-                            value_ty: entry_value_ty.clone(),
-                            len: *len,
-                        };
-                        value_ty = entry_value_ty.clone();
-                    }
-                }
-            }
-            if let mir::ContainerKind::Map {
-                key_ty,
-                value_ty: entry_value_ty,
-                len,
-            } = &mut kind
-            {
-                if *len == 0 {
-                    if let mir::Operand::Constant(constant) = &base_info.operand {
-                        if let mir::ConstantKind::Val(value, _) = &constant.literal {
-                            match value {
-                                mir::ConstValue::Map {
-                                    entries,
-                                    key_ty: map_key_ty,
-                                    value_ty: map_value_ty,
-                                } => {
-                                    *len = entries.len() as u64;
-                                    *key_ty = map_key_ty.clone();
-                                    *entry_value_ty = map_value_ty.clone();
-                                    value_ty = map_value_ty.clone();
-                                }
-                                mir::ConstValue::List { elements, elem_ty } => {
-                                    if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                        if fields.len() == 2 {
-                                            *len = elements.len() as u64;
-                                            *key_ty = (*fields[0].clone()).clone();
-                                            *entry_value_ty = (*fields[1].clone()).clone();
-                                            value_ty = (*fields[1].clone()).clone();
+                        if *len == 0 {
+                            if let mir::Operand::Constant(constant) = &base_info.operand {
+                                if let mir::ConstantKind::Val(value, _) = &constant.literal {
+                                    match value {
+                                        mir::ConstValue::Map {
+                                            entries,
+                                            key_ty: map_key_ty,
+                                            value_ty: map_value_ty,
+                                        } => {
+                                            *len = entries.len() as u64;
+                                            *key_ty = map_key_ty.clone();
+                                            *entry_value_ty = map_value_ty.clone();
+                                            value_ty = map_value_ty.clone();
                                         }
-                                    }
-                                }
-                                mir::ConstValue::Array(elements) => {
-                                    if let TyKind::Array(elem_ty, _) = &base_info.ty.kind {
-                                        if let TyKind::Tuple(fields) = &elem_ty.kind {
-                                            if fields.len() == 2 {
-                                                *len = elements.len() as u64;
-                                                *key_ty = (*fields[0].clone()).clone();
-                                                *entry_value_ty = (*fields[1].clone()).clone();
-                                                value_ty = (*fields[1].clone()).clone();
+                                        mir::ConstValue::List { elements, elem_ty } => {
+                                            if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                                if fields.len() == 2 {
+                                                    *len = elements.len() as u64;
+                                                    *key_ty = (*fields[0].clone()).clone();
+                                                    *entry_value_ty = (*fields[1].clone()).clone();
+                                                    value_ty = (*fields[1].clone()).clone();
+                                                }
                                             }
                                         }
+                                        mir::ConstValue::Array(elements) => {
+                                            if let TyKind::Array(elem_ty, _) = &base_info.ty.kind {
+                                                if let TyKind::Tuple(fields) = &elem_ty.kind {
+                                                    if fields.len() == 2 {
+                                                        *len = elements.len() as u64;
+                                                        *key_ty = (*fields[0].clone()).clone();
+                                                        *entry_value_ty =
+                                                            (*fields[1].clone()).clone();
+                                                        value_ty = (*fields[1].clone()).clone();
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        _ => {}
                                     }
                                 }
-                                _ => {}
                             }
                         }
                     }
-                }
-            }
-            if matches!(kind, mir::ContainerKind::Map { len: 0, .. }) {
-                self.lowering.emit_error(
-                    expr.span,
-                    "map indexing requires a literal HashMap for now",
-                );
-                return Ok(OperandInfo {
-                    operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
-                    ty: value_ty,
-                });
-            }
+                    if matches!(kind, mir::ContainerKind::Map { len: 0, .. }) {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "map indexing requires a literal HashMap for now",
+                        );
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(
+                                self.lowering.error_constant(expr.span),
+                            ),
+                            ty: value_ty,
+                        });
+                    }
                     let local_id = self.allocate_temp(value_ty.clone(), expr.span);
                     let local_place = mir::Place::from_local(local_id);
                     self.push_statement(mir::Statement {
@@ -7925,10 +7895,8 @@ impl<'a> BodyBuilder<'a> {
         let args = match &call.payload {
             IntrinsicCallPayload::Args { args } => args,
             IntrinsicCallPayload::Format { .. } => {
-                self.lowering.emit_error(
-                    expr.span,
-                    "catch_unwind does not accept formatted payloads",
-                );
+                self.lowering
+                    .emit_error(expr.span, "catch_unwind does not accept formatted payloads");
                 return Ok(self.constant_bool_operand(false, expr.span));
             }
         };
@@ -7971,8 +7939,10 @@ impl<'a> BodyBuilder<'a> {
         };
         if call_args.is_empty() {
             if !sig.inputs.is_empty() {
-                self.lowering
-                    .emit_error(expr.span, "catch_unwind only supports zero-argument callables");
+                self.lowering.emit_error(
+                    expr.span,
+                    "catch_unwind only supports zero-argument callables",
+                );
             }
         } else if sig.inputs.len() != call_args.len() {
             self.lowering.emit_error(
@@ -7987,9 +7957,7 @@ impl<'a> BodyBuilder<'a> {
             );
         }
 
-        let result_ty = Ty {
-            kind: TyKind::Bool,
-        };
+        let result_ty = Ty { kind: TyKind::Bool };
         let result_place = destination.unwrap_or_else(|| {
             let local_id = self.allocate_temp(result_ty.clone(), expr.span);
             mir::Place::from_local(local_id)
@@ -8097,31 +8065,39 @@ impl<'a> BodyBuilder<'a> {
         match &ty.kind {
             TyKind::Bool => Ok((operand, ty.clone(), "%d".to_string())),
             TyKind::Char => Ok((operand, ty.clone(), "%c".to_string())),
-            TyKind::Int(int_ty) => Ok((operand, ty.clone(), match int_ty {
-                IntTy::I8 => "%hhd",
-                IntTy::I16 => "%hd",
-                IntTy::I32 => "%d",
-                IntTy::I64 => "%lld",
-                IntTy::I128 => "%lld",
-                IntTy::Isize => "%lld",
-            }.to_string())),
-            TyKind::Uint(uint_ty) => Ok((operand, ty.clone(), match uint_ty {
-                UintTy::U8 => "%hhu",
-                UintTy::U16 => "%hu",
-                UintTy::U32 => "%u",
-                UintTy::U64 => "%llu",
-                UintTy::U128 => "%llu",
-                UintTy::Usize => "%llu",
-            }.to_string())),
+            TyKind::Int(int_ty) => Ok((
+                operand,
+                ty.clone(),
+                match int_ty {
+                    IntTy::I8 => "%hhd",
+                    IntTy::I16 => "%hd",
+                    IntTy::I32 => "%d",
+                    IntTy::I64 => "%lld",
+                    IntTy::I128 => "%lld",
+                    IntTy::Isize => "%lld",
+                }
+                .to_string(),
+            )),
+            TyKind::Uint(uint_ty) => Ok((
+                operand,
+                ty.clone(),
+                match uint_ty {
+                    UintTy::U8 => "%hhu",
+                    UintTy::U16 => "%hu",
+                    UintTy::U32 => "%u",
+                    UintTy::U64 => "%llu",
+                    UintTy::U128 => "%llu",
+                    UintTy::Usize => "%llu",
+                }
+                .to_string(),
+            )),
             TyKind::Float(_) => Ok((operand, ty.clone(), "%f".to_string())),
             TyKind::RawPtr(type_and_mut) => {
                 if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
                     Ok((operand, ty.clone(), "%s".to_string()))
                 } else {
-                    self.lowering.emit_error(
-                        span,
-                        "printf only supports raw pointers to byte strings",
-                    );
+                    self.lowering
+                        .emit_error(span, "printf only supports raw pointers to byte strings");
                     Ok((operand, ty.clone(), "%s".to_string()))
                 }
             }
@@ -8192,10 +8168,8 @@ impl<'a> BodyBuilder<'a> {
                 let place = match operand {
                     mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
                     _ => {
-                        self.lowering.emit_error(
-                            span,
-                            "printf cannot dereference non-place arguments",
-                        );
+                        self.lowering
+                            .emit_error(span, "printf cannot dereference non-place arguments");
                         return Ok((operand, ty.clone(), "%s".to_string()));
                     }
                 };
@@ -8382,10 +8356,8 @@ impl<'a> BodyBuilder<'a> {
                 if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
                     "%s"
                 } else {
-                    self.lowering.emit_error(
-                        span,
-                        "printf only supports raw pointers to byte strings",
-                    );
+                    self.lowering
+                        .emit_error(span, "printf only supports raw pointers to byte strings");
                     "%s"
                 }
             }
@@ -8399,10 +8371,7 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn is_c_string_ptr(&self, ty: &Ty) -> bool {
-        matches!(
-            ty.kind,
-            TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8)
-        )
+        matches!(ty.kind, TyKind::Int(IntTy::I8) | TyKind::Uint(UintTy::U8))
     }
 
     fn resolve_struct_ref(&mut self, expr: &hir::Expr) -> Option<StructRef> {
@@ -8444,10 +8413,11 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn compute_struct_size(&mut self, span: Span, struct_ref: &StructRef) -> Option<u64> {
-        let layout = match self
-            .lowering
-            .struct_layout_for_instance(struct_ref.def_id, &struct_ref.args, span)
-        {
+        let layout = match self.lowering.struct_layout_for_instance(
+            struct_ref.def_id,
+            &struct_ref.args,
+            span,
+        ) {
             Some(layout) => layout,
             None => return None,
         };
@@ -8660,10 +8630,8 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::Unary(hir::UnOp::Deref, inner) => {
                 let Some(mut place_info) = self.lower_place(inner)? else {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "dereference target is not a place expression",
-                    );
+                    self.lowering
+                        .emit_error(expr.span, "dereference target is not a place expression");
                     return Ok(None);
                 };
 
@@ -8736,7 +8704,10 @@ impl<'a> BodyBuilder<'a> {
                 };
 
                 let (field_index, field_info) =
-                    match self.lowering.struct_field(struct_def, &base_ty, field.as_str()) {
+                    match self
+                        .lowering
+                        .struct_field(struct_def, &base_ty, field.as_str())
+                    {
                         Some(data) => data,
                         None => {
                             self.lowering
@@ -8836,13 +8807,12 @@ impl<'a> BodyBuilder<'a> {
                 let value = self.lower_operand(expr, Some(expected_ty))?;
                 let container_kind = match &value.operand {
                     mir::Operand::Constant(constant) => match &constant.literal {
-                        mir::ConstantKind::Val(
-                            mir::ConstValue::List { elements, elem_ty },
-                            _,
-                        ) => Some(mir::ContainerKind::List {
-                            elem_ty: elem_ty.clone(),
-                            len: elements.len() as u64,
-                        }),
+                        mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, _) => {
+                            Some(mir::ContainerKind::List {
+                                elem_ty: elem_ty.clone(),
+                                len: elements.len() as u64,
+                            })
+                        }
                         mir::ConstantKind::Val(
                             mir::ConstValue::Map {
                                 entries,
@@ -8874,8 +8844,7 @@ impl<'a> BodyBuilder<'a> {
                             .insert(assignment_place.local, struct_def);
                     }
                     if let Some(kind) = container_kind {
-                        self.container_locals
-                            .insert(assignment_place.local, kind);
+                        self.container_locals.insert(assignment_place.local, kind);
                     }
                 }
             }
@@ -9182,8 +9151,11 @@ impl<'a> BodyBuilder<'a> {
                                     if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
                                         const_body_len = Some(elements.len() as u64);
                                     }
-                                    self.lowering
-                                        .register_const_value(self.program, *def_id, konst);
+                                    self.lowering.register_const_value(
+                                        self.program,
+                                        *def_id,
+                                        konst,
+                                    );
                                     if let Some(info) = self.lowering.const_values.get(def_id) {
                                         const_info = Some(info.clone());
                                     }
@@ -9194,14 +9166,17 @@ impl<'a> BodyBuilder<'a> {
                             for (def_id, item) in &self.program.def_map {
                                 if let hir::ItemKind::Const(konst) = &item.kind {
                                     if konst.name.as_str() == name {
-                                        if let hir::ExprKind::Array(elements) = &konst.body.value.kind {
+                                        if let hir::ExprKind::Array(elements) =
+                                            &konst.body.value.kind
+                                        {
                                             const_body_len = Some(elements.len() as u64);
                                         }
-                                        self.lowering
-                                            .register_const_value(self.program, *def_id, konst);
-                                        if let Some(info) =
-                                            self.lowering.const_values.get(def_id)
-                                        {
+                                        self.lowering.register_const_value(
+                                            self.program,
+                                            *def_id,
+                                            konst,
+                                        );
+                                        if let Some(info) = self.lowering.const_values.get(def_id) {
                                             const_info = Some(info.clone());
                                             break;
                                         }
@@ -9212,10 +9187,12 @@ impl<'a> BodyBuilder<'a> {
 
                         if let Some(const_info) = const_info {
                             if let mir::ConstantKind::Val(value, _) = &const_info.value.literal {
-                                if let Some((constant, ty)) = self
-                                    .lowering
-                                    .const_index_value(self.program, expr.span, &const_info.value, &args[0])
-                                {
+                                if let Some((constant, ty)) = self.lowering.const_index_value(
+                                    self.program,
+                                    expr.span,
+                                    &const_info.value,
+                                    &args[0],
+                                ) {
                                     self.push_statement(mir::Statement {
                                         source_info: expr.span,
                                         kind: mir::StatementKind::Assign(
@@ -9255,8 +9232,7 @@ impl<'a> BodyBuilder<'a> {
                                             if let TyKind::Tuple(fields) = &elem_ty.kind {
                                                 if fields.len() == 2 {
                                                     map_len = Some(elements.len() as u64);
-                                                    map_key_ty =
-                                                        Some((*fields[0].clone()).clone());
+                                                    map_key_ty = Some((*fields[0].clone()).clone());
                                                     map_value_ty =
                                                         Some((*fields[1].clone()).clone());
                                                 }
@@ -9321,8 +9297,7 @@ impl<'a> BodyBuilder<'a> {
                                 _,
                             ) = &constant.literal
                             {
-                                let key_operand =
-                                    self.lower_operand(&args[0], Some(key_ty))?;
+                                let key_operand = self.lower_operand(&args[0], Some(key_ty))?;
                                 let kind = mir::ContainerKind::Map {
                                     key_ty: key_ty.clone(),
                                     value_ty: value_ty.clone(),
@@ -9347,13 +9322,18 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                         if let Some(local_id) = self.local_id_from_expr(receiver) {
-                            if let Some(container_kind) = self.container_locals.get(&local_id).cloned()
+                            if let Some(container_kind) =
+                                self.container_locals.get(&local_id).cloned()
                             {
                                 let mut map_key_ty = None;
                                 let mut map_value_ty = None;
                                 let mut map_len = 0;
                                 match container_kind {
-                                    mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                    mir::ContainerKind::Map {
+                                        key_ty,
+                                        value_ty,
+                                        len,
+                                    } => {
                                         map_key_ty = Some(key_ty);
                                         map_value_ty = Some(value_ty);
                                         map_len = len;
@@ -9368,9 +9348,7 @@ impl<'a> BodyBuilder<'a> {
                                         }
                                     }
                                 }
-                                if let (Some(key_ty), Some(value_ty)) =
-                                    (map_key_ty, map_value_ty)
-                                {
+                                if let (Some(key_ty), Some(value_ty)) = (map_key_ty, map_value_ty) {
                                     if map_len != 0 {
                                         let key_operand =
                                             self.lower_operand(&args[0], Some(&key_ty))?;
@@ -9392,8 +9370,7 @@ impl<'a> BodyBuilder<'a> {
                                         });
 
                                         if (place.local as usize) < self.locals.len() {
-                                            self.locals[place.local as usize].ty =
-                                                value_ty.clone();
+                                            self.locals[place.local as usize].ty = value_ty.clone();
                                         }
                                         return Ok(());
                                     }
@@ -9408,7 +9385,11 @@ impl<'a> BodyBuilder<'a> {
                                 let mut map_value_ty = None;
                                 let mut map_len = 0;
                                 match container_kind {
-                                    mir::ContainerKind::Map { key_ty, value_ty, len } => {
+                                    mir::ContainerKind::Map {
+                                        key_ty,
+                                        value_ty,
+                                        len,
+                                    } => {
                                         map_key_ty = Some(key_ty);
                                         map_value_ty = Some(value_ty);
                                         map_len = len;
@@ -9423,9 +9404,7 @@ impl<'a> BodyBuilder<'a> {
                                         }
                                     }
                                 }
-                                if let (Some(key_ty), Some(value_ty)) =
-                                    (map_key_ty, map_value_ty)
-                                {
+                                if let (Some(key_ty), Some(value_ty)) = (map_key_ty, map_value_ty) {
                                     if map_len != 0 {
                                         let key_operand =
                                             self.lower_operand(&args[0], Some(&key_ty))?;
@@ -9446,8 +9425,7 @@ impl<'a> BodyBuilder<'a> {
                                         });
 
                                         if (place.local as usize) < self.locals.len() {
-                                            self.locals[place.local as usize].ty =
-                                                value_ty.clone();
+                                            self.locals[place.local as usize].ty = value_ty.clone();
                                         }
                                         return Ok(());
                                     }
@@ -9500,8 +9478,7 @@ impl<'a> BodyBuilder<'a> {
                                             map_len = Some(elements.len() as u64);
                                             if let TyKind::Tuple(fields) = &elem_ty.kind {
                                                 if fields.len() == 2 {
-                                                    map_key_ty =
-                                                        Some((*fields[0].clone()).clone());
+                                                    map_key_ty = Some((*fields[0].clone()).clone());
                                                     map_value_ty =
                                                         Some((*fields[1].clone()).clone());
                                                 }
@@ -9558,11 +9535,10 @@ impl<'a> BodyBuilder<'a> {
                         }
                     } else if let Some(enum_def) = self.enum_def_from_ty(&place_info.ty) {
                         if let Some(enum_entry) = self.lowering.enum_defs.get(&enum_def) {
-                            if let Some(info) = self
-                                .lowering
-                                .struct_methods
-                                .get(&enum_entry.name)
-                                .and_then(|methods| methods.get(&String::from(method_key.clone())))
+                            if let Some(info) =
+                                self.lowering.struct_methods.get(&enum_entry.name).and_then(
+                                    |methods| methods.get(&String::from(method_key.clone())),
+                                )
                             {
                                 resolved_info = Some((info.clone(), Some(place_info)));
                             }
@@ -9644,8 +9620,7 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(struct_entry) = self.lowering.struct_defs.get(&def_id) {
                             let method_key =
                                 format!("{}::{}", struct_entry.name, method_name.as_str());
-                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned()
-                            {
+                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned() {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty);
                                 let tentative_sig = self
                                     .lowering
@@ -9715,8 +9690,7 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(enum_entry) = self.lowering.enum_defs.get(&enum_def) {
                             let method_key =
                                 format!("{}::{}", enum_entry.name, method_name.as_str());
-                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned()
-                            {
+                            if let Some(def) = self.lowering.method_defs.get(&method_key).cloned() {
                                 let method_ctx = self.lowering.make_method_context(&def.self_ty);
                                 let tentative_sig = self
                                     .lowering
@@ -9828,13 +9802,11 @@ impl<'a> BodyBuilder<'a> {
                                     source_info: expr.span,
                                     kind: mir::StatementKind::Assign(
                                         place,
-                                        mir::Rvalue::Use(mir::Operand::Constant(
-                                            mir::Constant {
-                                                span: expr.span,
-                                                user_ty: None,
-                                                literal: mir::ConstantKind::UInt(len),
-                                            },
-                                        )),
+                                        mir::Rvalue::Use(mir::Operand::Constant(mir::Constant {
+                                            span: expr.span,
+                                            user_ty: None,
+                                            literal: mir::ConstantKind::UInt(len),
+                                        })),
                                     ),
                                 };
                                 self.push_statement(statement);
@@ -9902,10 +9874,12 @@ impl<'a> BodyBuilder<'a> {
                             }
                             if let Some(konst) = self.const_items.get(def_id).cloned() {
                                 let ty = self.lower_type_expr(&konst.ty);
-                                if let Some(constant) = self
-                                    .lowering
-                                    .lower_const_expr(self.program, &konst.body.value, Some(&ty), None)
-                                {
+                                if let Some(constant) = self.lowering.lower_const_expr(
+                                    self.program,
+                                    &konst.body.value,
+                                    Some(&ty),
+                                    None,
+                                ) {
                                     if let Some(len) =
                                         self.lowering.const_len_from_constant(&constant)
                                     {
@@ -10107,10 +10081,8 @@ impl<'a> BodyBuilder<'a> {
 
                     for element in elements {
                         let hir::ExprKind::Array(entry) = &element.kind else {
-                            self.lowering.emit_error(
-                                element.span,
-                                "HashMap literal expects array entries",
-                            );
+                            self.lowering
+                                .emit_error(element.span, "HashMap literal expects array entries");
                             continue;
                         };
                         if entry.len() != 2 {
@@ -10226,10 +10198,8 @@ impl<'a> BodyBuilder<'a> {
                         TyKind::Ref(_, inner, _) if matches!(inner.kind, TyKind::Array(_, _))
                     );
                 if heterogeneous && expected_is_array {
-                    self.lowering.emit_error(
-                        expr.span,
-                        "array literal elements have mismatched types",
-                    );
+                    self.lowering
+                        .emit_error(expr.span, "array literal elements have mismatched types");
                 }
 
                 let element_ty = element_ty.unwrap_or_else(|| {
@@ -10264,9 +10234,7 @@ impl<'a> BodyBuilder<'a> {
                 let aggregate_kind = if heterogeneous && !expected_is_array {
                     if place.projection.is_empty() {
                         let tuple_ty = Ty {
-                            kind: TyKind::Tuple(
-                                element_types.into_iter().map(Box::new).collect(),
-                            ),
+                            kind: TyKind::Tuple(element_types.into_iter().map(Box::new).collect()),
                         };
                         if let Some(local) = self.locals.get_mut(place.local as usize) {
                             local.ty = tuple_ty;

@@ -386,15 +386,8 @@ pub enum AggregateKind {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ContainerKind {
-    List {
-        elem_ty: Ty,
-        len: u64,
-    },
-    Map {
-        key_ty: Ty,
-        value_ty: Ty,
-        len: u64,
-    },
+    List { elem_ty: Ty, len: u64 },
+    Map { key_ty: Ty, value_ty: Ty, len: u64 },
 }
 
 #[derive(Debug, Clone, PartialEq)]

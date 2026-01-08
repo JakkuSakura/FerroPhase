@@ -11,7 +11,7 @@ fi
 
 mkdir -p "$SNAPSHOT_DIR"
 
-if ! (cd "$ROOT_DIR" && LLVM_SYS_191_PREFIX="${LLVM_SYS_191_PREFIX:-}" cargo build -p fp-cli --release); then
+if ! (cd "$ROOT_DIR" && LLVM_SYS_210_PREFIX="${LLVM_SYS_210_PREFIX:-}" cargo build -p fp-cli --release); then
   echo "Snapshot check skipped: failed to build fp-cli." >&2
   exit 0
 fi

@@ -1,7 +1,8 @@
 use crate::ast::items::LowerItemsError;
-use crate::lexer::tokenizer::strip_number_suffix;
-use crate::lexer::tokenizer::lex_lexemes;
+use crate::cst::parse_expr_lexemes_prefix_to_cst;
 use crate::lexer::lexeme::LexemeKind;
+use crate::lexer::tokenizer::lex_lexemes;
+use crate::lexer::tokenizer::strip_number_suffix;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
@@ -9,17 +10,16 @@ use fp_core::ast::{
     ExprFormatString, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop,
     ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
     ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
-    FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, ImplTraits, Locator, MacroDelimiter,
-    MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent,
-    PatternKind, PatternQuote, PatternStruct, PatternQuotePlural, PatternStructField,
-    PatternStructural, PatternTuple, PatternTupleStruct, PatternType, PatternVariant,
-    PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField, Ty, TypeArray,
-    TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuote, TypeReference, TypeSlice,
-    TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
+    FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, ImplTraits, Locator,
+    MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern,
+    PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
+    PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
+    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
+    Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuote,
+    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::ops::{BinOpKind, UnOpKind};
-use crate::cst::parse_expr_lexemes_prefix_to_cst;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LowerError {
@@ -87,17 +87,8 @@ fn quote_kind_from_cst(node: &SyntaxNode) -> Result<Option<QuoteFragmentKind>, L
             "stmt" => QuoteFragmentKind::Stmt,
             "item" => QuoteFragmentKind::Item,
             "type" => QuoteFragmentKind::Type,
-            "items"
-            | "fns"
-            | "structs"
-            | "enums"
-            | "traits"
-            | "impls"
-            | "consts"
-            | "statics"
-            | "mods"
-            | "uses"
-            | "macros" => {
+            "items" | "fns" | "structs" | "enums" | "traits" | "impls" | "consts" | "statics"
+            | "mods" | "uses" | "macros" => {
                 tracing::warn!("deprecated plural quote fragment kind: {}", kind_tok.text);
                 QuoteFragmentKind::Item
             }
@@ -284,7 +275,11 @@ fn quote_pattern_kind_from_cst(
             "stmt" => (QuoteFragmentKind::Stmt, None, false),
             "item" => (QuoteFragmentKind::Item, None, false),
             "type" => (QuoteFragmentKind::Type, None, false),
-            "fn" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Function), false),
+            "fn" => (
+                QuoteFragmentKind::Item,
+                Some(QuoteItemKind::Function),
+                false,
+            ),
             "struct" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Struct), false),
             "enum" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Enum), false),
             "trait" => (QuoteFragmentKind::Item, Some(QuoteItemKind::Trait), false),
@@ -803,10 +798,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .map(lower_expr_from_cst)
                 .transpose()?
                 .map(Box::new);
-            let end = end_node
-                .map(lower_expr_from_cst)
-                .transpose()?
-                .map(Box::new);
+            let end = end_node.map(lower_expr_from_cst).transpose()?.map(Box::new);
             Ok(ExprKind::Range(ExprRange {
                 start,
                 limit,
@@ -957,9 +949,7 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
         }
         for next in node.children.iter().skip(idx + 1) {
             match next {
-                crate::syntax::SyntaxElement::Node(n)
-                    if n.kind.category() == CstCategory::Expr =>
-                {
+                crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
                     update = Some(lower_expr_from_cst(n.as_ref())?);
                     break;
                 }
@@ -1251,9 +1241,10 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 let patterns = exprs
                     .map(lower_match_pattern_from_cst)
                     .collect::<Result<Vec<_>, _>>()?;
-                return Ok(Pattern::new(PatternKind::QuotePlural(
-                    PatternQuotePlural { fragment, patterns },
-                )));
+                return Ok(Pattern::new(PatternKind::QuotePlural(PatternQuotePlural {
+                    fragment,
+                    patterns,
+                })));
             }
             let callee_expr = lower_expr_from_cst(callee)?;
             let locator = match callee_expr.kind() {
@@ -1530,9 +1521,7 @@ fn parse_f_string_template(input: &str) -> Result<ExprFormatString, LowerError> 
             args.push(expr);
             parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
                 arg_ref: FormatArgRef::Implicit,
-                format_spec: format_spec
-                    .filter(|s| !s.is_empty())
-                    .map(|s| s.to_string()),
+                format_spec: format_spec.filter(|s| !s.is_empty()).map(|s| s.to_string()),
             }));
             continue;
         }
@@ -1566,10 +1555,7 @@ fn parse_f_string_expr(src: &str) -> Result<Expr, LowerError> {
         LowerError::Unsupported(format!("failed to tokenize f-string expression: {err}"))
     })?;
     let (cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
-        LowerError::Unsupported(format!(
-            "failed to parse f-string expression: {}",
-            err
-        ))
+        LowerError::Unsupported(format!("failed to parse f-string expression: {}", err))
     })?;
     if lexemes[consumed..]
         .iter()
@@ -1662,9 +1648,7 @@ fn lower_ty_expr(node: &SyntaxNode) -> Result<Ty, LowerError> {
         .children
         .iter()
         .find_map(|child| match child {
-            crate::syntax::SyntaxElement::Node(n)
-                if n.kind.category() == CstCategory::Expr =>
-            {
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
                 Some(n.as_ref())
             }
             _ => None,
@@ -2285,9 +2269,7 @@ fn range_operator_is_leading(node: &SyntaxNode) -> bool {
             {
                 return true;
             }
-            crate::syntax::SyntaxElement::Node(n)
-                if n.kind.category() == CstCategory::Expr =>
-            {
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Expr => {
                 return false;
             }
             _ => {}

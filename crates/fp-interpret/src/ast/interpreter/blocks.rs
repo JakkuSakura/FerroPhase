@@ -34,7 +34,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     QuotedFragment::Stmts(_)
                     | QuotedFragment::Items(_)
                     | QuotedFragment::Type(_) => {
-                        self.emit_error("cannot splice non-expression token in expression position");
+                        self.emit_error(
+                            "cannot splice non-expression token in expression position",
+                        );
                     }
                 }
             }
@@ -152,8 +154,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 let specialization_name = if let Some(name) = specialization_name {
                                     name
                                 } else {
-                                    let counter =
-                                        self.specialization_counter.entry(base_name.clone()).or_default();
+                                    let counter = self
+                                        .specialization_counter
+                                        .entry(base_name.clone())
+                                        .or_default();
                                     *counter += 1;
                                     let name = format!("{}__const_{}", base_name, *counter);
                                     self.specialization_cache
@@ -426,10 +430,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.enter_const_region();
                             let flow = self.eval_block_runtime(inner_block);
                             self.exit_const_region();
-                            let pending = self
-                                .pending_stmt_splices
-                                .pop()
-                                .unwrap_or_default();
+                            let pending = self.pending_stmt_splices.pop().unwrap_or_default();
                             match flow {
                                 RuntimeFlow::Value(_) => {}
                                 RuntimeFlow::Break(_)
@@ -455,17 +456,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.evaluate_function_body(expr_stmt.expr.as_mut());
                         new_stmts.push(stmt);
                     }
-            }
-            BlockStmt::Item(item) => {
-                self.evaluate_item(item.as_mut());
-                if matches!(self.mode, InterpreterMode::CompileTime)
-                    && is_quote_only_item(item.as_ref())
-                {
-                    self.mark_mutated();
-                } else {
-                    new_stmts.push(stmt);
                 }
-            }
+                BlockStmt::Item(item) => {
+                    self.evaluate_item(item.as_mut());
+                    if matches!(self.mode, InterpreterMode::CompileTime)
+                        && is_quote_only_item(item.as_ref())
+                    {
+                        self.mark_mutated();
+                    } else {
+                        new_stmts.push(stmt);
+                    }
+                }
                 BlockStmt::Let(let_stmt) => {
                     self.evaluate_function_let_stmt(let_stmt);
                     new_stmts.push(stmt);

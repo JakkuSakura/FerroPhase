@@ -3,7 +3,7 @@
 use crate::configs::ManifestConfig;
 use crate::models::{DependencyModel, DependencyModelMap, PackageModel, PatchMap};
 use crate::utils::glob_relative;
-use eyre::{bail, ContextCompat, Result};
+use eyre::{ContextCompat, Result, bail};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -20,7 +20,7 @@ pub struct WorkspaceModel {
     pub exclude: Vec<String>,
     /// Cargo resolver version (1 or 2)
     pub resolver: Option<String>,
-    
+
     /// Custom workspace metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyModelMap,
@@ -69,7 +69,9 @@ impl WorkspaceModel {
             exclude: config1.exclude,
             resolver: config1.resolver,
             custom: config1.custom,
-            dependencies: config1.dependencies.clone()
+            dependencies: config1
+                .dependencies
+                .clone()
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
@@ -118,10 +120,7 @@ impl WorkspaceModel {
             self.name
         )
     }
-    pub fn find_dependency(
-        &self,
-        name: &str,
-    ) -> Option<DependencyModel> {
+    pub fn find_dependency(&self, name: &str) -> Option<DependencyModel> {
         self.dependencies.get(name).cloned()
     }
 }

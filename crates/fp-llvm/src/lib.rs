@@ -183,10 +183,7 @@ impl LlvmCompiler {
         // Verify the module
         llvm_ctx.verify_module().map_err(|e| {
             tracing::error!("[fp-llvm] module verification failed: {}", e);
-            fp_core::error::Error::from(format!(
-                "LLVM module verification failed: {}",
-                e
-            ))
+            fp_core::error::Error::from(format!("LLVM module verification failed: {}", e))
         })?;
 
         // Persist LLVM IR to file for downstream tools (llc/clang)

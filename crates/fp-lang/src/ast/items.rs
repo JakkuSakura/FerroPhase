@@ -1,16 +1,16 @@
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, FunctionParam,
+    AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, ExprUnOp, FunctionParam,
     FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item, ItemDeclConst,
     ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic,
-    ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter,
+    ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup,
+    ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter,
     MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum,
-    TypeQuote, TypeStruct, Value, Visibility, ExprUnOp,
+    TypeQuote, TypeStruct, Value, Visibility,
 };
-use fp_core::ops::UnOpKind;
 use fp_core::cst::CstCategory;
+use fp_core::ops::UnOpKind;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LowerItemsError {
@@ -367,17 +367,8 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
                     "stmt" => Some(QuoteFragmentKind::Stmt),
                     "item" => Some(QuoteFragmentKind::Item),
                     "type" => Some(QuoteFragmentKind::Type),
-                    "items"
-                    | "fns"
-                    | "structs"
-                    | "enums"
-                    | "traits"
-                    | "impls"
-                    | "consts"
-                    | "statics"
-                    | "mods"
-                    | "uses"
-                    | "macros" => {
+                    "items" | "fns" | "structs" | "enums" | "traits" | "impls" | "consts"
+                    | "statics" | "mods" | "uses" | "macros" => {
                         tracing::warn!("deprecated plural quote fragment kind: {}", id.as_str());
                         Some(QuoteFragmentKind::Item)
                     }
@@ -390,9 +381,9 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
             _ => None,
         })
         .or_else(|| {
-            if node.children.iter().any(|c| {
-                matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "quote")
-            }) {
+            if node.children.iter().any(
+                |c| matches!(c, SyntaxElement::Token(t) if !t.is_trivia() && t.text == "quote"),
+            ) {
                 Some(QuoteFragmentKind::Item)
             } else {
                 None
@@ -402,9 +393,7 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
     let body_node = first_child_by_category(node, CstCategory::Expr)
         .ok_or(LowerItemsError::MissingToken("fn body"))?;
     let body = lower_expr_from_cst(body_node).map_err(|err| match err {
-        crate::ast::expr::LowerError::UnexpectedNode(kind) => {
-            LowerItemsError::UnexpectedNode(kind)
-        }
+        crate::ast::expr::LowerError::UnexpectedNode(kind) => LowerItemsError::UnexpectedNode(kind),
         _ => LowerItemsError::UnexpectedNode(node.kind),
     })?;
     let body = body;
@@ -785,11 +774,14 @@ fn lower_bound_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerItemsError>
             .children
             .iter()
             .find_map(|c| match c {
-                SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => Some(n.as_ref()),
+                SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
+                    Some(n.as_ref())
+                }
                 _ => None,
             })
             .ok_or(LowerItemsError::UnexpectedNode(node.kind))?;
-        let ty = lower_type_from_cst(inner).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+        let ty =
+            lower_type_from_cst(inner).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
         let inner_expr = Expr::value(Value::Type(ty));
         let expr = ExprKind::UnOp(ExprUnOp {
             op: UnOpKind::Not,

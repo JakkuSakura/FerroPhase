@@ -19,9 +19,9 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
 };
+use fp_core::intrinsics::IntrinsicNormalizer;
 #[cfg(feature = "bootstrap")]
 use fp_core::intrinsics::NoopIntrinsicNormalizer;
-use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::workspace::{WorkspaceDocument, WorkspaceModule, WorkspacePackage};
 use fp_core::{hir, lir};
@@ -381,7 +381,8 @@ impl Pipeline {
             CliError::Compilation(format!("Unsupported source language: {}", language))
         })?;
 
-        let ast = self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)?;
+        let ast =
+            self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)?;
         if language == languages::FERROPHASE {
             if let Some(path) = input_path {
                 return self.resolve_file_modules(options, &frontend, ast, path);
@@ -783,12 +784,9 @@ impl Pipeline {
         }
 
         if stage_enabled(options, STAGE_CONST_EVAL) {
-            self.run_stage(
-                STAGE_CONST_EVAL,
-                &diagnostic_manager,
-                options,
-                |pipeline| pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager),
-            )?;
+            self.run_stage(STAGE_CONST_EVAL, &diagnostic_manager, options, |pipeline| {
+                pipeline.stage_const_eval(&mut ast, options, &diagnostic_manager)
+            })?;
         }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
@@ -925,7 +923,6 @@ impl Pipeline {
                     },
                 )?;
             }
-
         }
 
         let output = if matches!(target, PipelineTarget::Rust) {
@@ -1063,8 +1060,7 @@ impl Pipeline {
                         },
                     )?;
 
-                    let repr =
-                        format!("; MIR\n{}\n\n; LIR\n{}", mir.mir_text, lir.lir_text);
+                    let repr = format!("; MIR\n{}\n\n; LIR\n{}", mir.mir_text, lir.lir_text);
                     PipelineOutput::Code(repr)
                 }
                 PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
@@ -1095,7 +1091,8 @@ impl Pipeline {
                 Self::stage_failure(STAGE_RUNTIME_MATERIALIZE)
             })?;
             let std_node = self.parse_source_public(&source, Some(&std_path))?;
-            let merged = merge_std_module(ast.clone(), std_node, manager, STAGE_RUNTIME_MATERIALIZE)?;
+            let merged =
+                merge_std_module(ast.clone(), std_node, manager, STAGE_RUNTIME_MATERIALIZE)?;
             *ast = merged;
         }
         Ok(())
@@ -1422,12 +1419,7 @@ impl Pipeline {
             &diagnostic_manager,
             &options,
             |pipeline| {
-                pipeline.stage_hir_to_mir(
-                    &hir_program,
-                    &options,
-                    &base_path,
-                    &diagnostic_manager,
-                )
+                pipeline.stage_hir_to_mir(&hir_program, &options, &base_path, &diagnostic_manager)
             },
         )?;
         let lir = self.run_stage(
@@ -2394,8 +2386,7 @@ fn merge_std_module(
     };
     let NodeKind::File(std_file) = std_kind else {
         manager.add_diagnostic(
-            Diagnostic::error("std module must be a file".to_string())
-                .with_source_context(stage),
+            Diagnostic::error("std module must be a file".to_string()).with_source_context(stage),
         );
         return Err(Pipeline::stage_failure(stage));
     };
@@ -2423,9 +2414,7 @@ fn merge_std_module(
     for item in &mut file.items {
         if let fp_core::ast::ItemKind::Module(existing) = item.kind_mut() {
             if existing.name.as_str() == "std" {
-                existing
-                    .items
-                    .extend(std::mem::take(&mut std_module.items));
+                existing.items.extend(std::mem::take(&mut std_module.items));
                 merged_into_existing = true;
                 break;
             }
@@ -2503,7 +2492,10 @@ impl ModuleTree {
             return;
         }
         let head = path[0].clone();
-        let child = self.children.entry(head).or_insert_with(ModuleTree::default);
+        let child = self
+            .children
+            .entry(head)
+            .or_insert_with(ModuleTree::default);
         if path.len() == 1 {
             if child.items.is_none() {
                 child.items = Some(items);
@@ -2725,7 +2717,11 @@ fn expand_import_tree_with_base(
         ItemImportTree::Group(group) => {
             let mut results = Vec::new();
             for item in &group.items {
-                results.extend(expand_import_tree_with_base(item, base.clone(), module_path));
+                results.extend(expand_import_tree_with_base(
+                    item,
+                    base.clone(),
+                    module_path,
+                ));
             }
             results
         }
@@ -2787,7 +2783,11 @@ fn expand_import_segments(
         ItemImportTree::Group(group) => {
             let mut results = Vec::new();
             for item in &group.items {
-                results.extend(expand_import_tree_with_base(item, base.clone(), module_path));
+                results.extend(expand_import_tree_with_base(
+                    item,
+                    base.clone(),
+                    module_path,
+                ));
             }
             if rest.is_empty() {
                 results
@@ -2822,9 +2822,7 @@ fn expand_import_segments(
             }
         }
         ItemImportTree::Root => expand_import_segments(rest, Vec::new(), module_path),
-        ItemImportTree::SelfMod => {
-            expand_import_segments(rest, module_path.to_vec(), module_path)
-        }
+        ItemImportTree::SelfMod => expand_import_segments(rest, module_path.to_vec(), module_path),
         ItemImportTree::SuperMod => {
             let mut parent = module_path.to_vec();
             parent.pop();

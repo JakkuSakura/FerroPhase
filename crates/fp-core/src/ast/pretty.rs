@@ -518,7 +518,11 @@ impl PrettyPrintable for ast::Item {
                 let mut line = format!(
                     "{}const {}{}",
                     visibility_prefix(&def.visibility),
-                    if def.mutable.unwrap_or(false) { "mut " } else { "" },
+                    if def.mutable.unwrap_or(false) {
+                        "mut "
+                    } else {
+                        ""
+                    },
                     def.name
                 );
                 if let Some(ty) = ty_display {
@@ -906,7 +910,12 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
                 None => "",
             };
             if let Some(inner) = &quote.inner {
-                format!("Quote<{}{}>({})", kind, item, render_ty_brief(inner.as_ref()))
+                format!(
+                    "Quote<{}{}>({})",
+                    kind,
+                    item,
+                    render_ty_brief(inner.as_ref())
+                )
             } else {
                 format!("Quote<{}{}>", kind, item)
             }
@@ -1227,7 +1236,11 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             format!("{}({})", render_invoke_target(&invoke.target), args)
         }
         ast::ExprKind::Struct(expr_struct) => {
-            let update = if expr_struct.update.is_some() { " .." } else { "" };
+            let update = if expr_struct.update.is_some() {
+                " .."
+            } else {
+                ""
+            };
             format!(
                 "{} {{ ...{} }}",
                 render_expr_inline(expr_struct.name.as_ref()),

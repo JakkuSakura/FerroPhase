@@ -1,12 +1,12 @@
 use crate::{Result, cli::CliConfig, pipeline::Pipeline};
 use clap::{ArgAction, Args, ValueEnum, ValueHint};
+#[cfg(any(test, feature = "bootstrap"))]
+use fp_core::ast::{File, Item, ItemKind, Module, Node};
 use fp_core::pretty::{PrettyOptions, pretty};
 use fp_typescript::frontend::TsParseMode;
 use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(any(test, feature = "bootstrap"))]
-use fp_core::ast::{File, Item, ItemKind, Module, Node};
 
 /// Remove un-serializable raw macro definition items (e.g., `macro_rules!`) from a Rust file AST.
 ///
@@ -474,7 +474,10 @@ fn is_package_manifest(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| {
             let lower = name.to_ascii_lowercase();
-            matches!(lower.as_str(), "cargo.toml" | "package.json" | "magnet.toml")
+            matches!(
+                lower.as_str(),
+                "cargo.toml" | "package.json" | "magnet.toml"
+            )
         })
         .unwrap_or(false)
 }

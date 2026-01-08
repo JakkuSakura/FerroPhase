@@ -1,0 +1,221 @@
+hir::Program {
+    struct __Closure0 {
+        pub test: TestCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.test.run()
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub fn factorial(n: i64) -> i64 {
+        // params: [n: i64]
+        {
+            let mut result = 1;
+            let mut i = 1;
+            while ((i <= n))
+                {
+                    result = (result * i);
+                    i = (i + 1);
+                }
+            result
+        }
+    }
+
+    pub fn const_factorial(n: i64) -> i64 {
+        // params: [n: i64]
+        {
+            if ((n <= 1))
+                {
+                    1
+                }
+            else
+                {
+                    (n * const_factorial((n - 1)))
+                }
+        }
+    }
+
+    pub fn sum_range(start: i64, end: i64) -> i64 {
+        // params: [start: i64, end: i64]
+        {
+            let mut sum = 0;
+            {
+                let mut i = start;
+                while ((i < end))
+                    {
+                        sum = (sum + i);
+                        i = (i + 1);
+                    }
+            }
+            sum
+        }
+    }
+
+    pub fn find_first_divisor(n: i64) -> i64 {
+        // params: [n: i64]
+        {
+            let mut i = 2;
+            loop
+                {
+                    if (((i * i) > n))
+                        {
+                            break n;
+                        }
+                    if (((n % i) == 0))
+                        {
+                            break i;
+                        }
+                    i = (i + 1);
+                }
+        }
+    }
+
+    pub fn sum_even_numbers(limit: i64) -> i64 {
+        // params: [limit: i64]
+        {
+            let mut sum = 0;
+            let mut i = 0;
+            while ((i < limit))
+                {
+                    i = (i + 1);
+                    if (((i % 2) != 0))
+                        {
+                            continue;
+                        }
+                    sum = (sum + i);
+                }
+            sum
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            printf("📘 Tutorial: 13_loops.fp\n");
+            printf("🧭 Focus: Loop constructs: while, for, and loop.\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            printf("=== Loop Constructs ===\n\n");
+            printf("1. While loop - factorial:\n");
+            printf("  5! = %lld\n", factorial(5));
+            printf("  7! = %lld\n", factorial(7));
+            printf("\n2. For loop - sum range:\n");
+            printf("  sum(1..10) = %lld\n", sum_range(1, 10));
+            printf("  sum(5..15) = %lld\n", sum_range(5, 15));
+            printf("\n3. Loop with break expression:\n");
+            printf("  First divisor of 24: %lld\n", find_first_divisor(24));
+            printf("  First divisor of 17: %lld\n", find_first_divisor(17));
+            printf("\n4. Loop with continue:\n");
+            printf("  Sum of even numbers < 10: %lld\n", sum_even_numbers(10));
+            printf("\n5. Nested loops:\n");
+            let mut count = 0;
+            {
+                let mut i = 1;
+                while ((i < 4))
+                    {
+                        <control-flow>;
+                        i = (i + 1);
+                    }
+            }
+            printf("\n  Iterations: %lld\n", count);
+            printf("\n6. Compile-time recursion:\n");
+            pub const FACTORIAL_CONST: i64 =
+                120;
+            printf("  const_factorial(5) = %lld\n", FACTORIAL_CONST);
+            printf("\n✓ Loop constructs demonstrated!\n");
+        }
+    }
+}

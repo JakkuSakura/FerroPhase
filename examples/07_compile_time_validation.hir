@@ -1,0 +1,164 @@
+hir::Program {
+    struct __Closure0 {
+        pub test: TestCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.test.run()
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            printf("📘 Tutorial: 07_compile_time_validation.fp\n");
+            printf("🧭 Focus: Compile-time validation using const expressions and introspection\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            pub struct Data {
+                pub a: i64,
+                pub b: i64,
+                pub c: [u8; 16],
+            }
+            pub struct Header {
+                pub magic: i64,
+                pub version: u8,
+                pub flags: u8,
+                pub pad: [u8; 6],
+            }
+            pub const DATA_SIZE: usize =
+                24;
+            pub const DATA_FIELDS: usize =
+                3;
+            pub const DATA_HAS_A: bool =
+                true;
+            pub const DATA_HAS_X: bool =
+                false;
+            pub const HEADER_SIZE: usize =
+                32;
+            pub const HEADER_FIELDS: usize =
+                4;
+            pub const HEADER_HAS_VERSION: bool =
+                true;
+            printf("data: sizeof=%llu, fields=%llu\n", DATA_SIZE, DATA_FIELDS);
+            printf("data: has_a=%d, has_x=%d\n", DATA_HAS_A, DATA_HAS_X);
+            printf("header: sizeof=%llu, fields=%llu, has_version=%d\n", HEADER_SIZE, HEADER_FIELDS, HEADER_HAS_VERSION);
+            pub const DATA_TYPE_NAME: &str =
+                "struct Data";
+            pub const DATA_FIELD_A_TYPE: &str =
+                "i64\n";
+            pub const HEADER_FIELD_VERSION_TYPE: &str =
+                "u8\n";
+            pub const HAS_TO_STRING: bool =
+                true;
+            printf("types: data='%s' a='%s' version='%s'\n", DATA_TYPE_NAME, DATA_FIELD_A_TYPE, HEADER_FIELD_VERSION_TYPE);
+            printf("data has to_string: %d\n", HAS_TO_STRING);
+            pub const MAX_SIZE: usize =
+                64;
+            pub const DATA_OK: bool =
+                true;
+            pub const HEADER_OK: bool =
+                true;
+            pub const TOTAL_SIZE: usize =
+                56;
+            pub const TOTAL_OK: bool =
+                true;
+            printf("layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\n", DATA_OK, HEADER_OK, TOTAL_OK, TOTAL_SIZE);
+            pub const _WARN: () =
+                {
+                }
+        }
+    }
+}

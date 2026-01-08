@@ -203,7 +203,8 @@ impl Parser {
                 let ty = self.parse_type_node()?;
                 children.push(SyntaxElement::Node(Box::new(ty)));
             } else if kind == SyntaxKind::ExprRange && self.range_end_is_missing() {
-                let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                let span =
+                    span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
                 left = SyntaxNode::new(kind, children, span);
                 continue;
             } else {
@@ -225,7 +226,10 @@ impl Parser {
         )
     }
 
-    fn parse_prefix(&mut self, allow_struct_literal: bool) -> Result<SyntaxNode, ExprCstParseError> {
+    fn parse_prefix(
+        &mut self,
+        allow_struct_literal: bool,
+    ) -> Result<SyntaxNode, ExprCstParseError> {
         if self.peek_non_trivia_normalized() == Some("await") {
             let mut children = Vec::new();
             let start_span = self
@@ -1074,10 +1078,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // '['
         self.bump_trivia_into(&mut children);
-        let index = if matches!(
-            self.peek_non_trivia_raw(),
-            Some("..") | Some("..=")
-        ) {
+        let index = if matches!(self.peek_non_trivia_raw(), Some("..") | Some("..=")) {
             self.parse_range_in_index(None)?
         } else {
             let start = self.parse_expr_bp(0)?;
@@ -1215,10 +1216,7 @@ impl Parser {
         if let Some(tok) = raw.as_deref() {
             if tok.starts_with('"')
                 || (tok.starts_with('\'') && tok.ends_with('\'') && tok.len() >= 2)
-                || tok
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_digit())
+                || tok.chars().next().is_some_and(|c| c.is_ascii_digit())
             {
                 return self.parse_type_value(start);
             }

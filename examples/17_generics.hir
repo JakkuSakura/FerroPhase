@@ -1,0 +1,168 @@
+hir::Program {
+    struct __Closure0 {
+        pub test: TestCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.test.run()
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub struct Pair<T, U> {
+        pub first: T,
+        pub second: U,
+    }
+
+    impl Pair<T, U> {
+        fn new(first: T, second: U) -> Self {
+            // params: [first: T, second: U]
+            {
+                Self { first: first, second: second }
+            }
+        }
+    }
+
+    pub enum Option<T> {
+        Some,
+        None,
+    }
+
+    impl Option<T> {
+        fn unwrap_or(self: Option<T>, default: T) -> T {
+            // params: [self: Option<T>, default: T]
+            {
+                match (self)
+                {
+                    Option::Some(v) =>
+                        v
+                    Option::None =>
+                        default
+                }
+            }
+        }
+    }
+
+    pub fn max<T>(a: T, b: T) -> T {
+        // params: [a: T, b: T]
+        {
+            if ((a > b))
+                {
+                    a
+                }
+            else
+                {
+                    b
+                }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            printf("📘 Tutorial: 17_generics.fp\n");
+            printf("🧭 Focus: Generics: type parameters and monomorphization\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            let pair = Pair::new(42, "hello");
+            std::Println(2 args);
+            printf("max(10, 20) = %lld\n", max(10, 20));
+            printf("max(3.5, 2.1) = %f\n", max(3.5, 2.1));
+            let some: Option<i64> = Option::Some(100);
+            let none: Option<i64> = Option::None;
+            std::Println(1 args);
+            std::Println(1 args);
+        }
+    }
+}

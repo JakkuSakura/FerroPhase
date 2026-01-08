@@ -1,8 +1,8 @@
 //! Package configuration for Magnet.toml files
 
+use crate::configs::DependencyConfigMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use crate::configs::DependencyConfigMap;
 
 /// Package-specific configuration
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

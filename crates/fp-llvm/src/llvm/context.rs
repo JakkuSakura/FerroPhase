@@ -32,8 +32,7 @@ impl LlvmContext {
 
     /// Initialize target machine for the current platform.
     pub fn init_target_machine(&mut self) -> Result<(), String> {
-        Target::initialize_native(&InitializationConfig::default())
-            .map_err(|e| e.to_string())?;
+        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
 
         let triple = TargetMachine::get_default_triple();
         self.module.set_triple(&triple);
@@ -64,10 +63,7 @@ impl LlvmContext {
 
     /// Verify the module.
     pub fn verify_module(&self) -> Result<(), String> {
-        self.module
-            .verify()
-            .map_err(|e| e.to_string())
-            .map(|_| ())
+        self.module.verify().map_err(|e| e.to_string()).map(|_| ())
     }
 
     /// Print the module IR to string.
@@ -77,6 +73,8 @@ impl LlvmContext {
 
     /// Write module to file.
     pub fn write_to_file(&self, output_path: &Path) -> Result<(), String> {
-        self.module.print_to_file(output_path).map_err(|e| e.to_string())
+        self.module
+            .print_to_file(output_path)
+            .map_err(|e| e.to_string())
     }
 }

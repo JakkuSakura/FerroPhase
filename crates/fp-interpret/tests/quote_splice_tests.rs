@@ -21,10 +21,8 @@ fn quote_item_expr(item: Item) -> Expr {
 
 #[test]
 fn quote_fn_structural_pattern_binds_name() -> Result<()> {
-    let func = ItemDefFunction::new_simple(
-        Ident::new("inspected"),
-        Expr::value(Value::unit()).into(),
-    );
+    let func =
+        ItemDefFunction::new_simple(Ident::new("inspected"), Expr::value(Value::unit()).into());
     let token = Value::QuoteToken(ValueQuoteToken {
         kind: QuoteFragmentKind::Item,
         value: QuoteTokenValue::Items(vec![Item::from(ItemKind::DefFunction(func))]),
@@ -67,14 +65,8 @@ fn quote_fn_structural_pattern_binds_name() -> Result<()> {
 
 #[test]
 fn quote_items_plural_pattern_binds_list() -> Result<()> {
-    let func_a = ItemDefFunction::new_simple(
-        Ident::new("a"),
-        Expr::value(Value::unit()).into(),
-    );
-    let func_b = ItemDefFunction::new_simple(
-        Ident::new("b"),
-        Expr::value(Value::unit()).into(),
-    );
+    let func_a = ItemDefFunction::new_simple(Ident::new("a"), Expr::value(Value::unit()).into());
+    let func_b = ItemDefFunction::new_simple(Ident::new("b"), Expr::value(Value::unit()).into());
     let token = Value::QuoteToken(ValueQuoteToken {
         kind: QuoteFragmentKind::Item,
         value: QuoteTokenValue::Items(vec![
@@ -184,9 +176,9 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
                 Some(arg) => match arg.kind() {
                     ExprKind::Value(v) => matches!(v.as_ref(), Value::Int(i) if i.value == 42),
                     _ => false,
-                }
+                },
                 None => false,
-            }
+            },
             _ => false,
         },
         _ => false,
@@ -413,13 +405,13 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
 #[test]
 fn splice_executes_expr_outside_const_block() -> Result<()> {
     let quoted_expr = Expr::from(ExprKind::Quote(ExprQuote {
-        block: ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(
-            Expr::from(ExprKind::BinOp(ExprBinOp {
+        block: ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(Expr::from(
+            ExprKind::BinOp(ExprBinOp {
                 kind: BinOpKind::Add,
                 lhs: Box::new(Expr::value(Value::int(7))),
                 rhs: Box::new(Expr::value(Value::int(5))),
-            })),
-        ))]),
+            }),
+        )))]),
         kind: Some(QuoteFragmentKind::Expr),
     }));
     let splice_expr = Expr::from(ExprKind::Splice(ExprSplice {
@@ -433,8 +425,7 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
         BlockStmt::Expr(BlockStmtExpr::new(Expr::value(Value::int(0)))),
     ]);
 
-    let mut func =
-        ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body).into());
+    let mut func = ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body).into());
     func.sig.ret_ty = Some(i32_ty());
 
     let file = File {
@@ -513,8 +504,7 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
         BlockStmt::Expr(BlockStmtExpr::new(splice_expr).with_semicolon(true)),
         BlockStmt::Expr(BlockStmtExpr::new(Expr::value(Value::int(0)))),
     ]);
-    let mut func =
-        ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body).into());
+    let mut func = ItemDefFunction::new_simple(Ident::new("demo"), Expr::block(fn_body).into());
     func.sig.ret_ty = Some(i32_ty());
 
     let file = File {

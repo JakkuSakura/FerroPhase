@@ -40,17 +40,15 @@ pub fn run(options: &RunOptions) -> Result<()> {
     let graph_path = write_package_graph(&root, &package, &output_dir, build_options)?;
 
     match options.mode {
-        RunMode::Compile => {
-            run_compile(
-                &package,
-                &entry,
-                &sources,
-                &graph_path,
-                &options.resolver,
-                &output_dir,
-                &options.build_options,
-            )
-        }
+        RunMode::Compile => run_compile(
+            &package,
+            &entry,
+            &sources,
+            &graph_path,
+            &options.resolver,
+            &output_dir,
+            &options.build_options,
+        ),
         RunMode::Interpret => run_interpret(&package, &sources, &graph_path, &options.resolver),
     }
 }
@@ -84,20 +82,23 @@ fn run_compile(
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
 
-    let status = command.status().with_context(|| {
-        format!("Failed to execute fp at '{}'", fp_bin.display())
-    })?;
+    let status = command
+        .status()
+        .with_context(|| format!("Failed to execute fp at '{}'", fp_bin.display()))?;
     if !status.success() {
-        bail!("fp compile failed with status {}", status.code().unwrap_or(-1));
+        bail!(
+            "fp compile failed with status {}",
+            status.code().unwrap_or(-1)
+        );
     }
 
     let mut exec = Command::new(&entry_output);
     exec.stdin(Stdio::inherit());
     exec.stdout(Stdio::inherit());
     exec.stderr(Stdio::inherit());
-    let status = exec.status().with_context(|| {
-        format!("Failed to execute output at '{}'", entry_output.display())
-    })?;
+    let status = exec
+        .status()
+        .with_context(|| format!("Failed to execute output at '{}'", entry_output.display()))?;
     if !status.success() {
         bail!(
             "Execution failed with status {}",
@@ -128,11 +129,14 @@ fn run_interpret(
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
 
-    let status = command.status().with_context(|| {
-        format!("Failed to execute fp at '{}'", fp_bin.display())
-    })?;
+    let status = command
+        .status()
+        .with_context(|| format!("Failed to execute fp at '{}'", fp_bin.display()))?;
     if !status.success() {
-        bail!("fp interpret failed with status {}", status.code().unwrap_or(-1));
+        bail!(
+            "fp interpret failed with status {}",
+            status.code().unwrap_or(-1)
+        );
     }
 
     Ok(())
@@ -149,8 +153,8 @@ fn resolve_start_dir(path: &Path) -> Result<PathBuf> {
 
 fn resolve_run_path(options: &RunOptions) -> Result<PathBuf> {
     if let Some(example) = options.example.as_ref() {
-        let cwd = std::env::current_dir()
-            .map_err(|err| eyre::eyre!("Failed to resolve cwd: {err}"))?;
+        let cwd =
+            std::env::current_dir().map_err(|err| eyre::eyre!("Failed to resolve cwd: {err}"))?;
         let path = cwd.join("examples").join(example);
         if !path.exists() {
             bail!("Example '{}' not found at {}", example, path.display());
@@ -192,7 +196,11 @@ pub(crate) fn resolve_package(
     }
 }
 
-pub(crate) fn resolve_entry(path: &Path, package: &PackageModel, entry: Option<&Path>) -> Result<PathBuf> {
+pub(crate) fn resolve_entry(
+    path: &Path,
+    package: &PackageModel,
+    entry: Option<&Path>,
+) -> Result<PathBuf> {
     let entry_path = if let Some(entry) = entry {
         resolve_path(entry, &package.root_path)
     } else if path.is_file() {
@@ -237,10 +245,7 @@ pub(crate) fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Ve
 }
 
 pub(crate) fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf {
-    let stem = entry
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("main");
+    let stem = entry.file_stem().and_then(|s| s.to_str()).unwrap_or("main");
     let ext = if cfg!(windows) { "exe" } else { "out" };
     output_dir.join(format!("{}.{}", stem, ext))
 }
@@ -269,7 +274,11 @@ fn write_package_graph(
 }
 
 fn build_output_dir(package: &PackageModel, profile: &str) -> PathBuf {
-    package.root_path.join("target").join(profile).join("magnet")
+    package
+        .root_path
+        .join("target")
+        .join(profile)
+        .join("magnet")
 }
 
 fn resolve_profile(options: &RunOptions) -> String {
@@ -340,11 +349,7 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 }
 
 fn binary_name() -> &'static str {
-    if cfg!(windows) {
-        "fp.exe"
-    } else {
-        "fp"
-    }
+    if cfg!(windows) { "fp.exe" } else { "fp" }
 }
 
 pub(crate) fn find_nearest_package(start_dir: &Path) -> Result<Option<PackageModel>> {

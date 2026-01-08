@@ -1147,11 +1147,7 @@ impl<'a> ExprParser<'a> {
                     }
                 }
 
-                Ok(ExprIntrinsicCall::new(
-                    kind,
-                    IntrinsicCallPayload::Args { args },
-                )
-                .into())
+                Ok(ExprIntrinsicCall::new(kind, IntrinsicCallPayload::Args { args }).into())
             }
             Err(e) => self.err(
                 format!(
@@ -1244,20 +1240,8 @@ impl<'a> ExprParser<'a> {
                     "stmt" => Some(QuoteFragmentKind::Stmt),
                     "item" => Some(QuoteFragmentKind::Item),
                     "type" => Some(QuoteFragmentKind::Type),
-                    "items"
-                    | "fns"
-                    | "structs"
-                    | "enums"
-                    | "traits"
-                    | "impls"
-                    | "consts"
-                    | "statics"
-                    | "mods"
-                    | "uses"
-                    | "macros"
-                    | "exprs"
-                    | "stmts"
-                    | "types" => {
+                    "items" | "fns" | "structs" | "enums" | "traits" | "impls" | "consts"
+                    | "statics" | "mods" | "uses" | "macros" | "exprs" | "stmts" | "types" => {
                         tracing::warn!("deprecated plural quote fragment kind: {}", kind_name);
                         Some(QuoteFragmentKind::Item)
                     }
@@ -1285,7 +1269,10 @@ impl<'a> ExprParser<'a> {
         let block_tokens = TokenStream::from(TokenTree::Group(group));
         let syn_block = syn::parse2::<syn::Block>(block_tokens).ok()?;
         let ast_block = self.parser.parse_block(syn_block).ok()?;
-        Some(Expr::from(ExprKind::Quote(ExprQuote { block: ast_block, kind })))
+        Some(Expr::from(ExprKind::Quote(ExprQuote {
+            block: ast_block,
+            kind,
+        })))
     }
 
     fn parse_expr_const(&self, expr: syn::ExprConst) -> Result<Expr> {

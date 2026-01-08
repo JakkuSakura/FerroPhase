@@ -1,0 +1,169 @@
+hir::Program {
+    struct __Closure0 {
+        pub test: TestCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.test.run()
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::CatchUnwind(1 args);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            printf("  %s ... ok\n", test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf("  %s ... FAILED\n", test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub const Shape: bool =
+        false;
+
+    pub struct Circle {
+        pub radius: f64,
+    }
+
+    impl Shape for Circle {
+        fn area(self: &Circle) -> f64 {
+            // params: [self: &Circle]
+            {
+                ((3.14159 * self.radius) * self.radius)
+            }
+        }
+
+        fn describe(self: &Circle) -> () {
+            // params: [self: &Circle]
+            {
+                std::Println(1 args);
+            }
+        }
+    }
+
+    pub struct Rectangle {
+        pub width: f64,
+        pub height: f64,
+    }
+
+    impl Shape for Rectangle {
+        fn area(self: &Rectangle) -> f64 {
+            // params: [self: &Rectangle]
+            {
+                (self.width * self.height)
+            }
+        }
+
+        fn describe(self: &Rectangle) -> () {
+            // params: [self: &Rectangle]
+            {
+                std::Println(1 args);
+            }
+        }
+    }
+
+    pub fn print_area<T>(shape: &T) -> () {
+        // params: [shape: &T]
+        {
+            printf("%.2f\n", shape.area());
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            printf("📘 Tutorial: 16_traits.fp\n");
+            printf("🧭 Focus: Traits: defining shared behavior with default methods\n");
+            printf("🧪 What to look for: labeled outputs below\n");
+            printf("✅ Expectation: outputs match labels\n");
+            printf("\n");
+            let circle = Circle { radius: 5 };
+            let rect = Rectangle { width: 4, height: 6 };
+            circle.describe();
+            rect.describe();
+            print_area(circle);
+            print_area(rect);
+        }
+    }
+}

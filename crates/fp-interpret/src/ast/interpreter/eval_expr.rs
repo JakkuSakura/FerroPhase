@@ -43,7 +43,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.eval_block_runtime(&mut block)
                     }
                     QuotedFragment::Items(_) | QuotedFragment::Type(_) => {
-                        self.emit_error("cannot splice non-expression token in expression position");
+                        self.emit_error(
+                            "cannot splice non-expression token in expression position",
+                        );
                         RuntimeFlow::Value(Value::undefined())
                     }
                 }
@@ -192,7 +194,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                             }
                         }
                         _ => {
-                            self.emit_error("expected boolean match condition in runtime expression");
+                            self.emit_error(
+                                "expected boolean match condition in runtime expression",
+                            );
                             return RuntimeFlow::Value(Value::undefined());
                         }
                     }
@@ -248,7 +252,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut values = Vec::new();
                 let mut current = start;
                 let inclusive = matches!(range.limit, fp_core::ast::ExprRangeLimit::Inclusive);
-                while if inclusive { current <= end } else { current < end } {
+                while if inclusive {
+                    current <= end
+                } else {
+                    current < end
+                } {
                     values.push(Value::int(current));
                     current += 1;
                 }
@@ -498,7 +506,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     } else if let Some(ty) = self.lookup_type(ident.as_str()) {
                         Value::Type(ty)
                     } else {
-                        let mut candidate_names = vec![locator.to_string(), ident.as_str().to_string()];
+                        let mut candidate_names =
+                            vec![locator.to_string(), ident.as_str().to_string()];
                         candidate_names.sort();
                         candidate_names.dedup();
                         for name in candidate_names {
@@ -838,16 +847,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                                     Err(err) => {
                                         let mut guard = err.into_inner();
                                         match &mut *guard {
-                                        Value::List(list) => {
-                                            list.values.push(value);
-                                            self.update_mutable_constant(
-                                                &name,
-                                                Value::List(list.clone()),
-                                            );
-                                            self.mark_mutated();
-                                            self.pending_expr_ty = Some(Ty::unit());
-                                            return Value::unit();
-                                        }
+                                            Value::List(list) => {
+                                                list.values.push(value);
+                                                self.update_mutable_constant(
+                                                    &name,
+                                                    Value::List(list.clone()),
+                                                );
+                                                self.mark_mutated();
+                                                self.pending_expr_ty = Some(Ty::unit());
+                                                return Value::unit();
+                                            }
                                             other => {
                                                 self.emit_error(format!(
                                                     "push expects a mutable list, found {}",

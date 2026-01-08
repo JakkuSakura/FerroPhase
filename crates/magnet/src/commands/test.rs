@@ -44,7 +44,10 @@ pub fn test(options: &TestOptions) -> Result<()> {
         )
     })?;
     if !status.success() {
-        bail!("cargo test failed with status {}", status.code().unwrap_or(-1));
+        bail!(
+            "cargo test failed with status {}",
+            status.code().unwrap_or(-1)
+        );
     }
 
     Ok(())

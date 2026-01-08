@@ -122,7 +122,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     }
                 };
 
-                let replacement = Expr::from_parts(ty_slot.clone(), ExprKind::FormatString(template));
+                let replacement =
+                    Expr::from_parts(ty_slot.clone(), ExprKind::FormatString(template));
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
         }
@@ -133,10 +134,10 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 }
 
 fn parse_type_macro_tokens(tokens: &str) -> Result<fp_core::ast::Ty> {
-    let lexemes = lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-    let (ty_cst, consumed) =
-        parse_type_lexemes_prefix_to_cst(&lexemes, 0, &[])
-            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+    let lexemes =
+        lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+    let (ty_cst, consumed) = parse_type_lexemes_prefix_to_cst(&lexemes, 0, &[])
+        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
 
     if lexemes[consumed..]
         .iter()
@@ -151,7 +152,8 @@ fn parse_type_macro_tokens(tokens: &str) -> Result<fp_core::ast::Ty> {
 }
 
 fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
-    let lexemes = lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+    let lexemes =
+        lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
     let mut idx = 0;
     let mut args = Vec::new();
     while idx < lexemes.len() {
@@ -169,8 +171,8 @@ fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
             parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], 0).map_err(|err| {
                 fp_core::error::Error::from(format!("assert macro parse error: {}", err))
             })?;
-        let expr =
-            lower_expr_from_cst(&expr_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+        let expr = lower_expr_from_cst(&expr_cst)
+            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
         args.push(expr);
         idx += consumed;
     }

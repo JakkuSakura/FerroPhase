@@ -78,11 +78,7 @@ impl ResolverRegistry {
         }
     }
 
-    pub fn register(
-        &mut self,
-        language: ModuleLanguage,
-        resolver: Arc<dyn LanguageResolver>,
-    ) {
+    pub fn register(&mut self, language: ModuleLanguage, resolver: Arc<dyn LanguageResolver>) {
         self.resolvers.insert(language, resolver);
     }
 

@@ -47,10 +47,9 @@ pub struct CargoWorkspaceConfig {
     /// Cargo resolver version (1 or 2)
     #[serde(default)]
     pub resolver: Option<String>,
-    
+
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub dependencies: DependencyConfigMap,
-    
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

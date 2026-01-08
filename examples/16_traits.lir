@@ -1,0 +1,339 @@
+lir::Program {
+    globals:
+        @global_5: [0 x { %__slice, ptr fn() -> void }] [linkage: internal] [visibility: hidden] const align 8 = [0 x { %__slice, ptr fn() -> void }] {  }
+        @global_91: i1 [linkage: internal] [visibility: hidden] const align 1 = bool false
+    functions:
+        fn __closure0_call(arg0: { ptr i8 }) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i8 // arg
+            bb0 // label: bb0 // succs: [bb1]:
+                i0: %r0 = alloca i32 1 align 8 : ptr ptr i8
+                i1: store %local1, %r0 align 8
+                i2: %r2 = bitcast %r0 to ptr ptr i8 : ptr ptr i8
+                i3: %r3 = load %r2 align 8 : ptr i8
+                i4: %r4 = call c @TestCase__run(%r3)
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                terminator: ret void
+        }
+
+        fn std__test__run_tests() -> { i64, i64, i64 } [cc: c, linkage: internal] {
+            locals:
+                %0: { i64, i64, i64 }
+                %1: [0 x { %__slice, ptr fn() -> void }]
+                %2: [0 x { %__slice, ptr fn() -> void }]
+                %3: [0 x { %__slice, ptr fn() -> void }]
+                %4: i64
+                %5: i64
+                %6: i64
+                %7: i1
+                %8: i64
+                %9: { %__slice, ptr fn() -> void }
+                %10: i64
+                %11: i64
+                %12: i1
+                %13: void
+                %14: i1
+                %15: void
+                %16: void
+                %17: i32
+                %18: i32
+                %19: i64
+                %20: i64
+                %21: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i6: %r6 = alloca i32 1 align 8 : ptr i64
+                i7: %r7 = alloca i32 1 align 8 : ptr i64
+                i8: %r8 = alloca i32 1 align 8 : ptr i64
+                i9: %r9 = alloca i32 1 align 1 : ptr i1
+                i10: %r10 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
+                i11: %r11 = alloca i32 1 align 8 : ptr [0 x { %__slice, ptr fn() -> void }]
+                i12: store [0 x { %__slice, ptr fn() -> void }] {  }, %r11 align 8
+                i13: %r13 = alloca i32 1 align 8 : ptr [0 x { %__slice, ptr fn() -> void }]
+                i14: store [0 x { %__slice, ptr fn() -> void }] {  }, %r13 align 8
+                i15: %r15 = alloca i32 1 align 8 : ptr [0 x { %__slice, ptr fn() -> void }]
+                i16: %r16 = load %r13 align 8 : [0 x { %__slice, ptr fn() -> void }]
+                i17: store %r16, %r15 align 8
+                i18: store i64 0, %r8 align 8
+                i19: store i64 0, %r7 align 8
+                i20: store i64 0, %r6 align 8
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0, bb9] // succs: [bb2, bb3]:
+                i21: %r21 = alloca i32 1 align 8 : ptr i64
+                i22: store i64 0, %r21 align 8
+                i23: %r23 = alloca i32 1 align 1 : ptr i1
+                i24: %r24 = load %r6 align 8 : i64
+                i25: %r25 = load %r21 align 8 : i64
+                i26: %r26 = lt %r24, %r25 : i1
+                i27: store %r26, %r23 align 1
+                i28: %r28 = load %r23 align 1 : i1
+                terminator: cond_br %r28, bb2, bb3
+            bb2 // label: bb2 // preds: [bb1]:
+                i29: %r29 = alloca i32 1 align 8 : ptr i64
+                i30: %r30 = load %r6 align 8 : i64
+                i31: store %r30, %r29 align 8
+                i32: %r32 = alloca i32 1 align 8 : ptr i64
+                i33: %r33 = load %r6 align 8 : i64
+                i34: store %r33, %r32 align 8
+                i35: %r35 = alloca i32 1 align 8 : ptr { %__slice, ptr fn() -> void }
+                i36: %r36 = load %r32 align 8 : i64
+                i37: %r37 = mul %r36, i64 24 : i64
+                i38: %r38 = bitcast %r15 to ptr i8 : ptr i8
+                i39: %r39 = gep inbounds %r38 [%r37] : ptr i8
+                i40: %r40 = bitcast %r39 to ptr { %__slice, ptr fn() -> void } : ptr { %__slice, ptr fn() -> void }
+                i41: %r41 = load %r40 align 8 : { %__slice, ptr fn() -> void }
+                i42: store %r41, %r35 align 8
+                i43: %r43 = load %r35 align 8 : { %__slice, ptr fn() -> void }
+                terminator: invoke c @__closure0_call(undef { ptr i8 }) to bb4 unwind bb5
+            bb3 // label: bb3 // preds: [bb1] // succs: [bb12]:
+                i45: %r45 = alloca i32 1 align 8 : ptr i64
+                i46: %r46 = load %r8 align 8 : i64
+                i47: %r47 = load %r7 align 8 : i64
+                i48: %r48 = add %r46, %r47 : i64
+                i49: store %r48, %r45 align 8
+                i50: %r50 = alloca i32 1 align 8 : ptr i64
+                i51: %r51 = load %r45 align 8 : i64
+                i52: store %r51, %r50 align 8
+                i53: %r53 = load %r8 align 8 : i64
+                i54: %r54 = load %r7 align 8 : i64
+                i55: %r55 = load %r50 align 8 : i64
+                i56: %r56 = call c @printf(c"test result: %lld passed; %lld failed; %lld total\n", %r53, %r54, %r55) : i32
+                terminator: br bb12
+            bb4 // label: bb4 // succs: [bb6]:
+                i57: store bool true, %r9 align 1
+                terminator: br bb6
+            bb5 // label: bb5 // succs: [bb6]:
+                i58: %r58 = landingpad { ptr i8, i32 } { catch null ptr i8 } : { ptr i8, i32 }
+                i59: store bool false, %r9 align 1
+                terminator: br bb6
+            bb12 // label: bb12 // preds: [bb3]:
+                i60: %r60 = load %r50 align 8 : i64
+                i61: %r61 = load %r8 align 8 : i64
+                i62: %r62 = load %r7 align 8 : i64
+                i63: %r63 = insertvalue undef { i64, i64, i64 }, %r60, [0] : { i64, i64, i64 }
+                i64: %r64 = insertvalue %r63, %r61, [1] : { i64, i64, i64 }
+                i65: %r65 = insertvalue %r64, %r62, [2] : { i64, i64, i64 }
+                i66: store %r65, %r10 align 8
+                i67: %r67 = load %r10 align 8 : { i64, i64, i64 }
+                terminator: ret %r67
+            bb6 // label: bb6 // preds: [bb4, bb5] // succs: [bb7, bb8]:
+                i68: %r68 = alloca i32 1 align 1 : ptr i1
+                i69: %r69 = load %r9 align 1 : i1
+                i70: store %r69, %r68 align 1
+                i71: %r71 = load %r68 align 1 : i1
+                terminator: cond_br %r71, bb7, bb8
+            bb7 // label: bb7 // preds: [bb6] // succs: [bb10]:
+                i72: %r72 = load %r8 align 8 : i64
+                i73: %r73 = add %r72, i64 1 : i64
+                i74: store %r73, %r8 align 8
+                i75: %r75 = bitcast %r35 to ptr %__slice : ptr %__slice
+                i76: %r76 = load %r75 align 8 : %__slice
+                i77: %r77 = call c @printf(c"  %s ... ok\n", %r76) : i32
+                terminator: br bb10
+            bb8 // label: bb8 // preds: [bb6] // succs: [bb11]:
+                i78: %r78 = load %r7 align 8 : i64
+                i79: %r79 = add %r78, i64 1 : i64
+                i80: store %r79, %r7 align 8
+                i81: %r81 = bitcast %r35 to ptr %__slice : ptr %__slice
+                i82: %r82 = load %r81 align 8 : %__slice
+                i83: %r83 = call c @printf(c"  %s ... FAILED\n", %r82) : i32
+                terminator: br bb11
+            bb10 // label: bb10 // preds: [bb7] // succs: [bb9]:
+                terminator: br bb9
+            bb11 // label: bb11 // preds: [bb8] // succs: [bb9]:
+                terminator: br bb9
+            bb9 // label: bb9 // preds: [bb10, bb11] // succs: [bb1]:
+                i84: %r84 = load %r6 align 8 : i64
+                i85: %r85 = add %r84, i64 1 : i64
+                i86: store %r85, %r6 align 8
+                terminator: br bb1
+        }
+
+        fn std__test__run() -> { i64, i64, i64 } [cc: c, linkage: internal] {
+            locals:
+                %0: { i64, i64, i64 }
+            bb0 // label: bb0 // succs: [bb1]:
+                i87: %r87 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
+                i88: %r88 = call c @std__test__run_tests() : { i64, i64, i64 }
+                i89: store %r88, %r87 align 8 : { i64, i64, i64 }
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                i90: %r90 = load %r87 align 8 : { i64, i64, i64 }
+                terminator: ret %r90
+        }
+
+        fn Circle__area(arg0: ptr { f64 }) -> f64 [cc: c, linkage: internal] {
+            locals:
+                %0: f64
+                %1: ptr { f64 } // arg
+                %2: f64
+            bb0 // label: bb0:
+                i92: %r92 = alloca i32 1 align 8 : ptr f64
+                i93: %r93 = alloca i32 1 align 8 : ptr f64
+                i94: %r94 = bitcast %local1 to ptr f64 : ptr f64
+                i95: %r95 = load %r94 align 8 : f64
+                i96: %r96 = mul f64 3.14159, %r95 : f64
+                i97: store %r96, %r93 align 8
+                i98: %r98 = load %r93 align 8 : f64
+                i99: %r99 = bitcast %local1 to ptr f64 : ptr f64
+                i100: %r100 = load %r99 align 8 : f64
+                i101: %r101 = mul %r98, %r100 : f64
+                i102: store %r101, %r92 align 8
+                i103: %r103 = load %r92 align 8 : f64
+                terminator: ret %r103
+        }
+
+        fn Circle__describe(arg0: ptr { f64 }) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr { f64 } // arg
+                %2: f64
+                %3: void
+            bb0 // label: bb0 // succs: [bb1]:
+                i104: %r104 = call c @Circle__area(%local1) : f64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                i105: %r105 = intrinsic Println "area=%.2f
+" (%r104)
+                terminator: ret void
+        }
+
+        fn Rectangle__area(arg0: ptr { f64, f64 }) -> f64 [cc: c, linkage: internal] {
+            locals:
+                %0: f64
+                %1: ptr { f64, f64 } // arg
+            bb0 // label: bb0:
+                i106: %r106 = alloca i32 1 align 8 : ptr f64
+                i107: %r107 = bitcast %local1 to ptr f64 : ptr f64
+                i108: %r108 = load %r107 align 8 : f64
+                i109: %r109 = bitcast %local1 to ptr i8 : ptr i8
+                i110: %r110 = gep inbounds %r109 [i64 8] : ptr i8
+                i111: %r111 = bitcast %r110 to ptr f64 : ptr f64
+                i112: %r112 = load %r111 align 8 : f64
+                i113: %r113 = mul %r108, %r112 : f64
+                i114: store %r113, %r106 align 8
+                i115: %r115 = load %r106 align 8 : f64
+                terminator: ret %r115
+        }
+
+        fn Rectangle__describe(arg0: ptr { f64, f64 }) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr { f64, f64 } // arg
+                %2: f64
+                %3: void
+            bb0 // label: bb0 // succs: [bb1]:
+                i116: %r116 = call c @Rectangle__area(%local1) : f64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0]:
+                i117: %r117 = intrinsic Println "area=%.2f
+" (%r116)
+                terminator: ret void
+        }
+
+        fn main() -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: i32
+                %2: i32
+                %3: i32
+                %4: i32
+                %5: i32
+                %6: { f64 }
+                %7: { f64, f64 }
+                %8: void
+                %9: ptr { f64 }
+                %10: void
+                %11: ptr { f64, f64 }
+                %12: ptr { f64 }
+                %13: void
+                %14: ptr { f64, f64 }
+                %15: void
+            bb0 // label: bb0 // succs: [bb1]:
+                i118: %r118 = call c @printf(c"📘 Tutorial: 16_traits.fp\n") : i32
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i119: %r119 = call c @printf(c"🧭 Focus: Traits: defining shared behavior with default methods\n") : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb3]:
+                i120: %r120 = call c @printf(c"🧪 What to look for: labeled outputs below\n") : i32
+                terminator: br bb3
+            bb3 // label: bb3 // preds: [bb2] // succs: [bb4]:
+                i121: %r121 = call c @printf(c"✅ Expectation: outputs match labels\n") : i32
+                terminator: br bb4
+            bb4 // label: bb4 // preds: [bb3] // succs: [bb5]:
+                i122: %r122 = call c @printf(c"\n") : i32
+                terminator: br bb5
+            bb5 // label: bb5 // preds: [bb4] // succs: [bb6]:
+                i123: %r123 = alloca i32 1 align 8 : ptr { f64 }
+                i124: store struct { f64 } { f64 5 }, %r123 align 8
+                i125: %r125 = alloca i32 1 align 8 : ptr { f64, f64 }
+                i126: store struct { f64, f64 } { f64 4, f64 6 }, %r125 align 8
+                i127: %r127 = alloca i32 1 align 8 : ptr ptr { f64 }
+                i128: store %r123, %r127 align 8
+                i129: %r129 = load %r127 align 8 : ptr { f64 }
+                i130: %r130 = call c @Circle__describe(%r129)
+                terminator: br bb6
+            bb6 // label: bb6 // preds: [bb5] // succs: [bb7]:
+                i131: %r131 = alloca i32 1 align 8 : ptr ptr { f64, f64 }
+                i132: store %r125, %r131 align 8
+                i133: %r133 = load %r131 align 8 : ptr { f64, f64 }
+                i134: %r134 = call c @Rectangle__describe(%r133)
+                terminator: br bb7
+            bb7 // label: bb7 // preds: [bb6] // succs: [bb8]:
+                i135: %r135 = alloca i32 1 align 8 : ptr ptr { f64 }
+                i136: store %r123, %r135 align 8
+                i137: %r137 = load %r135 align 8 : ptr { f64 }
+                i138: %r138 = call c @print_area__mono_85382269fdc78777_18(%r137)
+                terminator: br bb8
+            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
+                i139: %r139 = alloca i32 1 align 8 : ptr ptr { f64, f64 }
+                i140: store %r125, %r139 align 8
+                i141: %r141 = load %r139 align 8 : ptr { f64, f64 }
+                i142: %r142 = call c @print_area__mono_93ff406d3b2fff38_18(%r141)
+                terminator: br bb9
+            bb9 // label: bb9 // preds: [bb8]:
+                terminator: ret void
+        }
+
+        fn print_area__mono_85382269fdc78777_18(arg0: ptr { f64 }) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr { f64 } // arg
+                %2: f64
+                %3: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i143: %r143 = call c @Circle__area(%local1) : f64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i144: %r144 = call c @printf(c"%.2f\n", %r143) : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1]:
+                terminator: ret void
+        }
+
+        fn print_area__mono_93ff406d3b2fff38_18(arg0: ptr { f64, f64 }) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr { f64, f64 } // arg
+                %2: f64
+                %3: i32
+            bb0 // label: bb0 // succs: [bb1]:
+                i145: %r145 = call c @Rectangle__area(%local1) : f64
+                terminator: br bb1
+            bb1 // label: bb1 // preds: [bb0] // succs: [bb2]:
+                i146: %r146 = call c @printf(c"%.2f\n", %r145) : i32
+                terminator: br bb2
+            bb2 // label: bb2 // preds: [bb1]:
+                terminator: ret void
+        }
+
+        fn TestCase__run(arg0: ptr i8) -> void [cc: c, linkage: internal] {
+            locals:
+                %0: void
+                %1: ptr i8 // arg
+            bb0 // label: bb0:
+                terminator: ret void
+        }
+}

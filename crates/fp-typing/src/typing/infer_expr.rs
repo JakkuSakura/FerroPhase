@@ -448,7 +448,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                     let length_expr = array_repeat.len.as_ref().get();
                     let array_var = self.fresh_type_var();
-                    self.bind(array_var, TypeTerm::Array(elem_var, Some(length_expr.into())));
+                    self.bind(
+                        array_var,
+                        TypeTerm::Array(elem_var, Some(length_expr.into())),
+                    );
                     let array_ty = self.resolve_to_ty(array_var)?;
                     expr.set_ty(array_ty);
                     array_var
@@ -497,9 +500,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.nothing_type_var()
                 }
             }
-            ExprKind::ConstBlock(const_block) => {
-                self.infer_expr(const_block.expr.as_mut())?
-            }
+            ExprKind::ConstBlock(const_block) => self.infer_expr(const_block.expr.as_mut())?,
             ExprKind::For(for_expr) => {
                 let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
                 let iter_var = self.infer_expr(for_expr.iter.as_mut())?;
@@ -679,7 +680,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             _ => false,
         };
         let idx_non_integer = idx_bound_reference
-            || matches!(idx_ty, Ty::Reference(_) | Ty::Primitive(TypePrimitive::String));
+            || matches!(
+                idx_ty,
+                Ty::Reference(_) | Ty::Primitive(TypePrimitive::String)
+            );
         let idx_is_string_literal = matches!(
             index.index.kind(),
             ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))
@@ -916,14 +920,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     lifetime: None,
                 });
                 let fields = vec![
-                    StructuralField::new(
-                        Ident::new("name".to_string()),
-                        string_ref.clone(),
-                    ),
-                    StructuralField::new(
-                        Ident::new("type_name".to_string()),
-                        string_ref,
-                    ),
+                    StructuralField::new(Ident::new("name".to_string()), string_ref.clone()),
+                    StructuralField::new(Ident::new("type_name".to_string()), string_ref),
                 ];
                 let struct_ty = TypeStructural { fields };
                 let elem_var = self.fresh_type_var();
@@ -1517,8 +1515,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         QuoteTokenValue::Items(items) if items.len() > 1 => {
                             let item_refs: Vec<&Item> = items.iter().collect();
-                            let elem_ty = quote_item_type_from_items(&item_refs).unwrap_or_else(
-                                || {
+                            let elem_ty =
+                                quote_item_type_from_items(&item_refs).unwrap_or_else(|| {
                                     self.emit_error(
                                         "quote<item> contains multiple item kinds; using item type",
                                     );
@@ -1527,8 +1525,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         item: None,
                                         inner: None,
                                     })
-                                },
-                            );
+                                });
                             Ty::Slice(TypeSlice {
                                 elem: Box::new(elem_ty),
                             })
@@ -1784,49 +1781,47 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             _ => None,
                         };
                         if let Some(struct_name) = struct_name {
-                                if let Some(struct_def) =
-                                    self.struct_defs.get(&struct_name).cloned()
-                                {
-                                    let struct_var = self.fresh_type_var();
-                                    self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
+                            if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
+                                let struct_var = self.fresh_type_var();
+                                self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
 
-                                    if let Some(inner) = variant.pattern.as_mut() {
-                                        if let PatternKind::Structural(pat) = inner.kind_mut() {
-                                            let mut bindings = Vec::new();
-                                            for field in &mut pat.fields {
-                                                if let Some(def_field) = struct_def
-                                                    .fields
-                                                    .iter()
-                                                    .find(|f| f.name == field.name)
-                                                {
-                                                    let expected =
-                                                        self.type_from_ast_ty(&def_field.value)?;
-                                                    if let Some(rename) = field.rename.as_mut() {
-                                                        let child = self.infer_pattern(rename)?;
-                                                        bindings.extend(child.bindings);
-                                                        self.unify(child.var, expected)?;
-                                                    } else {
-                                                        let var = self.fresh_type_var();
-                                                        self.insert_env(
-                                                            field.name.as_str().to_string(),
-                                                            EnvEntry::Mono(var),
-                                                        );
-                                                        self.unify(var, expected)?;
-                                                        bindings.push(PatternBinding {
-                                                            name: field.name.as_str().to_string(),
-                                                            var,
-                                                        });
-                                                    }
+                                if let Some(inner) = variant.pattern.as_mut() {
+                                    if let PatternKind::Structural(pat) = inner.kind_mut() {
+                                        let mut bindings = Vec::new();
+                                        for field in &mut pat.fields {
+                                            if let Some(def_field) = struct_def
+                                                .fields
+                                                .iter()
+                                                .find(|f| f.name == field.name)
+                                            {
+                                                let expected =
+                                                    self.type_from_ast_ty(&def_field.value)?;
+                                                if let Some(rename) = field.rename.as_mut() {
+                                                    let child = self.infer_pattern(rename)?;
+                                                    bindings.extend(child.bindings);
+                                                    self.unify(child.var, expected)?;
+                                                } else {
+                                                    let var = self.fresh_type_var();
+                                                    self.insert_env(
+                                                        field.name.as_str().to_string(),
+                                                        EnvEntry::Mono(var),
+                                                    );
+                                                    self.unify(var, expected)?;
+                                                    bindings.push(PatternBinding {
+                                                        name: field.name.as_str().to_string(),
+                                                        var,
+                                                    });
                                                 }
                                             }
-
-                                            return Ok(PatternInfo {
-                                                var: struct_var,
-                                                bindings,
-                                            });
                                         }
+
+                                        return Ok(PatternInfo {
+                                            var: struct_var,
+                                            bindings,
+                                        });
                                     }
                                 }
+                            }
                         }
                         // Otherwise treat as a binding-like identifier.
                         let var = self.fresh_type_var();
@@ -2029,7 +2024,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                 let iter_elem_var = if field.name.as_str() == "enumerate" {
                     let index_var = self.fresh_type_var();
-                    self.bind(index_var, TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                    self.bind(
+                        index_var,
+                        TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                    );
                     let value_var = self.type_from_ast_ty(&elem_ty)?;
                     let tuple_var = self.fresh_type_var();
                     self.bind(tuple_var, TypeTerm::Tuple(vec![index_var, value_var]));
@@ -2063,7 +2061,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty);
         match resolved_ty {
-            Ty::Quote(ref quote) if quote.kind == QuoteFragmentKind::Item => match field.name.as_str() {
+            Ty::Quote(ref quote) if quote.kind == QuoteFragmentKind::Item => match field
+                .name
+                .as_str()
+            {
                 "name" => {
                     let var = self.fresh_type_var();
                     self.bind(var, TypeTerm::Primitive(TypePrimitive::String));
@@ -2079,10 +2080,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let var = self.type_from_ast_ty(&fn_ty)?;
                         Ok(var)
                     } else {
-                        self.emit_error(format!(
-                            "field {} requires a quoted function item",
-                            field
-                        ));
+                        self.emit_error(format!("field {} requires a quoted function item", field));
                         Ok(self.error_type_var())
                     }
                 }

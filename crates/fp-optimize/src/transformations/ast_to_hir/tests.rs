@@ -92,10 +92,7 @@ fn transform_index_expression_to_hir() -> Result<()> {
 
     let body_expr = &pick.body.as_ref().expect("body present").value;
     let target_expr = match &body_expr.kind {
-        hir::ExprKind::Block(block) => block
-            .expr
-            .as_deref()
-            .expect("expression present in block"),
+        hir::ExprKind::Block(block) => block.expr.as_deref().expect("expression present in block"),
         _ => body_expr,
     };
 

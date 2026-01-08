@@ -367,9 +367,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Slice(elem)
             | TypeTerm::Vec(elem)
             | TypeTerm::Array(elem, _)
-            | TypeTerm::Reference(elem) => {
-                self.occurs_in(var, *elem)
-            }
+            | TypeTerm::Reference(elem) => self.occurs_in(var, *elem),
             _ => false,
         }
     }
@@ -425,9 +423,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Union(lhs, rhs), other) => self.unify_union_with(lhs, rhs, other),
             (other, TypeTerm::Union(lhs, rhs)) => self.unify_union_with(lhs, rhs, other),
-            (TypeTerm::Array(a_elem, _), TypeTerm::Array(b_elem, _)) => {
-                self.unify(a_elem, b_elem)
-            }
+            (TypeTerm::Array(a_elem, _), TypeTerm::Array(b_elem, _)) => self.unify(a_elem, b_elem),
             (TypeTerm::Array(array_elem, _), TypeTerm::Slice(slice_elem))
             | (TypeTerm::Slice(slice_elem), TypeTerm::Array(array_elem, _)) => {
                 self.unify(array_elem, slice_elem)
@@ -529,12 +525,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn unify_union_with(
-        &mut self,
-        lhs: TypeVarId,
-        rhs: TypeVarId,
-        other: TypeTerm,
-    ) -> Result<()> {
+    fn unify_union_with(&mut self, lhs: TypeVarId, rhs: TypeVarId, other: TypeTerm) -> Result<()> {
         // Union typing: allow either branch to match, without committing if it fails.
         let snapshot = self.type_vars.clone();
         let other_var = self.fresh_type_var();
@@ -810,7 +801,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let term = match value_ty.value.as_ref() {
                     Value::Int(_) => TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
                     Value::Bool(_) => TypeTerm::Primitive(TypePrimitive::Bool),
-                    Value::Decimal(_) => TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64)),
+                    Value::Decimal(_) => {
+                        TypeTerm::Primitive(TypePrimitive::Decimal(DecimalType::F64))
+                    }
                     Value::String(_) => TypeTerm::Primitive(TypePrimitive::String),
                     Value::Char(_) => TypeTerm::Primitive(TypePrimitive::Char),
                     Value::Unit(_) => TypeTerm::Unit,
@@ -985,7 +978,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 fn quote_item_compatible(a: &Ty, b: &Ty) -> bool {
     let a_kind = quote_item_kind(a);
     let b_kind = quote_item_kind(b);
-    matches!((a_kind, b_kind), (Some("item"), Some(_)) | (Some(_), Some("item")))
+    matches!(
+        (a_kind, b_kind),
+        (Some("item"), Some(_)) | (Some(_), Some("item"))
+    )
 }
 
 fn quote_item_kind(ty: &Ty) -> Option<&'static str> {
@@ -1051,9 +1047,9 @@ fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
             }
             _ => None,
         },
-        ExprInvokeTarget::Method(_)
-        | ExprInvokeTarget::Closure(_)
-        | ExprInvokeTarget::BinOp(_) => None,
+        ExprInvokeTarget::Method(_) | ExprInvokeTarget::Closure(_) | ExprInvokeTarget::BinOp(_) => {
+            None
+        }
     }
 }
 

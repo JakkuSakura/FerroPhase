@@ -456,11 +456,20 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                         .as_ref()
                         .map(|expr| format!(" if {}", format_expr_inline(expr, ctx)))
                         .unwrap_or_default();
-                    format!("{}{} => {}", format_pat(&arm.pat, ctx), guard, format_expr_inline(&arm.body, ctx))
+                    format!(
+                        "{}{} => {}",
+                        format_pat(&arm.pat, ctx),
+                        guard,
+                        format_expr_inline(&arm.body, ctx)
+                    )
                 })
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!("match {} {{ {} }}", format_expr_inline(scrutinee, ctx), arms)
+            format!(
+                "match {} {{ {} }}",
+                format_expr_inline(scrutinee, ctx),
+                arms
+            )
         }
         ExprKind::IntrinsicCall(call) => match &call.payload {
             crate::intrinsics::IntrinsicCallPayload::Format { template } => {
@@ -651,9 +660,7 @@ fn fmt_type_expr(ty: &TypeExpr, ctx: &PrettyCtx<'_>) -> String {
             let fields = structural
                 .fields
                 .iter()
-                .map(|field| {
-                    format!("{}: {}", field.name, fmt_type_expr(&field.ty, ctx))
-                })
+                .map(|field| format!("{}: {}", field.name, fmt_type_expr(&field.ty, ctx)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("struct {{ {} }}", fields)

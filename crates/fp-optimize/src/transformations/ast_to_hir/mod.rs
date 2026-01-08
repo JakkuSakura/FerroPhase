@@ -202,11 +202,7 @@ impl HirGenerator {
 
             if value_res.is_none() && type_res.is_none() {
                 if let Some(first) = path_segments.first() {
-                    if first == "std"
-                        || first == "core"
-                        || first == "alloc"
-                        || first == "fp_rust"
-                    {
+                    if first == "std" || first == "core" || first == "alloc" || first == "fp_rust" {
                         // Standard library imports are not yet modeled; ignore them so
                         // user code can continue through the pipeline.
                         continue;
@@ -216,8 +212,7 @@ impl HirGenerator {
                     let module_res = hir::Res::Module(path_segments.clone());
                     self.current_value_scope()
                         .insert(alias.clone(), module_res.clone());
-                    self.current_type_scope()
-                        .insert(alias.clone(), module_res);
+                    self.current_type_scope().insert(alias.clone(), module_res);
                     continue;
                 }
                 if self.error_tolerance {
@@ -911,9 +906,7 @@ impl HirGenerator {
             }
             ItemKind::DefType(def_type) => {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
-                if let Some(hir_item) =
-                    self.materialize_def_type_item(item.as_ref(), def_type)?
-                {
+                if let Some(hir_item) = self.materialize_def_type_item(item.as_ref(), def_type)? {
                     Ok(hir::StmtKind::Item(hir_item))
                 } else {
                     let unit_block = hir::Block {
@@ -1158,9 +1151,8 @@ impl HirGenerator {
         }
         let ty = if let Some(ty) = &const_def.ty {
             if let (ast::Ty::Vec(vec_ty), Some(len)) = (ty, list_len) {
-                let len_expr = ast::Expr::new(ast::ExprKind::Value(Box::new(ast::Value::int(
-                    len as i64,
-                ))));
+                let len_expr =
+                    ast::Expr::new(ast::ExprKind::Value(Box::new(ast::Value::int(len as i64))));
                 let array_ty = ast::Ty::Array(ast::TypeArray {
                     elem: vec_ty.ty.clone(),
                     len: Box::new(len_expr),
@@ -1220,9 +1212,7 @@ impl HirGenerator {
         match ty {
             ast::Ty::Primitive(prim) => Ok(self.primitive_type_to_hir(*prim)),
             ast::Ty::Struct(struct_ty) => {
-                if let Some(alias) =
-                    self.lookup_type_alias(&[struct_ty.name.name.to_string()])
-                {
+                if let Some(alias) = self.lookup_type_alias(&[struct_ty.name.name.to_string()]) {
                     let alias = alias.clone();
                     return self.transform_type_to_hir(&alias);
                 }
@@ -1344,9 +1334,8 @@ impl HirGenerator {
                         self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))
                     }
                     ast::Value::Bool(_) => self.primitive_type_to_hir(ast::TypePrimitive::Bool),
-                    ast::Value::Decimal(_) => {
-                        self.primitive_type_to_hir(ast::TypePrimitive::Decimal(ast::DecimalType::F64))
-                    }
+                    ast::Value::Decimal(_) => self
+                        .primitive_type_to_hir(ast::TypePrimitive::Decimal(ast::DecimalType::F64)),
                     ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
                     ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
                     ast::Value::Unit(_) => self.create_unit_type(),
@@ -1512,11 +1501,9 @@ impl HirGenerator {
     fn literal_type_kind(&self, ty: &ast::Ty) -> Option<LiteralTypeKind> {
         match ty {
             ast::Ty::Value(type_value) => match type_value.value.as_ref() {
-                ast::Value::Int(_) => {
-                    Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Int(
-                        ast::TypeInt::I64,
-                    )))
-                }
+                ast::Value::Int(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Int(
+                    ast::TypeInt::I64,
+                ))),
                 ast::Value::Bool(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Bool)),
                 ast::Value::Decimal(_) => Some(LiteralTypeKind::Primitive(
                     ast::TypePrimitive::Decimal(ast::DecimalType::F64),
@@ -1645,12 +1632,9 @@ impl HirGenerator {
         let Some(fields) = self.struct_field_defs.get(&def_id) else {
             return false;
         };
-        fields.iter().all(|field| {
-            matches!(
-                field.value,
-                ast::Ty::Any(_) | ast::Ty::Unknown(_)
-            )
-        })
+        fields
+            .iter()
+            .all(|field| matches!(field.value, ast::Ty::Any(_) | ast::Ty::Unknown(_)))
     }
 
     fn update_structural_def_fields(
@@ -1712,17 +1696,15 @@ impl HirGenerator {
                 self.primitive_type_to_hir(ast::TypePrimitive::Int(ast::TypeInt::I64))
             }
             ast::Value::Bool(_) => self.primitive_type_to_hir(ast::TypePrimitive::Bool),
-            ast::Value::Decimal(_) => self.primitive_type_to_hir(ast::TypePrimitive::Decimal(
-                ast::DecimalType::F64,
-            )),
+            ast::Value::Decimal(_) => {
+                self.primitive_type_to_hir(ast::TypePrimitive::Decimal(ast::DecimalType::F64))
+            }
             ast::Value::String(_) => self.primitive_type_to_hir(ast::TypePrimitive::String),
             ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
             ast::Value::Unit(_) => self.create_unit_type(),
-            ast::Value::Null(_) | ast::Value::None(_) => hir::TypeExpr::new(
-                self.next_id(),
-                hir::TypeExprKind::Infer,
-                span,
-            ),
+            ast::Value::Null(_) | ast::Value::None(_) => {
+                hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Infer, span)
+            }
             ast::Value::Struct(struct_val) => {
                 let path = self.locator_to_hir_path_with_scope(
                     &Locator::Ident(struct_val.ty.name.clone()),
@@ -1852,11 +1834,12 @@ impl HirGenerator {
             .or_else(|| segments.get(0).and_then(|name| self.type_aliases.get(name)))
     }
 
-    fn materialized_type_alias(&self, def_type: &ast::ItemDefType) -> Option<MaterializedTypeAlias> {
+    fn materialized_type_alias(
+        &self,
+        def_type: &ast::ItemDefType,
+    ) -> Option<MaterializedTypeAlias> {
         match &def_type.value {
-            ast::Ty::Struct(struct_ty) => {
-                Some(MaterializedTypeAlias::Struct(struct_ty.clone()))
-            }
+            ast::Ty::Struct(struct_ty) => Some(MaterializedTypeAlias::Struct(struct_ty.clone())),
             ast::Ty::Structural(structural) => {
                 Some(MaterializedTypeAlias::Structural(structural.clone()))
             }
@@ -2128,7 +2111,10 @@ impl ClosureLowering {
             }
 
             if func.ty_annotation.is_some() || func.ty.is_some() {
-                func.ty_annotation = func.ty.as_ref().map(|ty_fn| ast::Ty::Function(ty_fn.clone()));
+                func.ty_annotation = func
+                    .ty
+                    .as_ref()
+                    .map(|ty_fn| ast::Ty::Function(ty_fn.clone()));
             }
 
             if let Some(ret_slot) = func.sig.ret_ty.as_mut() {
@@ -2151,10 +2137,7 @@ impl ClosureLowering {
         Ok(None)
     }
 
-    fn transform_closure_expr(
-        &mut self,
-        expr: &mut ast::Expr,
-    ) -> Result<Option<ClosureInfo>> {
+    fn transform_closure_expr(&mut self, expr: &mut ast::Expr) -> Result<Option<ClosureInfo>> {
         let Some(expr_ty) = expr.ty().cloned() else {
             return Ok(None);
         };
@@ -2223,7 +2206,10 @@ impl ClosureLowering {
                 .get(idx)
                 .cloned()
                 .unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
-            fn_params.push(ast::FunctionParam::new(ast::Ident::new(name.clone()), ty.clone()));
+            fn_params.push(ast::FunctionParam::new(
+                ast::Ident::new(name.clone()),
+                ty.clone(),
+            ));
             fn_param_tys.push(ty);
         }
 
@@ -2276,10 +2262,7 @@ impl ClosureLowering {
             generics_params: Vec::new(),
             ret_ty: Some(Box::new(call_ret_ty.clone())),
         });
-        fn_item_ast.ty_annotation = fn_item_ast
-            .ty
-            .clone()
-            .map(|ty_fn| ast::Ty::Function(ty_fn));
+        fn_item_ast.ty_annotation = fn_item_ast.ty.clone().map(|ty_fn| ast::Ty::Function(ty_fn));
 
         let fn_item = ast::Item::new(ast::ItemKind::DefFunction(fn_item_ast));
 
@@ -2294,7 +2277,9 @@ impl ClosureLowering {
         }
         if fields.is_empty() {
             let mut value_expr = ast::Expr::value(ast::Value::int(0));
-            value_expr.set_ty(ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I8)));
+            value_expr.set_ty(ast::Ty::Primitive(ast::TypePrimitive::Int(
+                ast::TypeInt::I8,
+            )));
             fields.push(ast::ExprField::new(
                 ast::Ident::new(DUMMY_CAPTURE_NAME),
                 value_expr,
@@ -2436,8 +2421,7 @@ impl ClosureLowering {
                                 let mut env_expr =
                                     ast::Expr::new(ast::ExprKind::Locator(locator.clone()));
                                 env_expr.set_ty(info.env_struct_ty.clone());
-                                let call_locator =
-                                    ast::Locator::ident(info.call_fn_ident.clone());
+                                let call_locator = ast::Locator::ident(info.call_fn_ident.clone());
                                 let mut new_args = Vec::with_capacity(invoke.args.len() + 1);
                                 new_args.push(env_expr);
                                 new_args.extend(invoke.args.iter().cloned());
@@ -2636,11 +2620,7 @@ impl ClosureLowering {
         }
     }
 
-    fn collect_captures(
-        &self,
-        expr: &ast::Expr,
-        params: &HashSet<String>,
-    ) -> Result<Vec<Capture>> {
+    fn collect_captures(&self, expr: &ast::Expr, params: &HashSet<String>) -> Result<Vec<Capture>> {
         let mut collector = CaptureCollector::new(params.clone());
         collector.visit(expr);
         Ok(collector.into_captures())
@@ -2841,7 +2821,10 @@ impl CaptureCollector {
                 if let Some(ident) = locator.as_ident() {
                     let name = ident.as_str();
                     if !self.is_in_scope(name) && !self.seen.contains(name) {
-                        let ty = expr.ty().cloned().unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
+                        let ty = expr
+                            .ty()
+                            .cloned()
+                            .unwrap_or_else(|| ast::Ty::Any(ast::TypeAny));
                         self.seen.insert(name.to_string());
                         self.captures.push((name.to_string(), ty));
                     }
@@ -2865,9 +2848,7 @@ impl CaptureCollector {
                     }
                 }
             },
-            ast::ExprKind::Any(_)
-            | ast::ExprKind::Id(_)
-            => {}
+            ast::ExprKind::Any(_) | ast::ExprKind::Id(_) => {}
         }
     }
 
@@ -2976,11 +2957,12 @@ impl CaptureReplacer {
             ast::ExprKind::Locator(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     if let Some(capture_ty) = self.captures.get(ident.as_str()) {
-                        let mut expr_struct = ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
-                            obj: ast::Expr::ident(self.env_ident.clone()).into(),
-                            field: ident.clone(),
-                            select: ast::ExprSelectType::Field,
-                        }));
+                        let mut expr_struct =
+                            ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
+                                obj: ast::Expr::ident(self.env_ident.clone()).into(),
+                                field: ident.clone(),
+                                select: ast::ExprSelectType::Field,
+                            }));
                         expr_struct.set_ty(capture_ty.clone());
                         *expr = expr_struct;
                     }

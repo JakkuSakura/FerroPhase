@@ -70,7 +70,8 @@ impl PackageModel {
             documentation: package.documentation,
             license: package.license,
             custom: package.custom,
-            dependencies: config.dependencies
+            dependencies: config
+                .dependencies
                 .clone()
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
