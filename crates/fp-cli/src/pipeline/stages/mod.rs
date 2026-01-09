@@ -6,5 +6,5 @@ pub(super) mod frontend;
 pub(super) mod materialize;
 pub(super) mod normalize;
 pub(super) mod project;
-pub(super) mod transpile;
+pub(super) mod lowering;
 pub(super) mod typing;
