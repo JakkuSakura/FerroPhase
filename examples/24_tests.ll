@@ -66,16 +66,16 @@ bb0:
   %alloca_count_15 = alloca { { ptr, i64 }, ptr }, align 8
   %alloca_11 = alloca { { ptr, i64 }, ptr }, align 8
   %alloca_count_11 = alloca { { ptr, i64 }, ptr }, align 8
-  %alloca_10 = alloca i1, align 1
-  %alloca_count_10 = alloca i1, align 1
+  %alloca_10 = alloca i64, align 8
+  %alloca_count_10 = alloca i64, align 8
   %alloca_9 = alloca i64, align 8
   %alloca_count_9 = alloca i64, align 8
-  %alloca_8 = alloca i64, align 8
-  %alloca_count_8 = alloca i64, align 8
-  %alloca_7 = alloca i64, align 8
-  %alloca_count_7 = alloca i64, align 8
-  %alloca_6 = alloca { i64, i64, i64 }, align 8
-  %alloca_count_6 = alloca { i64, i64, i64 }, align 8
+  %alloca_8 = alloca i1, align 1
+  %alloca_count_8 = alloca i1, align 1
+  %alloca_7 = alloca { i64, i64, i64 }, align 8
+  %alloca_count_7 = alloca { i64, i64, i64 }, align 8
+  %alloca_6 = alloca i64, align 8
+  %alloca_count_6 = alloca i64, align 8
   store { { ptr, i64 }, ptr } { { ptr, i64 } { ptr @.str.24_tests.0, i64 16 }, ptr @adds_two_numbers }, ptr %alloca_count_11, align 8
   store { { ptr, i64 }, ptr } { { ptr, i64 } { ptr @.str.24_tests.1, i64 13 }, ptr @string_concat }, ptr %alloca_count_15, align 8
   %load_20 = load { { ptr, i64 }, ptr }, ptr %alloca_count_11, align 8
@@ -93,13 +93,13 @@ bb0:
   %load_40 = load [2 x { { ptr, i64 }, ptr }], ptr %alloca_count_33, align 8
   store [2 x { { ptr, i64 }, ptr }] %load_40, ptr %alloca_count_39, align 8
   store i64 0, ptr %alloca_count_9, align 8
-  store i64 0, ptr %alloca_count_7, align 8
-  store i64 0, ptr %alloca_count_8, align 8
+  store i64 0, ptr %alloca_count_10, align 8
+  store i64 0, ptr %alloca_count_6, align 8
   br label %bb1
 
 bb1:                                              ; preds = %bb9, %bb0
   store i64 2, ptr %alloca_count_45, align 8
-  %load_48 = load i64, ptr %alloca_count_8, align 8
+  %load_48 = load i64, ptr %alloca_count_6, align 8
   %load_49 = load i64, ptr %alloca_count_45, align 8
   %icmp_50 = icmp slt i64 %load_48, %load_49
   store i1 %icmp_50, ptr %alloca_count_47, align 1
@@ -107,9 +107,9 @@ bb1:                                              ; preds = %bb9, %bb0
   br i1 %load_52, label %bb2, label %bb3
 
 bb2:                                              ; preds = %bb1
-  %load_54 = load i64, ptr %alloca_count_8, align 8
+  %load_54 = load i64, ptr %alloca_count_6, align 8
   store i64 %load_54, ptr %alloca_count_53, align 8
-  %load_57 = load i64, ptr %alloca_count_8, align 8
+  %load_57 = load i64, ptr %alloca_count_6, align 8
   store i64 %load_57, ptr %alloca_count_56, align 8
   %load_60 = load i64, ptr %alloca_count_56, align 8
   %iop_61 = mul i64 %load_60, 24
@@ -122,40 +122,40 @@ bb2:                                              ; preds = %bb1
 
 bb3:                                              ; preds = %bb1
   %load_70 = load i64, ptr %alloca_count_9, align 8
-  %load_71 = load i64, ptr %alloca_count_7, align 8
+  %load_71 = load i64, ptr %alloca_count_10, align 8
   %iop_72 = add i64 %load_70, %load_71
   store i64 %iop_72, ptr %alloca_count_69, align 8
   %load_75 = load i64, ptr %alloca_count_69, align 8
   store i64 %load_75, ptr %alloca_count_74, align 8
   %load_77 = load i64, ptr %alloca_count_9, align 8
-  %load_78 = load i64, ptr %alloca_count_7, align 8
+  %load_78 = load i64, ptr %alloca_count_10, align 8
   %load_79 = load i64, ptr %alloca_count_74, align 8
   %call_80 = call i32 (ptr, ...) @printf(ptr @.str.24_tests.2, i64 %load_77, i64 %load_78, i64 %load_79)
   br label %bb12
 
 bb4:                                              ; preds = %bb2
-  store i1 true, ptr %alloca_count_10, align 1
+  store i1 true, ptr %alloca_count_8, align 1
   br label %bb6
 
 bb5:                                              ; preds = %bb2
   %landingpad = landingpad { ptr, i32 }
           catch ptr null
-  store i1 false, ptr %alloca_count_10, align 1
+  store i1 false, ptr %alloca_count_8, align 1
   br label %bb6
 
 bb12:                                             ; preds = %bb3
   %load_84 = load i64, ptr %alloca_count_74, align 8
   %load_85 = load i64, ptr %alloca_count_9, align 8
-  %load_86 = load i64, ptr %alloca_count_7, align 8
+  %load_86 = load i64, ptr %alloca_count_10, align 8
   %insertvalue_87 = insertvalue { i64, i64, i64 } undef, i64 %load_84, 0
   %insertvalue_88 = insertvalue { i64, i64, i64 } %insertvalue_87, i64 %load_85, 1
   %insertvalue_89 = insertvalue { i64, i64, i64 } %insertvalue_88, i64 %load_86, 2
-  store { i64, i64, i64 } %insertvalue_89, ptr %alloca_count_6, align 8
-  %load_91 = load { i64, i64, i64 }, ptr %alloca_count_6, align 8
+  store { i64, i64, i64 } %insertvalue_89, ptr %alloca_count_7, align 8
+  %load_91 = load { i64, i64, i64 }, ptr %alloca_count_7, align 8
   ret { i64, i64, i64 } %load_91
 
 bb6:                                              ; preds = %bb5, %bb4
-  %load_93 = load i1, ptr %alloca_count_10, align 1
+  %load_93 = load i1, ptr %alloca_count_8, align 1
   store i1 %load_93, ptr %alloca_count_92, align 1
   %load_95 = load i1, ptr %alloca_count_92, align 1
   br i1 %load_95, label %bb7, label %bb8
@@ -169,9 +169,9 @@ bb7:                                              ; preds = %bb6
   br label %bb10
 
 bb8:                                              ; preds = %bb6
-  %load_102 = load i64, ptr %alloca_count_7, align 8
+  %load_102 = load i64, ptr %alloca_count_10, align 8
   %iop_103 = add i64 %load_102, 1
-  store i64 %iop_103, ptr %alloca_count_7, align 8
+  store i64 %iop_103, ptr %alloca_count_10, align 8
   %load_106 = load { ptr, i64 }, ptr %alloca_count_59, align 8
   %call_107 = call i32 (ptr, ...) @printf(ptr @.str.24_tests.4, { ptr, i64 } %load_106)
   br label %bb11
@@ -183,9 +183,9 @@ bb11:                                             ; preds = %bb8
   br label %bb9
 
 bb9:                                              ; preds = %bb11, %bb10
-  %load_108 = load i64, ptr %alloca_count_8, align 8
+  %load_108 = load i64, ptr %alloca_count_6, align 8
   %iop_109 = add i64 %load_108, 1
-  store i64 %iop_109, ptr %alloca_count_8, align 8
+  store i64 %iop_109, ptr %alloca_count_6, align 8
   br label %bb1
 }
 

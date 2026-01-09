@@ -207,7 +207,7 @@ mir::Program {
                 _18: (i64, i64)
                 _19: i32
                 _20: (isize, i64, i64, i64)
-                _21: (isize, i64, i64, i64)
+                _21: (i64, i64)
                 _22: <??>
                 _23: i64
                 _24: ()
@@ -270,7 +270,7 @@ mir::Program {
                     terminator: call global printf("InlineRecord tag=%lld value=%lld\n", copy _18[Field(0, Ty { kind: Int(I64) })], copy _18[Field(1, Ty { kind: Int(I64) })]) -> _19 then bb11
                 bb11:
                     s0: _20 = aggregate(tuple; [0, 2, 3, 4])
-                    s1: _21 = aggregate(tuple; [1, copy _8[Field(0, Ty { kind: Int(I64) })], copy _8[Field(1, Ty { kind: Int(I64) })], 0])
+                    s1: _21 = copy _8
                     s2: _22 = fn describe_union
                     terminator: call copy _22(copy _20) -> _23 then bb12
                 bb12:

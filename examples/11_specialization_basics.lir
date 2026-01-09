@@ -42,11 +42,11 @@ lir::Program {
                 %20: i64
                 %21: i32
             bb0 // label: bb0 // succs: [bb1]:
-                i6: %r6 = alloca i32 1 align 1 : ptr i1
+                i6: %r6 = alloca i32 1 align 8 : ptr i64
                 i7: %r7 = alloca i32 1 align 8 : ptr i64
                 i8: %r8 = alloca i32 1 align 8 : ptr i64
                 i9: %r9 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
-                i10: %r10 = alloca i32 1 align 8 : ptr i64
+                i10: %r10 = alloca i32 1 align 1 : ptr i1
                 i11: %r11 = alloca i32 1 align 8 : ptr [0 x { %__slice, ptr fn() -> void }]
                 i12: store [0 x { %__slice, ptr fn() -> void }] {  }, %r11 align 8
                 i13: %r13 = alloca i32 1 align 8 : ptr [0 x { %__slice, ptr fn() -> void }]
@@ -56,13 +56,13 @@ lir::Program {
                 i17: store %r16, %r15 align 8
                 i18: store i64 0, %r8 align 8
                 i19: store i64 0, %r7 align 8
-                i20: store i64 0, %r10 align 8
+                i20: store i64 0, %r6 align 8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0, bb9] // succs: [bb2, bb3]:
                 i21: %r21 = alloca i32 1 align 8 : ptr i64
                 i22: store i64 0, %r21 align 8
                 i23: %r23 = alloca i32 1 align 1 : ptr i1
-                i24: %r24 = load %r10 align 8 : i64
+                i24: %r24 = load %r6 align 8 : i64
                 i25: %r25 = load %r21 align 8 : i64
                 i26: %r26 = lt %r24, %r25 : i1
                 i27: store %r26, %r23 align 1
@@ -70,10 +70,10 @@ lir::Program {
                 terminator: cond_br %r28, bb2, bb3
             bb2 // label: bb2 // preds: [bb1]:
                 i29: %r29 = alloca i32 1 align 8 : ptr i64
-                i30: %r30 = load %r10 align 8 : i64
+                i30: %r30 = load %r6 align 8 : i64
                 i31: store %r30, %r29 align 8
                 i32: %r32 = alloca i32 1 align 8 : ptr i64
-                i33: %r33 = load %r10 align 8 : i64
+                i33: %r33 = load %r6 align 8 : i64
                 i34: store %r33, %r32 align 8
                 i35: %r35 = alloca i32 1 align 8 : ptr { %__slice, ptr fn() -> void }
                 i36: %r36 = load %r32 align 8 : i64
@@ -100,11 +100,11 @@ lir::Program {
                 i56: %r56 = call c @printf(c"test result: %lld passed; %lld failed; %lld total\n", %r53, %r54, %r55) : i32
                 terminator: br bb12
             bb4 // label: bb4 // succs: [bb6]:
-                i57: store bool true, %r6 align 1
+                i57: store bool true, %r10 align 1
                 terminator: br bb6
             bb5 // label: bb5 // succs: [bb6]:
                 i58: %r58 = landingpad { ptr i8, i32 } { catch null ptr i8 } : { ptr i8, i32 }
-                i59: store bool false, %r6 align 1
+                i59: store bool false, %r10 align 1
                 terminator: br bb6
             bb12 // label: bb12 // preds: [bb3]:
                 i60: %r60 = load %r50 align 8 : i64
@@ -118,7 +118,7 @@ lir::Program {
                 terminator: ret %r67
             bb6 // label: bb6 // preds: [bb4, bb5] // succs: [bb7, bb8]:
                 i68: %r68 = alloca i32 1 align 1 : ptr i1
-                i69: %r69 = load %r6 align 1 : i1
+                i69: %r69 = load %r10 align 1 : i1
                 i70: store %r69, %r68 align 1
                 i71: %r71 = load %r68 align 1 : i1
                 terminator: cond_br %r71, bb7, bb8
@@ -143,9 +143,9 @@ lir::Program {
             bb11 // label: bb11 // preds: [bb8] // succs: [bb9]:
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb10, bb11] // succs: [bb1]:
-                i84: %r84 = load %r10 align 8 : i64
+                i84: %r84 = load %r6 align 8 : i64
                 i85: %r85 = add %r84, i64 1 : i64
-                i86: store %r85, %r10 align 8
+                i86: store %r85, %r6 align 8
                 terminator: br bb1
         }
 
@@ -385,21 +385,21 @@ lir::Program {
                 i171: %r171 = load %r168 align 1 : i1
                 terminator: cond_br %r171, bb1, bb2
             bb1 // label: bb1 // preds: [bb0] // succs: [bb3]:
-                i172: store %local1, %r166 align 8
+                i172: store %local1, %r167 align 8
                 terminator: br bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i173: store %local2, %r166 align 8
+                i173: store %local2, %r167 align 8
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb1, bb2]:
                 i174: %r174 = alloca i32 1 align 8 : ptr i64
-                i175: %r175 = load %r166 align 8 : i64
+                i175: %r175 = load %r167 align 8 : i64
                 i176: store %r175, %r174 align 8
                 i177: %r177 = load %r174 align 8 : i64
                 i178: %r178 = intrinsic Println "max(%lld, %lld) = %lld
 " (%local1, %local2, %r177)
                 i179: %r179 = load %r174 align 8 : i64
-                i180: store %r179, %r167 align 8
-                i181: %r181 = load %r167 align 8 : i64
+                i180: store %r179, %r166 align 8
+                i181: %r181 = load %r166 align 8 : i64
                 terminator: ret %r181
         }
 
@@ -421,21 +421,21 @@ lir::Program {
                 i187: %r187 = load %r184 align 1 : i1
                 terminator: cond_br %r187, bb1, bb2
             bb1 // label: bb1 // preds: [bb0] // succs: [bb3]:
-                i188: store %local1, %r183 align 8
+                i188: store %local1, %r182 align 8
                 terminator: br bb3
             bb2 // label: bb2 // preds: [bb0] // succs: [bb3]:
-                i189: store %local2, %r183 align 8
+                i189: store %local2, %r182 align 8
                 terminator: br bb3
             bb3 // label: bb3 // preds: [bb1, bb2]:
                 i190: %r190 = alloca i32 1 align 8 : ptr f64
-                i191: %r191 = load %r183 align 8 : f64
+                i191: %r191 = load %r182 align 8 : f64
                 i192: store %r191, %r190 align 8
                 i193: %r193 = load %r190 align 8 : f64
                 i194: %r194 = intrinsic Println "max(%f, %f) = %f
 " (%local1, %local2, %r193)
                 i195: %r195 = load %r190 align 8 : f64
-                i196: store %r195, %r182 align 8
-                i197: %r197 = load %r182 align 8 : f64
+                i196: store %r195, %r183 align 8
+                i197: %r197 = load %r183 align 8 : f64
                 terminator: ret %r197
         }
 

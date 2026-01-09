@@ -267,6 +267,10 @@ impl MirLowering {
         }
     }
 
+    pub fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
+        self.lower_program(&hir_program)
+    }
+
     pub fn set_error_tolerance(&mut self, enabled: bool) {
         self.tolerate_errors = enabled;
     }
@@ -4817,7 +4821,8 @@ impl<'a> BodyBuilder<'a> {
         expr: &hir::Expr,
     ) -> Result<()> {
         // Coerce enum payloads into their tagged layout when assigning from a place.
-        if let Some(place_info) = self.lower_place(expr)? {
+        let place_info = self.lower_place(expr)?;
+        if let Some(place_info) = place_info {
             if let Some(enum_def) = annotated_enum_def {
                 if let Some(layout) = self.lowering.enum_layout_for_def(enum_def, expr.span) {
                     if let Some((variant, layout)) = self.enum_variant_for_payload(
@@ -4848,6 +4853,41 @@ impl<'a> BodyBuilder<'a> {
                         &variant,
                         &layout,
                         place_info.place,
+                        expr.span,
+                    )?;
+                    self.locals[local_id as usize].ty = layout.enum_ty.clone();
+                    return Ok(());
+                }
+            }
+        }
+        if let Some(expected_ty) = annotated_ty {
+            if self.lowering.enum_layout_for_ty(expected_ty).is_some()
+                && matches!(
+                    expr.kind,
+                    hir::ExprKind::Literal(_)
+                        | hir::ExprKind::Index(_, _)
+                        | hir::ExprKind::Cast(_, _)
+                )
+            {
+                let value = self.lower_operand(expr, None)?;
+                let payload_def = self.struct_def_from_ty(&value.ty);
+                if let Some((variant, layout)) =
+                    self.enum_variant_for_payload(expected_ty, &value.ty, payload_def)
+                {
+                    let payload_local = self.allocate_temp(value.ty.clone(), expr.span);
+                    let payload_place = mir::Place::from_local(payload_local);
+                    self.push_statement(mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            payload_place.clone(),
+                            mir::Rvalue::Use(value.operand),
+                        ),
+                    });
+                    self.assign_enum_variant_from_place(
+                        mir::Place::from_local(local_id),
+                        &variant,
+                        &layout,
+                        payload_place,
                         expr.span,
                     )?;
                     self.locals[local_id as usize].ty = layout.enum_ty.clone();
@@ -10480,7 +10520,4 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
-    pub fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
-        self.lower_program(&hir_program)
-    }
 }
