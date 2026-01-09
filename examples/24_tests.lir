@@ -46,11 +46,11 @@ lir::Program {
                 %24: i64
                 %25: i32
             bb0 // label: bb0 // succs: [bb1]:
-                i6: %r6 = alloca i32 1 align 1 : ptr i1
+                i6: %r6 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
                 i7: %r7 = alloca i32 1 align 8 : ptr i64
                 i8: %r8 = alloca i32 1 align 8 : ptr i64
                 i9: %r9 = alloca i32 1 align 8 : ptr i64
-                i10: %r10 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
+                i10: %r10 = alloca i32 1 align 1 : ptr i1
                 i11: %r11 = alloca i32 1 align 8 : ptr { %__slice, ptr fn() -> void }
                 i12: %r12 = insertvalue undef { %__slice, ptr fn() -> void }, struct %__slice { c"adds_two_numbers", i64 16 }, [0] : { %__slice, ptr fn() -> void }
                 i13: %r13 = insertvalue %r12, @adds_two_numbers, [1] : { %__slice, ptr fn() -> void }
@@ -128,11 +128,11 @@ lir::Program {
                 i80: %r80 = call c @printf(c"test result: %lld passed; %lld failed; %lld total\n", %r77, %r78, %r79) : i32
                 terminator: br bb12
             bb4 // label: bb4 // succs: [bb6]:
-                i81: store bool true, %r6 align 1
+                i81: store bool true, %r10 align 1
                 terminator: br bb6
             bb5 // label: bb5 // succs: [bb6]:
                 i82: %r82 = landingpad { ptr i8, i32 } { catch null ptr i8 } : { ptr i8, i32 }
-                i83: store bool false, %r6 align 1
+                i83: store bool false, %r10 align 1
                 terminator: br bb6
             bb12 // label: bb12 // preds: [bb3]:
                 i84: %r84 = load %r74 align 8 : i64
@@ -141,12 +141,12 @@ lir::Program {
                 i87: %r87 = insertvalue undef { i64, i64, i64 }, %r84, [0] : { i64, i64, i64 }
                 i88: %r88 = insertvalue %r87, %r85, [1] : { i64, i64, i64 }
                 i89: %r89 = insertvalue %r88, %r86, [2] : { i64, i64, i64 }
-                i90: store %r89, %r10 align 8
-                i91: %r91 = load %r10 align 8 : { i64, i64, i64 }
+                i90: store %r89, %r6 align 8
+                i91: %r91 = load %r6 align 8 : { i64, i64, i64 }
                 terminator: ret %r91
             bb6 // label: bb6 // preds: [bb4, bb5] // succs: [bb7, bb8]:
                 i92: %r92 = alloca i32 1 align 1 : ptr i1
-                i93: %r93 = load %r6 align 1 : i1
+                i93: %r93 = load %r10 align 1 : i1
                 i94: store %r93, %r92 align 1
                 i95: %r95 = load %r92 align 1 : i1
                 terminator: cond_br %r95, bb7, bb8

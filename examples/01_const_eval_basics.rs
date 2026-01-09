@@ -24,13 +24,7 @@ pub fn main() -> () {
     );
     let runtime_multiplier = 3;
     let optimized_size = const { 4096 * 2 };
-    let cache_strategy = const {
-        if 4096 > 2048 {
-            "large"
-        } else {
-            "small"
-        }
-    };
+    let cache_strategy = const { if 4096 > 2048 { "large" } else { "small" } };
     let total_memory = runtime_multiplier * const { BUFFER_SIZE * MAX_CONNECTIONS };
     println!(
         "Const blocks: size={}, strategy={}, memory={}",

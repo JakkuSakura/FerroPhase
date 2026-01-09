@@ -43,9 +43,9 @@ lir::Program {
                 %21: i32
             bb0 // label: bb0 // succs: [bb1]:
                 i6: %r6 = alloca i32 1 align 8 : ptr i64
-                i7: %r7 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
+                i7: %r7 = alloca i32 1 align 8 : ptr i64
                 i8: %r8 = alloca i32 1 align 8 : ptr i64
-                i9: %r9 = alloca i32 1 align 8 : ptr i64
+                i9: %r9 = alloca i32 1 align 8 : ptr { i64, i64, i64 }
                 i10: %r10 = alloca i32 1 align 1 : ptr i1
                 i11: %r11 = alloca i32 1 align 8 : ptr [0 x { %__slice, ptr fn() -> void }]
                 i12: store [0 x { %__slice, ptr fn() -> void }] {  }, %r11 align 8
@@ -56,13 +56,13 @@ lir::Program {
                 i17: store %r16, %r15 align 8
                 i18: store i64 0, %r8 align 8
                 i19: store i64 0, %r6 align 8
-                i20: store i64 0, %r9 align 8
+                i20: store i64 0, %r7 align 8
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0, bb9] // succs: [bb2, bb3]:
                 i21: %r21 = alloca i32 1 align 8 : ptr i64
                 i22: store i64 0, %r21 align 8
                 i23: %r23 = alloca i32 1 align 1 : ptr i1
-                i24: %r24 = load %r9 align 8 : i64
+                i24: %r24 = load %r7 align 8 : i64
                 i25: %r25 = load %r21 align 8 : i64
                 i26: %r26 = lt %r24, %r25 : i1
                 i27: store %r26, %r23 align 1
@@ -70,10 +70,10 @@ lir::Program {
                 terminator: cond_br %r28, bb2, bb3
             bb2 // label: bb2 // preds: [bb1]:
                 i29: %r29 = alloca i32 1 align 8 : ptr i64
-                i30: %r30 = load %r9 align 8 : i64
+                i30: %r30 = load %r7 align 8 : i64
                 i31: store %r30, %r29 align 8
                 i32: %r32 = alloca i32 1 align 8 : ptr i64
-                i33: %r33 = load %r9 align 8 : i64
+                i33: %r33 = load %r7 align 8 : i64
                 i34: store %r33, %r32 align 8
                 i35: %r35 = alloca i32 1 align 8 : ptr { %__slice, ptr fn() -> void }
                 i36: %r36 = load %r32 align 8 : i64
@@ -113,8 +113,8 @@ lir::Program {
                 i63: %r63 = insertvalue undef { i64, i64, i64 }, %r60, [0] : { i64, i64, i64 }
                 i64: %r64 = insertvalue %r63, %r61, [1] : { i64, i64, i64 }
                 i65: %r65 = insertvalue %r64, %r62, [2] : { i64, i64, i64 }
-                i66: store %r65, %r7 align 8
-                i67: %r67 = load %r7 align 8 : { i64, i64, i64 }
+                i66: store %r65, %r9 align 8
+                i67: %r67 = load %r9 align 8 : { i64, i64, i64 }
                 terminator: ret %r67
             bb6 // label: bb6 // preds: [bb4, bb5] // succs: [bb7, bb8]:
                 i68: %r68 = alloca i32 1 align 1 : ptr i1
@@ -143,9 +143,9 @@ lir::Program {
             bb11 // label: bb11 // preds: [bb8] // succs: [bb9]:
                 terminator: br bb9
             bb9 // label: bb9 // preds: [bb10, bb11] // succs: [bb1]:
-                i84: %r84 = load %r9 align 8 : i64
+                i84: %r84 = load %r7 align 8 : i64
                 i85: %r85 = add %r84, i64 1 : i64
-                i86: store %r85, %r9 align 8
+                i86: store %r85, %r7 align 8
                 terminator: br bb1
         }
 

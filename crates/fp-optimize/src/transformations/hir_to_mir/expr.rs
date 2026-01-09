@@ -6265,6 +6265,45 @@ impl<'a> BodyBuilder<'a> {
             }
         }
 
+        for (idx, operand) in lowered_args.iter_mut().enumerate() {
+            let Some(expected_ty) = sig.inputs.get(idx) else {
+                continue;
+            };
+            if self.lowering.enum_layout_for_ty(expected_ty).is_none() {
+                continue;
+            }
+
+            let place = match operand {
+                mir::Operand::Copy(place) | mir::Operand::Move(place) => place.clone(),
+                _ => continue,
+            };
+
+            let local_ty = self
+                .locals
+                .get(place.local as usize)
+                .map(|local| local.ty.clone())
+                .unwrap_or_else(|| expected_ty.clone());
+            let struct_def = self.local_structs.get(&place.local).copied();
+
+            if let Some((variant, layout)) =
+                self.enum_variant_for_payload(expected_ty, &local_ty, struct_def)
+            {
+                let local_id = self.allocate_temp(layout.enum_ty.clone(), expr.span);
+                let enum_place = mir::Place::from_local(local_id);
+                self.assign_enum_variant_from_place(
+                    enum_place.clone(),
+                    &variant,
+                    &layout,
+                    place,
+                    expr.span,
+                )?;
+                *operand = mir::Operand::Move(enum_place);
+                if let Some(arg_type) = arg_types.get_mut(idx) {
+                    *arg_type = layout.enum_ty.clone();
+                }
+            }
+        }
+
         let continue_block = self.new_block();
 
         let (mir_destination, place_info) = match destination {

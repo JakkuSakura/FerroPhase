@@ -33,16 +33,8 @@ pub fn main() -> () {
     println!("{}", none.unwrap_or(99));
 }
 pub fn max__spec0(a: i64, b: i64) -> i64 {
-    if a > b {
-        a
-    } else {
-        b
-    }
+    if a > b { a } else { b }
 }
 pub fn max__spec1(a: f64, b: f64) -> f64 {
-    if a > b {
-        a
-    } else {
-        b
-    }
+    if a > b { a } else { b }
 }
