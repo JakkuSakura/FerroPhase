@@ -3,7 +3,6 @@
 // gradually split into layout and abi submodules.
 
 // BEGIN ORIGINAL CONTENT
-use crate::transformations::IrTransform;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir::ty::{
@@ -4238,16 +4237,8 @@ impl LirGenerator {
     }
 }
 
-impl IrTransform<mir::Program, lir::LirProgram> for LirGenerator {
-    fn transform(&mut self, source: mir::Program) -> Result<lir::LirProgram> {
-        LirGenerator::transform(self, source)
-    }
-}
-
 impl Default for LirGenerator {
     fn default() -> Self {
         Self::new()
     }
 }
-
-// END ORIGINAL CONTENT

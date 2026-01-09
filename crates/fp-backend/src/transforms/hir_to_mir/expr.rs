@@ -21,8 +21,6 @@ use fp_core::span::Span;
 use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
-use crate::transformations::IrTransform;
-
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
 
 /// Minimal HIR → MIR lowering pass.
@@ -10481,12 +10479,8 @@ impl<'a> BodyBuilder<'a> {
             block.statements.push(statement);
         }
     }
-}
 
-impl IrTransform<hir::Program, mir::Program> for MirLowering {
-    fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
+    pub fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
         self.lower_program(&hir_program)
     }
 }
-
-// END ORIGINAL CONTENT

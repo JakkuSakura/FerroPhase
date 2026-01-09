@@ -7,8 +7,6 @@ use fp_core::{ast, ast::ItemKind, hir};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
-use super::IrTransform;
-
 mod exprs; // expression lowering
 mod helpers;
 mod items; // item/impl helpers
@@ -1987,18 +1985,6 @@ impl HirGenerator {
             visibility,
             span,
         }))
-    }
-}
-
-impl<'a> IrTransform<&'a ast::Expr, hir::Program> for HirGenerator {
-    fn transform(&mut self, source: &'a ast::Expr) -> Result<hir::Program> {
-        self.transform_expr(source)
-    }
-}
-
-impl<'a> IrTransform<&'a ast::File, hir::Program> for HirGenerator {
-    fn transform(&mut self, source: &'a ast::File) -> Result<hir::Program> {
-        self.transform_file(source)
     }
 }
 

@@ -43,8 +43,8 @@ impl PipelineStage for FrontendStage {
         }
 
         let result = match context.ast.kind() {
-            NodeKind::Expr(expr) => generator.transform(expr),
-            NodeKind::File(file) => generator.transform(file),
+            NodeKind::Expr(expr) => generator.transform_expr(expr),
+            NodeKind::File(file) => generator.transform_file(file),
             NodeKind::Item(_) => unreachable!(),
             NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
         };

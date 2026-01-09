@@ -22,7 +22,7 @@ use fp_interpret::engine::{
     AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome,
 };
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
-use fp_optimize::transformations::{HirGenerator, IrTransform, LirGenerator, MirLowering};
+use fp_optimize::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_pipeline::{
     PipelineBuilder, PipelineConfig, PipelineDiagnostics, PipelineError, PipelineOptions,
     PipelineStage, PipelineTarget,

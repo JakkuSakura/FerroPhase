@@ -1,7 +1,7 @@
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
-use fp_optimize::transformations::{HirGenerator, IrTransform};
+use fp_optimize::transformations::HirGenerator;
 use fp_rust::parser::RustParser;
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
     let ast_expr = support::ast::literal_expr(42);
     let mut generator = HirGenerator::new();
 
-    let program = generator.transform(&ast_expr)?;
+    let program = generator.transform_expr(&ast_expr)?;
 
     assert_eq!(program.items.len(), 1);
     let item = &program.items[0];
@@ -41,10 +41,7 @@ fn propagates_unimplemented_expression_error() {
         expr: Box::new(Expr::unit()),
     })
     .into();
-    let result = <HirGenerator as IrTransform<&Expr, fp_core::hir::Program>>::transform(
-        &mut generator,
-        &unsupported,
-    );
+    let result = generator.transform_expr(&unsupported);
     assert!(result.is_err());
 }
 
@@ -69,7 +66,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
         .expect("AST parsing succeeds");
 
     let mut generator = HirGenerator::new();
-    let program = generator.transform(&ast_file)?;
+    let program = generator.transform_file(&ast_file)?;
 
     let add_item = program
         .items
@@ -143,7 +140,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         .expect("AST parsing succeeds");
 
     let mut generator = HirGenerator::new();
-    let program = generator.transform(&ast_file)?;
+    let program = generator.transform_file(&ast_file)?;
 
     let add_item = program
         .items
@@ -210,7 +207,7 @@ fn transform_source(source: &str) -> OptimizeResult<hir::Program> {
     };
 
     let mut generator = HirGenerator::new();
-    generator.transform(&ast_file)
+    generator.transform_file(&ast_file)
 }
 
 fn find_function<'a>(program: &'a hir::Program, name: &str) -> &'a hir::Function {

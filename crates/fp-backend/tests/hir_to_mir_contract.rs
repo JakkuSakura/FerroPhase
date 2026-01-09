@@ -9,7 +9,7 @@ use fp_core::mir::{
     ConstantKind, ItemKind as MirItemKind, Operand, Rvalue, StatementKind, TerminatorKind,
 };
 use fp_core::span::Span;
-use fp_optimize::transformations::{IrTransform, MirLowering};
+use fp_optimize::transformations::MirLowering;
 
 fn span() -> Span {
     Span::new(0, 0, 0)
