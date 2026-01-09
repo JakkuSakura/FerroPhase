@@ -1,4 +1,84 @@
 use super::super::*;
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+
+pub(crate) struct FrontendContext {
+    pub ast: Node,
+    pub options: PipelineOptions,
+    pub file_path: Option<PathBuf>,
+    pub base_path: PathBuf,
+}
+
+pub(crate) struct FrontendStage;
+
+impl PipelineStage for FrontendStage {
+    type SrcCtx = FrontendContext;
+    type DstCtx = hir::Program;
+
+    fn name(&self) -> &'static str {
+        STAGE_AST_TO_HIR
+    }
+
+    fn run(
+        &self,
+        context: FrontendContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<hir::Program, PipelineError> {
+        let mut generator = match context.file_path.as_deref() {
+            Some(path) => HirGenerator::with_file(path),
+            None => HirGenerator::new(),
+        };
+
+        if context.options.error_tolerance.enabled {
+            generator.enable_error_tolerance(context.options.error_tolerance.max_errors);
+        }
+
+        if matches!(
+            context.ast.kind(),
+            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
+        ) {
+            let message = "Top-level items are not supported; provide a file or expression";
+            diagnostics
+                .push(Diagnostic::error(message.to_string()).with_source_context(STAGE_AST_TO_HIR));
+            return Err(PipelineError::new(STAGE_AST_TO_HIR, message));
+        }
+
+        let result = match context.ast.kind() {
+            NodeKind::Expr(expr) => generator.transform(expr),
+            NodeKind::File(file) => generator.transform(file),
+            NodeKind::Item(_) => unreachable!(),
+            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
+        };
+
+        let (errors, warnings) = generator.take_diagnostics();
+        diagnostics.extend(warnings);
+        diagnostics.extend(errors);
+
+        let program = match result {
+            Ok(program) => program,
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!("AST→HIR transformation failed: {}", err))
+                        .with_source_context(STAGE_AST_TO_HIR),
+                );
+                return Err(PipelineError::new(
+                    STAGE_AST_TO_HIR,
+                    "AST→HIR transformation failed",
+                ));
+            }
+        };
+
+        if context.options.save_intermediates {
+            let mut pretty_opts = PrettyOptions::default();
+            pretty_opts.show_spans = context.options.debug.verbose;
+            let rendered = format!("{}", pretty(&program, pretty_opts));
+            if let Err(err) = fs::write(context.base_path.with_extension(EXT_HIR), rendered) {
+                warn!(error = %err, "failed to persist HIR intermediate");
+            }
+        }
+
+        Ok(program)
+    }
+}
 
 impl Pipeline {
     pub(crate) fn stage_hir_generation(
@@ -7,122 +87,14 @@ impl Pipeline {
         options: &PipelineOptions,
         file_path: Option<&Path>,
         base_path: &Path,
-        manager: &DiagnosticManager,
     ) -> Result<hir::Program, CliError> {
-        let tolerate_fail = self.bootstrap_mode || options.bootstrap_mode;
-        let mut generator = match file_path {
-            Some(path) => HirGenerator::with_file(path),
-            None => HirGenerator::new(),
+        let stage = FrontendStage;
+        let context = FrontendContext {
+            ast: ast.clone(),
+            options: options.clone(),
+            file_path: file_path.map(Path::to_path_buf),
+            base_path: base_path.to_path_buf(),
         };
-
-        if options.error_tolerance.enabled {
-            generator.enable_error_tolerance(options.error_tolerance.max_errors);
-        }
-
-        if matches!(
-            ast.kind(),
-            NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
-        ) {
-            let message = "Top-level items are not supported; provide a file or expression";
-            if tolerate_fail {
-                if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, message) {
-                    manager.add_diagnostic(
-                        Diagnostic::warning(message.to_string())
-                            .with_source_context(STAGE_AST_TO_HIR),
-                    );
-                }
-                return Ok(hir::Program {
-                    items: Vec::new(),
-                    def_map: HashMap::new(),
-                    next_hir_id: 0,
-                });
-            } else {
-                manager.add_diagnostic(
-                    Diagnostic::error(message.to_string()).with_source_context(STAGE_AST_TO_HIR),
-                );
-                return Err(Self::stage_failure(STAGE_AST_TO_HIR));
-            }
-        }
-
-        let result = match ast.kind() {
-            NodeKind::Expr(expr) => generator.transform(expr),
-            NodeKind::File(file) => generator.transform(file),
-            NodeKind::Item(_) => unreachable!(),
-            NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
-        };
-
-        let (errors, warnings) = generator.take_diagnostics();
-
-        let transform_failed = result.is_err();
-
-        if let Err(e) = &result {
-            if tolerate_fail {
-                let message = format!("AST→HIR transformation failed: {}", e);
-                if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
-                    manager.add_diagnostic(
-                        Diagnostic::warning(message).with_source_context(STAGE_AST_TO_HIR),
-                    );
-                }
-            } else {
-                manager.add_diagnostic(
-                    Diagnostic::error(format!("AST→HIR transformation failed: {}", e))
-                        .with_source_context(STAGE_AST_TO_HIR),
-                );
-            }
-        }
-
-        if !warnings.is_empty() {
-            if tolerate_fail {
-                for diagnostic in warnings {
-                    let message = diagnostic.to_string();
-                    if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
-                        manager.add_diagnostic(
-                            Diagnostic::warning(message).with_source_context(STAGE_AST_TO_HIR),
-                        );
-                    }
-                }
-            } else {
-                manager.add_diagnostics(warnings);
-            }
-        }
-
-        if !errors.is_empty() {
-            if tolerate_fail {
-                for diagnostic in errors {
-                    let mut warning = diagnostic.as_string_diagnostic();
-                    warning.level = DiagnosticLevel::Warning;
-                    let message = warning.message.clone();
-                    if self.should_emit_bootstrap_diagnostic(STAGE_AST_TO_HIR, &message) {
-                        manager.add_diagnostic(warning);
-                    }
-                }
-            } else {
-                manager.add_diagnostics(errors);
-            }
-        }
-
-        if transform_failed {
-            if tolerate_fail {
-                return Ok(hir::Program {
-                    items: Vec::new(),
-                    def_map: HashMap::new(),
-                    next_hir_id: 0,
-                });
-            }
-            return Err(Self::stage_failure(STAGE_AST_TO_HIR));
-        }
-
-        let program = result.expect("hir generation errors accounted for");
-
-        if options.save_intermediates {
-            let mut pretty_opts = PrettyOptions::default();
-            pretty_opts.show_spans = options.debug.verbose;
-            let rendered = format!("{}", pretty(&program, pretty_opts));
-            if let Err(err) = fs::write(base_path.with_extension(EXT_HIR), rendered) {
-                warn!(error = %err, "failed to persist HIR intermediate");
-            }
-        }
-
-        Ok(program)
+        self.run_pipeline_stage(STAGE_AST_TO_HIR, stage, context, options)
     }
 }

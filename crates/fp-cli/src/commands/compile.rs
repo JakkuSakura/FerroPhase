@@ -1,11 +1,15 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
-use crate::{CliError, Result, cli::CliConfig, pipeline::{Pipeline, PipelineInput, PipelineOutput}};
+use crate::{
+    CliError, Result,
+    cli::CliConfig,
+    pipeline::{Pipeline, PipelineInput, PipelineOutput},
+};
+use console::style;
 use fp_pipeline::{
     DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
 };
-use console::style;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};

@@ -1,5 +1,8 @@
 use super::super::*;
 use fp_core::ast::Node;
+use fp_interpret::const_eval::{
+    ConstEvalContext, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
+};
 use std::fs;
 
 impl Pipeline {
@@ -7,45 +10,35 @@ impl Pipeline {
         &mut self,
         ast: &mut Node,
         options: &PipelineOptions,
-        manager: &DiagnosticManager,
     ) -> Result<ConstEvalOutcome, CliError> {
-        let serializer = self.serializer.clone().ok_or_else(|| {
-            CliError::Compilation("No serializer registered for const-eval".to_string())
-        })?;
-        register_threadlocal_serializer(serializer.clone());
-
-        let shared_context = SharedScopedContext::new();
-        let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
-        orchestrator.set_debug_assertions(!options.release);
-        orchestrator.set_execute_main(options.execute_main);
-
+        let mut std_modules = Vec::new();
         for std_path in runtime_std_paths() {
-            let source = fs::read_to_string(&std_path).map_err(|e| {
-                CliError::Compilation(format!(
-                    "failed to read std module {}: {}",
-                    std_path.display(),
-                    e
-                ))
-            })?;
+            let source = match fs::read_to_string(&std_path) {
+                Ok(source) => source,
+                Err(err) => {
+                    return Err(CliError::Compilation(format!(
+                        "failed to read std module {}: {}",
+                        std_path.display(),
+                        err
+                    )));
+                }
+            };
             let std_node = self.parse_input_source(options, &source, Some(&std_path))?;
-            *ast = merge_std_module(ast.clone(), std_node, manager, STAGE_CONST_EVAL)?;
+            std_modules.push(std_node);
         }
 
-        let outcome = match orchestrator.evaluate(ast, &shared_context) {
-            Ok(outcome) => outcome,
-            Err(e) => {
-                let diagnostic = Diagnostic::error(format!("Const evaluation failed: {}", e))
-                    .with_source_context(STAGE_CONST_EVAL);
-                manager.add_diagnostic(diagnostic);
-                return Err(Self::stage_failure(STAGE_CONST_EVAL));
-            }
+        let stage = ConstEvalStage;
+        let context = ConstEvalContext {
+            ast: ast.clone(),
+            options: options.clone(),
+            serializer: self.serializer.clone(),
+            std_modules,
         };
-
-        manager.add_diagnostics(outcome.diagnostics.clone());
-        if outcome.has_errors {
-            return Err(Self::stage_failure(STAGE_CONST_EVAL));
-        }
-
+        let ConstEvalResult {
+            ast: next_ast,
+            outcome,
+        } = self.run_pipeline_stage(STAGE_CONST_EVAL, stage, context, options)?;
+        *ast = next_ast;
         Ok(outcome)
     }
 }

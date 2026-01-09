@@ -13,13 +13,6 @@ pub(crate) struct LirArtifacts {
     pub(crate) lir_text: String,
 }
 
-/// Backend intermediate artifacts (MIR/LIR text and program) used by the pipeline.
-/// Internal to the `pipeline` module.
-#[derive(Debug)]
-pub(crate) struct BackendArtifacts {
-    pub(crate) lir_program: lir::LirProgram,
-}
-
 /// LLVM artifacts produced by LIR→LLVM lowering.
 #[derive(Debug)]
 pub(crate) struct LlvmArtifacts {

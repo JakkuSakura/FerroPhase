@@ -5,7 +5,7 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::Result;
-use fp_interpret::ast::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 use fp_rust::printer::RustPrinter;
 
 fn i32_ty() -> Ty {

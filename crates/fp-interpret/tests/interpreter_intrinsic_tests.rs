@@ -3,7 +3,7 @@ use fp_core::ast::{
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
-use fp_interpret::ast::{AstInterpreter, InterpreterOptions};
+use fp_interpret::engine::{AstInterpreter, InterpreterOptions};
 
 fn intrinsic_args_expr(kind: IntrinsicCallKind, values: Vec<Value>) -> Expr {
     let args = values.into_iter().map(Expr::value).collect();

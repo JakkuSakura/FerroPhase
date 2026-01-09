@@ -3,6 +3,45 @@ use fp_core::ast;
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicMaterializer;
 use fp_llvm::runtime::LlvmRuntimeIntrinsicMaterializer;
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+
+pub(crate) struct MaterializeContext {
+    pub ast: Node,
+    pub target: PipelineTarget,
+}
+
+pub(crate) struct MaterializeStage;
+
+impl PipelineStage for MaterializeStage {
+    type SrcCtx = MaterializeContext;
+    type DstCtx = Node;
+
+    fn name(&self) -> &'static str {
+        STAGE_RUNTIME_MATERIALIZE
+    }
+
+    fn run(
+        &self,
+        context: MaterializeContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<Node, PipelineError> {
+        let materializer = IntrinsicsMaterializer::for_target(&context.target);
+        let mut ast = context.ast;
+        match materializer.materialize(&mut ast) {
+            Ok(()) => Ok(ast),
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
+                        .with_source_context(STAGE_RUNTIME_MATERIALIZE),
+                );
+                Err(PipelineError::new(
+                    STAGE_RUNTIME_MATERIALIZE,
+                    "Failed to materialize runtime intrinsics",
+                ))
+            }
+        }
+    }
+}
 
 impl Pipeline {
     pub(crate) fn stage_materialize_runtime_intrinsics(
@@ -10,25 +49,16 @@ impl Pipeline {
         ast: &mut Node,
         target: &PipelineTarget,
         options: &PipelineOptions,
-        manager: &DiagnosticManager,
     ) -> Result<(), CliError> {
-        if options.bootstrap_mode {
-            return Ok(());
-        }
-
-        let materializer = IntrinsicsMaterializer::for_target(target);
-        let result = materializer.materialize(ast);
-
-        match result {
-            Ok(()) => Ok(()),
-            Err(err) => {
-                manager.add_diagnostic(
-                    Diagnostic::error(format!("Failed to materialize runtime intrinsics: {}", err))
-                        .with_source_context(STAGE_RUNTIME_MATERIALIZE),
-                );
-                Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE))
-            }
-        }
+        let stage = MaterializeStage;
+        let context = MaterializeContext {
+            ast: ast.clone(),
+            target: target.clone(),
+        };
+        let next_ast =
+            self.run_pipeline_stage(STAGE_RUNTIME_MATERIALIZE, stage, context, options)?;
+        *ast = next_ast;
+        Ok(())
     }
 }
 

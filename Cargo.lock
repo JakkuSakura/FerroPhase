@@ -817,6 +817,7 @@ version = "0.1.0"
 dependencies = [
  "eyre",
  "fp-core",
+ "fp-pipeline",
  "fp-rust",
  "fp-typing",
  "itertools 0.12.1",

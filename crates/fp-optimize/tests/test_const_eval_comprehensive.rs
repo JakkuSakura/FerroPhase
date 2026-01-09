@@ -6,7 +6,7 @@ use fp_core::ast::{
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
-use fp_optimize::orchestrators::ConstEvaluationOrchestrator;
+use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_rust::{printer::RustPrinter, shll_parse_items};
 
 #[test]

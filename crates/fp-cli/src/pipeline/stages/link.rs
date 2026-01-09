@@ -1,78 +1,107 @@
 use super::super::*;
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use std::process::Command;
 
-impl Pipeline {
-    pub(crate) fn stage_link_binary(
+pub(crate) struct LinkContext {
+    pub llvm_ir_path: PathBuf,
+    pub base_path: PathBuf,
+    pub options: PipelineOptions,
+}
+
+pub(crate) struct LinkStage;
+
+impl PipelineStage for LinkStage {
+    type SrcCtx = LinkContext;
+    type DstCtx = PathBuf;
+
+    fn name(&self) -> &'static str {
+        STAGE_LINK_BINARY
+    }
+
+    fn run(
         &self,
-        llvm_ir_path: &Path,
-        base_path: &Path,
-        options: &PipelineOptions,
-        manager: &DiagnosticManager,
-    ) -> Result<PathBuf, CliError> {
-        let binary_path = base_path.with_extension(if cfg!(target_os = "windows") {
-            "exe"
-        } else {
-            "out"
-        });
+        context: LinkContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<PathBuf, PipelineError> {
+        let binary_path = context
+            .base_path
+            .with_extension(if cfg!(target_os = "windows") {
+                "exe"
+            } else {
+                "out"
+            });
 
         if let Some(parent) = binary_path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
-                manager.add_diagnostic(
+                diagnostics.push(
                     Diagnostic::error(format!("Failed to create output directory: {}", err))
                         .with_source_context(STAGE_LINK_BINARY),
                 );
-                return Err(Self::stage_failure(STAGE_LINK_BINARY));
+                return Err(PipelineError::new(
+                    STAGE_LINK_BINARY,
+                    "Failed to create output directory",
+                ));
             }
         }
 
         let clang_available = Command::new("clang").arg("--version").output();
         if matches!(clang_available, Err(_)) {
-            manager.add_diagnostic(
+            diagnostics.push(
                 Diagnostic::error(
                     "`clang` not found in PATH; install LLVM toolchain to produce binaries"
                         .to_string(),
                 )
                 .with_source_context(STAGE_LINK_BINARY),
             );
-            return Err(Self::stage_failure(STAGE_LINK_BINARY));
+            return Err(PipelineError::new(
+                STAGE_LINK_BINARY,
+                "`clang` not found in PATH",
+            ));
         }
 
-        let llvm_ir_text = fs::read_to_string(llvm_ir_path).unwrap_or_default();
+        let llvm_ir_text = fs::read_to_string(&context.llvm_ir_path).unwrap_or_default();
         let requires_eh = llvm_ir_text.contains("landingpad") || llvm_ir_text.contains("invoke");
         let linker = if requires_eh { "clang++" } else { "clang" };
         if requires_eh {
             let clangxx_available = Command::new("clang++").arg("--version").output();
             if matches!(clangxx_available, Err(_)) {
-                manager.add_diagnostic(
+                diagnostics.push(
                     Diagnostic::error(
                         "`clang++` not found in PATH; install LLVM toolchain to produce binaries with unwind support"
                             .to_string(),
                     )
                     .with_source_context(STAGE_LINK_BINARY),
                 );
-                return Err(Self::stage_failure(STAGE_LINK_BINARY));
+                return Err(PipelineError::new(
+                    STAGE_LINK_BINARY,
+                    "`clang++` not found in PATH",
+                ));
             }
         }
         let mut cmd = Command::new(linker);
-        cmd.arg(llvm_ir_path);
+        cmd.arg(&context.llvm_ir_path);
         if requires_eh {
-            let runtime_path =
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../crates/fp-llvm/runtime/fp_unwind.cc");
+            let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../crates/fp-llvm/runtime/fp_unwind.cc");
             cmd.arg(runtime_path);
             cmd.arg("-fexceptions");
         }
         cmd.arg("-o").arg(&binary_path);
-        if options.release {
+        if context.options.release {
             cmd.arg("-O2");
         }
 
         let output = match cmd.output() {
             Ok(output) => output,
             Err(err) => {
-                manager.add_diagnostic(
+                diagnostics.push(
                     Diagnostic::error(format!("Failed to invoke clang: {}", err))
                         .with_source_context(STAGE_LINK_BINARY),
                 );
-                return Err(Self::stage_failure(STAGE_LINK_BINARY));
+                return Err(PipelineError::new(
+                    STAGE_LINK_BINARY,
+                    "Failed to invoke clang",
+                ));
             }
         };
 
@@ -86,19 +115,40 @@ impl Pipeline {
             if message.is_empty() {
                 message = "clang failed without diagnostics".to_string();
             }
-            manager.add_diagnostic(
+            diagnostics.push(
                 Diagnostic::error(format!("clang failed: {}", message))
                     .with_source_context(STAGE_LINK_BINARY),
             );
-            return Err(Self::stage_failure(STAGE_LINK_BINARY));
+            return Err(PipelineError::new(STAGE_LINK_BINARY, "clang failed"));
         }
 
-        if !options.save_intermediates {
-            if let Err(err) = fs::remove_file(llvm_ir_path) {
-                debug!(error = %err, path = %llvm_ir_path.display(), "failed to remove intermediate LLVM IR file after linking");
+        if !context.options.save_intermediates {
+            if let Err(err) = fs::remove_file(&context.llvm_ir_path) {
+                debug!(
+                    error = %err,
+                    path = %context.llvm_ir_path.display(),
+                    "failed to remove intermediate LLVM IR file after linking"
+                );
             }
         }
 
         Ok(binary_path)
+    }
+}
+
+impl Pipeline {
+    pub(crate) fn stage_link_binary(
+        &self,
+        llvm_ir_path: &Path,
+        base_path: &Path,
+        options: &PipelineOptions,
+    ) -> Result<PathBuf, CliError> {
+        let stage = LinkStage;
+        let context = LinkContext {
+            llvm_ir_path: llvm_ir_path.to_path_buf(),
+            base_path: base_path.to_path_buf(),
+            options: options.clone(),
+        };
+        self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
     }
 }

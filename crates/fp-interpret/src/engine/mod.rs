@@ -32,9 +32,9 @@ mod const_regions;
 mod env;
 mod eval_expr;
 mod eval_stmt;
-mod interpreter_splicing;
 mod intrinsics;
 mod operators;
+mod quote;
 
 const DEFAULT_DIAGNOSTIC_CONTEXT: &str = "ast-interpreter";
 
@@ -3780,7 +3780,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    // build_quoted_fragment moved to interpreter_splicing.rs
+    // build_quoted_fragment moved to quote.rs
 }
 
 fn is_quote_only_item(item: &Item) -> bool {

@@ -1,0 +1,248 @@
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use fp_core::ast::{
+    register_threadlocal_serializer, AstSerializer, Item, ItemKind, Node, Ty, Value,
+};
+use fp_core::context::SharedScopedContext;
+use fp_core::diagnostics::Diagnostic;
+use fp_core::error::Result as CoreResult;
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineOptions, PipelineStage};
+
+use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_typing::AstTypeInferencer;
+
+pub const STAGE_CONST_EVAL: &str = "const-eval";
+
+/// Result of running const evaluation on the typed AST.
+#[derive(Debug, Default, Clone)]
+pub struct ConstEvalOutcome {
+    pub evaluated_constants: HashMap<String, Value>,
+    pub mutations_applied: bool,
+    pub diagnostics: Vec<Diagnostic>,
+    pub has_errors: bool,
+    pub stdout: Vec<String>,
+    pub closure_types: HashMap<String, Ty>,
+}
+
+/// Const-evaluation orchestrator that operates directly on the typed AST.
+pub struct ConstEvaluationOrchestrator {
+    diagnostics: Option<Arc<fp_core::diagnostics::DiagnosticManager>>,
+    debug_assertions: bool,
+    execute_main: bool,
+}
+
+impl ConstEvaluationOrchestrator {
+    pub fn new(_serializer: Arc<dyn AstSerializer>) -> Self {
+        Self {
+            diagnostics: None,
+            debug_assertions: false,
+            execute_main: false,
+        }
+    }
+
+    pub fn with_diagnostics(
+        mut self,
+        manager: Arc<fp_core::diagnostics::DiagnosticManager>,
+    ) -> Self {
+        self.diagnostics = Some(manager);
+        self
+    }
+
+    pub fn set_debug_assertions(&mut self, enabled: bool) {
+        self.debug_assertions = enabled;
+    }
+
+    pub fn set_execute_main(&mut self, enabled: bool) {
+        self.execute_main = enabled;
+    }
+
+    pub fn evaluate(
+        &mut self,
+        ast: &mut Node,
+        ctx: &SharedScopedContext,
+    ) -> CoreResult<ConstEvalOutcome> {
+        let options = InterpreterOptions {
+            mode: InterpreterMode::CompileTime,
+            debug_assertions: self.debug_assertions,
+            diagnostics: self.diagnostics.clone(),
+            diagnostic_context: STAGE_CONST_EVAL,
+            module_resolution: None,
+        };
+
+        let mut interpreter = AstInterpreter::new(ctx, options);
+
+        // Initialize the typer with the full AST context before using it incrementally
+        // so the interpreter can resolve declarations during const evaluation.
+        let mut typer = AstTypeInferencer::new().with_context(ctx);
+        typer.initialize_from_node(ast);
+        interpreter.set_typer(typer);
+
+        interpreter.interpret(ast);
+
+        if self.execute_main {
+            let _ = interpreter.execute_main();
+        }
+
+        let outcome = interpreter.take_outcome();
+
+        Ok(ConstEvalOutcome {
+            evaluated_constants: outcome.evaluated_constants,
+            mutations_applied: outcome.mutations_applied,
+            diagnostics: outcome.diagnostics,
+            has_errors: outcome.has_errors,
+            stdout: outcome.stdout,
+            closure_types: outcome.closure_types,
+        })
+    }
+}
+
+pub struct ConstEvalContext {
+    pub ast: Node,
+    pub options: PipelineOptions,
+    pub serializer: Option<Arc<dyn AstSerializer>>,
+    pub std_modules: Vec<Node>,
+}
+
+pub struct ConstEvalStage;
+
+pub struct ConstEvalResult {
+    pub ast: Node,
+    pub outcome: ConstEvalOutcome,
+}
+
+impl PipelineStage for ConstEvalStage {
+    type SrcCtx = ConstEvalContext;
+    type DstCtx = ConstEvalResult;
+
+    fn name(&self) -> &'static str {
+        STAGE_CONST_EVAL
+    }
+
+    fn run(
+        &self,
+        context: ConstEvalContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> std::result::Result<ConstEvalResult, PipelineError> {
+        let serializer = match context.serializer.clone() {
+            Some(serializer) => serializer,
+            None => {
+                diagnostics.push(
+                    Diagnostic::error("No serializer registered for const-eval".to_string())
+                        .with_source_context(STAGE_CONST_EVAL),
+                );
+                return Err(PipelineError::new(
+                    STAGE_CONST_EVAL,
+                    "No serializer registered for const-eval",
+                ));
+            }
+        };
+        register_threadlocal_serializer(serializer.clone());
+
+        let mut ast = context.ast;
+        for std_node in context.std_modules {
+            ast = merge_std_module(ast, std_node, diagnostics)?;
+        }
+
+        let shared_context = SharedScopedContext::new();
+        let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
+        orchestrator.set_debug_assertions(!context.options.release);
+        orchestrator.set_execute_main(context.options.execute_main);
+
+        let outcome = match orchestrator.evaluate(&mut ast, &shared_context) {
+            Ok(outcome) => outcome,
+            Err(err) => {
+                diagnostics.push(
+                    Diagnostic::error(format!("Const evaluation failed: {}", err))
+                        .with_source_context(STAGE_CONST_EVAL),
+                );
+                return Err(PipelineError::new(
+                    STAGE_CONST_EVAL,
+                    "Const evaluation failed",
+                ));
+            }
+        };
+
+        diagnostics.extend(outcome.diagnostics.clone());
+        if outcome.has_errors {
+            return Err(PipelineError::new(
+                STAGE_CONST_EVAL,
+                "Const evaluation reported errors",
+            ));
+        }
+
+        Ok(ConstEvalResult { ast, outcome })
+    }
+}
+
+fn merge_std_module(
+    ast: Node,
+    std_node: Node,
+    diagnostics: &mut PipelineDiagnostics,
+) -> std::result::Result<Node, PipelineError> {
+    let Node { ty, kind } = ast;
+    let Node { kind: std_kind, .. } = std_node;
+    let fp_core::ast::NodeKind::File(mut file) = kind else {
+        diagnostics.push(
+            Diagnostic::error("std injection expects a file AST".to_string())
+                .with_source_context(STAGE_CONST_EVAL),
+        );
+        return Err(PipelineError::new(
+            STAGE_CONST_EVAL,
+            "std injection expects a file AST",
+        ));
+    };
+    let fp_core::ast::NodeKind::File(std_file) = std_kind else {
+        diagnostics.push(
+            Diagnostic::error("std module must be a file".to_string())
+                .with_source_context(STAGE_CONST_EVAL),
+        );
+        return Err(PipelineError::new(
+            STAGE_CONST_EVAL,
+            "std module must be a file",
+        ));
+    };
+    let mut std_module = None;
+    let mut std_items = Vec::new();
+    for item in std_file.items {
+        if let ItemKind::Module(module) = item.kind() {
+            if module.name.as_str() == "std" {
+                std_module = Some(module.clone());
+                continue;
+            }
+        }
+        std_items.push(item);
+    }
+    let Some(mut std_module) = std_module else {
+        diagnostics.push(
+            Diagnostic::error("std file must define module std".to_string())
+                .with_source_context(STAGE_CONST_EVAL),
+        );
+        return Err(PipelineError::new(
+            STAGE_CONST_EVAL,
+            "std file must define module std",
+        ));
+    };
+    std_module.items.extend(std_items);
+
+    let mut merged_into_existing = false;
+    for item in &mut file.items {
+        if let ItemKind::Module(existing) = item.kind_mut() {
+            if existing.name.as_str() == "std" {
+                existing.items.extend(std::mem::take(&mut std_module.items));
+                merged_into_existing = true;
+                break;
+            }
+        }
+    }
+    if !merged_into_existing {
+        let mut items = Vec::with_capacity(file.items.len() + 1);
+        items.push(Item::from(ItemKind::Module(std_module)));
+        items.append(&mut file.items);
+        file.items = items;
+    }
+    Ok(Node {
+        ty,
+        kind: fp_core::ast::NodeKind::File(file),
+    })
+}

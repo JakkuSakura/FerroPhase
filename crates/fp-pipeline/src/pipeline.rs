@@ -44,9 +44,7 @@ impl<Src> PipelineBuilder<Src, Src> {
                    _diagnostics: &mut PipelineDiagnostics,
                    _options: &PipelineOptions| Ok(context);
         Self {
-            pipeline: Pipeline {
-                run: Box::new(run),
-            },
+            pipeline: Pipeline { run: Box::new(run) },
             _marker: PhantomData,
         }
     }
@@ -71,15 +69,19 @@ impl<Src, Mid> PipelineBuilder<Src, Mid> {
                     diagnostics.emit_stage(name, options);
                     Ok(next)
                 }
-                Err(err) if err.stage == name => Err(err),
-                Err(err) => Err(PipelineError::new(name, err.message)),
+                Err(err) => {
+                    diagnostics.emit_stage(name, options);
+                    if err.stage == name {
+                        Err(err)
+                    } else {
+                        Err(PipelineError::new(name, err.message))
+                    }
+                }
             }
         };
 
         PipelineBuilder {
-            pipeline: Pipeline {
-                run: Box::new(run),
-            },
+            pipeline: Pipeline { run: Box::new(run) },
             _marker: PhantomData,
         }
     }
