@@ -80,6 +80,10 @@ pub struct CompileArgs {
     #[arg(long)]
     pub save_intermediates: bool,
 
+    /// Emit text-based bytecode (.ftbc) when compiling to bytecode
+    #[arg(long)]
+    pub emit_text_bytecode: bool,
+
     /// Enable error tolerance during compilation
     #[arg(long)]
     pub error_tolerance: bool,
@@ -125,6 +129,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
             args.output.as_ref(),
             &args.backend,
             args.target_triple.as_deref(),
+            args.emit_text_bytecode,
             output_is_dir,
         )?;
 
@@ -378,6 +383,7 @@ fn determine_output_path(
     output: Option<&PathBuf>,
     backend: &str,
     target_triple: Option<&str>,
+    emit_text_bytecode: bool,
     output_is_dir: bool,
 ) -> Result<PathBuf> {
     if let Some(output) = output {
@@ -393,7 +399,13 @@ fn determine_output_path(
                 "rust" => "rs",
                 "llvm" => "ll",
                 "wasm" => "wasm",
-                "bytecode" => "fbc",
+                "bytecode" => {
+                    if emit_text_bytecode {
+                        "ftbc"
+                    } else {
+                        "fbc"
+                    }
+                }
                 _ => "out",
             };
             let stem = input
@@ -426,6 +438,12 @@ fn determine_output_path(
             return Ok(path);
         }
 
+        if backend == "bytecode" && emit_text_bytecode {
+            let mut path = output.clone();
+            path.set_extension("ftbc");
+            return Ok(path);
+        }
+
         Ok(output.clone())
     } else {
         let extension = match backend {
@@ -440,7 +458,13 @@ fn determine_output_path(
             "rust" => "rs",
             "llvm" => "ll",
             "wasm" => "wasm",
-            "bytecode" => "fbc",
+            "bytecode" => {
+                if emit_text_bytecode {
+                    "ftbc"
+                } else {
+                    "fbc"
+                }
+            }
             _ => {
                 return Err(CliError::InvalidInput(format!(
                     "Unknown backend for output extension: {}",

@@ -632,15 +632,23 @@ impl Pipeline {
                     let bytecode = fp_bytecode::lower_program(&mir.mir_program).map_err(|err| {
                         CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err))
                     })?;
-                    let bytes = fp_bytecode::encode_file(&bytecode).map_err(|err| {
-                        CliError::Compilation(format!("Bytecode encoding failed: {}", err))
-                    })?;
-
                     let bytecode_path = base_path.to_path_buf();
                     if let Some(parent) = bytecode_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    fs::write(&bytecode_path, bytes)?;
+                    if bytecode_path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        == Some("ftbc")
+                    {
+                        let rendered = fp_bytecode::format_program(&bytecode);
+                        fs::write(&bytecode_path, rendered)?;
+                    } else {
+                        let bytes = fp_bytecode::encode_file(&bytecode).map_err(|err| {
+                            CliError::Compilation(format!("Bytecode encoding failed: {}", err))
+                        })?;
+                        fs::write(&bytecode_path, bytes)?;
+                    }
 
                     PipelineOutput::Binary(bytecode_path)
                 }

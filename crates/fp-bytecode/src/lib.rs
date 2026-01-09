@@ -185,6 +185,41 @@ pub fn decode_file(bytes: &[u8]) -> Result<BytecodeFile, BytecodeError> {
     Ok(file)
 }
 
+pub fn format_program(program: &BytecodeProgram) -> String {
+    let mut output = String::new();
+    output.push_str("fp-bytecode {\n");
+    output.push_str("  const_pool:\n");
+    for (index, constant) in program.const_pool.iter().enumerate() {
+        output.push_str(&format!(
+            "    [{}] {}\n",
+            index,
+            format_const(constant)
+        ));
+    }
+    output.push_str("  functions:\n");
+    for function in &program.functions {
+        output.push_str(&format!(
+            "    fn {}(params: {}, locals: {})\n",
+            function.name, function.params, function.locals
+        ));
+        for block in &function.blocks {
+            output.push_str(&format!("      bb{}:\n", block.id));
+            for instr in &block.code {
+                output.push_str(&format!("        {}\n", format_instr(instr)));
+            }
+            output.push_str(&format!(
+                "        terminator {}\n",
+                format_terminator(&block.terminator)
+            ));
+        }
+    }
+    if let Some(entry) = &program.entry {
+        output.push_str(&format!("  entry: {}\n", entry));
+    }
+    output.push_str("}\n");
+    output
+}
+
 pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, BytecodeError> {
     let mut const_pool = Vec::new();
     let mut functions = Vec::new();
@@ -577,4 +612,123 @@ fn lower_unop(op: &mir::UnOp) -> Result<BytecodeUnOp, BytecodeError> {
         mir::UnOp::Neg => BytecodeUnOp::Neg,
     };
     Ok(lowered)
+}
+
+fn format_const(value: &BytecodeConst) -> String {
+    match value {
+        BytecodeConst::Unit => "()".to_string(),
+        BytecodeConst::Bool(value) => value.to_string(),
+        BytecodeConst::Int(value) => value.to_string(),
+        BytecodeConst::UInt(value) => value.to_string(),
+        BytecodeConst::Float(value) => value.to_string(),
+        BytecodeConst::Str(value) => format!("{:?}", value),
+        BytecodeConst::Null => "null".to_string(),
+        BytecodeConst::Tuple(items) => format_list("tuple", items),
+        BytecodeConst::Array(items) => format_list("array", items),
+        BytecodeConst::List(items) => format_list("list", items),
+        BytecodeConst::Map(items) => {
+            let mut rendered = Vec::with_capacity(items.len());
+            for (key, value) in items {
+                rendered.push(format!("{} => {}", format_const(key), format_const(value)));
+            }
+            format!("map [{}]", rendered.join(", "))
+        }
+    }
+}
+
+fn format_list(label: &str, items: &[BytecodeConst]) -> String {
+    let rendered = items
+        .iter()
+        .map(format_const)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("{} [{}]", label, rendered)
+}
+
+fn format_instr(instr: &BytecodeInstr) -> String {
+    match instr {
+        BytecodeInstr::LoadConst(id) => format!("load.const {}", id),
+        BytecodeInstr::LoadLocal(id) => format!("load.local {}", id),
+        BytecodeInstr::StoreLocal(id) => format!("store.local {}", id),
+        BytecodeInstr::LoadPlace(place) => format!("load.place {}", format_place(place)),
+        BytecodeInstr::StorePlace(place) => format!("store.place {}", format_place(place)),
+        BytecodeInstr::BinaryOp(op) => format!("binop {:?}", op),
+        BytecodeInstr::UnaryOp(op) => format!("unop {:?}", op),
+        BytecodeInstr::IntrinsicCall {
+            kind,
+            arg_count,
+            format,
+        } => {
+            let format_label = format.as_deref().unwrap_or("");
+            if format_label.is_empty() {
+                format!("intrinsic {:?} {}", kind, arg_count)
+            } else {
+                format!("intrinsic {:?} {} {:?}", kind, arg_count, format_label)
+            }
+        }
+        BytecodeInstr::MakeTuple(count) => format!("make.tuple {}", count),
+        BytecodeInstr::MakeArray(count) => format!("make.array {}", count),
+        BytecodeInstr::MakeList(count) => format!("make.list {}", count),
+        BytecodeInstr::MakeMap(count) => format!("make.map {}", count),
+        BytecodeInstr::Pop => "pop".to_string(),
+    }
+}
+
+fn format_terminator(term: &BytecodeTerminator) -> String {
+    match term {
+        BytecodeTerminator::Return => "return".to_string(),
+        BytecodeTerminator::Jump { target } => format!("jump bb{}", target),
+        BytecodeTerminator::JumpIfTrue { target } => format!("jump_if_true bb{}", target),
+        BytecodeTerminator::JumpIfFalse { target } => format!("jump_if_false bb{}", target),
+        BytecodeTerminator::SwitchInt {
+            values,
+            targets,
+            otherwise,
+        } => {
+            let mut pairs = Vec::with_capacity(values.len());
+            for (value, target) in values.iter().zip(targets) {
+                pairs.push(format!("{}:bb{}", value, target));
+            }
+            format!(
+                "switch [{}] otherwise bb{}",
+                pairs.join(", "),
+                otherwise
+            )
+        }
+        BytecodeTerminator::Call {
+            callee,
+            arg_count,
+            destination,
+            target,
+        } => {
+            let dest = destination
+                .as_ref()
+                .map(format_place)
+                .unwrap_or_else(|| "_".to_string());
+            format!(
+                "call {:?} {} -> {} then bb{}",
+                callee, arg_count, dest, target
+            )
+        }
+        BytecodeTerminator::Abort => "abort".to_string(),
+        BytecodeTerminator::Unreachable => "unreachable".to_string(),
+    }
+}
+
+fn format_place(place: &BytecodePlace) -> String {
+    if place.projection.is_empty() {
+        return format!("_{}", place.local);
+    }
+    let mut rendered = format!("_{}", place.local);
+    for elem in &place.projection {
+        match elem {
+            BytecodePlaceElem::Field(index) => {
+                rendered.push_str(&format!(".{}", index));
+            }
+            BytecodePlaceElem::Index(local) => {
+                rendered.push_str(&format!("[_{}]", local));
+            }
+        }
+    }
+    rendered
 }
