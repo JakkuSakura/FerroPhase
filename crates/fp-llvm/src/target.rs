@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use inkwell::module::Module;
+use inkwell::targets::TargetMachine;
 use std::path::Path;
 
 /// Target configuration for LLVM code generation
@@ -41,21 +42,22 @@ pub enum CodeModel {
 
 impl Default for TargetConfig {
     fn default() -> Self {
-        Self {
-            triple: "x86_64-apple-darwin".to_string(),
-            cpu: "generic".to_string(),
-            features: "".to_string(),
-            optimization_level: OptimizationLevel::Default,
-            reloc_mode: RelocMode::Default,
-            code_model: CodeModel::Default,
-        }
+        Self::host()
     }
 }
 
 impl TargetConfig {
     /// Create a new target configuration for the host machine
     pub fn host() -> Self {
-        Self::default()
+        let triple = TargetMachine::get_default_triple();
+        Self {
+            triple: triple.as_str().to_string_lossy().to_string(),
+            cpu: "generic".to_string(),
+            features: "".to_string(),
+            optimization_level: OptimizationLevel::Default,
+            reloc_mode: RelocMode::Default,
+            code_model: CodeModel::Default,
+        }
     }
 
     /// Create a target configuration for a specific triple

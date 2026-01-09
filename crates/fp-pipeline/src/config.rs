@@ -6,6 +6,16 @@ use std::path::PathBuf;
 pub struct PipelineOptions {
     /// Compilation target
     pub target: PipelineTarget,
+    /// Target triple for codegen (defaults to host when unset)
+    pub target_triple: Option<String>,
+    /// Target CPU for codegen (optional)
+    pub target_cpu: Option<String>,
+    /// Target feature string for codegen (optional)
+    pub target_features: Option<String>,
+    /// Target sysroot for linking (optional)
+    pub target_sysroot: Option<PathBuf>,
+    /// Explicit linker override for target (optional)
+    pub target_linker: Option<PathBuf>,
     /// Runtime configuration
     pub runtime: RuntimeConfig,
     /// Explicit source language override (defaults to detection)
@@ -96,6 +106,11 @@ impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
             target: PipelineTarget::Interpret,
+            target_triple: None,
+            target_cpu: None,
+            target_features: None,
+            target_sysroot: None,
+            target_linker: None,
             runtime: RuntimeConfig {
                 runtime_type: "literal".to_string(),
                 options: HashMap::new(),
@@ -141,6 +156,11 @@ impl From<&PipelineConfig> for PipelineOptions {
 
         Self {
             target,
+            target_triple: None,
+            target_cpu: None,
+            target_features: None,
+            target_sysroot: None,
+            target_linker: None,
             runtime: RuntimeConfig {
                 runtime_type: config.runtime.clone(),
                 options: HashMap::new(),

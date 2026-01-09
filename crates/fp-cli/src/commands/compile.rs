@@ -24,9 +24,29 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Output target (binary, rust, llvm, wasm, interpret)
-    #[arg(short, long, default_value = "binary")]
-    pub target: String,
+    /// Backend target (binary, rust, llvm, wasm, interpret)
+    #[arg(short = 'b', long, default_value = "binary")]
+    pub backend: String,
+
+    /// Target triple for codegen (defaults to host if omitted)
+    #[arg(long = "target")]
+    pub target_triple: Option<String>,
+
+    /// Target CPU for codegen (optional)
+    #[arg(long = "target-cpu")]
+    pub target_cpu: Option<String>,
+
+    /// Target feature string for codegen (optional)
+    #[arg(long = "target-features")]
+    pub target_features: Option<String>,
+
+    /// Target sysroot for linking (optional)
+    #[arg(long = "sysroot")]
+    pub target_sysroot: Option<PathBuf>,
+
+    /// Explicit linker override for target (optional)
+    #[arg(long = "linker")]
+    pub target_linker: Option<PathBuf>,
 
     /// Output file or directory
     #[arg(short, long)]
@@ -79,7 +99,7 @@ pub struct CompileArgs {
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    info!("Starting compilation with target: {}", args.target);
+    info!("Starting compilation with backend: {}", args.backend);
 
     // Validate inputs
     validate_inputs(&args)?;
@@ -103,7 +123,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            &args.target,
+            &args.backend,
+            args.target_triple.as_deref(),
             output_is_dir,
         )?;
 
@@ -122,7 +143,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
-        if args.target == "binary" {
+        if args.backend == "binary" {
             match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled binaries available to execute");
@@ -155,7 +176,7 @@ async fn compile_file(
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     // Configure pipeline for compilation with new options
-    let target = match args.target.as_str() {
+    let target = match args.backend.as_str() {
         "rust" => PipelineTarget::Rust,
         "llvm" => PipelineTarget::Llvm,
         "binary" => PipelineTarget::Binary,
@@ -175,6 +196,11 @@ async fn compile_file(
 
     let pipeline_options = PipelineOptions {
         target,
+        target_triple: args.target_triple.clone(),
+        target_cpu: args.target_cpu.clone(),
+        target_features: args.target_features.clone(),
+        target_sysroot: args.target_sysroot.clone(),
+        target_linker: args.target_linker.clone(),
         runtime: RuntimeConfig {
             runtime_type: "literal".to_string(),
             options: std::collections::HashMap::new(),
@@ -224,7 +250,7 @@ async fn compile_file(
     let artifact = match pipeline_output {
         PipelineOutput::Code(code) => {
             let bootstrap = std::env::var_os("FERROPHASE_BOOTSTRAP").is_some();
-            if bootstrap && args.output.is_none() && args.target == "llvm" {
+            if bootstrap && args.output.is_none() && args.backend == "llvm" {
                 print!("{}", code);
                 let _ = io::stdout().flush();
                 info!("Emitted LLVM IR to stdout (bootstrap)");
@@ -324,14 +350,15 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
 fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
-    target: &str,
+    backend: &str,
+    target_triple: Option<&str>,
     output_is_dir: bool,
 ) -> Result<PathBuf> {
     if let Some(output) = output {
         if output_is_dir {
-            let extension = match target {
+            let extension = match backend {
                 "binary" => {
-                    if cfg!(target_os = "windows") {
+                    if is_windows_target(target_triple) {
                         "exe"
                     } else {
                         "out"
@@ -351,9 +378,9 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if target == "binary" {
+        if backend == "binary" {
             let mut path = output.clone();
-            let desired_ext = if cfg!(target_os = "windows") {
+            let desired_ext = if is_windows_target(target_triple) {
                 "exe"
             } else {
                 "out"
@@ -374,10 +401,10 @@ fn determine_output_path(
 
         Ok(output.clone())
     } else {
-        let extension = match target {
+        let extension = match backend {
             "binary" => {
                 // Use platform-specific executable extension
-                if cfg!(target_os = "windows") {
+                if is_windows_target(target_triple) {
                     "exe"
                 } else {
                     "out" // Use .out extension on Unix systems for clarity
@@ -388,14 +415,22 @@ fn determine_output_path(
             "wasm" => "wasm",
             _ => {
                 return Err(CliError::InvalidInput(format!(
-                    "Unknown target for output extension: {}",
-                    target
+                    "Unknown backend for output extension: {}",
+                    backend
                 )));
             }
         };
 
         Ok(input.with_extension(extension))
     }
+}
+
+fn is_windows_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(target_os = "windows"),
+    };
+    triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
 }
 
 // Progress bar helper moved to commands::common

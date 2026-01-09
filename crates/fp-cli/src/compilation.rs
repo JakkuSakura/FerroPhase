@@ -18,12 +18,15 @@ impl BinaryCompiler {
             .arg("-o")
             .arg(obj_path);
 
-        // Add target architecture (minimal process as specified)
-        #[cfg(target_arch = "x86_64")]
-        cmd.arg("-march=x86_64");
-
-        #[cfg(target_arch = "aarch64")]
-        cmd.arg("-march=arm64");
+        if let Some(triple) = options.target_triple.as_deref() {
+            cmd.arg("-mtriple").arg(triple);
+        }
+        if let Some(cpu) = options.target_cpu.as_deref() {
+            cmd.arg("-mcpu").arg(cpu);
+        }
+        if let Some(features) = options.target_features.as_deref() {
+            cmd.arg("-mattr").arg(features);
+        }
 
         // Add optimization if requested
         if options.optimization_level > 0 {
@@ -164,6 +167,15 @@ impl BinaryCompiler {
 
         // Simple clang linking - it handles all the platform details
         cmd.arg(obj_path).arg("-o").arg(binary_path);
+        if let Some(target_triple) = options.target_triple.as_deref() {
+            cmd.arg("--target").arg(target_triple);
+        }
+        if let Some(sysroot) = options.target_sysroot.as_ref() {
+            cmd.arg("--sysroot").arg(sysroot);
+        }
+        if let Some(linker_path) = options.target_linker.as_ref() {
+            cmd.arg(format!("-fuse-ld={}", linker_path.display()));
+        }
 
         // Add optimization if requested
         if options.optimization_level > 0 {

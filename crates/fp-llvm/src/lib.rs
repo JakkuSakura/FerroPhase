@@ -127,7 +127,7 @@ impl LlvmCompiler {
 
         // Initialize target machine
         llvm_ctx
-            .init_target_machine()
+            .init_target_machine_with_config(&self.config.target)
             .map_err(fp_core::error::Error::from)?;
 
         // Create target codegen
@@ -210,7 +210,7 @@ impl LlvmCompiler {
 
         // Initialize target machine
         llvm_ctx
-            .init_target_machine()
+            .init_target_machine_with_config(&self.config.target)
             .map_err(fp_core::error::Error::from)?;
 
         // Create target codegen

@@ -25,7 +25,7 @@ impl PipelineStage for LinkStage {
     ) -> Result<PathBuf, PipelineError> {
         let binary_path = context
             .base_path
-            .with_extension(if cfg!(target_os = "windows") {
+            .with_extension(if is_windows_target(context.options.target_triple.as_deref()) {
                 "exe"
             } else {
                 "out"
@@ -86,6 +86,15 @@ impl PipelineStage for LinkStage {
             cmd.arg(runtime_path);
             cmd.arg("-fexceptions");
         }
+        if let Some(target_triple) = context.options.target_triple.as_deref() {
+            cmd.arg("--target").arg(target_triple);
+        }
+        if let Some(sysroot) = context.options.target_sysroot.as_ref() {
+            cmd.arg("--sysroot").arg(sysroot);
+        }
+        if let Some(linker_path) = context.options.target_linker.as_ref() {
+            cmd.arg(format!("-fuse-ld={}", linker_path.display()));
+        }
         cmd.arg("-o").arg(&binary_path);
         if context.options.release {
             cmd.arg("-O2");
@@ -134,6 +143,14 @@ impl PipelineStage for LinkStage {
 
         Ok(binary_path)
     }
+}
+
+fn is_windows_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(target_os = "windows"),
+    };
+    triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
 }
 
 impl Pipeline {

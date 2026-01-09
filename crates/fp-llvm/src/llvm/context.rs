@@ -1,9 +1,11 @@
 use inkwell::builder::Builder;
 use inkwell::context::Context;
 use inkwell::module::Module;
-use inkwell::targets::{InitializationConfig, Target, TargetMachine};
+use inkwell::targets::{InitializationConfig, Target, TargetTriple};
 use inkwell::values::FunctionValue;
 use std::path::Path;
+
+use crate::target::{CodeModel, OptimizationLevel, RelocMode, TargetConfig};
 
 /// LLVM compilation context that manages the LLVM module.
 pub struct LlvmContext {
@@ -32,20 +34,47 @@ impl LlvmContext {
 
     /// Initialize target machine for the current platform.
     pub fn init_target_machine(&mut self) -> Result<(), String> {
-        Target::initialize_native(&InitializationConfig::default()).map_err(|e| e.to_string())?;
+        let config = TargetConfig::host();
+        self.init_target_machine_with_config(&config)
+    }
 
-        let triple = TargetMachine::get_default_triple();
+    /// Initialize target machine for a specific configuration.
+    pub fn init_target_machine_with_config(&mut self, config: &TargetConfig) -> Result<(), String> {
+        Target::initialize_all(&InitializationConfig::default());
+
+        let triple = TargetTriple::create(&config.triple);
         self.module.set_triple(&triple);
+
+        let optimization_level = match config.optimization_level {
+            OptimizationLevel::None => inkwell::OptimizationLevel::None,
+            OptimizationLevel::Less => inkwell::OptimizationLevel::Less,
+            OptimizationLevel::Default => inkwell::OptimizationLevel::Default,
+            OptimizationLevel::Aggressive => inkwell::OptimizationLevel::Aggressive,
+        };
+        let reloc_mode = match config.reloc_mode {
+            RelocMode::Default => inkwell::targets::RelocMode::Default,
+            RelocMode::Static => inkwell::targets::RelocMode::Static,
+            RelocMode::PIC => inkwell::targets::RelocMode::PIC,
+            RelocMode::DynamicNoPic => inkwell::targets::RelocMode::DynamicNoPic,
+        };
+        let code_model = match config.code_model {
+            CodeModel::Default => inkwell::targets::CodeModel::Default,
+            CodeModel::JITDefault => inkwell::targets::CodeModel::JITDefault,
+            CodeModel::Small => inkwell::targets::CodeModel::Small,
+            CodeModel::Kernel => inkwell::targets::CodeModel::Kernel,
+            CodeModel::Medium => inkwell::targets::CodeModel::Medium,
+            CodeModel::Large => inkwell::targets::CodeModel::Large,
+        };
 
         let target = Target::from_triple(&triple).map_err(|e| e.to_string())?;
         let target_machine = target
             .create_target_machine(
                 &triple,
-                "generic",
-                "",
-                inkwell::OptimizationLevel::Default,
-                inkwell::targets::RelocMode::Default,
-                inkwell::targets::CodeModel::Default,
+                &config.cpu,
+                &config.features,
+                optimization_level,
+                reloc_mode,
+                code_model,
             )
             .ok_or_else(|| "Failed to create target machine".to_string())?;
 

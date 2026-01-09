@@ -1,6 +1,7 @@
 use super::super::artifacts::{LirArtifacts, MirArtifacts};
 use super::super::*;
 use fp_core::mir;
+use fp_llvm::target::{OptimizationLevel, TargetConfig};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::sync::Arc;
 
@@ -169,10 +170,12 @@ impl Pipeline {
             .map(sanitize_module_identifier)
             .unwrap_or_else(|| "module".to_string());
         let allow_unresolved_globals = false;
+        let target_config = target_config_from_options(options);
         let config = LlvmConfig::new()
             .with_linker(LinkerConfig::executable(&llvm_path))
             .with_module_name(module_name)
-            .with_allow_unresolved_globals(allow_unresolved_globals);
+            .with_allow_unresolved_globals(allow_unresolved_globals)
+            .with_target(target_config);
         let compiler = LlvmCompiler::new(config);
 
         compiler
@@ -191,6 +194,30 @@ impl Pipeline {
             ir_path: llvm_path,
         })
     }
+}
+
+fn target_config_from_options(options: &PipelineOptions) -> TargetConfig {
+    let base = if let Some(triple) = options.target_triple.as_deref() {
+        TargetConfig::for_triple(triple)
+    } else {
+        TargetConfig::host()
+    };
+
+    let mut config = base.with_optimization(match options.optimization_level {
+        0 => OptimizationLevel::None,
+        1 => OptimizationLevel::Less,
+        2 => OptimizationLevel::Default,
+        _ => OptimizationLevel::Aggressive,
+    });
+
+    if let Some(cpu) = options.target_cpu.as_deref() {
+        config = config.with_cpu(cpu);
+    }
+    if let Some(features) = options.target_features.as_deref() {
+        config = config.with_features(features);
+    }
+
+    config
 }
 
 fn sanitize_module_identifier(id: &str) -> String {

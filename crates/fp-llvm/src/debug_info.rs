@@ -152,17 +152,18 @@ impl DebugLocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use inkwell::context::Context;
+    use inkwell::module::Module;
     use std::path::PathBuf;
 
-    fn empty_module<'ctx>(name: &str) -> (Context, Module<'ctx>) {
-        let context = Context::create();
-        let module = context.create_module(name);
-        (context, module)
+    fn empty_module(name: &str) -> Module<'static> {
+        let context = Box::leak(Box::new(Context::create()));
+        context.create_module(name)
     }
 
     #[test]
     fn test_debug_info_builder_creation() {
-        let (_context, module) = empty_module("test");
+        let module = empty_module("test");
         let source_file = PathBuf::from("test.fp");
 
         let result = DebugInfoBuilder::new(&module, &source_file, "fp-compiler");
@@ -175,7 +176,7 @@ mod tests {
 
     #[test]
     fn test_function_debug_info_creation() {
-        let (_context, module) = empty_module("test");
+        let module = empty_module("test");
         let source_file = PathBuf::from("test.fp");
 
         let mut debug_builder =
@@ -197,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_span_to_debug_info() {
-        let (_context, module) = empty_module("test");
+        let module = empty_module("test");
         let source_file = PathBuf::from("test.fp");
 
         let mut debug_builder =
