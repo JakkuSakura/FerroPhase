@@ -30,9 +30,9 @@ use fp_cli::{
     Result,
     cli::CliConfig,
     commands::{
-        self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
-        parse::ParseArgs, run::RunArgs, syntax_transpile::SyntaxTranspileArgs,
-        transpile::TranspileArgs,
+        self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs,
+        eval::EvalArgs, interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
+        syntax_transpile::SyntaxTranspileArgs, transpile::TranspileArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -96,6 +96,9 @@ enum Commands {
     /// Run a FerroPhase file (delegates to magnet)
     Run(RunArgs),
 
+    /// Interpret bytecode produced by `compile --backend bytecode`
+    Interpret(InterpretArgs),
+
     /// Check and validate FerroPhase code
     Check(CheckArgs),
 
@@ -138,6 +141,7 @@ async fn main() -> Result<()> {
         Commands::Eval(args) => commands::eval_command(args, &config).await,
         Commands::Parse(args) => commands::parse_command(args, &config).await,
         Commands::Run(args) => commands::run_command(args, &config).await,
+        Commands::Interpret(args) => commands::interpret_command(args, &config).await,
         Commands::Check(args) => commands::check_command(args, &config).await,
         Commands::Completions(args) => commands::completions_command(args, &config).await,
     };

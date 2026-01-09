@@ -143,8 +143,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
-        if args.backend == "binary" {
-            match compiled_files.as_slice() {
+        match args.backend.as_str() {
+            "binary" => match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled binaries available to execute");
                 }
@@ -156,9 +156,24 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                         "--exec currently supports compiling a single binary at a time".to_string(),
                     ));
                 }
+            },
+            "bytecode" => match compiled_files.as_slice() {
+                [] => {
+                    warn!("No compiled bytecode available to execute");
+                }
+                [path] => {
+                    exec_compiled_bytecode(path)?;
+                }
+                _ => {
+                    return Err(CliError::Compilation(
+                        "--exec currently supports compiling a single bytecode file at a time"
+                            .to_string(),
+                    ));
+                }
+            },
+            _ => {
+                warn!("--exec is only supported for binary or bytecode targets");
             }
-        } else {
-            warn!("--exec is only supported for binary targets");
         }
     }
 
@@ -334,6 +349,17 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
     Ok(())
 }
 
+fn exec_compiled_bytecode(path: &Path) -> Result<()> {
+    let bytes = std::fs::read(path).map_err(CliError::Io)?;
+    let file = fp_bytecode::decode_file(&bytes)
+        .map_err(|err| CliError::Compilation(format!("Failed to decode bytecode: {}", err)))?;
+    let vm = fp_stackvm::Vm::new(file.program);
+    vm.run_main().map_err(|err| {
+        CliError::Compilation(format!("Bytecode execution failed: {}", err))
+    })?;
+    Ok(())
+}
+
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
     validate_paths_exist(&args.input, true, "compile")?;
 
@@ -367,6 +393,7 @@ fn determine_output_path(
                 "rust" => "rs",
                 "llvm" => "ll",
                 "wasm" => "wasm",
+                "bytecode" => "fbc",
                 _ => "out",
             };
             let stem = input
@@ -413,6 +440,7 @@ fn determine_output_path(
             "rust" => "rs",
             "llvm" => "ll",
             "wasm" => "wasm",
+            "bytecode" => "fbc",
             _ => {
                 return Err(CliError::InvalidInput(format!(
                     "Unknown backend for output extension: {}",

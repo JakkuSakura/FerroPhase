@@ -23,6 +23,7 @@ use fp_interpret::engine::{
 };
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_optimize::transformations::{HirGenerator, LirGenerator, MirLowering};
+use fp_bytecode;
 use fp_pipeline::{
     PipelineBuilder, PipelineConfig, PipelineDiagnostics, PipelineError, PipelineOptions,
     PipelineStage, PipelineTarget,
@@ -628,10 +629,20 @@ impl Pipeline {
                 }
                 PipelineTarget::Bytecode => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
-                    let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                    let bytecode = fp_bytecode::lower_program(&mir.mir_program).map_err(|err| {
+                        CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err))
+                    })?;
+                    let bytes = fp_bytecode::encode_file(&bytecode).map_err(|err| {
+                        CliError::Compilation(format!("Bytecode encoding failed: {}", err))
+                    })?;
 
-                    let repr = format!("; MIR\n{}\n\n; LIR\n{}", mir.mir_text, lir.lir_text);
-                    PipelineOutput::Code(repr)
+                    let bytecode_path = base_path.to_path_buf();
+                    if let Some(parent) = bytecode_path.parent() {
+                        fs::create_dir_all(parent)?;
+                    }
+                    fs::write(&bytecode_path, bytes)?;
+
+                    PipelineOutput::Binary(bytecode_path)
                 }
                 PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
             }

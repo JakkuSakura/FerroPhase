@@ -26,6 +26,8 @@ fp-sql = { path = "../fp-sql" }
 fp-jsonschema = { path = "../fp-jsonschema" }
 fp-flatbuffers = { path = "../fp-flatbuffers" }
 fp-pipeline = { path = "../fp-pipeline" }
+fp-bytecode = { path = "../fp-bytecode" }
+fp-stackvm = { path = "../fp-stackvm" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }

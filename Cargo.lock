@@ -195,6 +195,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -702,6 +711,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-bytecode"
+version = "0.1.0"
+dependencies = [
+ "bincode",
+ "fp-core",
+ "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
 name = "fp-clang"
 version = "0.1.0"
 dependencies = [
@@ -730,6 +749,7 @@ dependencies = [
  "criterion",
  "dirs",
  "eyre",
+ "fp-bytecode",
  "fp-core",
  "fp-csharp",
  "fp-flatbuffers",
@@ -743,6 +763,7 @@ dependencies = [
  "fp-python",
  "fp-rust",
  "fp-sql",
+ "fp-stackvm",
  "fp-typescript",
  "fp-typing",
  "fp-wit",
@@ -937,6 +958,14 @@ name = "fp-sql"
 version = "0.1.0"
 dependencies = [
  "fp-core",
+]
+
+[[package]]
+name = "fp-stackvm"
+version = "0.1.0"
+dependencies = [
+ "fp-bytecode",
+ "thiserror 2.0.17",
 ]
 
 [[package]]
