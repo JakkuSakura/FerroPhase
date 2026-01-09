@@ -12,3 +12,4 @@ project/project
 .DS_Store
 *.out
 *.o
+*.fbc

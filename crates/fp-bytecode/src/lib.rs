@@ -52,15 +52,25 @@ pub enum BytecodeInstr {
     MakeArray(u32),
     MakeList(u32),
     MakeMap(u32),
+    ContainerGet,
+    ContainerLen,
     Pop,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BytecodeTerminator {
     Return,
-    Jump { target: u32 },
-    JumpIfTrue { target: u32 },
-    JumpIfFalse { target: u32 },
+    Jump {
+        target: u32,
+    },
+    JumpIfTrue {
+        target: u32,
+        otherwise: u32,
+    },
+    JumpIfFalse {
+        target: u32,
+        otherwise: u32,
+    },
     SwitchInt {
         values: Vec<u128>,
         targets: Vec<u32>,
@@ -79,6 +89,7 @@ pub enum BytecodeTerminator {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum BytecodeCallee {
     Function(String),
+    Local(BytecodePlace),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,6 +100,7 @@ pub enum BytecodeConst {
     UInt(u64),
     Float(f64),
     Str(String),
+    Function(String),
     Null,
     Tuple(Vec<BytecodeConst>),
     Array(Vec<BytecodeConst>),
@@ -182,7 +194,194 @@ pub fn decode_file(bytes: &[u8]) -> Result<BytecodeFile, BytecodeError> {
         });
     }
     let file: BytecodeFile = bincode::deserialize(&bytes[8..]).map_err(BytecodeError::Decode)?;
+    if file.version != BYTECODE_VERSION {
+        return Err(BytecodeError::Format {
+            message: format!(
+                "bytecode payload version {} does not match expected {}",
+                file.version, BYTECODE_VERSION
+            ),
+        });
+    }
+    validate_program(&file.program)?;
     Ok(file)
+}
+
+fn validate_program(program: &BytecodeProgram) -> Result<(), BytecodeError> {
+    if let Some(entry) = &program.entry {
+        if !program.functions.iter().any(|func| &func.name == entry) {
+            return Err(BytecodeError::Format {
+                message: format!("entry function {} not found", entry),
+            });
+        }
+    }
+    for function in &program.functions {
+        validate_function(function, program.const_pool.len())?;
+    }
+    Ok(())
+}
+
+fn validate_function(
+    function: &BytecodeFunction,
+    const_pool_len: usize,
+) -> Result<(), BytecodeError> {
+    if function.params > function.locals {
+        return Err(BytecodeError::Format {
+            message: format!(
+                "function {} has {} params but only {} locals",
+                function.name, function.params, function.locals
+            ),
+        });
+    }
+    if function.blocks.is_empty() {
+        return Err(BytecodeError::Format {
+            message: format!("function {} has no blocks", function.name),
+        });
+    }
+
+    let mut ids: Vec<u32> = function.blocks.iter().map(|block| block.id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    if ids.len() != function.blocks.len() {
+        return Err(BytecodeError::Format {
+            message: format!("function {} has duplicate block ids", function.name),
+        });
+    }
+    for (expected, actual) in ids.iter().enumerate() {
+        if *actual != expected as u32 {
+            return Err(BytecodeError::Format {
+                message: format!(
+                    "function {} has non-contiguous block id {}",
+                    function.name, actual
+                ),
+            });
+        }
+    }
+
+    for block in &function.blocks {
+        validate_block(block, function.locals as usize, const_pool_len, &ids)?;
+    }
+    Ok(())
+}
+
+fn validate_block(
+    block: &BytecodeBlock,
+    locals_len: usize,
+    const_pool_len: usize,
+    block_ids: &[u32],
+) -> Result<(), BytecodeError> {
+    for instr in &block.code {
+        validate_instr(instr, locals_len, const_pool_len)?;
+    }
+    validate_terminator(&block.terminator, block_ids)
+}
+
+fn validate_instr(
+    instr: &BytecodeInstr,
+    locals_len: usize,
+    const_pool_len: usize,
+) -> Result<(), BytecodeError> {
+    match instr {
+        BytecodeInstr::LoadConst(id) => {
+            if (*id as usize) >= const_pool_len {
+                return Err(BytecodeError::Format {
+                    message: format!("const id {} out of bounds", id),
+                });
+            }
+        }
+        BytecodeInstr::LoadLocal(local) | BytecodeInstr::StoreLocal(local) => {
+            if (*local as usize) >= locals_len {
+                return Err(BytecodeError::Format {
+                    message: format!("local {} out of bounds", local),
+                });
+            }
+        }
+        BytecodeInstr::LoadPlace(place) | BytecodeInstr::StorePlace(place) => {
+            validate_place(place, locals_len)?;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn validate_place(place: &BytecodePlace, locals_len: usize) -> Result<(), BytecodeError> {
+    if (place.local as usize) >= locals_len {
+        return Err(BytecodeError::Format {
+            message: format!("place local {} out of bounds", place.local),
+        });
+    }
+    for elem in &place.projection {
+        if let BytecodePlaceElem::Index(local) = elem {
+            if (*local as usize) >= locals_len {
+                return Err(BytecodeError::Format {
+                    message: format!("place index local {} out of bounds", local),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_terminator(
+    terminator: &BytecodeTerminator,
+    block_ids: &[u32],
+) -> Result<(), BytecodeError> {
+    let contains = |target: u32| block_ids.binary_search(&target).is_ok();
+    match terminator {
+        BytecodeTerminator::Return
+        | BytecodeTerminator::Abort
+        | BytecodeTerminator::Unreachable => Ok(()),
+        BytecodeTerminator::Jump { target } => {
+            if contains(*target) {
+                Ok(())
+            } else {
+                Err(BytecodeError::Format {
+                    message: format!("terminator target {} missing", target),
+                })
+            }
+        }
+        BytecodeTerminator::JumpIfTrue { target, otherwise }
+        | BytecodeTerminator::JumpIfFalse { target, otherwise } => {
+            if !contains(*target) {
+                return Err(BytecodeError::Format {
+                    message: format!("terminator target {} missing", target),
+                });
+            }
+            if !contains(*otherwise) {
+                return Err(BytecodeError::Format {
+                    message: format!("terminator target {} missing", otherwise),
+                });
+            }
+            Ok(())
+        }
+        BytecodeTerminator::SwitchInt {
+            values,
+            targets,
+            otherwise,
+        } => {
+            if values.len() != targets.len() {
+                return Err(BytecodeError::Format {
+                    message: "switch targets length mismatch".to_string(),
+                });
+            }
+            for target in targets.iter().chain(std::iter::once(otherwise)) {
+                if !contains(*target) {
+                    return Err(BytecodeError::Format {
+                        message: format!("switch target {} missing", target),
+                    });
+                }
+            }
+            Ok(())
+        }
+        BytecodeTerminator::Call { target, .. } => {
+            if contains(*target) {
+                Ok(())
+            } else {
+                Err(BytecodeError::Format {
+                    message: format!("call target {} missing", target),
+                })
+            }
+        }
+    }
 }
 
 pub fn format_program(program: &BytecodeProgram) -> String {
@@ -190,11 +389,7 @@ pub fn format_program(program: &BytecodeProgram) -> String {
     output.push_str("fp-bytecode {\n");
     output.push_str("  const_pool:\n");
     for (index, constant) in program.const_pool.iter().enumerate() {
-        output.push_str(&format!(
-            "    [{}] {}\n",
-            index,
-            format_const(constant)
-        ));
+        output.push_str(&format!("    [{}] {}\n", index, format_const(constant)));
     }
     output.push_str("  functions:\n");
     for function in &program.functions {
@@ -229,16 +424,21 @@ pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, Bytecode
             mir::ItemKind::Function(func) => func,
             mir::ItemKind::Static(_) => continue,
         };
-        let body = program.bodies.get(&function.body_id).ok_or_else(|| {
-            BytecodeError::Lowering {
-                message: format!("missing body for function {}", function.name.as_str()),
-            }
-        })?;
+        let body =
+            program
+                .bodies
+                .get(&function.body_id)
+                .ok_or_else(|| BytecodeError::Lowering {
+                    message: format!("missing body for function {}", function.name.as_str()),
+                })?;
         let lowered = lower_function(function, body, &mut const_pool)?;
         functions.push(lowered);
     }
 
-    let entry = functions.iter().find(|f| f.name == "main").map(|f| f.name.clone());
+    let entry = functions
+        .iter()
+        .find(|f| f.name == "main")
+        .map(|f| f.name.clone());
 
     Ok(BytecodeProgram {
         const_pool,
@@ -324,11 +524,28 @@ fn lower_terminator(
     match &term.kind {
         mir::TerminatorKind::Return => Ok(BytecodeTerminator::Return),
         mir::TerminatorKind::Goto { target } => Ok(BytecodeTerminator::Jump { target: *target }),
-        mir::TerminatorKind::SwitchInt {
-            discr,
-            targets,
+        mir::TerminatorKind::Assert {
+            cond,
+            expected,
+            target,
             ..
         } => {
+            lower_operand(cond, code, const_pool)?;
+            let otherwise = terminator_otherwise(term)?;
+            let terminator = if *expected {
+                BytecodeTerminator::JumpIfTrue {
+                    target: *target,
+                    otherwise,
+                }
+            } else {
+                BytecodeTerminator::JumpIfFalse {
+                    target: *target,
+                    otherwise,
+                }
+            };
+            Ok(terminator)
+        }
+        mir::TerminatorKind::SwitchInt { discr, targets, .. } => {
             lower_operand(discr, code, const_pool)?;
             Ok(BytecodeTerminator::SwitchInt {
                 values: targets.values.clone(),
@@ -350,11 +567,13 @@ fn lower_terminator(
                 .as_ref()
                 .map(|(place, _)| lower_place(place))
                 .transpose()?;
-            let target = destination.as_ref().map(|(_, bb)| *bb).ok_or_else(|| {
-                BytecodeError::Lowering {
-                    message: "call terminator missing destination".to_string(),
-                }
-            })?;
+            let target =
+                destination
+                    .as_ref()
+                    .map(|(_, bb)| *bb)
+                    .ok_or_else(|| BytecodeError::Lowering {
+                        message: "call terminator missing destination".to_string(),
+                    })?;
             Ok(BytecodeTerminator::Call {
                 callee,
                 arg_count: args.len() as u32,
@@ -362,10 +581,39 @@ fn lower_terminator(
                 target,
             })
         }
+        mir::TerminatorKind::FalseEdge {
+            real_target,
+            imaginary_target,
+        } => Ok(BytecodeTerminator::JumpIfTrue {
+            target: *real_target,
+            otherwise: *imaginary_target,
+        }),
+        mir::TerminatorKind::FalseUnwind { real_target, .. } => {
+            Ok(BytecodeTerminator::JumpIfTrue {
+                target: *real_target,
+                otherwise: *real_target,
+            })
+        }
         mir::TerminatorKind::Abort => Ok(BytecodeTerminator::Abort),
         mir::TerminatorKind::Unreachable => Ok(BytecodeTerminator::Unreachable),
         _ => Err(BytecodeError::Lowering {
             message: format!("unsupported terminator: {:?}", term.kind),
+        }),
+    }
+}
+
+fn terminator_otherwise(term: &mir::Terminator) -> Result<u32, BytecodeError> {
+    match &term.kind {
+        mir::TerminatorKind::Assert {
+            cleanup, target, ..
+        } => match cleanup {
+            Some(otherwise) => Ok(*otherwise),
+            None => Err(BytecodeError::Lowering {
+                message: format!("missing cleanup target for assert to bb{}", target),
+            }),
+        },
+        _ => Err(BytecodeError::Lowering {
+            message: "terminator_otherwise expects assert terminator".to_string(),
         }),
     }
 }
@@ -377,6 +625,9 @@ fn lower_rvalue(
 ) -> Result<(), BytecodeError> {
     match rvalue {
         mir::Rvalue::Use(op) => lower_operand(op, code, const_pool),
+        mir::Rvalue::Ref(_, _, place) => {
+            lower_operand(&mir::Operand::Copy(place.clone()), code, const_pool)
+        }
         mir::Rvalue::BinaryOp(op, lhs, rhs) => {
             lower_operand(lhs, code, const_pool)?;
             lower_operand(rhs, code, const_pool)?;
@@ -388,6 +639,7 @@ fn lower_rvalue(
             code.push(BytecodeInstr::UnaryOp(lower_unop(op)?));
             Ok(())
         }
+        mir::Rvalue::Cast(_, operand, _) => lower_operand(operand, code, const_pool),
         mir::Rvalue::IntrinsicCall { kind, format, args } => {
             for arg in args {
                 lower_operand(arg, code, const_pool)?;
@@ -401,6 +653,18 @@ fn lower_rvalue(
                     Some(format.clone())
                 },
             });
+            Ok(())
+        }
+        mir::Rvalue::Repeat(operand, len) => {
+            if *len > u32::MAX as u64 {
+                return Err(BytecodeError::Lowering {
+                    message: format!("repeat length {} exceeds bytecode limits", len),
+                });
+            }
+            for _ in 0..*len {
+                lower_operand(operand, code, const_pool)?;
+            }
+            code.push(BytecodeInstr::MakeArray(*len as u32));
             Ok(())
         }
         mir::Rvalue::Aggregate(kind, operands) => {
@@ -450,6 +714,17 @@ fn lower_rvalue(
                 }),
             }
         }
+        mir::Rvalue::ContainerLen { container, .. } => {
+            lower_operand(container, code, const_pool)?;
+            code.push(BytecodeInstr::ContainerLen);
+            Ok(())
+        }
+        mir::Rvalue::ContainerGet { container, key, .. } => {
+            lower_operand(container, code, const_pool)?;
+            lower_operand(key, code, const_pool)?;
+            code.push(BytecodeInstr::ContainerGet);
+            Ok(())
+        }
         _ => Err(BytecodeError::Lowering {
             message: format!("unsupported rvalue: {:?}", rvalue),
         }),
@@ -483,12 +758,16 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
         mir::ConstantKind::Float(value) => Ok(BytecodeConst::Float(*value)),
         mir::ConstantKind::Bool(value) => Ok(BytecodeConst::Bool(*value)),
         mir::ConstantKind::Str(value) => Ok(BytecodeConst::Str(value.clone())),
-        mir::ConstantKind::Val(value, _) => lower_const_value(value),
-        mir::ConstantKind::Ty(_) | mir::ConstantKind::Fn(_, _) | mir::ConstantKind::Global(_, _) => {
-            Err(BytecodeError::Lowering {
-                message: format!("unsupported constant: {:?}", constant.literal),
-            })
+        mir::ConstantKind::Fn(symbol, _) => {
+            Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
+        mir::ConstantKind::Global(symbol, _) => {
+            Ok(BytecodeConst::Function(symbol.as_str().to_string()))
+        }
+        mir::ConstantKind::Val(value, _) => lower_const_value(value),
+        mir::ConstantKind::Ty(_) => Err(BytecodeError::Lowering {
+            message: format!("unsupported constant: {:?}", constant.literal),
+        }),
     }
 }
 
@@ -539,6 +818,7 @@ fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
             mir::PlaceElem::Index(local) => {
                 projection.push(BytecodePlaceElem::Index(*local));
             }
+            mir::PlaceElem::Deref => {}
             _ => {
                 return Err(BytecodeError::Lowering {
                     message: format!("unsupported place projection: {:?}", elem),
@@ -566,9 +846,9 @@ fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError>
                 message: format!("unsupported call operand: {:?}", constant.literal),
             }),
         },
-        _ => Err(BytecodeError::Lowering {
-            message: format!("unsupported call operand: {:?}", operand),
-        }),
+        mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+            Ok(BytecodeCallee::Local(lower_place(place)?))
+        }
     }
 }
 
@@ -622,6 +902,7 @@ fn format_const(value: &BytecodeConst) -> String {
         BytecodeConst::UInt(value) => value.to_string(),
         BytecodeConst::Float(value) => value.to_string(),
         BytecodeConst::Str(value) => format!("{:?}", value),
+        BytecodeConst::Function(name) => format!("fn {}", name),
         BytecodeConst::Null => "null".to_string(),
         BytecodeConst::Tuple(items) => format_list("tuple", items),
         BytecodeConst::Array(items) => format_list("array", items),
@@ -670,6 +951,8 @@ fn format_instr(instr: &BytecodeInstr) -> String {
         BytecodeInstr::MakeArray(count) => format!("make.array {}", count),
         BytecodeInstr::MakeList(count) => format!("make.list {}", count),
         BytecodeInstr::MakeMap(count) => format!("make.map {}", count),
+        BytecodeInstr::ContainerGet => "container.get".to_string(),
+        BytecodeInstr::ContainerLen => "container.len".to_string(),
         BytecodeInstr::Pop => "pop".to_string(),
     }
 }
@@ -678,8 +961,12 @@ fn format_terminator(term: &BytecodeTerminator) -> String {
     match term {
         BytecodeTerminator::Return => "return".to_string(),
         BytecodeTerminator::Jump { target } => format!("jump bb{}", target),
-        BytecodeTerminator::JumpIfTrue { target } => format!("jump_if_true bb{}", target),
-        BytecodeTerminator::JumpIfFalse { target } => format!("jump_if_false bb{}", target),
+        BytecodeTerminator::JumpIfTrue { target, otherwise } => {
+            format!("jump_if_true bb{} else bb{}", target, otherwise)
+        }
+        BytecodeTerminator::JumpIfFalse { target, otherwise } => {
+            format!("jump_if_false bb{} else bb{}", target, otherwise)
+        }
         BytecodeTerminator::SwitchInt {
             values,
             targets,
@@ -689,11 +976,7 @@ fn format_terminator(term: &BytecodeTerminator) -> String {
             for (value, target) in values.iter().zip(targets) {
                 pairs.push(format!("{}:bb{}", value, target));
             }
-            format!(
-                "switch [{}] otherwise bb{}",
-                pairs.join(", "),
-                otherwise
-            )
+            format!("switch [{}] otherwise bb{}", pairs.join(", "), otherwise)
         }
         BytecodeTerminator::Call {
             callee,

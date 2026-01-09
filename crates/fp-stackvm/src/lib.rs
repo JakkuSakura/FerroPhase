@@ -1,6 +1,6 @@
 use fp_bytecode::{
-    BytecodeBinOp, BytecodeCallee, BytecodeConst, BytecodeInstr, BytecodePlace,
-    BytecodePlaceElem, BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicCallKind,
+    BytecodeBinOp, BytecodeCallee, BytecodeConst, BytecodeInstr, BytecodePlace, BytecodePlaceElem,
+    BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicCallKind,
 };
 use thiserror::Error;
 
@@ -37,13 +37,9 @@ impl Vm {
     }
 
     pub fn run_main(&self) -> Result<Value, VmError> {
-        let entry = self
-            .program
-            .entry
-            .clone()
-            .ok_or_else(|| VmError::Runtime {
-                message: "no entry function found".to_string(),
-            })?;
+        let entry = self.program.entry.clone().ok_or_else(|| VmError::Runtime {
+            message: "no entry function found".to_string(),
+        })?;
         self.run_function(&entry, Vec::new())
     }
 
@@ -57,14 +53,30 @@ impl Vm {
                 message: format!("missing function {}", name),
             })?;
 
+        if args.len() != function.params as usize {
+            return Err(VmError::Runtime {
+                message: format!(
+                    "function {} expects {} args but got {}",
+                    function.name,
+                    function.params,
+                    args.len()
+                ),
+            });
+        }
+        let required_locals = function.params.saturating_add(1);
+        if function.locals < required_locals {
+            return Err(VmError::Runtime {
+                message: format!(
+                    "function {} expects {} params but only {} locals",
+                    function.name, function.params, function.locals
+                ),
+            });
+        }
+
         let mut locals = vec![Value::Unit; function.locals as usize];
         for (index, value) in args.into_iter().enumerate() {
-            if index >= locals.len() {
-                return Err(VmError::Runtime {
-                    message: "argument count exceeds local slots".to_string(),
-                });
-            }
-            locals[index] = value;
+            let slot = 1 + index;
+            locals[slot] = value;
         }
 
         let mut stack: Vec<Value> = Vec::new();
@@ -89,20 +101,20 @@ impl Vm {
                 BytecodeTerminator::Jump { target } => {
                     current_block = *target;
                 }
-                BytecodeTerminator::JumpIfTrue { target } => {
+                BytecodeTerminator::JumpIfTrue { target, otherwise } => {
                     let cond = pop_bool(&mut stack)?;
                     if cond {
                         current_block = *target;
                     } else {
-                        current_block = next_block(function, current_block)?;
+                        current_block = *otherwise;
                     }
                 }
-                BytecodeTerminator::JumpIfFalse { target } => {
+                BytecodeTerminator::JumpIfFalse { target, otherwise } => {
                     let cond = pop_bool(&mut stack)?;
                     if !cond {
                         current_block = *target;
                     } else {
-                        current_block = next_block(function, current_block)?;
+                        current_block = *otherwise;
                     }
                 }
                 BytecodeTerminator::SwitchInt {
@@ -131,17 +143,24 @@ impl Vm {
                 } => {
                     let mut args = Vec::with_capacity(*arg_count as usize);
                     for _ in 0..*arg_count {
-                        args.push(
-                            stack
-                                .pop()
-                                .ok_or_else(|| VmError::Runtime {
-                                    message: "stack underflow in call".to_string(),
-                                })?,
-                        );
+                        args.push(stack.pop().ok_or_else(|| VmError::Runtime {
+                            message: "stack underflow in call".to_string(),
+                        })?);
                     }
                     args.reverse();
                     let result = match callee {
                         BytecodeCallee::Function(name) => self.run_function(name, args)?,
+                        BytecodeCallee::Local(place) => {
+                            let value = load_place(&locals, place)?;
+                            match value {
+                                Value::Str(name) => self.run_function(&name, args)?,
+                                _ => {
+                                    return Err(VmError::Runtime {
+                                        message: "callee value is not a function".to_string(),
+                                    });
+                                }
+                            }
+                        }
                     };
                     if let Some(place) = destination {
                         store_place(&mut locals, place, result)?;
@@ -238,13 +257,9 @@ fn execute_instr(
         } => {
             let mut args = Vec::with_capacity(*arg_count as usize);
             for _ in 0..*arg_count {
-                args.push(
-                    stack
-                        .pop()
-                        .ok_or_else(|| VmError::Runtime {
-                            message: "stack underflow in intrinsic call".to_string(),
-                        })?,
-                );
+                args.push(stack.pop().ok_or_else(|| VmError::Runtime {
+                    message: "stack underflow in intrinsic call".to_string(),
+                })?);
             }
             args.reverse();
             let result = exec_intrinsic(*kind, format.as_deref(), args)?;
@@ -283,6 +298,66 @@ fn execute_instr(
             stack.push(Value::Map(entries));
             Ok(())
         }
+        BytecodeInstr::ContainerLen => {
+            let value = stack.pop().ok_or_else(|| VmError::Runtime {
+                message: "stack underflow in container len".to_string(),
+            })?;
+            let len = match value {
+                Value::Str(text) => text.len() as i64,
+                Value::Array(items) => items.len() as i64,
+                Value::List(items) => items.len() as i64,
+                Value::Tuple(items) => items.len() as i64,
+                Value::Map(items) => items.len() as i64,
+                _ => {
+                    return Err(VmError::Unsupported {
+                        message: "len unsupported for value".to_string(),
+                    });
+                }
+            };
+            stack.push(Value::Int(len));
+            Ok(())
+        }
+        BytecodeInstr::ContainerGet => {
+            let key = stack.pop().ok_or_else(|| VmError::Runtime {
+                message: "stack underflow in container get".to_string(),
+            })?;
+            let container = stack.pop().ok_or_else(|| VmError::Runtime {
+                message: "stack underflow in container get".to_string(),
+            })?;
+            let value = match (container, key) {
+                (Value::Array(items), Value::Int(index)) => items
+                    .get(index as usize)
+                    .cloned()
+                    .ok_or_else(|| VmError::Runtime {
+                        message: "index out of bounds".to_string(),
+                    })?,
+                (Value::List(items), Value::Int(index)) => items
+                    .get(index as usize)
+                    .cloned()
+                    .ok_or_else(|| VmError::Runtime {
+                        message: "index out of bounds".to_string(),
+                    })?,
+                (Value::Map(items), key) => {
+                    let mut found = None;
+                    for (k, v) in items {
+                        if values_equal(&k, &key) {
+                            found = Some(v);
+                            break;
+                        }
+                    }
+                    found.ok_or_else(|| VmError::Runtime {
+                        message: "key not found".to_string(),
+                    })?
+                }
+                _ => {
+                    return Err(VmError::Unsupported {
+                        message: "container get unsupported for value".to_string(),
+                    });
+                }
+            };
+            stack.push(value);
+            Ok(())
+        }
         BytecodeInstr::Pop => {
             let _ = stack.pop();
             Ok(())
@@ -297,12 +372,66 @@ fn eval_binop(op: &BytecodeBinOp, left: Value, right: Value) -> Result<Value, Vm
         (BytecodeBinOp::Mul, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
         (BytecodeBinOp::Div, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
         (BytecodeBinOp::Rem, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a % b)),
+        (BytecodeBinOp::Add, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a + b)),
+        (BytecodeBinOp::Sub, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a - b)),
+        (BytecodeBinOp::Mul, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a * b)),
+        (BytecodeBinOp::Div, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a / b)),
+        (BytecodeBinOp::Rem, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a % b)),
+        (BytecodeBinOp::Add, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a + b)),
+        (BytecodeBinOp::Sub, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a - b)),
+        (BytecodeBinOp::Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
+        (BytecodeBinOp::Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
+        (BytecodeBinOp::Rem, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
         (BytecodeBinOp::Eq, a, b) => Ok(Value::Bool(values_equal(&a, &b))),
         (BytecodeBinOp::Ne, a, b) => Ok(Value::Bool(!values_equal(&a, &b))),
         (BytecodeBinOp::Lt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
         (BytecodeBinOp::Le, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a <= b)),
         (BytecodeBinOp::Gt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a > b)),
         (BytecodeBinOp::Ge, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a >= b)),
+        (BytecodeBinOp::Lt, Value::UInt(a), Value::UInt(b)) => Ok(Value::Bool(a < b)),
+        (BytecodeBinOp::Le, Value::UInt(a), Value::UInt(b)) => Ok(Value::Bool(a <= b)),
+        (BytecodeBinOp::Gt, Value::UInt(a), Value::UInt(b)) => Ok(Value::Bool(a > b)),
+        (BytecodeBinOp::Ge, Value::UInt(a), Value::UInt(b)) => Ok(Value::Bool(a >= b)),
+        (BytecodeBinOp::Lt, Value::Int(a), Value::UInt(b)) => {
+            Ok(Value::Bool(if a < 0 { true } else { (a as u64) < b }))
+        }
+        (BytecodeBinOp::Le, Value::Int(a), Value::UInt(b)) => {
+            Ok(Value::Bool(if a < 0 { true } else { (a as u64) <= b }))
+        }
+        (BytecodeBinOp::Gt, Value::Int(a), Value::UInt(b)) => {
+            Ok(Value::Bool(if a < 0 { false } else { (a as u64) > b }))
+        }
+        (BytecodeBinOp::Ge, Value::Int(a), Value::UInt(b)) => {
+            Ok(Value::Bool(if a < 0 { false } else { (a as u64) >= b }))
+        }
+        (BytecodeBinOp::Lt, Value::UInt(a), Value::Int(b)) => {
+            Ok(Value::Bool(if b < 0 { false } else { a < b as u64 }))
+        }
+        (BytecodeBinOp::Le, Value::UInt(a), Value::Int(b)) => {
+            Ok(Value::Bool(if b < 0 { false } else { a <= b as u64 }))
+        }
+        (BytecodeBinOp::Gt, Value::UInt(a), Value::Int(b)) => {
+            Ok(Value::Bool(if b < 0 { true } else { a > b as u64 }))
+        }
+        (BytecodeBinOp::Ge, Value::UInt(a), Value::Int(b)) => {
+            Ok(Value::Bool(if b < 0 { true } else { a >= b as u64 }))
+        }
+        (BytecodeBinOp::Lt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a < b)),
+        (BytecodeBinOp::Le, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
+        (BytecodeBinOp::Gt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
+        (BytecodeBinOp::Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+        (BytecodeBinOp::BitAnd, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a & b)),
+        (BytecodeBinOp::BitOr, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a | b)),
+        (BytecodeBinOp::BitXor, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a ^ b)),
+        (BytecodeBinOp::Shl, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a << b)),
+        (BytecodeBinOp::Shr, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a >> b)),
+        (BytecodeBinOp::BitAnd, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a & b)),
+        (BytecodeBinOp::BitOr, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a | b)),
+        (BytecodeBinOp::BitXor, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a ^ b)),
+        (BytecodeBinOp::Shl, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a << b)),
+        (BytecodeBinOp::Shr, Value::UInt(a), Value::UInt(b)) => Ok(Value::UInt(a >> b)),
+        (BytecodeBinOp::And, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a && b)),
+        (BytecodeBinOp::Or, Value::Bool(a), Value::Bool(b)) => Ok(Value::Bool(a || b)),
         _ => Err(VmError::Unsupported {
             message: format!("unsupported binary op {:?} for operands", op),
         }),
@@ -435,11 +564,19 @@ fn render_value(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Tuple(items) => format!(
             "({})",
-            items.iter().map(render_value).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(render_value)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Value::Array(items) | Value::List(items) => format!(
             "[{}]",
-            items.iter().map(render_value).collect::<Vec<_>>().join(", ")
+            items
+                .iter()
+                .map(render_value)
+                .collect::<Vec<_>>()
+                .join(", ")
         ),
         Value::Map(items) => {
             let rendered = items
@@ -476,6 +613,7 @@ fn pop_int(stack: &mut Vec<Value>) -> Result<i64, VmError> {
     match stack.pop() {
         Some(Value::Int(value)) => Ok(value),
         Some(Value::UInt(value)) => Ok(value as i64),
+        Some(Value::Bool(value)) => Ok(i64::from(value)),
         _ => Err(VmError::Runtime {
             message: "expected int on stack".to_string(),
         }),
@@ -500,6 +638,13 @@ fn load_place(locals: &[Value], place: &BytecodePlace) -> Result<Value, VmError>
                         .ok_or_else(|| VmError::Runtime {
                             message: "field index out of bounds".to_string(),
                         })?,
+                    Value::Str(text) => {
+                        let idx = *index as usize;
+                        let ch = text.chars().nth(idx).ok_or_else(|| VmError::Runtime {
+                            message: "string index out of bounds".to_string(),
+                        })?;
+                        Value::Str(ch.to_string())
+                    }
                     _ => {
                         return Err(VmError::Unsupported {
                             message: "field access unsupported for value".to_string(),
@@ -518,12 +663,11 @@ fn load_place(locals: &[Value], place: &BytecodePlace) -> Result<Value, VmError>
                     }
                 };
                 value = match value {
-                    Value::Array(items) | Value::List(items) => items
-                        .get(idx)
-                        .cloned()
-                        .ok_or_else(|| VmError::Runtime {
+                    Value::Array(items) | Value::List(items) => {
+                        items.get(idx).cloned().ok_or_else(|| VmError::Runtime {
                             message: "index out of bounds".to_string(),
-                        })?,
+                        })?
+                    }
                     _ => {
                         return Err(VmError::Unsupported {
                             message: "index access unsupported for value".to_string(),
@@ -621,6 +765,7 @@ fn convert_const(value: &BytecodeConst) -> Result<Value, VmError> {
         BytecodeConst::UInt(value) => Value::UInt(*value),
         BytecodeConst::Float(value) => Value::Float(*value),
         BytecodeConst::Str(value) => Value::Str(value.clone()),
+        BytecodeConst::Function(name) => Value::Str(name.clone()),
         BytecodeConst::Null => Value::Null,
         BytecodeConst::Tuple(items) => {
             Value::Tuple(items.iter().map(convert_const).collect::<Result<_, _>>()?)
@@ -641,24 +786,6 @@ fn convert_const(value: &BytecodeConst) -> Result<Value, VmError> {
     })
 }
 
-fn next_block(function: &fp_bytecode::BytecodeFunction, current: u32) -> Result<u32, VmError> {
-    let mut ids: Vec<u32> = function.blocks.iter().map(|b| b.id).collect();
-    ids.sort_unstable();
-    for (index, id) in ids.iter().enumerate() {
-        if *id == current {
-            return ids
-                .get(index + 1)
-                .copied()
-                .ok_or_else(|| VmError::Runtime {
-                    message: "missing fallthrough block".to_string(),
-                });
-        }
-    }
-    Err(VmError::Runtime {
-        message: "missing block id".to_string(),
-    })
-}
-
 fn values_equal(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Unit, Value::Unit) => true,
@@ -675,9 +802,9 @@ fn values_equal(left: &Value, right: &Value) -> bool {
         }
         (Value::Map(a), Value::Map(b)) => {
             a.len() == b.len()
-                && a.iter().zip(b).all(|((lk, lv), (rk, rv))| {
-                    values_equal(lk, rk) && values_equal(lv, rv)
-                })
+                && a.iter()
+                    .zip(b)
+                    .all(|((lk, lv), (rk, rv))| values_equal(lk, rk) && values_equal(lv, rv))
         }
         _ => false,
     }
@@ -713,5 +840,90 @@ mod tests {
         let vm = Vm::new(program);
         let result = vm.run_main().expect("vm should run");
         assert!(matches!(result, Value::Int(42)));
+    }
+
+    #[test]
+    fn rejects_argument_arity_mismatch() {
+        let program = BytecodeProgram {
+            const_pool: vec![],
+            functions: vec![BytecodeFunction {
+                name: "main".to_string(),
+                params: 1,
+                locals: 1,
+                blocks: vec![BytecodeBlock {
+                    id: 0,
+                    code: vec![],
+                    terminator: BytecodeTerminator::Return,
+                }],
+            }],
+            entry: Some("main".to_string()),
+        };
+
+        let vm = Vm::new(program);
+        let err = vm.run_main().expect_err("should reject missing args");
+        assert!(matches!(err, VmError::Runtime { .. }));
+    }
+
+    #[test]
+    fn supports_uint_and_bool_ops() {
+        let program = BytecodeProgram {
+            const_pool: vec![
+                BytecodeConst::UInt(2),
+                BytecodeConst::UInt(1),
+                BytecodeConst::Bool(true),
+                BytecodeConst::Bool(false),
+            ],
+            functions: vec![BytecodeFunction {
+                name: "main".to_string(),
+                params: 0,
+                locals: 2,
+                blocks: vec![BytecodeBlock {
+                    id: 0,
+                    code: vec![
+                        BytecodeInstr::LoadConst(0),
+                        BytecodeInstr::LoadConst(1),
+                        BytecodeInstr::BinaryOp(BytecodeBinOp::Shl),
+                        BytecodeInstr::StoreLocal(0),
+                        BytecodeInstr::LoadConst(2),
+                        BytecodeInstr::LoadConst(3),
+                        BytecodeInstr::BinaryOp(BytecodeBinOp::Or),
+                        BytecodeInstr::StoreLocal(1),
+                    ],
+                    terminator: BytecodeTerminator::Return,
+                }],
+            }],
+            entry: Some("main".to_string()),
+        };
+
+        let vm = Vm::new(program);
+        let result = vm.run_main().expect("vm should run");
+        assert!(matches!(result, Value::UInt(4)));
+    }
+
+    #[test]
+    fn validate_jump_if_true_targets() {
+        let program = BytecodeProgram {
+            const_pool: vec![BytecodeConst::Bool(true)],
+            functions: vec![BytecodeFunction {
+                name: "main".to_string(),
+                params: 0,
+                locals: 1,
+                blocks: vec![BytecodeBlock {
+                    id: 0,
+                    code: vec![BytecodeInstr::LoadConst(0), BytecodeInstr::StoreLocal(0)],
+                    terminator: BytecodeTerminator::JumpIfTrue {
+                        target: 0,
+                        otherwise: 1,
+                    },
+                }],
+            }],
+            entry: Some("main".to_string()),
+        };
+
+        let vm = Vm::new(program);
+        let err = vm
+            .run_main()
+            .expect_err("missing otherwise block should fail");
+        assert!(matches!(err, VmError::Runtime { .. }));
     }
 }
