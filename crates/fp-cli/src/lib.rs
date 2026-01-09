@@ -8,7 +8,6 @@ pub mod cli;
 pub mod codegen;
 pub mod commands;
 pub mod compilation;
-pub mod config;
 pub mod diagnostics;
 pub mod languages;
 pub mod pipeline;

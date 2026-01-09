@@ -1,4 +1,5 @@
-use crate::error::PipelineError;
+use crate::config::PipelineOptions;
+use crate::error::{PipelineDiagnostics, PipelineError};
 use std::marker::PhantomData;
 
 pub trait PipelineStage: Send + Sync {
@@ -9,20 +10,26 @@ pub trait PipelineStage: Send + Sync {
     fn run(
         &self,
         context: Self::SrcCtx,
+        diagnostics: &mut PipelineDiagnostics,
     ) -> Result<Self::DstCtx, PipelineError>;
 }
 
 pub struct Pipeline<Src, Dst> {
     run: Box<
-        dyn Fn(Src) -> Result<Dst, PipelineError>
+        dyn Fn(Src, &mut PipelineDiagnostics, &PipelineOptions) -> Result<Dst, PipelineError>
             + Send
             + Sync,
     >,
 }
 
 impl<Src, Dst> Pipeline<Src, Dst> {
-    pub fn run(&self, context: Src) -> Result<Dst, PipelineError> {
-        (self.run)(context)
+    pub fn run(
+        &self,
+        context: Src,
+        diagnostics: &mut PipelineDiagnostics,
+        options: &PipelineOptions,
+    ) -> Result<Dst, PipelineError> {
+        (self.run)(context, diagnostics, options)
     }
 }
 
@@ -33,7 +40,9 @@ pub struct PipelineBuilder<Src, Dst> {
 
 impl<Src> PipelineBuilder<Src, Src> {
     pub fn new() -> Self {
-        let run = |context: Src| Ok(context);
+        let run = |context: Src,
+                   _diagnostics: &mut PipelineDiagnostics,
+                   _options: &PipelineOptions| Ok(context);
         Self {
             pipeline: Pipeline {
                 run: Box::new(run),
@@ -53,10 +62,15 @@ impl<Src, Mid> PipelineBuilder<Src, Mid> {
     {
         let name = stage.name();
         let previous = self.pipeline.run;
-        let run = move |context: Src| {
-            let mid = previous(context)?;
-            match stage.run(mid) {
-                Ok(next) => Ok(next),
+        let run = move |context: Src,
+                        diagnostics: &mut PipelineDiagnostics,
+                        options: &PipelineOptions| {
+            let mid = previous(context, diagnostics, options)?;
+            match stage.run(mid, diagnostics) {
+                Ok(next) => {
+                    diagnostics.emit_stage(name, options);
+                    Ok(next)
+                }
                 Err(err) if err.stage == name => Err(err),
                 Err(err) => Err(PipelineError::new(name, err.message)),
             }

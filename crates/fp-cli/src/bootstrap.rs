@@ -1,6 +1,4 @@
-use crate::config::{
-    DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
-};
+use fp_pipeline::{DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig};
 use crate::pipeline::{Pipeline, PipelineOutput};
 use crate::{CliError, Result};
 use std::io::{self, Write};

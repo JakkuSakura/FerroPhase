@@ -1,6 +1,6 @@
 use crate::CliError;
 use crate::codegen::CodeGenerator;
-use crate::config::{PipelineConfig, PipelineOptions, PipelineTarget};
+use fp_pipeline::{PipelineConfig, PipelineOptions, PipelineTarget};
 use crate::languages::frontend::{
     FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, JsonSchemaFrontend,
     LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
@@ -2887,7 +2887,7 @@ fn render_workspace_summary(workspace: &WorkspaceDocument) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::PipelineTarget;
+    use fp_pipeline::PipelineTarget;
     use fp_core::diagnostics::DiagnosticManager;
     use fp_core::intrinsics::IntrinsicCallKind;
     use fp_core::{ast, hir, lir};

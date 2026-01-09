@@ -119,16 +119,14 @@ pub fn maybe_rewrite_cli_main(function: &mut ItemDefFunction) -> bool {
 
     let options_expr = Expr::new(ExprKind::Struct(ExprStruct {
         name: Box::new(Expr::locator(Locator::path(Path::new(vec![
-            Ident::new("fp_cli"),
-            Ident::new("config"),
+            Ident::new("fp_pipeline"),
             Ident::new("PipelineOptions"),
         ])))),
         fields: vec![
             ExprField::new(
                 Ident::new("target"),
                 Expr::locator(Locator::path(Path::new(vec![
-                    Ident::new("fp_cli"),
-                    Ident::new("config"),
+                    Ident::new("fp_pipeline"),
                     Ident::new("PipelineTarget"),
                     Ident::new("Llvm"),
                 ]))),

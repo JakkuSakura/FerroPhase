@@ -1,5 +1,5 @@
 use crate::CliError;
-use crate::config::PipelineOptions;
+use fp_pipeline::PipelineOptions;
 use std::process::Command;
 
 /// Binary compilation utilities using llc + lld

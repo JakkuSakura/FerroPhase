@@ -25,6 +25,7 @@ fp-prql = { path = "../fp-prql" }
 fp-sql = { path = "../fp-sql" }
 fp-jsonschema = { path = "../fp-jsonschema" }
 fp-flatbuffers = { path = "../fp-flatbuffers" }
+fp-pipeline = { path = "../fp-pipeline" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }

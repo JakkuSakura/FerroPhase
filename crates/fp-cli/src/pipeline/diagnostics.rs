@@ -1,6 +1,6 @@
 use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticManager};
 
-use crate::config::PipelineOptions;
+use fp_pipeline::PipelineOptions;
 
 pub(crate) fn display_options(options: &PipelineOptions) -> DiagnosticDisplayOptions {
     DiagnosticDisplayOptions::new(options.debug.verbose)

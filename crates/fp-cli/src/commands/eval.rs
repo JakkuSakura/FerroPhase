@@ -3,9 +3,9 @@
 use crate::{
     CliError, Result,
     cli::CliConfig,
-    config::PipelineConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
+use fp_pipeline::PipelineConfig;
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
 use clap::{ArgAction, Args};

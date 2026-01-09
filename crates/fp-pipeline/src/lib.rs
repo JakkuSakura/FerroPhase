@@ -6,5 +6,5 @@ pub use config::{
     DebugOptions, ErrorToleranceOptions, PipelineConfig, PipelineOptions, PipelineTarget,
     RuntimeConfig,
 };
-pub use error::PipelineError;
+pub use error::{PipelineDiagnostics, PipelineError};
 pub use pipeline::{Pipeline, PipelineBuilder, PipelineStage};
