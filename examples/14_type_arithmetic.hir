@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -132,7 +132,7 @@ hir::Program {
     pub fn print_display<T>(value: T) -> () {
         // params: [value: T]
         {
-            std::Println(1 args);
+            std::Println(format = "display: {}", args = [arg0 = value]);
         }
     }
 
@@ -151,44 +151,44 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 14_type_arithmetic.fp\n");
-            printf("🧭 Focus: Type arithmetic examples: combining and relating types with operators.\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 14_type_arithmetic.fp");
+            std::Println(format = "🧭 Focus: Type arithmetic examples: combining and relating types with operators.");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             let base_foo: struct { a: i64, common: i64, foo: i64 } = Foo { a: 1, common: 2, foo: 3 };
-            printf("Foo a=%lld common=%lld foo=%lld\n", base_foo.a, base_foo.common, base_foo.foo);
+            std::Println(format = "Foo a={} common={} foo={}", args = [arg0 = base_foo.a, arg1 = base_foo.common, arg2 = base_foo.foo]);
             let base_bar: struct { common: i64, bar: i64 } = Bar { common: 4, bar: 5 };
-            printf("Bar common=%lld bar=%lld\n", base_bar.common, base_bar.bar);
+            std::Println(format = "Bar common={} bar={}", args = [arg0 = base_bar.common, arg1 = base_bar.bar]);
             let merged: struct { a: i64, common: i64, foo: i64 } + struct { common: i64, bar: i64 } = <control-flow>;
-            printf("FooPlusBar a=%lld common=%lld foo=%lld bar=%lld\n", merged.a, merged.common, merged.foo, merged.bar);
+            std::Println(format = "FooPlusBar a={} common={} foo={} bar={}", args = [arg0 = merged.a, arg1 = merged.common, arg2 = merged.foo, arg3 = merged.bar]);
             let reduced: struct { a: i64, common: i64, foo: i64 } - struct { common: i64, bar: i64 } = FooMinusBar { a: 10, foo: 20 };
-            printf("FooMinusBar a=%lld foo=%lld\n", reduced.a, reduced.foo);
+            std::Println(format = "FooMinusBar a={} foo={}", args = [arg0 = reduced.a, arg1 = reduced.foo]);
             let overlap: struct { a: i64, common: i64, foo: i64 } & struct { common: i64, bar: i64 } = FooAndBar { common: 99 };
-            printf("FooAndBar common=%lld\n", overlap.common);
+            std::Println(format = "FooAndBar common={}", args = [arg0 = overlap.common]);
             let record: struct { tag: i64, value: i64 } = InlineRecord { tag: 7, value: 42 };
-            printf("InlineRecord tag=%lld value=%lld\n", record.tag, record.value);
+            std::Println(format = "InlineRecord tag={} value={}", args = [arg0 = record.tag, arg1 = record.value]);
             let left: struct { a: i64, common: i64, foo: i64 } | struct { common: i64, bar: i64 } = Foo { a: 2, common: 3, foo: 4 };
             let right: struct { a: i64, common: i64, foo: i64 } | struct { common: i64, bar: i64 } = base_bar;
             let handler: fn(struct { a: i64, common: i64, foo: i64 } | struct { common: i64, bar: i64 }) -> i64 = describe_union;
-            std::Println(1 args);
-            std::Println(1 args);
+            std::Println(format = "FooOrBar left sum={}", args = [arg0 = handler(arg0 = left)]);
+            std::Println(format = "FooOrBar right sum={}", args = [arg0 = handler(arg0 = right)]);
             let _ints: [i64; 4] = [1, 2, 3, 4];
-            std::Println(4 args);
+            std::Println(format = "Int4[0]={} Int4[1]={} Int4[2]={} Int4[3]={}", args = [arg0 = _ints[0], arg1 = _ints[1], arg2 = _ints[2], arg3 = _ints[3]]);
             let lit_int: i64 = 42;
             let lit_bool: bool = true;
             let lit_str: &str = "hello";
             let lit_unit: () = <control-flow>;
             let lit_null: null = null;
             let lit_enum: &str = "green";
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
-            std::Println(1 args);
+            std::Println(format = "LiteralInt {}", args = [arg0 = lit_int]);
+            std::Println(format = "LiteralBool {}", args = [arg0 = lit_bool]);
+            std::Println(format = "LiteralStr {}", args = [arg0 = lit_str]);
+            std::Println(format = "LiteralUnit {}", args = [arg0 = lit_unit]);
+            std::Println(format = "LiteralNull {}", args = [arg0 = lit_null]);
+            std::Println(format = "LiteralStrEnum {}", args = [arg0 = lit_enum]);
             let maybe: struct { a: i64, common: i64, foo: i64 } | null = Foo { a: 5, common: 6, foo: 7 };
-            std::Println(1 args);
+            std::Println(format = "FooMaybe sum={}", args = [arg0 = describe_optional(value = maybe)]);
             let _ = print_display;
         }
     }

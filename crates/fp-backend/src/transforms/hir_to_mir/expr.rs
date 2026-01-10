@@ -23,7 +23,7 @@ use fp_core::mir::ty::{
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
+use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
 use std::hash::{Hash, Hasher};
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
@@ -127,7 +127,6 @@ struct MethodContext {
 
 #[derive(Clone, Debug)]
 struct StructDefinition {
-    def_id: hir::DefId,
     name: String,
     generics: Vec<String>,
     fields: Vec<StructFieldDef>,
@@ -183,6 +182,7 @@ pub struct MirLowering {
     diagnostics: Vec<Diagnostic>,
     has_errors: bool,
     struct_defs: HashMap<hir::DefId, StructDefinition>,
+    struct_defs_by_name: HashMap<String, hir::DefId>,
     struct_layouts: HashMap<StructLayoutKey, StructLayout>,
     struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
     structural_defs: HashMap<StructuralLayoutKey, hir::DefId>,
@@ -247,6 +247,7 @@ impl MirLowering {
             diagnostics: Vec::new(),
             has_errors: false,
             struct_defs: HashMap::new(),
+            struct_defs_by_name: HashMap::new(),
             struct_layouts: HashMap::new(),
             struct_layouts_by_ty: HashMap::new(),
             structural_defs: HashMap::new(),
@@ -840,6 +841,7 @@ impl MirLowering {
                         }
                     } else {
                         if actual_is_opaque {
+                            substs.insert(name.to_string(), actual_ty.clone());
                             return Ok(());
                         }
                         substs.insert(name.to_string(), actual_ty.clone());
@@ -1381,13 +1383,12 @@ impl MirLowering {
 
             self.struct_defs.insert(
                 def_id,
-                StructDefinition {
-                    def_id,
-                    name: format!("__structural_{}", def_id),
-                    generics: Vec::new(),
-                    fields: fields.clone(),
-                    field_index,
-                },
+                    StructDefinition {
+                        name: format!("__structural_{}", def_id),
+                        generics: Vec::new(),
+                        fields: fields.clone(),
+                        field_index,
+                    },
             );
             self.structural_defs.insert(key, def_id);
             def_id
@@ -1848,7 +1849,101 @@ impl MirLowering {
         }
     }
 
+    fn resolve_path_def_id(&self, path: &hir::Path) -> Option<hir::DefId> {
+        if let Some(hir::Res::Def(def_id)) = path.res {
+            return Some(def_id);
+        }
+        let full = path
+            .segments
+            .iter()
+            .map(|seg| seg.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        let resolved = self.struct_defs_by_name.get(&full).copied().or_else(|| {
+            self.enum_defs
+                .values()
+                .find(|def| def.name == full)
+                .map(|def| def.def_id)
+        });
+        if resolved.is_some() {
+            return resolved;
+        }
+        let tail = path.segments.last()?.name.as_str();
+        let struct_matches: Vec<hir::DefId> = self
+            .struct_defs
+            .iter()
+            .filter_map(|(def_id, def)| {
+                if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
+                    Some(*def_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if struct_matches.len() == 1 {
+            return struct_matches.into_iter().next();
+        }
+        let enum_matches: Vec<hir::DefId> = self
+            .enum_defs
+            .iter()
+            .filter_map(|(def_id, def)| {
+                if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
+                    Some(*def_id)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if enum_matches.len() == 1 {
+            return enum_matches.into_iter().next();
+        }
+        None
+    }
+
     fn lower_path_type(&mut self, path: &hir::Path, span: Span) -> Ty {
+        if let Some(def_id) = self.resolve_path_def_id(path) {
+            if self.struct_defs.contains_key(&def_id) {
+                let args = path
+                    .segments
+                    .last()
+                    .and_then(|segment| segment.args.as_ref())
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
+                    return layout.ty.clone();
+                }
+                return self.error_ty();
+            }
+            if self.enum_defs.contains_key(&def_id) {
+                let args = path
+                    .segments
+                    .last()
+                    .and_then(|segment| segment.args.as_ref())
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(layout) = self.enum_layout_for_instance(def_id, &args, span) {
+                    return layout.enum_ty.clone();
+                }
+                return self.error_ty();
+            }
+            if let Some(sig) = self.function_sigs.get(&def_id) {
+                return Ty {
+                    kind: TyKind::FnPtr(mir::ty::PolyFnSig {
+                        binder: mir::ty::Binder {
+                            value: mir::ty::FnSig {
+                                inputs: sig.inputs.iter().map(|ty| Box::new(ty.clone())).collect(),
+                                output: Box::new(sig.output.clone()),
+                                c_variadic: false,
+                                unsafety: mir::ty::Unsafety::Normal,
+                                abi: mir::ty::Abi::C { unwind: false },
+                            },
+                            bound_vars: Vec::new(),
+                        },
+                    }),
+                };
+            }
+        }
+
         if let Some(segment) = path.segments.last() {
             let name = segment.name.as_str();
             if name == "Vec" || name == "List" {
@@ -1934,6 +2029,57 @@ impl MirLowering {
                         }),
                     };
                 }
+            }
+        }
+
+        if let Some(segment) = path.segments.last() {
+            let tail = segment.name.as_str();
+            let struct_matches: Vec<hir::DefId> = self
+                .struct_defs
+                .iter()
+                .filter_map(|(def_id, def)| {
+                    if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
+                        Some(*def_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if struct_matches.len() == 1 {
+                let def_id = struct_matches[0];
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
+                    return layout.ty.clone();
+                }
+                return self.error_ty();
+            }
+
+            let enum_matches: Vec<hir::DefId> = self
+                .enum_defs
+                .iter()
+                .filter_map(|(def_id, def)| {
+                    if def.name == tail || def.name.ends_with(&format!("::{}", tail)) {
+                        Some(*def_id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if enum_matches.len() == 1 {
+                let def_id = enum_matches[0];
+                let args = segment
+                    .args
+                    .as_ref()
+                    .map(|args| self.lower_generic_args(Some(args), span))
+                    .unwrap_or_default();
+                if let Some(layout) = self.enum_layout_for_instance(def_id, &args, span) {
+                    return layout.enum_ty.clone();
+                }
+                return self.error_ty();
             }
         }
 
@@ -2025,18 +2171,13 @@ impl MirLowering {
                 _ => {}
             }
 
-            if let Some(def) = self
-                .struct_defs
-                .values()
-                .find(|def| def.name.as_str() == name.as_str())
-                .cloned()
-            {
+            if let Some(def_id) = self.struct_defs_by_name.get(name.as_str()).copied() {
                 let args = segment
                     .args
                     .as_ref()
                     .map(|args| self.lower_generic_args(Some(args), span))
                     .unwrap_or_default();
-                if let Some(layout) = self.struct_layout_for_instance(def.def_id, &args, span) {
+                if let Some(layout) = self.struct_layout_for_instance(def_id, &args, span) {
                     return layout.ty.clone();
                 }
                 return self.error_ty();
@@ -2065,13 +2206,6 @@ impl MirLowering {
             .map(|seg| seg.name.as_str())
             .collect::<Vec<_>>()
             .join("::");
-        self.emit_warning(
-            span,
-            format!(
-                "treating type `{}` as opaque during MIR lowering (bootstrap placeholder)",
-                display
-            ),
-        );
         self.opaque_ty(&display)
     }
 
@@ -2101,13 +2235,14 @@ impl MirLowering {
         self.struct_defs.insert(
             def_id,
             StructDefinition {
-                def_id,
                 name: String::from(strukt.name.clone()),
                 generics,
                 fields,
                 field_index,
             },
         );
+        self.struct_defs_by_name
+            .insert(String::from(strukt.name.clone()), def_id);
 
         if strukt.generics.params.is_empty() {
             let _ = self.struct_layout_for_instance(def_id, &[], span);
@@ -2891,14 +3026,23 @@ impl MirLowering {
     }
 
     fn struct_field(
-        &self,
+        &mut self,
         def_id: hir::DefId,
         struct_ty: &Ty,
         name: &str,
+        span: Span,
     ) -> Option<(usize, StructFieldInfo)> {
         let def = self.struct_defs.get(&def_id)?;
         let idx = *def.field_index.get(name)?;
-        let layout = self.struct_layout_for_ty(struct_ty)?;
+        let layout = self
+            .struct_layout_for_ty(struct_ty)
+            .or_else(|| {
+                if self.is_opaque_ty(struct_ty) {
+                    self.struct_layout_for_instance(def_id, &[], span)
+                } else {
+                    None
+                }
+            })?;
         let ty = layout.field_tys.get(idx)?.clone();
         Some((
             idx,
@@ -3961,7 +4105,27 @@ impl<'a> BodyBuilder<'a> {
                 .lowering
                 .struct_layouts_by_ty
                 .get(ty)
-                .map(|key| key.def_id),
+                .map(|key| key.def_id)
+                .or_else(|| {
+                    let name = self.lowering.display_type_name(ty)?;
+                    let matches: Vec<hir::DefId> = self
+                        .lowering
+                        .struct_defs
+                        .iter()
+                        .filter_map(|(def_id, def)| {
+                            if def.name == name || def.name.ends_with(&format!("::{}", name)) {
+                                Some(*def_id)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    if matches.len() == 1 {
+                        matches.into_iter().next()
+                    } else {
+                        None
+                    }
+                }),
         }
     }
 
@@ -6154,7 +6318,7 @@ impl<'a> BodyBuilder<'a> {
             let expected_ty = sig.inputs.get(idx);
             let operand = self.lower_operand(&arg.value, expected_ty)?;
             let inferred_ty = if let Some(expected_ty) = expected_ty {
-                if let TyKind::Ref(region, _inner, mutability) = &expected_ty.kind {
+                if let TyKind::Ref(_region, _inner, mutability) = &expected_ty.kind {
                     let local_id = match &arg.value.kind {
                         hir::ExprKind::Path(path) => {
                             if let Some(hir::Res::Local(hir_id)) = &path.res {
@@ -6185,7 +6349,22 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                 }
-                expected_ty.clone()
+                let expected_has_opaque = self.lowering.is_opaque_ty(expected_ty)
+                    || match &expected_ty.kind {
+                        TyKind::FnPtr(poly_sig) => {
+                            let sig = &poly_sig.binder.value;
+                            sig.inputs
+                                .iter()
+                                .any(|ty| self.lowering.is_opaque_ty(ty))
+                                || self.lowering.is_opaque_ty(&sig.output)
+                        }
+                        _ => false,
+                    };
+                if expected_has_opaque {
+                    operand.ty.clone()
+                } else {
+                    expected_ty.clone()
+                }
             } else {
                 operand.ty.clone()
             };
@@ -6842,7 +7021,21 @@ impl<'a> BodyBuilder<'a> {
                             "unable to resolve enum layout for variant value",
                         );
                     }
-                    if let Some(const_info) = self.lowering.const_values.get(def_id) {
+                    if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
+                        if resolved_path
+                            .segments
+                            .last()
+                            .map(|seg| seg.name.as_str())
+                            == Some("REGISTRY")
+                        {
+                            self.lowering.emit_warning(
+                                expr.span,
+                                format!(
+                                    "lower_operand resolved REGISTRY to const ty {:?}",
+                                    const_info.ty.kind
+                                ),
+                            );
+                        }
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(const_info.value.clone()),
                             ty: const_info.ty.clone(),
@@ -6902,11 +7095,23 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                if resolved_path.res.is_none() && resolved_path.segments.len() == 1 {
-                    let name = resolved_path.segments[0].name.as_str();
+                if resolved_path.res.is_none() {
+                    let name = resolved_path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    let tail = resolved_path
+                        .segments
+                        .last()
+                        .map(|seg| seg.name.as_str())
+                        .unwrap_or(name.as_str());
                     for (def_id, item) in &self.program.def_map {
                         if let hir::ItemKind::Const(konst) = &item.kind {
-                            if konst.name.as_str() == name {
+                            let konst_name = konst.name.as_str();
+                            let konst_tail = konst_name.split("::").last().unwrap_or(konst_name);
+                            if konst_name == name || konst_tail == name || konst_tail == tail {
                                 self.lowering
                                     .register_const_value(self.program, *def_id, konst);
                                 if let Some(const_info) = self.lowering.const_values.get(def_id) {
@@ -7204,17 +7409,77 @@ impl<'a> BodyBuilder<'a> {
                         ty: value_ty,
                     });
                 }
-                self.lowering.emit_error(
-                    expr.span,
-                    "index access requires array, slice, or supported container",
-                );
-                let ty = expected
-                    .cloned()
-                    .unwrap_or_else(|| self.lowering.error_ty());
-                Ok(OperandInfo {
-                    operand: mir::Operand::Constant(self.lowering.error_constant(expr.span)),
-                    ty,
-                })
+                let index_ty = Ty {
+                    kind: TyKind::Uint(UintTy::Usize),
+                };
+                let index_operand = self.lower_operand(index, Some(&index_ty))?;
+                let index_local = self.allocate_temp(index_operand.ty.clone(), index.span);
+                let index_place = mir::Place::from_local(index_local);
+                self.push_statement(mir::Statement {
+                    source_info: index.span,
+                    kind: mir::StatementKind::Assign(
+                        index_place.clone(),
+                        mir::Rvalue::Use(index_operand.operand),
+                    ),
+                });
+
+                let (mut place, mut base_ty) = match base_info.operand {
+                    mir::Operand::Copy(place) | mir::Operand::Move(place) => {
+                        (place, base_info.ty.clone())
+                    }
+                    other => {
+                        let local_id = self.allocate_temp(base_info.ty.clone(), expr.span);
+                        let place = mir::Place::from_local(local_id);
+                        self.push_statement(mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                place.clone(),
+                                mir::Rvalue::Use(other),
+                            ),
+                        });
+                        (place, base_info.ty.clone())
+                    }
+                };
+
+                loop {
+                    match &base_ty.kind {
+                        TyKind::Ref(_, inner, _) => {
+                            place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = inner.as_ref().clone();
+                        }
+                        TyKind::RawPtr(type_and_mut) => {
+                            place.projection.push(mir::PlaceElem::Deref);
+                            base_ty = type_and_mut.ty.as_ref().clone();
+                        }
+                        _ => break,
+                    }
+                }
+
+                let element_ty = match &base_ty.kind {
+                    TyKind::Array(elem, _) => *elem.clone(),
+                    TyKind::Slice(elem) => *elem.clone(),
+                    _ => {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "index access requires array, slice, or supported container",
+                        );
+                        let ty = expected
+                            .cloned()
+                            .unwrap_or_else(|| self.lowering.error_ty());
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(
+                                self.lowering.error_constant(expr.span),
+                            ),
+                            ty,
+                        });
+                    }
+                };
+
+                place.projection.push(mir::PlaceElem::Index(index_local));
+                return Ok(OperandInfo {
+                    operand: mir::Operand::copy(place),
+                    ty: element_ty,
+                });
             }
             hir::ExprKind::IntrinsicCall(call) => {
                 if matches!(
@@ -8280,6 +8545,9 @@ impl<'a> BodyBuilder<'a> {
                 {
                     return Ok((string_operand, string_ty, "%s".to_string()));
                 }
+                if self.lowering.is_opaque_ty(&ty) {
+                    return Ok((operand, ty.clone(), "%s".to_string()));
+                }
                 let ty_name = self
                     .lowering
                     .display_type_name(&ty)
@@ -8457,9 +8725,13 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             _ => {
-                self.lowering
-                    .emit_error(span, "printf argument type is not supported");
-                "%s"
+                if self.lowering.is_opaque_ty(ty) {
+                    "%s"
+                } else {
+                    self.lowering
+                        .emit_error(span, "printf argument type is not supported");
+                    "%s"
+                }
             }
         };
         Ok(spec.to_string())
@@ -8801,7 +9073,7 @@ impl<'a> BodyBuilder<'a> {
                 let (field_index, field_info) =
                     match self
                         .lowering
-                        .struct_field(struct_def, &base_ty, field.as_str())
+                        .struct_field(struct_def, &base_ty, field.as_str(), expr.span)
                     {
                         Some(data) => data,
                         None => {
@@ -9342,7 +9614,7 @@ impl<'a> BodyBuilder<'a> {
                                 }
 
                                 if map_key_ty.is_none() {
-                                    let key_operand = self.lower_operand(arg_values[0], None)?;
+                                    let key_operand = self.lower_operand(&args[0].value, None)?;
                                     map_key_ty = Some(key_operand.ty);
                                 }
                                 if map_value_ty.is_none() {
@@ -9354,7 +9626,7 @@ impl<'a> BodyBuilder<'a> {
                                 {
                                     if len != 0 {
                                         let key_operand =
-                                            self.lower_operand(arg_values[0], Some(&key_ty))?;
+                                            self.lower_operand(&args[0].value, Some(&key_ty))?;
                                         self.push_statement(mir::Statement {
                                             source_info: expr.span,
                                             kind: mir::StatementKind::Assign(
@@ -9448,7 +9720,7 @@ impl<'a> BodyBuilder<'a> {
                                 if let (Some(key_ty), Some(value_ty)) = (map_key_ty, map_value_ty) {
                                     if map_len != 0 {
                                         let key_operand =
-                                            self.lower_operand(arg_values[0], Some(&key_ty))?;
+                                            self.lower_operand(&args[0].value, Some(&key_ty))?;
                                         let local_place = mir::Place::from_local(local_id);
                                         self.push_statement(mir::Statement {
                                             source_info: expr.span,
@@ -9504,7 +9776,7 @@ impl<'a> BodyBuilder<'a> {
                                 if let (Some(key_ty), Some(value_ty)) = (map_key_ty, map_value_ty) {
                                     if map_len != 0 {
                                         let key_operand =
-                                            self.lower_operand(arg_values[0], Some(&key_ty))?;
+                                            self.lower_operand(&args[0].value, Some(&key_ty))?;
                                         self.push_statement(mir::Statement {
                                             source_info: expr.span,
                                             kind: mir::StatementKind::Assign(
@@ -9591,7 +9863,7 @@ impl<'a> BodyBuilder<'a> {
                             let len = map_len.unwrap_or(0);
                             if len != 0 {
                                 let key_operand =
-                                    self.lower_operand(arg_values[0], Some(&key_ty))?;
+                                    self.lower_operand(&args[0].value, Some(&key_ty))?;
                                 self.push_statement(mir::Statement {
                                     source_info: expr.span,
                                     kind: mir::StatementKind::Assign(
@@ -10120,7 +10392,13 @@ impl<'a> BodyBuilder<'a> {
                         match operand {
                             mir::Operand::Copy(place) | mir::Operand::Move(place) => {
                                 if (place.local as usize) < self.locals.len() {
-                                    self.locals[place.local as usize].ty = expected_input.clone();
+                                    let existing = self.locals[place.local as usize].ty.clone();
+                                    if MirLowering::is_unit_ty(&existing)
+                                        || matches!(existing.kind, TyKind::Infer(_) | TyKind::Error(_))
+                                    {
+                                        self.locals[place.local as usize].ty =
+                                            expected_input.clone();
+                                    }
                                 }
                             }
                             _ => {}
@@ -10159,13 +10437,6 @@ impl<'a> BodyBuilder<'a> {
                     self.local_structs.insert(place.local, struct_def);
                 }
 
-                self.lowering.emit_warning(
-                    expr.span,
-                    format!(
-                        "treating method `{}` as opaque runtime stub during MIR lowering",
-                        method_name
-                    ),
-                );
                 return Ok(());
             }
             hir::ExprKind::Call(callee, args) => {

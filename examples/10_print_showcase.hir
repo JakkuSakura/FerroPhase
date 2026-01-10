@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,36 +102,36 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 10_print_showcase.fp\n");
-            printf("🧭 Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("Hello");
-            printf("World with newlines");
-            printf("\n");
-            printf("Number: %lld", 42);
-            printf("Boolean: %d %d", true, false);
-            printf("Mixed: %lld %f %s %d", 1, 2.5, "text", true);
-            printf("\n");
-            printf("Namespace test %s", "still works");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 10_print_showcase.fp");
+            std::Println(format = "🧭 Focus: Comprehensive println!/print showcase covering variadic arguments and runtime formatting");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Print(format = "Hello");
+            std::Print(format = "World with newlines");
+            std::Println(format = "");
+            std::Print(format = "Number: {}", args = [arg0 = 42]);
+            std::Print(format = "Boolean: {} {}", args = [arg0 = true, arg1 = false]);
+            std::Print(format = "Mixed: {} {} {} {}", args = [arg0 = 1, arg1 = 2.5, arg2 = "text", arg3 = true]);
+            std::Println(format = "");
+            std::Print(format = "Namespace test {}", args = [arg0 = "still works"]);
+            std::Println(format = "");
             let value = 7;
-            printf("value = %lld\n", value);
-            printf("math: %lld + %lld = %lld\n", 2, 3, 5);
-            printf("float: %f\n", 3.14159);
-            std::Println(2 args);
-            printf("tuple: (%lld, %lld)\n", 1, 2);
-            printf("bools: %d %d\n", true, false);
-            printf("This %s %s %s %s", "stays", "on", "one", "line");
-            printf("\n");
-            printf("Continuing without newline");
-            printf(" - appended content");
-            printf("\n");
-            std::Print(1 args);
-            std::Print(1 args);
-            printf("\n");
-            printf("escaped: %s %s\n", "line1\nline2", "tab\tend");
+            std::Println(format = "value = {}", args = [arg0 = value]);
+            std::Println(format = "math: {} + {} = {}", args = [arg0 = 2, arg1 = 3, arg2 = 5]);
+            std::Println(format = "float: {}", args = [arg0 = 3.14159]);
+            std::Println(format = "chars: {} {}", args = [arg0 = <control-flow>, arg1 = <control-flow>]);
+            std::Println(format = "tuple: ({}, {})", args = [arg0 = 1, arg1 = 2]);
+            std::Println(format = "bools: {} {}", args = [arg0 = true, arg1 = false]);
+            std::Print(format = "This {} {} {} {}", args = [arg0 = "stays", arg1 = "on", arg2 = "one", arg3 = "line"]);
+            std::Println(format = "");
+            std::Print(format = "Continuing without newline");
+            std::Print(format = " - appended content");
+            std::Println(format = "");
+            std::Print(format = "Unit: {}", args = [arg0 = <control-flow>]);
+            std::Print(format = "Null: {}", args = [arg0 = null]);
+            std::Println(format = "");
+            std::Println(format = "escaped: {} {}", args = [arg0 = "line1\nline2", arg1 = "tab\tend"]);
         }
     }
 }

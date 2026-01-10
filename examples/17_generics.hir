@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -150,19 +150,19 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 17_generics.fp\n");
-            printf("🧭 Focus: Generics: type parameters and monomorphization\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            let pair = Pair::new(42, "hello");
-            std::Println(2 args);
-            printf("max(10, 20) = %lld\n", max(10, 20));
-            printf("max(3.5, 2.1) = %f\n", max(3.5, 2.1));
-            let some: Option<i64> = Option::Some(100);
+            std::Println(format = "📘 Tutorial: 17_generics.fp");
+            std::Println(format = "🧭 Focus: Generics: type parameters and monomorphization");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            let pair = Pair::new(arg0 = 42, arg1 = "hello");
+            std::Println(format = "pair = ({}, {})", args = [arg0 = pair.first, arg1 = pair.second]);
+            std::Println(format = "max(10, 20) = {}", args = [arg0 = max(a = 10, b = 20)]);
+            std::Println(format = "max(3.5, 2.1) = {}", args = [arg0 = max(a = 3.5, b = 2.1)]);
+            let some: Option<i64> = Option::Some(arg0 = 100);
             let none: Option<i64> = Option::None;
-            std::Println(1 args);
-            std::Println(1 args);
+            std::Println(format = "unwrap_or(Some(100), 0) = {}", args = [arg0 = some.unwrap_or(arg0 = 0)]);
+            std::Println(format = "unwrap_or(None, 99) = {}", args = [arg0 = none.unwrap_or(arg0 = 99)]);
         }
     }
 }

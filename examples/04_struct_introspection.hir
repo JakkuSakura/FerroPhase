@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,11 +102,11 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 04_struct_introspection.fp\n");
-            printf("🧭 Focus: Struct introspection demonstration\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 04_struct_introspection.fp");
+            std::Println(format = "🧭 Focus: Struct introspection demonstration");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             pub struct Point {
                 pub x: f64,
                 pub y: f64,
@@ -132,17 +132,17 @@ hir::Program {
                 0;
             pub const COLOR_METHODS: usize =
                 0;
-            printf("=== Struct Introspection ===\n");
-            printf("Point size: %lld bytes\n", 16);
-            printf("Color size: %lld bytes\n", 24);
-            printf("Point fields: %lld\n", 2);
-            printf("Color fields: %lld\n", 3);
-            printf("Point has x: %d\n", true);
-            printf("Point has z: %d\n", false);
-            printf("Point methods: %lld\n", 0);
-            printf("Color methods: %lld\n", 0);
-            printf("\n✓ Introspection completed!\n");
-            printf("\n=== Transpilation Demo ===\n");
+            std::Println(format = "=== Struct Introspection ===");
+            std::Println(format = "Point size: {} bytes", args = [arg0 = 16]);
+            std::Println(format = "Color size: {} bytes", args = [arg0 = 24]);
+            std::Println(format = "Point fields: {}", args = [arg0 = 2]);
+            std::Println(format = "Color fields: {}", args = [arg0 = 3]);
+            std::Println(format = "Point has x: {}", args = [arg0 = true]);
+            std::Println(format = "Point has z: {}", args = [arg0 = false]);
+            std::Println(format = "Point methods: {}", args = [arg0 = 0]);
+            std::Println(format = "Color methods: {}", args = [arg0 = 0]);
+            std::Println(format = "\n✓ Introspection completed!");
+            std::Println(format = "\n=== Transpilation Demo ===");
             pub const POINT_SIZE_CONST: usize =
                 16;
             pub const COLOR_SIZE_CONST: usize =
@@ -151,14 +151,14 @@ hir::Program {
                 40;
             let origin = Point { x: 0, y: 0 };
             let red = Color { r: 255, g: 0, b: 0 };
-            printf("Transpilation target sizes:\n");
-            printf("  Point: %llu bytes (const)\n", POINT_SIZE_CONST);
-            printf("  Color: %llu bytes (const)\n", COLOR_SIZE_CONST);
-            printf("  Combined: %llu bytes\n", TOTAL_SIZE);
-            printf("Runtime instances:\n");
-            printf("  Origin: (%f, %f)\n", origin.x, origin.y);
-            printf("  Red: rgb(%hhu, %hhu, %hhu)\n", red.r, red.g, red.b);
-            printf("\n✓ Introspection enables external code generation!\n");
+            std::Println(format = "Transpilation target sizes:");
+            std::Println(format = "  Point: {} bytes (const)", args = [arg0 = POINT_SIZE_CONST]);
+            std::Println(format = "  Color: {} bytes (const)", args = [arg0 = COLOR_SIZE_CONST]);
+            std::Println(format = "  Combined: {} bytes", args = [arg0 = TOTAL_SIZE]);
+            std::Println(format = "Runtime instances:");
+            std::Println(format = "  Origin: ({}, {})", args = [arg0 = origin.x, arg1 = origin.y]);
+            std::Println(format = "  Red: rgb({}, {}, {})", args = [arg0 = red.r, arg1 = red.g, arg2 = red.b]);
+            std::Println(format = "\n✓ Introspection enables external code generation!");
         }
     }
 }

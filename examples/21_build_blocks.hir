@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -110,16 +110,16 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 21_build_blocks.fp\n");
-            printf("🧭 Focus: Build blocks with typed quote tokens and expression-driven splice.\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 21_build_blocks.fp");
+            std::Println(format = "🧭 Focus: Build blocks with typed quote tokens and expression-driven splice.");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             let alpha = Alpha { id: 1 };
-            printf("build_items(true) -> Alpha { id: %lld }\n", alpha.id);
+            std::Println(format = "build_items(true) -> Alpha { id: {} }", args = [arg0 = alpha.id]);
             let beta = Beta { id: 2 };
-            printf("build_items_2(false) -> Beta { id: %lld }\n", beta.id);
-            printf("generated types are usable at runtime\n");
+            std::Println(format = "build_items_2(false) -> Beta { id: {} }", args = [arg0 = beta.id]);
+            std::Println(format = "generated types are usable at runtime");
         }
     }
 }

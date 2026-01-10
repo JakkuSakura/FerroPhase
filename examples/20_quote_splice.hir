@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,15 +102,15 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 20_quote_splice.fp\n");
-            printf("🧭 Focus: Quote, splice, and emit: staged code generation with runtime output.\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            let result1 = apply_ops__const_1(0, 6);
-            printf("result1=%d\n", result1);
-            let result2 = apply_ops__const_2(10, 30);
-            printf("result2=%d\n", result2);
+            std::Println(format = "📘 Tutorial: 20_quote_splice.fp");
+            std::Println(format = "🧭 Focus: Quote, splice, and emit: staged code generation with runtime output.");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            let result1 = apply_ops__const_1(arg0 = 0, arg1 = 6);
+            std::Println(format = "result1={}", args = [arg0 = result1]);
+            let result2 = apply_ops__const_2(arg0 = 10, arg1 = 30);
+            std::Println(format = "result2={}", args = [arg0 = result2]);
         }
     }
 

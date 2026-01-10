@@ -49,7 +49,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
             &output_dir,
             &options.build_options,
         ),
-        RunMode::Interpret => run_interpret(&package, &sources, &graph_path, &options.resolver),
+        RunMode::Interpret => run_interpret(&package, &entry),
     }
 }
 
@@ -109,21 +109,11 @@ fn run_compile(
     Ok(())
 }
 
-fn run_interpret(
-    package: &PackageModel,
-    sources: &[PathBuf],
-    graph_path: &Path,
-    resolver: &str,
-) -> Result<()> {
+fn run_interpret(package: &PackageModel, entry: &Path) -> Result<()> {
     let fp_bin = resolve_fp_binary()?;
     let mut command = Command::new(&fp_bin);
-    command.arg("compile");
-    for source in sources {
-        command.arg(source);
-    }
-    command.arg("--target").arg("interpret");
-    command.arg("--package-graph").arg(graph_path);
-    command.arg("--resolver").arg(resolver);
+    command.arg("interpret");
+    command.arg(entry);
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());

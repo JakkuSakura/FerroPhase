@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,14 +102,14 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 24_tests.fp\n");
-            printf("🧭 Focus: minimal test harness using assert! macros\n");
-            printf("🧪 What to look for: both tests pass with no assertion failures\n");
-            printf("✅ Expectation: test report shows 2 passed\n");
-            printf("\n");
-            printf("Running tests via std::test::run_tests:\n");
+            std::Println(format = "📘 Tutorial: 24_tests.fp");
+            std::Println(format = "🧭 Focus: minimal test harness using assert! macros");
+            std::Println(format = "🧪 What to look for: both tests pass with no assertion failures");
+            std::Println(format = "✅ Expectation: test report shows 2 passed");
+            std::Println(format = "");
+            std::Println(format = "Running tests via std::test::run_tests:");
             let report = std::test::run_tests();
-            printf("Summary: %lld passed, %lld failed, %lld total\n", report.passed, report.failed, report.total);
+            std::Println(format = "Summary: {} passed, {} failed, {} total", args = [arg0 = report.passed, arg1 = report.failed, arg2 = report.total]);
         }
     }
 

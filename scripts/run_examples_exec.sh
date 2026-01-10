@@ -12,7 +12,7 @@ fi
 
 for f in examples/*.fp; do
   echo "==> ${f}"
-  if ! cargo run --bin fp -- compile --exec --save-intermediates "${f}"; then
+  if ! cargo run --bin fp --release -- compile --exec --save-intermediates "${f}"; then
     echo "FAILED: ${f}"
   fi
 done

@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -137,7 +137,7 @@ hir::Program {
     pub fn print_board(positions: &[i64; 8]) -> () {
         // params: [positions: &[i64; 8]]
         {
-            printf("First solution:\n");
+            std::Println(format = "First solution:");
             {
                 let mut r = 0;
                 while ((r < 8))
@@ -150,7 +150,7 @@ hir::Program {
                                     c = (c + 1);
                                 }
                         }
-                        std::Println(0 args);
+                        std::Println(format = "");
                         r = (r + 1);
                     }
             }
@@ -159,20 +159,20 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 22_eight_queens.fp\n");
-            printf("🧭 Focus: Classic 8-queens solver using recursive backtracking.\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 22_eight_queens.fp");
+            std::Println(format = "🧭 Focus: Classic 8-queens solver using recursive backtracking.");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             let cols: [i64; 8] = [0; 8];
             let diag1: [i64; 15] = [0; 15];
             let diag2: [i64; 15] = [0; 15];
             let positions: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
             let first_solution: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
             let mut found_first = false;
-            let total = solve(0, cols, diag1, diag2, positions, first_solution, found_first);
-            print_board(first_solution);
-            printf("Total solutions: %lld\n", total);
+            let total = solve(row = 0, cols = cols, diag1 = diag1, diag2 = diag2, positions = positions, first_solution = first_solution, found_first = found_first);
+            print_board(positions = first_solution);
+            std::Println(format = "Total solutions: {}", args = [arg0 = total]);
         }
     }
 }

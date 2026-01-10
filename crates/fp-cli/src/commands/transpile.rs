@@ -80,7 +80,6 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
         define: Vec::new(),
         exec: false,
         save_intermediates: args.save_intermediates,
-        emit_text_bytecode: false,
         error_tolerance: args.error_tolerance,
         max_errors: args.max_errors,
         source_language: args.source_language,

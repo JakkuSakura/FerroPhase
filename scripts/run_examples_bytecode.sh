@@ -12,12 +12,12 @@ fi
 
 for f in examples/*.fp; do
   echo "==> ${f}"
-  cargo run --bin fp -- compile --backend bytecode --emit-text-bytecode --save-intermediates "${f}"
-  cargo run --bin fp -- compile --backend bytecode --save-intermediates "${f}"
+  cargo run --bin fp --release -- compile --backend text-bytecode --save-intermediates "${f}"
+  cargo run --bin fp --release -- compile --backend bytecode --save-intermediates "${f}"
   fbc="${f%.fp}.fbc"
   if [[ ! -f "${fbc}" ]]; then
     echo "Missing bytecode output: ${fbc}"
     exit 1
   fi
-  cargo run --bin fp -- interpret "${fbc}"
+  cargo run --bin fp --release -- interpret "${fbc}"
  done

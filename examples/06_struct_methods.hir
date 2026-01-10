@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -168,24 +168,24 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 06_struct_methods.fp\n");
-            printf("🧭 Focus: Struct methods and field access\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("=== Struct Operations ===\n");
-            let mut p1 = Point::new(10, 20);
-            let p2 = Point::new(5, 15);
-            printf("p1 = (%lld, %lld)\n", p1.x, p1.y);
-            printf("p2 = (%lld, %lld)\n", p2.x, p2.y);
-            p1.translate(3, (-4));
-            printf("p1 after translate = (%lld, %lld)\n", p1.x, p1.y);
-            printf("Distance²(p1, p2) = %lld\n", p1.distance2(p2));
-            let rect = Rectangle::new(10, 5);
-            printf("Rectangle: %lld×%lld\n", rect.width, rect.height);
-            printf("  area = %lld\n", rect.area());
-            printf("  perimeter = %lld\n", rect.perimeter());
-            printf("  is_square = %d\n", rect.is_square());
+            std::Println(format = "📘 Tutorial: 06_struct_methods.fp");
+            std::Println(format = "🧭 Focus: Struct methods and field access");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Println(format = "=== Struct Operations ===");
+            let mut p1 = Point::new(arg0 = 10, arg1 = 20);
+            let p2 = Point::new(arg0 = 5, arg1 = 15);
+            std::Println(format = "p1 = ({}, {})", args = [arg0 = p1.x, arg1 = p1.y]);
+            std::Println(format = "p2 = ({}, {})", args = [arg0 = p2.x, arg1 = p2.y]);
+            p1.translate(arg0 = 3, arg1 = (-4));
+            std::Println(format = "p1 after translate = ({}, {})", args = [arg0 = p1.x, arg1 = p1.y]);
+            std::Println(format = "Distance²(p1, p2) = {}", args = [arg0 = p1.distance2(arg0 = p2)]);
+            let rect = Rectangle::new(arg0 = 10, arg1 = 5);
+            std::Println(format = "Rectangle: {}×{}", args = [arg0 = rect.width, arg1 = rect.height]);
+            std::Println(format = "  area = {}", args = [arg0 = rect.area()]);
+            std::Println(format = "  perimeter = {}", args = [arg0 = rect.perimeter()]);
+            std::Println(format = "  is_square = {}", args = [arg0 = rect.is_square()]);
         }
     }
 }

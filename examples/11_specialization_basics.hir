@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -122,8 +122,8 @@ hir::Program {
     pub fn pipeline<T>(a: T, b: T) -> T {
         // params: [a: T, b: T]
         {
-            let result = double(add(a, b));
-            std::Println(1 args);
+            let result = double(x = add(a = a, b = b));
+            std::Println(format = "specialized result: {}", args = [arg0 = result]);
             result
         }
     }
@@ -139,26 +139,26 @@ hir::Program {
         // params: [a: T, b: T]
         {
             let result = <control-flow>;
-            std::Println(3 args);
+            std::Println(format = "max({}, {}) = {}", args = [arg0 = a, arg1 = b, arg2 = result]);
             result
         }
     }
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 11_specialization_basics.fp\n");
-            printf("🧭 Focus: Function specialization via generic monomorphization\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            let _ = pipeline(10, 20);
-            let _ = pipeline(1.5, 2.5);
+            std::Println(format = "📘 Tutorial: 11_specialization_basics.fp");
+            std::Println(format = "🧭 Focus: Function specialization via generic monomorphization");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            let _ = pipeline(a = 10, b = 20);
+            let _ = pipeline(a = 1.5, b = 2.5);
             let pair_i = Pair { left: 3, right: 7 };
             let pair_f = Pair { left: 1.25, right: 2.75 };
-            std::Println(1 args);
-            std::Println(1 args);
-            let _ = max(10, 3);
-            let _ = max(2.5, 9);
+            std::Println(format = "sum_pair i64 = {}", args = [arg0 = sum_pair(pair = pair_i)]);
+            std::Println(format = "sum_pair f64 = {}", args = [arg0 = sum_pair(pair = pair_f)]);
+            let _ = max(a = 10, b = 3);
+            let _ = max(a = 2.5, b = 9);
         }
     }
 }

@@ -16,7 +16,7 @@ mir::Program {
             return_local: _0
             locals:
                 _0: ()
-                _1: <??>
+                _1: (<??>)
             blocks:
                 bb0:
                     terminator: call fn TestCase::run(copy _1[Field(0, Ty { kind: Adt(AdtDef { did: 1, variants: [VariantDef { def_id: 2, ctor_def_id: None, ident: Symbol { name: "TestCase" }, discr: Relative(0), fields: [], ctor_kind: Const, is_recovered: false }], flags: AdtFlags(IS_STRUCT), repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags(0x0), field_shuffle_seed: 0 } }, []) })]) -> _0 then bb1

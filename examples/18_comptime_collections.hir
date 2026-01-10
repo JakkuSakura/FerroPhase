@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -111,20 +111,20 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 18_comptime_collections.fp\n");
-            printf("🧭 Focus: Showcase compile-time Vec and HashMap construction.\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("=== Compile-time Collections ===\n");
-            printf("Vec literals:\n");
-            std::Println(2 args);
-            printf("  zero buffer: %lld elements\n", ZERO_BUFFER.len());
-            printf("  first four zeros: [%lld, %lld, %lld, %lld]\n", ZERO_BUFFER[0], ZERO_BUFFER[1], ZERO_BUFFER[2], ZERO_BUFFER[3]);
-            printf("\nHashMap literal via HashMap::from:\n");
-            printf("  tracked HTTP statuses: %lld entries\n", HTTP_STATUSES.len());
-            std::Println(1 args);
-            std::Println(1 args);
+            std::Println(format = "📘 Tutorial: 18_comptime_collections.fp");
+            std::Println(format = "🧭 Focus: Showcase compile-time Vec and HashMap construction.");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Println(format = "=== Compile-time Collections ===");
+            std::Println(format = "Vec literals:");
+            std::Println(format = "  primes: {} elements -> {}", args = [arg0 = PRIMES.len(), arg1 = PRIMES]);
+            std::Println(format = "  zero buffer: {} elements", args = [arg0 = ZERO_BUFFER.len()]);
+            std::Println(format = "  first four zeros: [{}, {}, {}, {}]", args = [arg0 = ZERO_BUFFER[0], arg1 = ZERO_BUFFER[1], arg2 = ZERO_BUFFER[2], arg3 = ZERO_BUFFER[3]]);
+            std::Println(format = "\nHashMap literal via HashMap::from:");
+            std::Println(format = "  tracked HTTP statuses: {} entries", args = [arg0 = HTTP_STATUSES.len()]);
+            std::Println(format = "  ok => {}", args = [arg0 = HTTP_STATUSES.get_unchecked(arg0 = "ok")]);
+            std::Println(format = "  not_found => {}", args = [arg0 = HTTP_STATUSES.get_unchecked(arg0 = "not_found")]);
         }
     }
 }

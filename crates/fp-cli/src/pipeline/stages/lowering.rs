@@ -64,10 +64,7 @@ impl PipelineStage for HirToMirStage {
             }
         }
 
-        Ok(MirArtifacts {
-            mir_program,
-            mir_text,
-        })
+        Ok(MirArtifacts { mir_program })
     }
 }
 
@@ -117,10 +114,7 @@ impl PipelineStage for MirToLirStage {
             }
         }
 
-        Ok(LirArtifacts {
-            lir_program,
-            lir_text,
-        })
+        Ok(LirArtifacts { lir_program })
     }
 }
 

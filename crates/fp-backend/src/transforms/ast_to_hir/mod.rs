@@ -109,6 +109,12 @@ enum LiteralTypeKind {
     Null,
 }
 
+#[derive(Debug, Clone)]
+struct ImportBinding {
+    target: Vec<String>,
+    alias: Option<String>,
+}
+
 impl HirGenerator {
     fn add_error(&mut self, diag: Diagnostic) {
         self.errors.push(diag);
@@ -119,7 +125,131 @@ impl HirGenerator {
     }
 
     fn handle_import(&mut self, _import: &ast::ItemImport) -> Result<()> {
+        let mut bindings = Vec::new();
+        self.collect_imports(Vec::new(), &_import.tree, &mut bindings)?;
+        for binding in bindings {
+            self.register_import_binding(binding, &_import.visibility);
+        }
         Ok(())
+    }
+
+    fn collect_imports(
+        &self,
+        base: Vec<String>,
+        tree: &ast::ItemImportTree,
+        out: &mut Vec<ImportBinding>,
+    ) -> Result<()> {
+        match tree {
+            ast::ItemImportTree::Path(path) => self.collect_imports_from_path(base, path, out),
+            ast::ItemImportTree::Ident(ident) => {
+                let mut target = base;
+                target.push(ident.name.clone());
+                out.push(ImportBinding { target, alias: None });
+                Ok(())
+            }
+            ast::ItemImportTree::Rename(rename) => {
+                let mut target = base;
+                target.push(rename.from.name.clone());
+                out.push(ImportBinding {
+                    target,
+                    alias: Some(rename.to.name.clone()),
+                });
+                Ok(())
+            }
+            ast::ItemImportTree::Group(group) => {
+                for item in &group.items {
+                    self.collect_imports(base.clone(), item, out)?;
+                }
+                Ok(())
+            }
+            ast::ItemImportTree::Root
+            | ast::ItemImportTree::SelfMod
+            | ast::ItemImportTree::SuperMod
+            | ast::ItemImportTree::Crate
+            | ast::ItemImportTree::Glob => Ok(()),
+        }
+    }
+
+    fn collect_imports_from_path(
+        &self,
+        base: Vec<String>,
+        path: &ast::ItemImportPath,
+        out: &mut Vec<ImportBinding>,
+    ) -> Result<()> {
+        let mut prefix = base;
+        for seg in &path.segments {
+            match seg {
+                ast::ItemImportTree::Root | ast::ItemImportTree::Crate => {
+                    prefix.clear();
+                }
+                ast::ItemImportTree::SelfMod => {
+                    prefix = self.module_path.clone();
+                }
+                ast::ItemImportTree::SuperMod => {
+                    prefix = self.module_path.clone();
+                    prefix.pop();
+                }
+                ast::ItemImportTree::Ident(ident) => {
+                    prefix.push(ident.name.clone());
+                }
+                ast::ItemImportTree::Rename(rename) => {
+                    let mut target = prefix.clone();
+                    target.push(rename.from.name.clone());
+                    out.push(ImportBinding {
+                        target,
+                        alias: Some(rename.to.name.clone()),
+                    });
+                    return Ok(());
+                }
+                ast::ItemImportTree::Group(group) => {
+                    for item in &group.items {
+                        self.collect_imports(prefix.clone(), item, out)?;
+                    }
+                    return Ok(());
+                }
+                ast::ItemImportTree::Path(nested) => {
+                    self.collect_imports_from_path(prefix.clone(), nested, out)?;
+                    return Ok(());
+                }
+                ast::ItemImportTree::Glob => {
+                    return Ok(());
+                }
+            }
+        }
+
+        if !prefix.is_empty() {
+            out.push(ImportBinding {
+                target: prefix,
+                alias: None,
+            });
+        }
+        Ok(())
+    }
+
+    fn register_import_binding(&mut self, binding: ImportBinding, visibility: &ast::Visibility) {
+        let alias = binding
+            .alias
+            .clone()
+            .unwrap_or_else(|| binding.target.last().cloned().unwrap_or_default());
+        if alias.is_empty() {
+            return;
+        }
+        if self.module_defs.contains(&binding.target) {
+            self.current_value_scope()
+                .insert(alias.clone(), hir::Res::Module(binding.target.clone()));
+            return;
+        }
+        let key = binding.target.join("::");
+        if let Some(res) = self.lookup_symbol(&key, &self.global_value_defs) {
+            self.current_value_scope()
+                .insert(alias.clone(), res.clone());
+            self.record_value_symbol(&alias, res, visibility);
+        }
+        if let Some(res) = self.lookup_symbol(&key, &self.global_type_defs) {
+            self.current_type_scope()
+                .insert(alias.clone(), res.clone());
+            self.record_type_symbol(&alias, res, visibility);
+        }
     }
 
     pub fn with_file<P: AsRef<Path>>(path: P) -> Self {
@@ -436,16 +566,6 @@ impl HirGenerator {
         match visibility {
             ast::Visibility::Public => self.current_module_visibility_flag(),
             _ => false,
-        }
-    }
-
-    fn parent_module_path(&self) -> Vec<String> {
-        if self.module_path.is_empty() {
-            Vec::new()
-        } else {
-            let mut parent = self.module_path.clone();
-            parent.pop();
-            parent
         }
     }
 
@@ -1287,7 +1407,11 @@ impl HirGenerator {
             ast::Ty::TypeBinaryOp(op) if matches!(op.kind, ast::TypeBinaryOpKind::Union) => {
                 let lhs = self.literal_type_kind(&op.lhs)?;
                 let rhs = self.literal_type_kind(&op.rhs)?;
-                if lhs == rhs { Some(lhs) } else { None }
+                if lhs == rhs {
+                    Some(lhs)
+                } else {
+                    None
+                }
             }
             _ => None,
         }

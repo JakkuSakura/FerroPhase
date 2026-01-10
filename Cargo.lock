@@ -718,6 +718,7 @@ dependencies = [
  "fp-core",
  "serde",
  "thiserror 2.0.17",
+ "winnow 0.6.26",
 ]
 
 [[package]]

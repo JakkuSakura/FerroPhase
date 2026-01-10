@@ -451,7 +451,7 @@ fp-bytecode {
         load.place _29
         load.place _30
         load.place _31
-        make.list 4
+        make.array 4
         store.place _27
         load.const 132
         load.const 133
@@ -473,7 +473,7 @@ fp-bytecode {
         load.place _34
         load.place _35
         load.place _36
-        make.list 4
+        make.array 4
         store.place _32
         load.const 140
         store.place _26

@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,20 +102,20 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 23_runtime_collections.fp\n");
-            printf("🧭 Focus: runtime list/map access with linear search.\n");
-            printf("🧪 What to look for: values resolved from container accesses\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("=== Runtime Collections ===\n");
+            std::Println(format = "📘 Tutorial: 23_runtime_collections.fp");
+            std::Println(format = "🧭 Focus: runtime list/map access with linear search.");
+            std::Println(format = "🧪 What to look for: values resolved from container accesses");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Println(format = "=== Runtime Collections ===");
             let numbers: Vec<i64> = [10, 20, 30, 40];
             let idx = 2;
-            printf("numbers[%lld] = %lld\n", idx, numbers[idx]);
-            printf("numbers.len = %lld\n", numbers.len());
-            let statuses: HashMap<&str, i64> = HashMap::from([HashMapEntry { key: "ok", value: 200 }, HashMapEntry { key: "accepted", value: 202 }, HashMapEntry { key: "nope", value: 404 }]);
+            std::Println(format = "numbers[{}] = {}", args = [arg0 = idx, arg1 = numbers[idx]]);
+            std::Println(format = "numbers.len = {}", args = [arg0 = numbers.len()]);
+            let statuses: HashMap<&str, i64> = HashMap::from(arg0 = [HashMapEntry { key: "ok", value: 200 }, HashMapEntry { key: "accepted", value: 202 }, HashMapEntry { key: "nope", value: 404 }]);
             let key = "accepted";
-            std::Println(2 args);
-            printf("statuses.len = %lld\n", statuses.len());
+            std::Println(format = "statuses[{}] = {}", args = [arg0 = key, arg1 = statuses.get_unchecked(arg0 = key)]);
+            std::Println(format = "statuses.len = {}", args = [arg0 = statuses.len()]);
         }
     }
 }

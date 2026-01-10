@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -118,7 +118,7 @@ hir::Program {
         fn describe(self: &Circle) -> () {
             // params: [self: &Circle]
             {
-                std::Println(1 args);
+                std::Println(format = "area={:.2}", args = [arg0 = self.area()]);
             }
         }
     }
@@ -139,7 +139,7 @@ hir::Program {
         fn describe(self: &Rectangle) -> () {
             // params: [self: &Rectangle]
             {
-                std::Println(1 args);
+                std::Println(format = "area={:.2}", args = [arg0 = self.area()]);
             }
         }
     }
@@ -147,23 +147,23 @@ hir::Program {
     pub fn print_area<T>(shape: &T) -> () {
         // params: [shape: &T]
         {
-            printf("%.2f\n", shape.area());
+            std::Println(format = "{:.2}", args = [arg0 = shape.area()]);
         }
     }
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 16_traits.fp\n");
-            printf("🧭 Focus: Traits: defining shared behavior with default methods\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 16_traits.fp");
+            std::Println(format = "🧭 Focus: Traits: defining shared behavior with default methods");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             let circle = Circle { radius: 5 };
             let rect = Rectangle { width: 4, height: 6 };
             circle.describe();
             rect.describe();
-            print_area(circle);
-            print_area(rect);
+            print_area(shape = circle);
+            print_area(shape = rect);
         }
     }
 }

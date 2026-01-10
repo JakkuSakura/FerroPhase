@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -151,26 +151,26 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 15_enums.fp\n");
-            printf("🧭 Focus: Enum variants: unit, tuple, struct variants and discriminants\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 15_enums.fp");
+            std::Println(format = "🧭 Focus: Enum variants: unit, tuple, struct variants and discriminants");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             let point = Shape::Point;
-            let circle = Shape::Circle(10);
+            let circle = Shape::Circle(arg0 = 10);
             let rect = Shape::Rectangle { w: 5, h: 3 };
-            printf("shape point -> %s\n", point.describe());
-            printf("shape circle -> %s\n", circle.describe());
-            printf("shape rectangle -> %s\n", rect.describe());
+            std::Println(format = "shape point -> {}", args = [arg0 = point.describe()]);
+            std::Println(format = "shape circle -> {}", args = [arg0 = circle.describe()]);
+            std::Println(format = "shape rectangle -> {}", args = [arg0 = rect.describe()]);
             let val = Value::C;
-            printf("discriminant: %d\n", (val as i32));
-            let some: Option<i64> = Option::Some(42);
+            std::Println(format = "discriminant: {}", args = [arg0 = (val as i32)]);
+            let some: Option<i64> = Option::Some(arg0 = 42);
             let none: Option<i64> = Option::None;
-            std::Println(1 args);
-            std::Println(1 args);
+            std::Println(format = "unwrap_or(Some(42), 0) = {}", args = [arg0 = some.unwrap_or(arg0 = 0)]);
+            std::Println(format = "unwrap_or(None, 99) = {}", args = [arg0 = none.unwrap_or(arg0 = 99)]);
             pub const CODE: i32 =
                 2;
-            printf("const: %d\n", CODE);
+            std::Println(format = "const: {}", args = [arg0 = CODE]);
         }
     }
 }

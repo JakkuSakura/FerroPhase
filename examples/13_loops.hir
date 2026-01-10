@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -123,7 +123,7 @@ hir::Program {
                 }
             else
                 {
-                    (n * const_factorial((n - 1)))
+                    (n * const_factorial(arg0 = (n - 1)))
                 }
         }
     }
@@ -183,24 +183,24 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 13_loops.fp\n");
-            printf("🧭 Focus: Loop constructs: while, for, and loop.\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("=== Loop Constructs ===\n\n");
-            printf("1. While loop - factorial:\n");
-            printf("  5! = %lld\n", factorial(5));
-            printf("  7! = %lld\n", factorial(7));
-            printf("\n2. For loop - sum range:\n");
-            printf("  sum(1..10) = %lld\n", sum_range(1, 10));
-            printf("  sum(5..15) = %lld\n", sum_range(5, 15));
-            printf("\n3. Loop with break expression:\n");
-            printf("  First divisor of 24: %lld\n", find_first_divisor(24));
-            printf("  First divisor of 17: %lld\n", find_first_divisor(17));
-            printf("\n4. Loop with continue:\n");
-            printf("  Sum of even numbers < 10: %lld\n", sum_even_numbers(10));
-            printf("\n5. Nested loops:\n");
+            std::Println(format = "📘 Tutorial: 13_loops.fp");
+            std::Println(format = "🧭 Focus: Loop constructs: while, for, and loop.");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Println(format = "=== Loop Constructs ===\n");
+            std::Println(format = "1. While loop - factorial:");
+            std::Println(format = "  5! = {}", args = [arg0 = factorial(n = 5)]);
+            std::Println(format = "  7! = {}", args = [arg0 = factorial(n = 7)]);
+            std::Println(format = "\n2. For loop - sum range:");
+            std::Println(format = "  sum(1..10) = {}", args = [arg0 = sum_range(start = 1, end = 10)]);
+            std::Println(format = "  sum(5..15) = {}", args = [arg0 = sum_range(start = 5, end = 15)]);
+            std::Println(format = "\n3. Loop with break expression:");
+            std::Println(format = "  First divisor of 24: {}", args = [arg0 = find_first_divisor(n = 24)]);
+            std::Println(format = "  First divisor of 17: {}", args = [arg0 = find_first_divisor(n = 17)]);
+            std::Println(format = "\n4. Loop with continue:");
+            std::Println(format = "  Sum of even numbers < 10: {}", args = [arg0 = sum_even_numbers(limit = 10)]);
+            std::Println(format = "\n5. Nested loops:");
             let mut count = 0;
             {
                 let mut i = 1;
@@ -210,12 +210,12 @@ hir::Program {
                         i = (i + 1);
                     }
             }
-            printf("\n  Iterations: %lld\n", count);
-            printf("\n6. Compile-time recursion:\n");
+            std::Println(format = "\n  Iterations: {}", args = [arg0 = count]);
+            std::Println(format = "\n6. Compile-time recursion:");
             pub const FACTORIAL_CONST: i64 =
                 120;
-            printf("  const_factorial(5) = %lld\n", FACTORIAL_CONST);
-            printf("\n✓ Loop constructs demonstrated!\n");
+            std::Println(format = "  const_factorial(5) = {}", args = [arg0 = FACTORIAL_CONST]);
+            std::Println(format = "\n✓ Loop constructs demonstrated!");
         }
     }
 }

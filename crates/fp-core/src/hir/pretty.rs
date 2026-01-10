@@ -3,9 +3,9 @@ use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use std::fmt::{self, Formatter};
 
 use super::{
-    BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatTemplatePart, Function, GenericArg,
-    GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path,
-    Program, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
+    BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatArgRef, FormatTemplatePart, Function,
+    GenericArg, GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind,
+    Path, Program, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 impl PrettyPrintable for Program {
@@ -473,6 +473,8 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         }
         ExprKind::IntrinsicCall(call) => match &call.payload {
             IntrinsicCallPayload::Format { template } => {
+                let format_text = summarize_format_parts(&template.parts);
+                let format_literal = format!("\"{}\"", escape_string(&format_text));
                 let args = template
                     .args
                     .iter()
@@ -486,10 +488,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                     .collect::<Vec<_>>()
                     .join(", ");
                 let mut pieces = Vec::new();
-                pieces.push(format!(
-                    "format = {}",
-                    summarize_format_parts(&template.parts)
-                ));
+                pieces.push(format!("format = {}", format_literal));
                 if !args.is_empty() {
                     pieces.push(format!("args = [{}]", args));
                 }
@@ -563,10 +562,26 @@ fn summarize_format_parts(parts: &[FormatTemplatePart]) -> String {
     for part in parts {
         match part {
             FormatTemplatePart::Literal(text) => buf.push_str(text),
-            FormatTemplatePart::Placeholder(_) => buf.push_str("{..}"),
+            FormatTemplatePart::Placeholder(placeholder) => {
+                buf.push('{');
+                buf.push_str(&format_arg_ref(&placeholder.arg_ref));
+                if let Some(spec) = &placeholder.format_spec {
+                    buf.push(':');
+                    buf.push_str(spec);
+                }
+                buf.push('}');
+            }
         }
     }
     buf
+}
+
+fn format_arg_ref(arg_ref: &FormatArgRef) -> String {
+    match arg_ref {
+        FormatArgRef::Implicit => String::new(),
+        FormatArgRef::Positional(index) => index.to_string(),
+        FormatArgRef::Named(name) => name.clone(),
+    }
 }
 
 fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {

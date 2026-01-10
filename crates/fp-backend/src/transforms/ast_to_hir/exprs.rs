@@ -1,6 +1,6 @@
 use super::*;
-use fp_rust::RawExpr;
 use fp_rust::parser::RustParser;
+use fp_rust::RawExpr;
 
 struct EnumerateLoopSpec {
     base_segments: Vec<ast::Ident>,
@@ -64,15 +64,12 @@ impl HirGenerator {
                         stmts: Vec::new(),
                         expr: None,
                     };
-                    return Ok(hir::Expr {
-                        hir_id,
-                        kind: hir::ExprKind::Block(block),
-                        span,
-                    });
+                    hir::ExprKind::Block(block)
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "splice expressions should be removed by const-eval",
+                    ));
                 }
-                return Err(crate::error::optimization_error(
-                    "splice expressions should be removed by const-eval",
-                ));
             }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
@@ -90,44 +87,28 @@ impl HirGenerator {
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
                 if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "async/await lowering is lossy during bootstrap; treating as passthrough"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
                     return Ok(hir::Expr {
                         hir_id,
                         kind: inner_expr.kind,
                         span,
                     });
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "`await` lowering not implemented",
-                    ));
                 }
+                return Err(crate::error::optimization_error(
+                    "`await` lowering not implemented",
+                ));
             }
             ExprKind::Async(async_expr) => {
                 let inner_expr = self.transform_expr_to_hir(async_expr.expr.as_ref())?;
                 if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "async lowering is lossy during bootstrap; treating as passthrough"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
                     return Ok(hir::Expr {
                         hir_id,
                         kind: inner_expr.kind,
                         span,
                     });
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "`async` lowering not implemented",
-                    ));
                 }
+                return Err(crate::error::optimization_error(
+                    "`async` lowering not implemented",
+                ));
             }
             ExprKind::For(for_expr) => {
                 let kind = self.transform_for_to_hir(for_expr)?;
@@ -445,12 +426,7 @@ impl HirGenerator {
         match &invoke.target {
             ast::ExprInvokeTarget::Method(select) => {
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
-                let mut args = Vec::with_capacity(invoke.args.len() + 1);
-                args.push(hir::CallArg {
-                    name: hir::Symbol::new("self"),
-                    value: receiver.clone(),
-                });
-                args.extend(self.transform_call_args_bound(&invoke.args, None)?);
+                let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::MethodCall(
                     Box::new(receiver),
                     select.field.clone().into(),
@@ -474,9 +450,10 @@ impl HirGenerator {
             }
             ast::ExprInvokeTarget::Expr(expr) => {
                 let func_expr = self.transform_expr_to_hir(expr)?;
-                let args = self.transform_call_args_bound(&invoke.args, Some(&func_expr))?;
+                let args = self.transform_call_args_strict(&invoke.args)?;
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
             }
+
             _ => Err(crate::error::optimization_error(format!(
                 "Unimplemented invoke target type for HIR transformation: {:?}",
                 invoke.target
@@ -1751,9 +1728,14 @@ impl HirGenerator {
             })
             .and_then(|def_id| self.program_def_params(def_id))
         else {
-            return Err(crate::error::optimization_error(
-                "cannot bind call arguments without resolved function signature",
-            ));
+            return Ok(values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| hir::CallArg {
+                    name: hir::Symbol::new(format!("arg{}", index)),
+                    value,
+                })
+                .collect());
         };
 
         if values.len() != param_names.len() {
@@ -1767,6 +1749,24 @@ impl HirGenerator {
             .enumerate()
             .map(|(index, value)| hir::CallArg {
                 name: param_names[index].clone(),
+                value,
+            })
+            .collect())
+    }
+
+    pub(super) fn transform_call_args_strict(
+        &mut self,
+        args: &[ast::Expr],
+    ) -> Result<Vec<hir::CallArg>> {
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args {
+            values.push(self.transform_expr_to_hir(arg)?);
+        }
+        Ok(values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| hir::CallArg {
+                name: hir::Symbol::new(format!("arg{}", index)),
                 value,
             })
             .collect())

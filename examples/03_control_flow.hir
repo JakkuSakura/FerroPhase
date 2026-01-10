@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,31 +102,31 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 03_control_flow.fp\n");
-            printf("🧭 Focus: Control flow: if/else expressions with const and runtime evaluation\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 03_control_flow.fp");
+            std::Println(format = "🧭 Focus: Control flow: if/else expressions with const and runtime evaluation");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             pub const TEMP: i64 =
                 25;
             pub const WEATHER: &str =
                 "warm";
-            printf("%lld°C is %s\n", TEMP, WEATHER);
+            std::Println(format = "{}°C is {}", args = [arg0 = TEMP, arg1 = WEATHER]);
             pub const IS_SUNNY: bool =
                 true;
             pub const IS_WARM: bool =
                 true;
             pub const ACTIVITY: &str =
                 "outdoor";
-            printf("Suggested: %s\n", ACTIVITY);
+            std::Println(format = "Suggested: {}", args = [arg0 = ACTIVITY]);
             pub const SCORE: i64 =
                 85;
             pub const GRADE: &str =
                 "B";
-            printf("Score %lld = grade %s\n", SCORE, GRADE);
+            std::Println(format = "Score {} = grade {}", args = [arg0 = SCORE, arg1 = GRADE]);
             let value = 42;
             let category = <control-flow>;
-            printf("Value %lld is %s\n", value, category);
+            std::Println(format = "Value {} is {}", args = [arg0 = value, arg1 = category]);
         }
     }
 }

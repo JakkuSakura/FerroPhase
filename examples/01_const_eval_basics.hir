@@ -75,21 +75,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,11 +102,11 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 01_const_eval_basics.fp\n");
-            printf("🧭 Focus: Basic const evaluation with compile-time arithmetic and const blocks\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
+            std::Println(format = "📘 Tutorial: 01_const_eval_basics.fp");
+            std::Println(format = "🧭 Focus: Basic const evaluation with compile-time arithmetic and const blocks");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
             pub const BUFFER_SIZE: i64 =
                 4096;
             pub const MAX_CONNECTIONS: i64 =
@@ -115,19 +115,19 @@ hir::Program {
                 120;
             pub const IS_LARGE: bool =
                 true;
-            printf("Buffer: %lldKB, factorial(5)=%lld, large=%d\n", (BUFFER_SIZE / 1024), FACTORIAL_5, IS_LARGE);
+            std::Println(format = "Buffer: {}KB, factorial(5)={}, large={}", args = [arg0 = (BUFFER_SIZE / 1024), arg1 = FACTORIAL_5, arg2 = IS_LARGE]);
             pub struct Config {
                 pub buffer_size: i64,
                 pub max_connections: i64,
             }
             pub const DEFAULT_CONFIG: Config =
                 Config { buffer_size: 4096, max_connections: 150 };
-            printf("Config: %lldKB buffer, %lld connections\n", (DEFAULT_CONFIG.buffer_size / 1024), DEFAULT_CONFIG.max_connections);
+            std::Println(format = "Config: {}KB buffer, {} connections", args = [arg0 = (DEFAULT_CONFIG.buffer_size / 1024), arg1 = DEFAULT_CONFIG.max_connections]);
             let runtime_multiplier = 3;
             let optimized_size = 8192;
             let cache_strategy = "large";
             let total_memory = (runtime_multiplier * 614400);
-            printf("Const blocks: size=%lld, strategy=%s, memory=%lld\n", optimized_size, cache_strategy, total_memory);
+            std::Println(format = "Const blocks: size={}, strategy={}, memory={}", args = [arg0 = optimized_size, arg1 = cache_strategy, arg2 = total_memory]);
         }
     }
 }

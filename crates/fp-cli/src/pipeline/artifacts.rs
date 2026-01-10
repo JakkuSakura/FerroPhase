@@ -4,13 +4,11 @@ use fp_core::{lir, mir};
 #[derive(Debug)]
 pub(crate) struct MirArtifacts {
     pub(crate) mir_program: mir::Program,
-    pub(crate) mir_text: String,
 }
 
 #[derive(Debug)]
 pub(crate) struct LirArtifacts {
     pub(crate) lir_program: lir::LirProgram,
-    pub(crate) lir_text: String,
 }
 
 /// LLVM artifacts produced by LIR→LLVM lowering.

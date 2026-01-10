@@ -24,7 +24,7 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Backend target (binary, rust, llvm, wasm, interpret)
+    /// Backend target (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
     #[arg(short = 'b', long, default_value = "binary")]
     pub backend: String,
 
@@ -80,10 +80,6 @@ pub struct CompileArgs {
     #[arg(long)]
     pub save_intermediates: bool,
 
-    /// Emit text-based bytecode (.ftbc) when compiling to bytecode
-    #[arg(long)]
-    pub emit_text_bytecode: bool,
-
     /// Enable error tolerance during compilation
     #[arg(long)]
     pub error_tolerance: bool,
@@ -116,6 +112,14 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
 
+    let is_text_backend = args.backend == "text-bytecode";
+    let target_backend = if is_text_backend {
+        "bytecode"
+    } else {
+        args.backend.as_str()
+    };
+    let emit_text_bytecode = is_text_backend;
+
     let output_is_dir = args
         .output
         .as_ref()
@@ -127,14 +131,16 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            &args.backend,
+            target_backend,
             args.target_triple.as_deref(),
-            args.emit_text_bytecode,
+            emit_text_bytecode,
             output_is_dir,
         )?;
 
         // Compile single file
-        if let Some(artifact_path) = compile_file(input_file, &output_file, &args, config).await? {
+        if let Some(artifact_path) =
+            compile_file(input_file, &output_file, &args, target_backend, config).await?
+        {
             compiled_files.push(artifact_path);
         }
         progress.inc(1);
@@ -148,7 +154,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
-        match args.backend.as_str() {
+        match target_backend {
             "binary" => match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled binaries available to execute");
@@ -167,7 +173,11 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                     warn!("No compiled bytecode available to execute");
                 }
                 [path] => {
-                    exec_compiled_bytecode(path)?;
+                    if is_text_backend {
+                        warn!("--exec is not supported for text-bytecode output");
+                    } else {
+                        exec_compiled_bytecode(path)?;
+                    }
                 }
                 _ => {
                     return Err(CliError::Compilation(
@@ -191,12 +201,13 @@ async fn compile_file(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
+    backend: &str,
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     // Configure pipeline for compilation with new options
-    let target = match args.backend.as_str() {
+    let target = match backend {
         "rust" => PipelineTarget::Rust,
         "llvm" => PipelineTarget::Llvm,
         "binary" => PipelineTarget::Binary,

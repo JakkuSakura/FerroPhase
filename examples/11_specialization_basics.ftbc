@@ -165,17 +165,17 @@ fp-bytecode {
         make.tuple 2
         store.place _9
         load.place _8
-        terminator call Function("sum_pair__mono_a7af9f593fdc4675_17") 1 -> _10 then bb3
+        terminator call Function("sum_pair__mono_35d8f1c3001d7117_17") 1 -> _10 then bb3
       bb3:
         load.place _10
-        intrinsic Println 1 "sum_pair i64 = %lld\n"
+        intrinsic Println 1 "sum_pair i64 = %s\n"
         make.tuple 0
         store.place _11
         load.place _9
-        terminator call Function("sum_pair__mono_d7ad91e83a08a980_17") 1 -> _12 then bb4
+        terminator call Function("sum_pair__mono_35d8f1c3001d7117_17") 1 -> _12 then bb4
       bb4:
         load.place _12
-        intrinsic Println 1 "sum_pair f64 = %f\n"
+        intrinsic Println 1 "sum_pair f64 = %s\n"
         make.tuple 0
         store.place _13
         load.const 17
@@ -247,14 +247,7 @@ fp-bytecode {
         load.place _3
         store.place _0
         terminator return
-    fn sum_pair__mono_a7af9f593fdc4675_17(params: 1, locals: 2)
-      bb0:
-        load.place _1.0
-        load.place _1.1
-        binop Add
-        store.place _0
-        terminator return
-    fn sum_pair__mono_d7ad91e83a08a980_17(params: 1, locals: 2)
+    fn sum_pair__mono_35d8f1c3001d7117_17(params: 1, locals: 2)
       bb0:
         load.place _1.0
         load.place _1.1

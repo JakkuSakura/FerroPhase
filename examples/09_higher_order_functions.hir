@@ -93,21 +93,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure1 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -121,7 +121,7 @@ hir::Program {
     pub fn apply<T>(a: T, b: T, op: fn(T, T) -> T) -> () {
         // params: [a: T, b: T, op: fn(T, T) -> T]
         {
-            std::Println(3 args);
+            std::Println(format = "apply({}, {}) = {}", args = [arg0 = a, arg1 = b, arg2 = op(arg0 = a, arg1 = b)]);
         }
     }
 
@@ -137,7 +137,7 @@ hir::Program {
         {
             if (cond)
                 {
-                    op(a, b)
+                    op(arg0 = a, arg1 = b)
                 }
             else
                 {
@@ -155,23 +155,23 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 09_higher_order_functions.fp\n");
-            printf("🧭 Focus: Higher-order functions: passing functions as arguments and closures\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("Generic operations:\n");
-            apply(10, 20, add);
-            apply(1.5, 2.5, add);
-            printf("\nConditional:\n");
-            printf("apply_if(true, 5, 3) = %lld\n", apply_if(true, 5, 3, add__spec0));
-            printf("apply_if(false, 5, 3) = %lld\n", apply_if(false, 5, 3, add__spec0));
-            printf("\nClosure factory:\n");
+            std::Println(format = "📘 Tutorial: 09_higher_order_functions.fp");
+            std::Println(format = "🧭 Focus: Higher-order functions: passing functions as arguments and closures");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Println(format = "Generic operations:");
+            apply(a = 10, b = 20, op = add);
+            apply(a = 1.5, b = 2.5, op = add);
+            std::Println(format = "\nConditional:");
+            std::Println(format = "apply_if(true, 5, 3) = {}", args = [arg0 = apply_if(cond = true, a = 5, b = 3, op = add__spec0)]);
+            std::Println(format = "apply_if(false, 5, 3) = {}", args = [arg0 = apply_if(cond = false, a = 5, b = 3, op = add__spec0)]);
+            std::Println(format = "\nClosure factory:");
             pub const add_10: __Closure0 =
-                make_adder(10);
-            printf("add_10(5) = %lld\n", __closure0_call(add_10, 5));
+                make_adder(n = 10);
+            std::Println(format = "add_10(5) = {}", args = [arg0 = __closure0_call(__env = add_10, x = 5)]);
             let double = __Closure2 { __fp_no_capture: 0 };
-            printf("double(7) = %lld\n", __closure2_call(double, 7));
+            std::Println(format = "double(7) = {}", args = [arg0 = __closure2_call(__env = double, x = 7)]);
         }
     }
 

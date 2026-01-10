@@ -80,21 +80,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(1 args);
+                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf("  %s ... ok\n", test.name);
+                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf("  %s ... FAILED\n", test.name);
+                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf("test result: %lld passed; %lld failed; %lld total\n", passed, failed, total);
+            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -124,12 +124,12 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            printf("📘 Tutorial: 08_metaprogramming_patterns.fp\n");
-            printf("🧭 Focus: Metaprogramming: const metadata + quote/splice execution\n");
-            printf("🧪 What to look for: labeled outputs below\n");
-            printf("✅ Expectation: outputs match labels\n");
-            printf("\n");
-            printf("=== Part 1: Const Metadata ===\n");
+            std::Println(format = "📘 Tutorial: 08_metaprogramming_patterns.fp");
+            std::Println(format = "🧭 Focus: Metaprogramming: const metadata + quote/splice execution");
+            std::Println(format = "🧪 What to look for: labeled outputs below");
+            std::Println(format = "✅ Expectation: outputs match labels");
+            std::Println(format = "");
+            std::Println(format = "=== Part 1: Const Metadata ===");
             pub const FIELD_COUNT: i64 =
                 3;
             pub const POINT_NAME: &str =
@@ -140,40 +140,40 @@ hir::Program {
                 [__structural_value_c06222709673fe0f { name: "x", type_name: "i64\n" }, __structural_value_c06222709673fe0f { name: "y", type_name: "i64\n" }, __structural_value_c06222709673fe0f { name: "z", type_name: "i64\n" }];
             pub const X_TYPE: &str =
                 "i64\n";
-            printf("%s has %lld fields (size=%lld)\n", POINT_NAME, FIELD_COUNT, SIZE);
-            printf("x type: %s\n", X_TYPE);
-            printf("fields:\n");
+            std::Println(format = "{} has {} fields (size={})", args = [arg0 = POINT_NAME, arg1 = FIELD_COUNT, arg2 = SIZE]);
+            std::Println(format = "x type: {}", args = [arg0 = X_TYPE]);
+            std::Println(format = "fields:");
             {
-                let mut __fp_idx355 = 0;
-                while ((__fp_idx355 < 3))
+                let mut __fp_idx331 = 0;
+                while ((__fp_idx331 < 3))
                     {
-                        let field = FIELDS[__fp_idx355];
-                        std::Println(2 args);
-                        __fp_idx355 = (__fp_idx355 + 1);
+                        let field = FIELDS[__fp_idx331];
+                        std::Println(format = "  {}: {}", args = [arg0 = field.name, arg1 = field.type_name]);
+                        __fp_idx331 = (__fp_idx331 + 1);
                     }
             }
             let p = Point3D { x: 1, y: 2, z: 3 };
-            printf("point=(%lld, %lld, %lld)\n", p.x, p.y, p.z);
+            std::Println(format = "point=({}, {}, {})", args = [arg0 = p.x, arg1 = p.y, arg2 = p.z]);
             let lp = LabeledPoint { x: 4, y: 5, z: 6, label: "origin" };
-            printf("labeled=(%lld, %lld, %lld, %s)\n", lp.x, lp.y, lp.z, lp.label);
-            printf("\n");
-            printf("=== Part 2: Execute Quoted Code ===\n");
+            std::Println(format = "labeled=({}, {}, {}, {})", args = [arg0 = lp.x, arg1 = lp.y, arg2 = lp.z, arg3 = lp.label]);
+            std::Println(format = "");
+            std::Println(format = "=== Part 2: Execute Quoted Code ===");
             let score = 20;
-            printf("expr splice => %lld\n", score);
+            std::Println(format = "expr splice => {}", args = [arg0 = score]);
             pub const fn_name: &&str =
                 "inspected";
-            printf("quote<fn> inspect => name=%s\n", fn_name);
+            std::Println(format = "quote<fn> inspect => name={}", args = [arg0 = fn_name]);
             pub const fn_count: i64 =
                 2;
-            printf("quote<[item]> count => %lld\n", fn_count);
+            std::Println(format = "quote<[item]> count => {}", args = [arg0 = fn_count]);
             let step = 21;
-            printf("stmt splice => step=%lld\n", step);
+            std::Println(format = "stmt splice => step={}", args = [arg0 = step]);
             pub struct Banner {
                 pub title: &str,
                 pub rank: i64,
             }
             let banner = Banner { title: "metaprogramming", rank: score };
-            printf("item splice => %s #%lld\n", banner.title, banner.rank);
+            std::Println(format = "item splice => {} #{}", args = [arg0 = banner.title, arg1 = banner.rank]);
         }
     }
 }
