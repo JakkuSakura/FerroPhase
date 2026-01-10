@@ -359,9 +359,8 @@ fn exec_compiled_bytecode(path: &Path) -> Result<()> {
     let file = fp_bytecode::decode_file(&bytes)
         .map_err(|err| CliError::Compilation(format!("Failed to decode bytecode: {}", err)))?;
     let vm = fp_stackvm::Vm::new(file.program);
-    vm.run_main().map_err(|err| {
-        CliError::Compilation(format!("Bytecode execution failed: {}", err))
-    })?;
+    vm.run_main()
+        .map_err(|err| CliError::Compilation(format!("Bytecode execution failed: {}", err)))?;
     Ok(())
 }
 

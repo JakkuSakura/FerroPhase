@@ -469,10 +469,12 @@ impl HirGenerator {
         match &invoke.target {
             ast::ExprInvokeTarget::Method(select) => {
                 let receiver = self.transform_expr_to_hir(&select.obj)?;
-                let mut args = Vec::new();
-                for arg in &invoke.args {
-                    args.push(self.transform_expr_to_hir(arg)?);
-                }
+                let mut args = Vec::with_capacity(invoke.args.len() + 1);
+                args.push(hir::CallArg {
+                    name: hir::Symbol::new("self"),
+                    value: receiver.clone(),
+                });
+                args.extend(self.transform_call_args_bound(&invoke.args, None)?);
                 Ok(hir::ExprKind::MethodCall(
                     Box::new(receiver),
                     select.field.clone().into(),
@@ -491,12 +493,12 @@ impl HirGenerator {
                     ),
                     span: self.create_span(1),
                 };
-                let args = self.transform_call_args(&invoke.args)?;
+                let args = self.transform_call_args_bound(&invoke.args, Some(&func_expr))?;
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
             }
             ast::ExprInvokeTarget::Expr(expr) => {
                 let func_expr = self.transform_expr_to_hir(expr)?;
-                let args = self.transform_call_args(&invoke.args)?;
+                let args = self.transform_call_args_bound(&invoke.args, Some(&func_expr))?;
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
             }
             _ => Err(crate::error::optimization_error(format!(
@@ -1190,7 +1192,10 @@ impl HirGenerator {
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                     kind: IntrinsicCallKind::Len,
                     payload: IntrinsicCallPayload::Args {
-                        args: vec![base_expr.clone()],
+                        args: vec![hir::CallArg {
+                            name: hir::Symbol::new("arg0"),
+                            value: base_expr.clone(),
+                        }],
                     },
                 }),
                 span: Span::new(self.current_file, 0, 0),
@@ -1385,7 +1390,10 @@ impl HirGenerator {
                 kind: hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {
                     kind: IntrinsicCallKind::Len,
                     payload: IntrinsicCallPayload::Args {
-                        args: vec![base_expr.clone()],
+                        args: vec![hir::CallArg {
+                            name: hir::Symbol::new("arg0"),
+                            value: base_expr.clone(),
+                        }],
                     },
                 }),
                 span: Span::new(self.current_file, 0, 0),
@@ -1699,15 +1707,21 @@ impl HirGenerator {
                 let args = template
                     .args
                     .iter()
-                    .map(|arg| self.transform_expr_to_hir(arg))
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        Ok(hir::CallArg {
+                            name: hir::Symbol::new(format!("arg{}", index)),
+                            value: self.transform_expr_to_hir(arg)?,
+                        })
+                    })
                     .collect::<Result<Vec<_>>>()?;
 
                 let kwargs = template
                     .kwargs
                     .iter()
                     .map(|kwarg| {
-                        Ok(hir::FormatKwArg {
-                            name: kwarg.name.clone(),
+                        Ok(hir::CallArg {
+                            name: kwarg.name.clone().into(),
                             value: self.transform_expr_to_hir(&kwarg.value)?,
                         })
                     })
@@ -1724,7 +1738,13 @@ impl HirGenerator {
             IntrinsicCallPayload::Args { args } => IntrinsicCallPayload::Args {
                 args: args
                     .iter()
-                    .map(|arg| self.transform_expr_to_hir(arg))
+                    .enumerate()
+                    .map(|(index, arg)| {
+                        Ok(hir::CallArg {
+                            name: hir::Symbol::new(format!("arg{}", index)),
+                            value: self.transform_expr_to_hir(arg)?,
+                        })
+                    })
                     .collect::<Result<Vec<_>>>()?,
             },
         };
@@ -1735,10 +1755,58 @@ impl HirGenerator {
         }))
     }
 
-    pub(super) fn transform_call_args(&mut self, args: &[ast::Expr]) -> Result<Vec<hir::Expr>> {
-        args.iter()
-            .map(|arg| self.transform_expr_to_hir(arg))
-            .collect()
+    pub(super) fn transform_call_args_bound(
+        &mut self,
+        args: &[ast::Expr],
+        callee: Option<&hir::Expr>,
+    ) -> Result<Vec<hir::CallArg>> {
+        let mut values = Vec::with_capacity(args.len());
+        for arg in args {
+            values.push(self.transform_expr_to_hir(arg)?);
+        }
+        let param_names = callee
+            .and_then(|expr| match &expr.kind {
+                hir::ExprKind::Path(path) => path.res.as_ref(),
+                _ => None,
+            })
+            .and_then(|res| match res {
+                hir::Res::Def(def_id) => Some(*def_id),
+                _ => None,
+            })
+            .and_then(|def_id| self.program_def_params(def_id));
+
+        Ok(values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                let name = param_names
+                    .as_ref()
+                    .and_then(|names| names.get(index))
+                    .cloned()
+                    .unwrap_or_else(|| hir::Symbol::new(format!("arg{}", index)));
+                hir::CallArg { name, value }
+            })
+            .collect())
+    }
+
+    pub(super) fn program_def_params(&self, def_id: hir::DefId) -> Option<Vec<hir::Symbol>> {
+        let Some(item) = self.program_def_map.get(&def_id) else {
+            return None;
+        };
+        match &item.kind {
+            hir::ItemKind::Function(function) => Some(
+                function
+                    .sig
+                    .inputs
+                    .iter()
+                    .filter_map(|param| match &param.pat.kind {
+                        hir::PatKind::Binding { name, .. } => Some(name.clone()),
+                        _ => None,
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        }
     }
 
     // locator_to_hir_path_with_scope moved to helpers.rs

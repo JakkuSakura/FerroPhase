@@ -399,7 +399,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         ExprKind::Call(callee, args) => {
             let args = args
                 .iter()
-                .map(|arg| format_expr_inline(arg, ctx))
+                .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{}({})", format_expr_inline(callee, ctx), args)
@@ -407,7 +407,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         ExprKind::MethodCall(receiver, name, args) => {
             let args = args
                 .iter()
-                .map(|arg| format_expr_inline(arg, ctx))
+                .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
                 .collect::<Vec<_>>()
                 .join(", ");
             format!("{}.{}({})", format_expr_inline(receiver, ctx), name, args)
@@ -473,13 +473,41 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         }
         ExprKind::IntrinsicCall(call) => match &call.payload {
             crate::intrinsics::IntrinsicCallPayload::Format { template } => {
-                let arg_count = template.args.len() + template.kwargs.len();
-                format!("std::{:?}({} args)", call.kind, arg_count)
+                let args = template
+                    .args
+                    .iter()
+                    .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let kwargs = template
+                    .kwargs
+                    .iter()
+                    .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let mut pieces = Vec::new();
+                pieces.push(format!(
+                    "format = {}",
+                    summarize_format_parts(&template.parts)
+                ));
+                if !args.is_empty() {
+                    pieces.push(format!("args = [{}]", args));
+                }
+                if !kwargs.is_empty() {
+                    pieces.push(format!("kwargs = [{}]", kwargs));
+                }
+                format!("std::{:?}({})", call.kind, pieces.join(", "))
             }
             crate::intrinsics::IntrinsicCallPayload::Args { args } => {
-                format!("std::{:?}({} args)", call.kind, args.len())
+                let args = args
+                    .iter()
+                    .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("std::{:?}({})", call.kind, args)
             }
         },
+
         ExprKind::Let(pat, ty, value) => {
             let pat_str = format_pat(pat, ctx);
             let ty_str = if ctx.options.show_types {
@@ -528,6 +556,17 @@ fn format_lit(lit: &Lit) -> String {
         Lit::Char(value) => format!("'{}'", escape_char(*value)),
         Lit::Null => "null".to_string(),
     }
+}
+
+fn summarize_format_parts(parts: &[crate::intrinsics::FormatTemplatePart]) -> String {
+    let mut buf = String::new();
+    for part in parts {
+        match part {
+            crate::intrinsics::FormatTemplatePart::Literal(text) => buf.push_str(text),
+            crate::intrinsics::FormatTemplatePart::Placeholder(_) => buf.push_str("{..}"),
+        }
+    }
+    buf
 }
 
 fn format_pat(pat: &Pat, ctx: &PrettyCtx<'_>) -> String {

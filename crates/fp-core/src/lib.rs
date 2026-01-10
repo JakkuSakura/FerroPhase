@@ -31,7 +31,6 @@ pub mod workspace;
 pub use tracing;
 
 pub use frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-pub use hir::typed as thir;
 
 // Alias for error types
 pub type Error = crate::error::Error;

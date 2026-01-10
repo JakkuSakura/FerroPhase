@@ -23,13 +23,13 @@ impl PipelineStage for LinkStage {
         context: LinkContext,
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<PathBuf, PipelineError> {
-        let binary_path = context
-            .base_path
-            .with_extension(if is_windows_target(context.options.target_triple.as_deref()) {
+        let binary_path = context.base_path.with_extension(
+            if is_windows_target(context.options.target_triple.as_deref()) {
                 "exe"
             } else {
                 "out"
-            });
+            },
+        );
 
         if let Some(parent) = binary_path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {

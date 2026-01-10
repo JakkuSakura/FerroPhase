@@ -43,6 +43,7 @@ pub struct HirGenerator {
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
     module_defs: HashSet<Vec<String>>,
+    program_def_map: HashMap<hir::DefId, hir::Item>,
 
     // NEW: Error tolerance support
     /// Collected errors during transformation (non-fatal)
@@ -131,278 +132,8 @@ impl HirGenerator {
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
             module_defs: HashSet::new(),
-
-            // Initialize error tolerance support
-            errors: Vec::new(),
-            warnings: Vec::new(),
-            error_tolerance: false, // Disabled by default for backward compatibility
-            max_errors: 10,
-        }
-    }
-
-    /// Create a new HIR generator with error tolerance enabled
-    pub fn with_error_tolerance(max_errors: usize) -> Self {
-        let mut generator = Self::new();
-        generator.error_tolerance = true;
-        generator.max_errors = max_errors;
-        generator
-    }
-
-    /// Enable error tolerance on an existing generator
-    pub fn enable_error_tolerance(&mut self, max_errors: usize) -> &mut Self {
-        self.error_tolerance = true;
-        self.max_errors = max_errors;
-        self
-    }
-
-    /// Add an error to the collection (for error tolerance mode)
-    fn add_error(&mut self, error: Diagnostic) -> bool {
-        self.errors.push(error);
-        if self.max_errors == 0 {
-            // Zero means unlimited error collection; always continue.
-            return true;
-        }
-        // Return false if we've hit the error limit (should stop transformation)
-        self.errors.len() < self.max_errors
-    }
-
-    /// Add a warning to the collection
-    fn add_warning(&mut self, warning: Diagnostic) {
-        self.warnings.push(warning);
-    }
-
-    /// Get all collected errors and warnings
-    pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
-        (
-            std::mem::take(&mut self.errors),
-            std::mem::take(&mut self.warnings),
-        )
-    }
-
-    fn handle_import(&mut self, import: &ast::ItemImport) -> Result<()> {
-        let entries = match self.expand_import_tree(&import.tree, Vec::new()) {
-            Ok(entries) => entries,
-            Err(e) if self.error_tolerance => {
-                // In error tolerance mode, collect the error and continue
-                self.add_warning(
-                    Diagnostic::warning(format!("Failed to expand import tree: {}", e))
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_suggestion("Check import syntax and module availability".to_string()),
-                );
-                return Ok(()); // Continue with empty imports
-            }
-            Err(e) => return Err(e), // Legacy behavior
-        };
-
-        for (path_segments, alias) in entries {
-            let value_res = self.lookup_global_res(&path_segments, PathResolutionScope::Value);
-            let type_res = self.lookup_global_res(&path_segments, PathResolutionScope::Type);
-
-            if value_res.is_none() && type_res.is_none() {
-                if let Some(first) = path_segments.first() {
-                    if first == "std" || first == "core" || first == "alloc" || first == "fp_rust" {
-                        // Standard library imports are not yet modeled; ignore them so
-                        // user code can continue through the pipeline.
-                        continue;
-                    }
-                }
-                if self.module_defs.contains(&path_segments) {
-                    let module_res = hir::Res::Module(path_segments.clone());
-                    self.current_value_scope()
-                        .insert(alias.clone(), module_res.clone());
-                    self.current_type_scope().insert(alias.clone(), module_res);
-                    continue;
-                }
-                if self.error_tolerance {
-                    // Collect error and continue instead of early return
-                    self.add_warning(
-                        Diagnostic::warning(format!(
-                            "Unresolved import: {}",
-                            path_segments.join("::")
-                        ))
-                        .with_suggestions(vec![
-                            "Check if the module exists".to_string(),
-                            "Verify the import path".to_string(),
-                            "Make sure the symbol is exported".to_string(),
-                        ])
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-
-                    continue; // Skip this import but continue with others
-                } else {
-                    // Legacy behavior: early return
-                    return Err(crate::error::optimization_error(format!(
-                        "Unresolved import: {}",
-                        path_segments.join("::")
-                    )));
-                }
-            }
-
-            if let Some(res) = value_res {
-                self.current_value_scope()
-                    .insert(alias.clone(), res.clone());
-                self.record_value_symbol(&alias, res, &import.visibility);
-            }
-
-            if let Some(res) = type_res {
-                self.current_type_scope().insert(alias.clone(), res.clone());
-                self.record_type_symbol(&alias, res, &import.visibility);
-            }
-        }
-
-        Ok(())
-    }
-
-    fn expand_import_tree(
-        &self,
-        tree: &ast::ItemImportTree,
-        base: Vec<String>,
-    ) -> Result<Vec<(Vec<String>, String)>> {
-        match tree {
-            ast::ItemImportTree::Path(path) => self.expand_import_segments(&path.segments, base),
-            ast::ItemImportTree::Group(group) => {
-                let mut results = Vec::new();
-                for item in &group.items {
-                    results.extend(self.expand_import_tree(item, base.clone())?);
-                }
-                Ok(results)
-            }
-            ast::ItemImportTree::Root => self.expand_import_segments(&[], Vec::new()),
-            ast::ItemImportTree::SelfMod => {
-                self.expand_import_segments(&[], self.module_path.clone())
-            }
-            ast::ItemImportTree::SuperMod => {
-                self.expand_import_segments(&[], self.parent_module_path())
-            }
-            ast::ItemImportTree::Crate => self.expand_import_segments(&[], Vec::new()),
-            ast::ItemImportTree::Glob => Err(crate::error::optimization_error(
-                "Glob imports are not yet supported".to_string(),
-            )),
-            _ => self.expand_import_segments(std::slice::from_ref(tree), base),
-        }
-    }
-
-    fn expand_import_segments(
-        &self,
-        segments: &[ast::ItemImportTree],
-        base: Vec<String>,
-    ) -> Result<Vec<(Vec<String>, String)>> {
-        if segments.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        let first = &segments[0];
-        let rest = &segments[1..];
-        match first {
-            ast::ItemImportTree::Ident(ident) => {
-                let name = ident.name.as_str();
-                let mut new_base = base;
-                match name {
-                    "self" => new_base = self.module_path.clone(),
-                    "super" => new_base = self.parent_module_path(),
-                    "crate" => new_base = Vec::new(),
-                    _ => new_base.push(ident.name.clone()),
-                }
-
-                if rest.is_empty() && !matches!(name, "self" | "super" | "crate") {
-                    Ok(vec![(new_base.clone(), ident.name.clone())])
-                } else if rest.is_empty() {
-                    Ok(Vec::new())
-                } else {
-                    self.expand_import_segments(rest, new_base)
-                }
-            }
-            ast::ItemImportTree::Rename(rename) => {
-                if !rest.is_empty() {
-                    return Err(crate::error::optimization_error(
-                        "Rename segments must be terminal".to_string(),
-                    ));
-                }
-                let mut new_base = base;
-                new_base.push(rename.from.name.clone());
-                Ok(vec![(new_base, rename.to.name.clone())])
-            }
-            ast::ItemImportTree::Group(group) => {
-                let mut results = Vec::new();
-                for item in &group.items {
-                    results.extend(self.expand_import_tree(item, base.clone())?);
-                }
-                if rest.is_empty() {
-                    Ok(results)
-                } else {
-                    let mut final_results = Vec::new();
-                    for (path_segments, alias) in results {
-                        let mut more = self.expand_import_segments(rest, path_segments.clone())?;
-                        if more.is_empty() {
-                            final_results.push((path_segments, alias));
-                        } else {
-                            final_results.append(&mut more);
-                        }
-                    }
-                    Ok(final_results)
-                }
-            }
-            ast::ItemImportTree::Path(path) => {
-                let nested = self.expand_import_segments(&path.segments, base.clone())?;
-                if rest.is_empty() {
-                    Ok(nested)
-                } else {
-                    let mut results = Vec::new();
-                    for (segments_acc, alias) in nested {
-                        let mut more = self.expand_import_segments(rest, segments_acc.clone())?;
-                        if more.is_empty() {
-                            results.push((segments_acc, alias));
-                        } else {
-                            results.append(&mut more);
-                        }
-                    }
-                    Ok(results)
-                }
-            }
-            ast::ItemImportTree::Root => self.expand_import_segments(rest, Vec::new()),
-            ast::ItemImportTree::SelfMod => {
-                self.expand_import_segments(rest, self.module_path.clone())
-            }
-            ast::ItemImportTree::SuperMod => {
-                self.expand_import_segments(rest, self.parent_module_path())
-            }
-            ast::ItemImportTree::Crate => self.expand_import_segments(rest, Vec::new()),
-            ast::ItemImportTree::Glob => Err(crate::error::optimization_error(
-                "Glob imports are not yet supported".to_string(),
-            )),
-        }
-    }
-
-    /// Create a new HIR generator with file context
-    pub fn with_file<P: AsRef<Path>>(file_path: P) -> Self {
-        // Generate a simple hash-based file ID from the path
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        file_path.as_ref().hash(&mut hasher);
-        let file_id = hasher.finish();
-
-        Self {
-            next_hir_id: 0,
-            next_def_id: 0,
-            current_file: file_id,
-            current_position: 0,
-            type_scopes: vec![HashMap::new()],
-            value_scopes: vec![HashMap::new()],
-            module_path: Vec::new(),
-            module_visibility: vec![true],
-            global_value_defs: HashMap::new(),
-            global_type_defs: HashMap::new(),
-            preassigned_def_ids: HashMap::new(),
-            enum_variant_def_ids: HashMap::new(),
-            type_aliases: HashMap::new(),
-            struct_field_defs: HashMap::new(),
-            trait_defs: HashMap::new(),
-            structural_value_defs: HashMap::new(),
-            const_list_length_scopes: vec![HashMap::new()],
-            synthetic_items: Vec::new(),
-            module_defs: HashSet::new(),
+            program_def_map: HashMap::new(),
+            program_def_map: HashMap::new(),
 
             // Initialize error tolerance support
             errors: Vec::new(),
@@ -816,6 +547,10 @@ impl HirGenerator {
         self.prepare_lowering_state();
         self.predeclare_items(&file.items)?;
         let mut program = hir::Program::new();
+        self.program_def_map = HashMap::new();
+        for item in &self.synthetic_items {
+            self.program_def_map.insert(item.def_id, item.clone());
+        }
 
         for item in &file.items {
             self.append_item(&mut program, item)?;
@@ -825,10 +560,12 @@ impl HirGenerator {
             let mut synthetic = std::mem::take(&mut self.synthetic_items);
             for item in &synthetic {
                 program.def_map.insert(item.def_id, item.clone());
+                self.program_def_map.insert(item.def_id, item.clone());
             }
             program.items.splice(0..0, synthetic.drain(..));
         }
 
+        self.program_def_map.extend(program.def_map.clone());
         Ok(program)
     }
 
@@ -850,6 +587,8 @@ impl HirGenerator {
                 self.register_type_alias(&def_type.name.name, &def_type.value);
                 if let Some(hir_item) = self.materialize_def_type_item(item, def_type)? {
                     program.def_map.insert(hir_item.def_id, hir_item.clone());
+                    self.program_def_map
+                        .insert(hir_item.def_id, hir_item.clone());
                     program.items.push(hir_item);
                 }
                 Ok(())
@@ -878,6 +617,8 @@ impl HirGenerator {
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
                 program.def_map.insert(hir_item.def_id, hir_item.clone());
+                self.program_def_map
+                    .insert(hir_item.def_id, hir_item.clone());
                 program.items.push(hir_item);
                 Ok(())
             }

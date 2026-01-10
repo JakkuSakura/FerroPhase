@@ -30,8 +30,8 @@ use fp_cli::{
     Result,
     cli::CliConfig,
     commands::{
-        self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs,
-        eval::EvalArgs, interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
+        self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
+        interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
         syntax_transpile::SyntaxTranspileArgs, transpile::TranspileArgs,
     },
     diagnostics::setup_error_reporting,

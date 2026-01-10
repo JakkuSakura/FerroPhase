@@ -143,8 +143,8 @@ pub enum ExprKind {
     Path(Path),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
-    Call(Box<Expr>, Vec<Expr>),
-    MethodCall(Box<Expr>, Symbol, Vec<Expr>),
+    Call(Box<Expr>, Vec<CallArg>),
+    MethodCall(Box<Expr>, Symbol, Vec<CallArg>),
     FieldAccess(Box<Expr>, Symbol),
     Index(Box<Expr>, Box<Expr>),
     Cast(Box<Expr>, Box<TypeExpr>),
@@ -180,10 +180,16 @@ pub struct StructExprField {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub struct CallArg {
+    pub name: Symbol,
+    pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct FormatString {
     pub parts: Vec<FormatTemplatePart>,
-    pub args: Vec<Expr>,
-    pub kwargs: Vec<FormatKwArg>,
+    pub args: Vec<CallArg>,
+    pub kwargs: Vec<CallArg>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -205,14 +211,8 @@ pub enum FormatArgRef {
     Named(String),
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct FormatKwArg {
-    pub name: String,
-    pub value: Expr,
-}
-
 pub type IntrinsicCallExpr = IntrinsicCall<HirIntrinsicCallPayload>;
-pub type HirIntrinsicCallPayload = GenericIntrinsicCallPayload<Expr, FormatString>;
+pub type HirIntrinsicCallPayload = GenericIntrinsicCallPayload<CallArg, FormatString>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {

@@ -5,6 +5,7 @@ use crate::languages::frontend::{
     LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
+use fp_bytecode;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{
     AstSerializer, File, Ident, Item, ItemChunk, ItemImportTree, ItemKind, Module, Node, NodeKind,
@@ -23,7 +24,6 @@ use fp_interpret::engine::{
 };
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_optimize::transformations::{HirGenerator, LirGenerator, MirLowering};
-use fp_bytecode;
 use fp_pipeline::{
     PipelineBuilder, PipelineConfig, PipelineDiagnostics, PipelineError, PipelineOptions,
     PipelineStage, PipelineTarget,
@@ -636,11 +636,7 @@ impl Pipeline {
                     if let Some(parent) = bytecode_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    if bytecode_path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        == Some("ftbc")
-                    {
+                    if bytecode_path.extension().and_then(|ext| ext.to_str()) == Some("ftbc") {
                         let rendered = fp_bytecode::format_program(&bytecode);
                         fs::write(&bytecode_path, rendered)?;
                     } else {
