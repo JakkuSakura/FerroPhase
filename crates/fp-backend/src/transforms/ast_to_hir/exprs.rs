@@ -1,6 +1,6 @@
 use super::*;
-use fp_rust::parser::RustParser;
 use fp_rust::RawExpr;
+use fp_rust::parser::RustParser;
 
 struct EnumerateLoopSpec {
     base_segments: Vec<ast::Ident>,
@@ -53,63 +53,39 @@ impl HirGenerator {
                 hir::ExprKind::Index(Box::new(base), Box::new(index))
             }
             ExprKind::Quote(_quote) => {
-                self.add_error(
-                    Diagnostic::error(
-                        "quote expressions should be removed by const-eval".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT),
-                );
-                let block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                hir::ExprKind::Block(block)
+                return Err(crate::error::optimization_error(
+                    "quote expressions should be removed by const-eval",
+                ));
             }
             ExprKind::Splice(_splice) => {
                 if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "splice expressions should be removed by const-eval; substituting unit"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                } else {
-                    self.add_error(
-                        Diagnostic::error(
-                            "splice expressions should be removed by const-eval".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
+                    let block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    return Ok(hir::Expr {
+                        hir_id,
+                        kind: hir::ExprKind::Block(block),
+                        span,
+                    });
                 }
-                let block = hir::Block {
-                    hir_id: self.next_id(),
-                    stmts: Vec::new(),
-                    expr: None,
-                };
-                hir::ExprKind::Block(block)
+                return Err(crate::error::optimization_error(
+                    "splice expressions should be removed by const-eval",
+                ));
             }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
                 if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "`?` operator lowering is lossy during bootstrap; treating as passthrough"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
                     return Ok(hir::Expr {
                         hir_id,
                         kind: inner_expr.kind,
                         span,
                     });
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "`?` operator lowering not implemented",
-                    ));
                 }
+                return Err(crate::error::optimization_error(
+                    "`?` operator lowering not implemented",
+                ));
             }
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
@@ -1764,7 +1740,7 @@ impl HirGenerator {
         for arg in args {
             values.push(self.transform_expr_to_hir(arg)?);
         }
-        let param_names = callee
+        let Some(param_names) = callee
             .and_then(|expr| match &expr.kind {
                 hir::ExprKind::Path(path) => path.res.as_ref(),
                 _ => None,
@@ -1773,18 +1749,25 @@ impl HirGenerator {
                 hir::Res::Def(def_id) => Some(*def_id),
                 _ => None,
             })
-            .and_then(|def_id| self.program_def_params(def_id));
+            .and_then(|def_id| self.program_def_params(def_id))
+        else {
+            return Err(crate::error::optimization_error(
+                "cannot bind call arguments without resolved function signature",
+            ));
+        };
+
+        if values.len() != param_names.len() {
+            return Err(crate::error::optimization_error(
+                "call arguments do not match function parameter count",
+            ));
+        }
 
         Ok(values
             .into_iter()
             .enumerate()
-            .map(|(index, value)| {
-                let name = param_names
-                    .as_ref()
-                    .and_then(|names| names.get(index))
-                    .cloned()
-                    .unwrap_or_else(|| hir::Symbol::new(format!("arg{}", index)));
-                hir::CallArg { name, value }
+            .map(|(index, value)| hir::CallArg {
+                name: param_names[index].clone(),
+                value,
             })
             .collect())
     }

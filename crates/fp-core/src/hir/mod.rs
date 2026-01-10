@@ -5,7 +5,6 @@ use std::collections::HashMap;
 pub mod ident;
 pub mod pretty;
 pub mod ty;
-pub mod typed;
 
 pub use ident::Symbol;
 pub use ty::Ty;

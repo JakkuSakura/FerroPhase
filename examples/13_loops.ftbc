@@ -1,0 +1,521 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 1
+    [10] 1
+    [11] 1
+    [12] 1
+    [13] 1
+    [14] 1
+    [15] 0
+    [16] 1
+    [17] 2
+    [18] 0
+    [19] 1
+    [20] 0
+    [21] 0
+    [22] 1
+    [23] 2
+    [24] 0
+    [25] 5
+    [26] 7
+    [27] 1
+    [28] 10
+    [29] 5
+    [30] 15
+    [31] 24
+    [32] 17
+    [33] 10
+    [34] 0
+    [35] 1
+    [36] 4
+    [37] 1
+    [38] 120
+    [39] 4
+    [40] 1
+    [41] 1
+    [42] 1
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn factorial(params: 1, locals: 5)
+      bb0:
+        load.const 9
+        store.place _2
+        load.const 10
+        store.place _3
+        terminator jump bb1
+      bb1:
+        load.place _3
+        load.place _1
+        binop Le
+        store.place _4
+        load.place _4
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _2
+        load.place _3
+        binop Mul
+        store.place _2
+        load.place _3
+        load.const 11
+        binop Add
+        store.place _3
+        terminator jump bb1
+      bb3:
+        load.place _2
+        store.place _0
+        terminator return
+    fn const_factorial(params: 1, locals: 5)
+      bb0:
+        load.place _1
+        load.const 12
+        binop Le
+        store.place _2
+        load.place _2
+        terminator switch [1:bb1] otherwise bb2
+      bb1:
+        load.const 13
+        store.place _0
+        terminator jump bb3
+      bb2:
+        load.place _1
+        load.const 14
+        binop Sub
+        store.place _4
+        load.place _4
+        terminator call Function("const_factorial") 1 -> _3 then bb4
+      bb3:
+        terminator return
+      bb4:
+        load.place _1
+        load.place _3
+        binop Mul
+        store.place _0
+        terminator jump bb3
+    fn sum_range(params: 2, locals: 7)
+      bb0:
+        load.const 15
+        store.place _3
+        load.place _1
+        store.place _5
+        terminator jump bb1
+      bb1:
+        load.place _5
+        load.place _2
+        binop Lt
+        store.place _6
+        load.place _6
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _3
+        load.place _5
+        binop Add
+        store.place _3
+        load.place _5
+        load.const 16
+        binop Add
+        store.place _5
+        terminator jump bb1
+      bb3:
+        make.tuple 0
+        store.place _4
+        load.place _3
+        store.place _0
+        terminator return
+    fn find_first_divisor(params: 1, locals: 9)
+      bb0:
+        load.const 17
+        store.place _2
+        terminator jump bb1
+      bb1:
+        terminator jump bb2
+      bb2:
+        load.place _2
+        load.place _2
+        binop Mul
+        store.place _5
+        load.place _5
+        load.place _1
+        binop Gt
+        store.place _4
+        load.place _4
+        terminator switch [1:bb4] otherwise bb5
+      bb3:
+        terminator return
+      bb4:
+        load.place _1
+        store.place _0
+        terminator jump bb3
+      bb5:
+        make.tuple 0
+        store.place _3
+        terminator jump bb6
+      bb6:
+        load.place _1
+        load.place _2
+        binop Rem
+        store.place _8
+        load.place _8
+        load.const 18
+        binop Eq
+        store.place _7
+        load.place _7
+        terminator switch [1:bb8] otherwise bb9
+      bb7:
+        make.tuple 0
+        store.place _3
+        terminator jump bb6
+      bb8:
+        load.place _2
+        store.place _0
+        terminator jump bb3
+      bb9:
+        make.tuple 0
+        store.place _6
+        terminator jump bb10
+      bb10:
+        load.place _2
+        load.const 19
+        binop Add
+        store.place _2
+        terminator jump bb1
+      bb11:
+        make.tuple 0
+        store.place _6
+        terminator jump bb10
+    fn sum_even_numbers(params: 1, locals: 8)
+      bb0:
+        load.const 20
+        store.place _2
+        load.const 21
+        store.place _3
+        terminator jump bb1
+      bb1:
+        load.place _3
+        load.place _1
+        binop Lt
+        store.place _4
+        load.place _4
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _3
+        load.const 22
+        binop Add
+        store.place _3
+        load.place _3
+        load.const 23
+        binop Rem
+        store.place _7
+        load.place _7
+        load.const 24
+        binop Ne
+        store.place _6
+        load.place _6
+        terminator switch [1:bb4] otherwise bb5
+      bb3:
+        load.place _2
+        store.place _0
+        terminator return
+      bb4:
+        terminator jump bb1
+      bb5:
+        make.tuple 0
+        store.place _5
+        terminator jump bb6
+      bb6:
+        load.place _2
+        load.place _3
+        binop Add
+        store.place _2
+        terminator jump bb1
+      bb7:
+        make.tuple 0
+        store.place _5
+        terminator jump bb6
+    fn main(params: 0, locals: 41)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 13_loops.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Loop constructs: while, for, and loop.\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        intrinsic Println 0 "=== Loop Constructs ===\n\n"
+        make.tuple 0
+        store.place _6
+        intrinsic Println 0 "1. While loop - factorial:\n"
+        make.tuple 0
+        store.place _7
+        load.const 25
+        terminator call Function("factorial") 1 -> _8 then bb1
+      bb1:
+        load.place _8
+        intrinsic Println 1 "  5! = %lld\n"
+        make.tuple 0
+        store.place _9
+        load.const 26
+        terminator call Function("factorial") 1 -> _10 then bb2
+      bb2:
+        load.place _10
+        intrinsic Println 1 "  7! = %lld\n"
+        make.tuple 0
+        store.place _11
+        intrinsic Println 0 "\n2. For loop - sum range:\n"
+        make.tuple 0
+        store.place _12
+        load.const 27
+        load.const 28
+        terminator call Function("sum_range") 2 -> _13 then bb3
+      bb3:
+        load.place _13
+        intrinsic Println 1 "  sum(1..10) = %lld\n"
+        make.tuple 0
+        store.place _14
+        load.const 29
+        load.const 30
+        terminator call Function("sum_range") 2 -> _15 then bb4
+      bb4:
+        load.place _15
+        intrinsic Println 1 "  sum(5..15) = %lld\n"
+        make.tuple 0
+        store.place _16
+        intrinsic Println 0 "\n3. Loop with break expression:\n"
+        make.tuple 0
+        store.place _17
+        load.const 31
+        terminator call Function("find_first_divisor") 1 -> _18 then bb5
+      bb5:
+        load.place _18
+        intrinsic Println 1 "  First divisor of 24: %lld\n"
+        make.tuple 0
+        store.place _19
+        load.const 32
+        terminator call Function("find_first_divisor") 1 -> _20 then bb6
+      bb6:
+        load.place _20
+        intrinsic Println 1 "  First divisor of 17: %lld\n"
+        make.tuple 0
+        store.place _21
+        intrinsic Println 0 "\n4. Loop with continue:\n"
+        make.tuple 0
+        store.place _22
+        load.const 33
+        terminator call Function("sum_even_numbers") 1 -> _23 then bb7
+      bb7:
+        load.place _23
+        intrinsic Println 1 "  Sum of even numbers < 10: %lld\n"
+        make.tuple 0
+        store.place _24
+        intrinsic Println 0 "\n5. Nested loops:\n"
+        make.tuple 0
+        store.place _25
+        load.const 34
+        store.place _26
+        load.const 35
+        store.place _28
+        terminator jump bb8
+      bb8:
+        load.place _28
+        load.const 36
+        binop Lt
+        store.place _29
+        load.place _29
+        terminator switch [1:bb9] otherwise bb10
+      bb9:
+        load.const 37
+        store.place _31
+        terminator jump bb11
+      bb10:
+        make.tuple 0
+        store.place _27
+        load.place _26
+        intrinsic Println 1 "\n  Iterations: %lld\n"
+        make.tuple 0
+        store.place _36
+        intrinsic Println 0 "\n6. Compile-time recursion:\n"
+        make.tuple 0
+        store.place _37
+        load.const 38
+        store.place _38
+        load.place _38
+        intrinsic Println 1 "  const_factorial(5) = %lld\n"
+        make.tuple 0
+        store.place _39
+        intrinsic Println 0 "\n✓ Loop constructs demonstrated!\n"
+        make.tuple 0
+        store.place _40
+        terminator return
+      bb11:
+        load.place _31
+        load.const 39
+        binop Lt
+        store.place _32
+        load.place _32
+        terminator switch [1:bb12] otherwise bb13
+      bb12:
+        load.place _26
+        load.const 40
+        binop Add
+        store.place _26
+        load.place _28
+        load.place _31
+        binop Eq
+        store.place _34
+        load.place _34
+        terminator switch [1:bb14] otherwise bb15
+      bb13:
+        make.tuple 0
+        store.place _30
+        load.place _28
+        load.const 41
+        binop Add
+        store.place _28
+        terminator jump bb8
+      bb14:
+        load.place _28
+        intrinsic Print 1 "[%lld] "
+        make.tuple 0
+        store.place _35
+        make.tuple 0
+        store.place _33
+        terminator jump bb16
+      bb15:
+        make.tuple 0
+        store.place _33
+        terminator jump bb16
+      bb16:
+        load.place _31
+        load.const 42
+        binop Add
+        store.place _31
+        terminator jump bb11
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

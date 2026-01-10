@@ -1,0 +1,324 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 10
+    [10] 20
+    [11] 1.5
+    [12] 2.5
+    [13] 3
+    [14] 7
+    [15] 1.25
+    [16] 2.75
+    [17] 10
+    [18] 3
+    [19] 2.5
+    [20] 9
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 16)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 11_specialization_basics.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Function specialization via generic monomorphization\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        load.const 9
+        load.const 10
+        terminator call Function("pipeline__mono_a7af9f593fdc4675_16") 2 -> _6 then bb1
+      bb1:
+        load.const 11
+        load.const 12
+        terminator call Function("pipeline__mono_d7ad91e83a08a980_16") 2 -> _7 then bb2
+      bb2:
+        load.const 13
+        load.const 14
+        make.tuple 2
+        store.place _8
+        load.const 15
+        load.const 16
+        make.tuple 2
+        store.place _9
+        load.place _8
+        terminator call Function("sum_pair__mono_a7af9f593fdc4675_17") 1 -> _10 then bb3
+      bb3:
+        load.place _10
+        intrinsic Println 1 "sum_pair i64 = %lld\n"
+        make.tuple 0
+        store.place _11
+        load.place _9
+        terminator call Function("sum_pair__mono_d7ad91e83a08a980_17") 1 -> _12 then bb4
+      bb4:
+        load.place _12
+        intrinsic Println 1 "sum_pair f64 = %f\n"
+        make.tuple 0
+        store.place _13
+        load.const 17
+        load.const 18
+        terminator call Function("max__mono_a7af9f593fdc4675_18") 2 -> _14 then bb5
+      bb5:
+        load.const 19
+        load.const 20
+        terminator call Function("max__mono_d7ad91e83a08a980_18") 2 -> _15 then bb6
+      bb6:
+        terminator return
+    fn add__mono_a7af9f593fdc4675_14(params: 2, locals: 3)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Add
+        store.place _0
+        terminator return
+    fn double__mono_a7af9f593fdc4675_15(params: 1, locals: 2)
+      bb0:
+        load.place _1
+        load.place _1
+        binop Add
+        store.place _0
+        terminator return
+    fn pipeline__mono_a7af9f593fdc4675_16(params: 2, locals: 6)
+      bb0:
+        load.place _1
+        load.place _2
+        terminator call Function("add__mono_a7af9f593fdc4675_14") 2 -> _4 then bb1
+      bb1:
+        load.place _4
+        terminator call Function("double__mono_a7af9f593fdc4675_15") 1 -> _3 then bb2
+      bb2:
+        load.place _3
+        intrinsic Println 1 "specialized result: %lld\n"
+        make.tuple 0
+        store.place _5
+        load.place _3
+        store.place _0
+        terminator return
+    fn add__mono_d7ad91e83a08a980_14(params: 2, locals: 3)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Add
+        store.place _0
+        terminator return
+    fn double__mono_d7ad91e83a08a980_15(params: 1, locals: 2)
+      bb0:
+        load.place _1
+        load.place _1
+        binop Add
+        store.place _0
+        terminator return
+    fn pipeline__mono_d7ad91e83a08a980_16(params: 2, locals: 6)
+      bb0:
+        load.place _1
+        load.place _2
+        terminator call Function("add__mono_d7ad91e83a08a980_14") 2 -> _4 then bb1
+      bb1:
+        load.place _4
+        terminator call Function("double__mono_d7ad91e83a08a980_15") 1 -> _3 then bb2
+      bb2:
+        load.place _3
+        intrinsic Println 1 "specialized result: %f\n"
+        make.tuple 0
+        store.place _5
+        load.place _3
+        store.place _0
+        terminator return
+    fn sum_pair__mono_a7af9f593fdc4675_17(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        load.place _1.1
+        binop Add
+        store.place _0
+        terminator return
+    fn sum_pair__mono_d7ad91e83a08a980_17(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        load.place _1.1
+        binop Add
+        store.place _0
+        terminator return
+    fn max__mono_a7af9f593fdc4675_18(params: 2, locals: 7)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Gt
+        store.place _5
+        load.place _5
+        terminator switch [1:bb1] otherwise bb2
+      bb1:
+        load.place _1
+        store.place _4
+        terminator jump bb3
+      bb2:
+        load.place _2
+        store.place _4
+        terminator jump bb3
+      bb3:
+        load.place _4
+        store.place _3
+        load.place _1
+        load.place _2
+        load.place _3
+        intrinsic Println 3 "max(%lld, %lld) = %lld\n"
+        make.tuple 0
+        store.place _6
+        load.place _3
+        store.place _0
+        terminator return
+    fn max__mono_d7ad91e83a08a980_18(params: 2, locals: 7)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Gt
+        store.place _5
+        load.place _5
+        terminator switch [1:bb1] otherwise bb2
+      bb1:
+        load.place _1
+        store.place _4
+        terminator jump bb3
+      bb2:
+        load.place _2
+        store.place _4
+        terminator jump bb3
+      bb3:
+        load.place _4
+        store.place _3
+        load.place _1
+        load.place _2
+        load.place _3
+        intrinsic Println 3 "max(%f, %f) = %f\n"
+        make.tuple 0
+        store.place _6
+        load.place _3
+        store.place _0
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

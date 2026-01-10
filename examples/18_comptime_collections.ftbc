@@ -1,0 +1,501 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 2
+    [10] 3
+    [11] 5
+    [12] 7
+    [13] 11
+    [14] 13
+    [15] 2
+    [16] 3
+    [17] 5
+    [18] 7
+    [19] 11
+    [20] 13
+    [21] 6
+    [22] "[2, 3, 5, 7, 11, 13]"
+    [23] 0
+    [24] 0
+    [25] 0
+    [26] 0
+    [27] 0
+    [28] 0
+    [29] 0
+    [30] 0
+    [31] 0
+    [32] 0
+    [33] 0
+    [34] 0
+    [35] 0
+    [36] 0
+    [37] 0
+    [38] 0
+    [39] 0
+    [40] 0
+    [41] 0
+    [42] 0
+    [43] 0
+    [44] 0
+    [45] 0
+    [46] 0
+    [47] 0
+    [48] 0
+    [49] 0
+    [50] 0
+    [51] 0
+    [52] 0
+    [53] 0
+    [54] 0
+    [55] 16
+    [56] 0
+    [57] 0
+    [58] 0
+    [59] 0
+    [60] 0
+    [61] 0
+    [62] 0
+    [63] 0
+    [64] 0
+    [65] 0
+    [66] 0
+    [67] 0
+    [68] 0
+    [69] 0
+    [70] 0
+    [71] 0
+    [72] 0
+    [73] 0
+    [74] 0
+    [75] 0
+    [76] 0
+    [77] 0
+    [78] 0
+    [79] 0
+    [80] 0
+    [81] 0
+    [82] 0
+    [83] 0
+    [84] 0
+    [85] 0
+    [86] 0
+    [87] 0
+    [88] 0
+    [89] 1
+    [90] 0
+    [91] 0
+    [92] 0
+    [93] 0
+    [94] 0
+    [95] 0
+    [96] 0
+    [97] 0
+    [98] 0
+    [99] 0
+    [100] 0
+    [101] 0
+    [102] 0
+    [103] 0
+    [104] 0
+    [105] 0
+    [106] 2
+    [107] 0
+    [108] 0
+    [109] 0
+    [110] 0
+    [111] 0
+    [112] 0
+    [113] 0
+    [114] 0
+    [115] 0
+    [116] 0
+    [117] 0
+    [118] 0
+    [119] 0
+    [120] 0
+    [121] 0
+    [122] 0
+    [123] 3
+    [124] "ok"
+    [125] 200
+    [126] "created"
+    [127] 201
+    [128] "accepted"
+    [129] 202
+    [130] "not_found"
+    [131] 404
+    [132] "ok"
+    [133] 200
+    [134] "created"
+    [135] 201
+    [136] "accepted"
+    [137] 202
+    [138] "not_found"
+    [139] 404
+    [140] 4
+    [141] 200
+    [142] 404
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 42)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 18_comptime_collections.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Showcase compile-time Vec and HashMap construction.\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        intrinsic Println 0 "=== Compile-time Collections ===\n"
+        make.tuple 0
+        store.place _6
+        intrinsic Println 0 "Vec literals:\n"
+        make.tuple 0
+        store.place _7
+        load.const 9
+        load.const 10
+        load.const 11
+        load.const 12
+        load.const 13
+        load.const 14
+        make.array 6
+        store.place _9
+        load.const 15
+        load.const 16
+        load.const 17
+        load.const 18
+        load.const 19
+        load.const 20
+        make.array 6
+        store.place _10
+        load.const 21
+        store.place _8
+        load.place _8
+        load.const 22
+        intrinsic Println 2 "  primes: %llu elements -> %s\n"
+        make.tuple 0
+        store.place _11
+        load.const 23
+        load.const 24
+        load.const 25
+        load.const 26
+        load.const 27
+        load.const 28
+        load.const 29
+        load.const 30
+        load.const 31
+        load.const 32
+        load.const 33
+        load.const 34
+        load.const 35
+        load.const 36
+        load.const 37
+        load.const 38
+        make.array 16
+        store.place _13
+        load.const 39
+        load.const 40
+        load.const 41
+        load.const 42
+        load.const 43
+        load.const 44
+        load.const 45
+        load.const 46
+        load.const 47
+        load.const 48
+        load.const 49
+        load.const 50
+        load.const 51
+        load.const 52
+        load.const 53
+        load.const 54
+        make.array 16
+        store.place _14
+        load.const 55
+        store.place _12
+        load.place _12
+        intrinsic Println 1 "  zero buffer: %llu elements\n"
+        make.tuple 0
+        store.place _15
+        load.const 56
+        load.const 57
+        load.const 58
+        load.const 59
+        load.const 60
+        load.const 61
+        load.const 62
+        load.const 63
+        load.const 64
+        load.const 65
+        load.const 66
+        load.const 67
+        load.const 68
+        load.const 69
+        load.const 70
+        load.const 71
+        make.array 16
+        store.place _16
+        load.const 72
+        store.place _17
+        load.const 73
+        load.const 74
+        load.const 75
+        load.const 76
+        load.const 77
+        load.const 78
+        load.const 79
+        load.const 80
+        load.const 81
+        load.const 82
+        load.const 83
+        load.const 84
+        load.const 85
+        load.const 86
+        load.const 87
+        load.const 88
+        make.array 16
+        store.place _18
+        load.const 89
+        store.place _19
+        load.const 90
+        load.const 91
+        load.const 92
+        load.const 93
+        load.const 94
+        load.const 95
+        load.const 96
+        load.const 97
+        load.const 98
+        load.const 99
+        load.const 100
+        load.const 101
+        load.const 102
+        load.const 103
+        load.const 104
+        load.const 105
+        make.array 16
+        store.place _20
+        load.const 106
+        store.place _21
+        load.const 107
+        load.const 108
+        load.const 109
+        load.const 110
+        load.const 111
+        load.const 112
+        load.const 113
+        load.const 114
+        load.const 115
+        load.const 116
+        load.const 117
+        load.const 118
+        load.const 119
+        load.const 120
+        load.const 121
+        load.const 122
+        make.array 16
+        store.place _22
+        load.const 123
+        store.place _23
+        load.place _16[_17]
+        load.place _18[_19]
+        load.place _20[_21]
+        load.place _22[_23]
+        intrinsic Println 4 "  first four zeros: [%lld, %lld, %lld, %lld]\n"
+        make.tuple 0
+        store.place _24
+        intrinsic Println 0 "\nHashMap literal via HashMap::from:\n"
+        make.tuple 0
+        store.place _25
+        load.const 124
+        load.const 125
+        make.tuple 2
+        store.place _28
+        load.const 126
+        load.const 127
+        make.tuple 2
+        store.place _29
+        load.const 128
+        load.const 129
+        make.tuple 2
+        store.place _30
+        load.const 130
+        load.const 131
+        make.tuple 2
+        store.place _31
+        load.place _28
+        load.place _29
+        load.place _30
+        load.place _31
+        make.list 4
+        store.place _27
+        load.const 132
+        load.const 133
+        make.tuple 2
+        store.place _33
+        load.const 134
+        load.const 135
+        make.tuple 2
+        store.place _34
+        load.const 136
+        load.const 137
+        make.tuple 2
+        store.place _35
+        load.const 138
+        load.const 139
+        make.tuple 2
+        store.place _36
+        load.place _33
+        load.place _34
+        load.place _35
+        load.place _36
+        make.list 4
+        store.place _32
+        load.const 140
+        store.place _26
+        load.place _26
+        intrinsic Println 1 "  tracked HTTP statuses: %llu entries\n"
+        make.tuple 0
+        store.place _37
+        load.const 141
+        store.place _38
+        load.place _38
+        intrinsic Println 1 "  ok => %lld\n"
+        make.tuple 0
+        store.place _39
+        load.const 142
+        store.place _40
+        load.place _40
+        intrinsic Println 1 "  not_found => %lld\n"
+        make.tuple 0
+        store.place _41
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

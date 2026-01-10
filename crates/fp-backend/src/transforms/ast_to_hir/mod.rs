@@ -110,6 +110,36 @@ enum LiteralTypeKind {
 }
 
 impl HirGenerator {
+    fn add_error(&mut self, diag: Diagnostic) {
+        self.errors.push(diag);
+    }
+
+    fn add_warning(&mut self, diag: Diagnostic) {
+        self.warnings.push(diag);
+    }
+
+    fn handle_import(&mut self, _import: &ast::ItemImport) -> Result<()> {
+        Ok(())
+    }
+
+    pub fn with_file<P: AsRef<Path>>(path: P) -> Self {
+        let mut generator = Self::new();
+        generator.reset_file_context(path);
+        generator
+    }
+
+    pub fn enable_error_tolerance(&mut self, max_errors: usize) {
+        self.error_tolerance = true;
+        self.max_errors = max_errors;
+    }
+
+    pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
+        (
+            std::mem::take(&mut self.errors),
+            std::mem::take(&mut self.warnings),
+        )
+    }
+
     /// Create a new HIR generator
     pub fn new() -> Self {
         Self {
@@ -132,7 +162,6 @@ impl HirGenerator {
             const_list_length_scopes: vec![HashMap::new()],
             synthetic_items: Vec::new(),
             module_defs: HashSet::new(),
-            program_def_map: HashMap::new(),
             program_def_map: HashMap::new(),
 
             // Initialize error tolerance support
@@ -1083,7 +1112,7 @@ impl HirGenerator {
                         return Err(crate::error::optimization_error(format!(
                             "unsupported literal type in AST→HIR lowering: {:?}",
                             other
-                        )))
+                        )));
                     }
                 };
                 Ok(expr)
@@ -1258,11 +1287,7 @@ impl HirGenerator {
             ast::Ty::TypeBinaryOp(op) if matches!(op.kind, ast::TypeBinaryOpKind::Union) => {
                 let lhs = self.literal_type_kind(&op.lhs)?;
                 let rhs = self.literal_type_kind(&op.rhs)?;
-                if lhs == rhs {
-                    Some(lhs)
-                } else {
-                    None
-                }
+                if lhs == rhs { Some(lhs) } else { None }
             }
             _ => None,
         }
@@ -1460,7 +1485,7 @@ impl HirGenerator {
                 return Err(crate::error::optimization_error(format!(
                     "unsupported structural field value type: {:?}",
                     other
-                )))
+                )));
             }
         };
         Ok(expr)

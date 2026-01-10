@@ -1,0 +1,308 @@
+fp-bytecode {
+  const_pool:
+    [0] 2
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] 0
+    [5] true
+    [6] false
+    [7] 1
+    [8] 1
+    [9] 1
+    [10] 0
+    [11] 10
+    [12] 20
+    [13] fn add__mono_a7af9f593fdc4675_18
+    [14] 1.5
+    [15] 2.5
+    [16] fn add__mono_d7ad91e83a08a980_18
+    [17] true
+    [18] 5
+    [19] 3
+    [20] fn add__spec0
+    [21] false
+    [22] 5
+    [23] 3
+    [24] fn add__spec0
+    [25] 10
+    [26] 5
+    [27] 0
+    [28] 7
+  functions:
+    fn __closure0_call(params: 2, locals: 3)
+      bb0:
+        load.place _2
+        load.place _1.0
+        binop Add
+        store.place _0
+        terminator return
+    fn __closure1_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn __closure2_call(params: 2, locals: 3)
+      bb0:
+        load.place _2
+        load.const 0
+        binop Mul
+        store.place _0
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 1
+        store.place _4
+        load.const 2
+        store.place _5
+        load.const 3
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 4
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure1_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 6
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 7
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 8
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 9
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn apply_if(params: 4, locals: 5)
+      bb0:
+        load.place _1
+        terminator switch [1:bb1] otherwise bb2
+      bb1:
+        load.place _2
+        load.place _3
+        terminator call Local(BytecodePlace { local: 4, projection: [] }) 2 -> _0 then bb4
+      bb2:
+        load.const 10
+        store.place _0
+        terminator jump bb3
+      bb3:
+        terminator return
+      bb4:
+        terminator jump bb3
+    fn make_adder(params: 1, locals: 2)
+      bb0:
+        load.place _1
+        make.tuple 1
+        store.place _0
+        terminator return
+    fn main(params: 0, locals: 21)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 09_higher_order_functions.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Higher-order functions: passing functions as arguments and closures\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        intrinsic Println 0 "Generic operations:\n"
+        make.tuple 0
+        store.place _6
+        load.const 11
+        load.const 12
+        load.const 13
+        terminator call Function("apply__mono_a7af9f593fdc4675_17") 3 -> _7 then bb1
+      bb1:
+        load.const 14
+        load.const 15
+        load.const 16
+        terminator call Function("apply__mono_d7ad91e83a08a980_17") 3 -> _8 then bb2
+      bb2:
+        intrinsic Println 0 "\nConditional:\n"
+        make.tuple 0
+        store.place _9
+        load.const 17
+        load.const 18
+        load.const 19
+        load.const 20
+        terminator call Function("apply_if") 4 -> _10 then bb3
+      bb3:
+        load.place _10
+        intrinsic Println 1 "apply_if(true, 5, 3) = %lld\n"
+        make.tuple 0
+        store.place _11
+        load.const 21
+        load.const 22
+        load.const 23
+        load.const 24
+        terminator call Function("apply_if") 4 -> _12 then bb4
+      bb4:
+        load.place _12
+        intrinsic Println 1 "apply_if(false, 5, 3) = %lld\n"
+        make.tuple 0
+        store.place _13
+        intrinsic Println 0 "\nClosure factory:\n"
+        make.tuple 0
+        store.place _14
+        load.const 25
+        terminator call Function("make_adder") 1 -> _16 then bb5
+      bb5:
+        load.place _16
+        load.const 26
+        terminator call Function("__closure0_call") 2 -> _15 then bb6
+      bb6:
+        load.place _15
+        intrinsic Println 1 "add_10(5) = %lld\n"
+        make.tuple 0
+        store.place _17
+        load.const 27
+        make.tuple 1
+        store.place _18
+        load.place _18
+        load.const 28
+        terminator call Function("__closure2_call") 2 -> _19 then bb7
+      bb7:
+        load.place _19
+        intrinsic Println 1 "double(7) = %lld\n"
+        make.tuple 0
+        store.place _20
+        terminator return
+    fn add__spec0(params: 2, locals: 3)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Add
+        store.place _0
+        terminator return
+    fn apply__mono_a7af9f593fdc4675_17(params: 3, locals: 6)
+      bb0:
+        load.place _1
+        load.place _2
+        terminator call Local(BytecodePlace { local: 3, projection: [] }) 2 -> _4 then bb1
+      bb1:
+        load.place _1
+        load.place _2
+        load.place _4
+        intrinsic Println 3 "apply(%lld, %lld) = %lld\n"
+        make.tuple 0
+        store.place _5
+        terminator return
+    fn add__mono_a7af9f593fdc4675_18(params: 2, locals: 3)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Add
+        store.place _0
+        terminator return
+    fn apply__mono_d7ad91e83a08a980_17(params: 3, locals: 6)
+      bb0:
+        load.place _1
+        load.place _2
+        terminator call Local(BytecodePlace { local: 3, projection: [] }) 2 -> _4 then bb1
+      bb1:
+        load.place _1
+        load.place _2
+        load.place _4
+        intrinsic Println 3 "apply(%f, %f) = %f\n"
+        make.tuple 0
+        store.place _5
+        terminator return
+    fn add__mono_d7ad91e83a08a980_18(params: 2, locals: 3)
+      bb0:
+        load.place _1
+        load.place _2
+        binop Add
+        store.place _0
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

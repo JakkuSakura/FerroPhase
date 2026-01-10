@@ -1,0 +1,208 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 1
+    [10] "core"
+    [11] 2
+    [12] "primary"
+    [13] "strict"
+    [14] 3
+    [15] "shadow"
+    [16] "relaxed"
+    [17] 3
+    [18] true
+    [19] false
+    [20] 24
+    [21] "struct Config"
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 17)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 05_struct_generation.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Struct generation with compile-time conditionals\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        load.const 9
+        load.const 10
+        make.tuple 2
+        store.place _6
+        load.place _6.0
+        load.place _6.1
+        intrinsic Println 2 "base: id=%lld name=%s\n"
+        make.tuple 0
+        store.place _7
+        load.const 11
+        load.const 12
+        load.const 13
+        make.tuple 3
+        store.place _8
+        load.place _8.0
+        load.place _8.1
+        load.place _8.2
+        intrinsic Println 3 "config: id=%lld name=%s mode=%s\n"
+        make.tuple 0
+        store.place _9
+        load.const 14
+        load.const 15
+        load.const 16
+        make.tuple 3
+        store.place _10
+        load.place _10.0
+        load.place _10.1
+        load.place _10.2
+        intrinsic Println 3 "config clone: id=%lld name=%s mode=%s\n"
+        make.tuple 0
+        store.place _11
+        load.const 17
+        intrinsic Println 1 "config fields: %lld\n"
+        make.tuple 0
+        store.place _12
+        load.const 18
+        intrinsic Println 1 "config has mode: %d\n"
+        make.tuple 0
+        store.place _13
+        load.const 19
+        intrinsic Println 1 "config has max_retries: %d\n"
+        make.tuple 0
+        store.place _14
+        load.const 20
+        intrinsic Println 1 "config size: %lld\n"
+        make.tuple 0
+        store.place _15
+        load.const 21
+        intrinsic Println 1 "config type: %s\n"
+        make.tuple 0
+        store.place _16
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

@@ -1,0 +1,278 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] "FerroPhase"
+    [10] 10
+    [11] "0.1.0"
+    [12] 5
+    [13] true
+    [14] true
+    [15] true
+    [16] "Ferro"
+    [17] "Phase"
+    [18] 0
+    [19] 4
+    [20] "alpha"
+    [21] "beta"
+    [22] "gamma"
+    [23] "delta"
+    [24] 5
+    [25] 4
+    [26] 5
+    [27] 5
+    [28] 1
+    [29] 19
+    [30] false
+    [31] true
+    [32] "FerroPhase v0.1.0"
+    [33] 256
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 37)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 02_string_processing.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Compile-time string operations and intrinsics\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        load.const 9
+        store.place _6
+        load.const 10
+        store.place _7
+        load.place _6
+        load.place _7
+        intrinsic Println 2 "name='%s' len=%llu\n"
+        make.tuple 0
+        store.place _8
+        load.const 11
+        store.place _9
+        load.const 12
+        store.place _10
+        load.place _9
+        load.place _10
+        intrinsic Println 2 "version='%s' len=%llu\n"
+        make.tuple 0
+        store.place _11
+        load.const 13
+        store.place _12
+        load.const 14
+        store.place _13
+        load.const 15
+        store.place _14
+        load.place _12
+        load.place _13
+        load.place _14
+        intrinsic Println 3 "prefix_ok=%d, suffix_ok=%d, contains_phase=%d\n"
+        make.tuple 0
+        store.place _15
+        load.const 16
+        store.place _16
+        load.const 17
+        store.place _17
+        load.place _16
+        load.place _17
+        intrinsic Println 2 "slices: short='%s' tail='%s'\n"
+        make.tuple 0
+        store.place _18
+        intrinsic Println 0 "words:\n"
+        make.tuple 0
+        store.place _19
+        load.const 18
+        store.place _21
+        terminator jump bb1
+      bb1:
+        load.place _21
+        load.const 19
+        binop Lt
+        store.place _22
+        load.place _22
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.const 20
+        load.const 21
+        load.const 22
+        load.const 23
+        make.array 4
+        store.place _23
+        load.place _21
+        store.place _24
+        load.const 24
+        load.const 25
+        load.const 26
+        load.const 27
+        make.array 4
+        store.place _25
+        load.place _21
+        store.place _26
+        load.place _23[_24]
+        load.place _25[_26]
+        intrinsic Println 2 "  %s -> len=%llu\n"
+        make.tuple 0
+        store.place _27
+        load.place _21
+        load.const 28
+        binop Add
+        store.place _21
+        terminator jump bb1
+      bb3:
+        make.tuple 0
+        store.place _20
+        load.const 29
+        store.place _28
+        load.place _28
+        intrinsic Println 1 "total word length=%llu\n"
+        make.tuple 0
+        store.place _29
+        load.const 30
+        store.place _30
+        load.const 31
+        store.place _31
+        load.place _30
+        load.place _31
+        intrinsic Println 2 "empty=%d, long=%d\n"
+        make.tuple 0
+        store.place _32
+        load.const 32
+        store.place _33
+        load.place _33
+        intrinsic Println 1 "banner='%s'\n"
+        make.tuple 0
+        store.place _34
+        load.const 33
+        store.place _35
+        load.place _35
+        intrinsic Println 1 "buffer_size=%llu\n"
+        make.tuple 0
+        store.place _36
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

@@ -1,0 +1,326 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] "struct Point3D"
+    [10] 3
+    [11] 24
+    [12] "i64\n"
+    [13] 0
+    [14] 3
+    [15] "x"
+    [16] "i64\n"
+    [17] "y"
+    [18] "i64\n"
+    [19] "z"
+    [20] "i64\n"
+    [21] "x"
+    [22] "i64\n"
+    [23] "y"
+    [24] "i64\n"
+    [25] "z"
+    [26] "i64\n"
+    [27] 1
+    [28] 1
+    [29] 2
+    [30] 3
+    [31] 4
+    [32] 5
+    [33] 6
+    [34] "origin"
+    [35] 20
+    [36] "inspected"
+    [37] 2
+    [38] 21
+    [39] "metaprogramming"
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 45)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 08_metaprogramming_patterns.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Metaprogramming: const metadata + quote/splice execution\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        intrinsic Println 0 "=== Part 1: Const Metadata ===\n"
+        make.tuple 0
+        store.place _6
+        load.const 9
+        store.place _7
+        load.const 10
+        store.place _8
+        load.const 11
+        store.place _9
+        load.place _7
+        load.place _8
+        load.place _9
+        intrinsic Println 3 "%s has %lld fields (size=%lld)\n"
+        make.tuple 0
+        store.place _10
+        load.const 12
+        store.place _11
+        load.place _11
+        intrinsic Println 1 "x type: %s\n"
+        make.tuple 0
+        store.place _12
+        intrinsic Println 0 "fields:\n"
+        make.tuple 0
+        store.place _13
+        load.const 13
+        store.place _15
+        terminator jump bb1
+      bb1:
+        load.place _15
+        load.const 14
+        binop Lt
+        store.place _16
+        load.place _16
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.const 15
+        load.const 16
+        make.tuple 2
+        store.place _19
+        load.const 17
+        load.const 18
+        make.tuple 2
+        store.place _20
+        load.const 19
+        load.const 20
+        make.tuple 2
+        store.place _21
+        load.place _19
+        load.place _20
+        load.place _21
+        make.array 3
+        store.place _18
+        load.place _15
+        store.place _22
+        load.const 21
+        load.const 22
+        make.tuple 2
+        store.place _24
+        load.const 23
+        load.const 24
+        make.tuple 2
+        store.place _25
+        load.const 25
+        load.const 26
+        make.tuple 2
+        store.place _26
+        load.place _24
+        load.place _25
+        load.place _26
+        make.array 3
+        store.place _23
+        load.place _15
+        store.place _27
+        load.place _23[_27]
+        store.place _17
+        load.place _17.0
+        load.place _17.1
+        intrinsic Println 2 "  %s: %s\n"
+        make.tuple 0
+        store.place _28
+        load.place _15
+        load.const 27
+        binop Add
+        store.place _15
+        terminator jump bb1
+      bb3:
+        make.tuple 0
+        store.place _14
+        load.const 28
+        load.const 29
+        load.const 30
+        make.tuple 3
+        store.place _29
+        load.place _29.0
+        load.place _29.1
+        load.place _29.2
+        intrinsic Println 3 "point=(%lld, %lld, %lld)\n"
+        make.tuple 0
+        store.place _30
+        load.const 31
+        load.const 32
+        load.const 33
+        load.const 34
+        make.tuple 4
+        store.place _31
+        load.place _31.0
+        load.place _31.1
+        load.place _31.2
+        load.place _31.3
+        intrinsic Println 4 "labeled=(%lld, %lld, %lld, %s)\n"
+        make.tuple 0
+        store.place _32
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _33
+        intrinsic Println 0 "=== Part 2: Execute Quoted Code ===\n"
+        make.tuple 0
+        store.place _34
+        load.const 35
+        store.place _35
+        load.place _35
+        intrinsic Println 1 "expr splice => %lld\n"
+        make.tuple 0
+        store.place _36
+        load.const 36
+        store.place _37
+        load.place _37
+        intrinsic Println 1 "quote<fn> inspect => name=%s\n"
+        make.tuple 0
+        store.place _38
+        load.const 37
+        store.place _39
+        load.place _39
+        intrinsic Println 1 "quote<[item]> count => %lld\n"
+        make.tuple 0
+        store.place _40
+        load.const 38
+        store.place _41
+        load.place _41
+        intrinsic Println 1 "stmt splice => step=%lld\n"
+        make.tuple 0
+        store.place _42
+        load.const 39
+        load.place _35
+        make.tuple 2
+        store.place _43
+        load.place _43.0
+        load.place _43.1
+        intrinsic Println 2 "item splice => %s #%lld\n"
+        make.tuple 0
+        store.place _44
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

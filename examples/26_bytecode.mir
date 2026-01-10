@@ -1,0 +1,137 @@
+mir::Program {
+    items:
+        fn __closure0_call(arg0: (<??>)) -> () [body: body0]
+
+        static <static>: <??> = const <<??>>
+
+        fn std::test::run_tests() -> (i64, i64, i64) [body: body1]
+
+        fn std::test::run() -> (i64, i64, i64) [body: body2]
+
+        fn main() -> () [body: body3]
+
+        fn TestCase::run(arg0: <??>) -> () [body: body4]
+    bodies:
+        body0 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+            blocks:
+                bb0:
+                    terminator: call fn TestCase::run(copy _1[Field(0, Ty { kind: Adt(AdtDef { did: 1, variants: [VariantDef { def_id: 2, ctor_def_id: None, ident: Symbol { name: "TestCase" }, discr: Relative(0), fields: [], ctor_kind: Const, is_recovered: false }], flags: AdtFlags(IS_STRUCT), repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags(0x0), field_shuffle_seed: 0 } }, []) })]) -> _0 then bb1
+                bb1:
+                    terminator: return
+        body1 { arg_count: 0, locals: 22 }
+            return_local: _0
+            locals:
+                _0: (i64, i64, i64)
+                _1: <??>
+                _2: <??>
+                _3: <??>
+                _4: i64
+                _5: i64
+                _6: i64
+                _7: bool
+                _8: usize
+                _9: (<??>, <??>)
+                _10: i64
+                _11: i64
+                _12: bool
+                _13: ()
+                _14: bool
+                _15: ()
+                _16: ()
+                _17: ()
+                _18: ()
+                _19: i64
+                _20: i64
+                _21: ()
+            blocks:
+                bb0:
+                    s0: _2 = aggregate(array [(<??>, <??>)]; [])
+                    s1: _3 = aggregate(array [(<??>, <??>)]; [])
+                    s2: _1 = copy _3
+                    s3: _4 = 0
+                    s4: _5 = 0
+                    s5: _6 = 0
+                    terminator: goto -> bb1
+                bb1:
+                    s0: _8 = 0u
+                    s1: _7 = Lt(copy _6, copy _8)
+                    terminator: switch copy _7 [1 -> bb2] otherwise -> bb3
+                bb2:
+                    s0: _10 = copy _6
+                    s1: _11 = copy _6
+                    s2: _9 = copy _1[Index(11)]
+                    s3: _13 = aggregate(tuple; [copy _9])
+                    terminator: call fn __closure0_call(copy _13) -> _15 then bb4, cleanup -> bb5
+                bb3:
+                    s0: _20 = Add(copy _4, copy _5)
+                    s1: _19 = copy _20
+                    s2: intrinsic Println "test result: %lld passed; %lld failed; %lld total
+" [copy _4, copy _5, copy _19]
+                    s3: _21 = aggregate(tuple; [])
+                    s4: _0 = aggregate(tuple; [copy _19, copy _4, copy _5])
+                    terminator: <none>
+                bb4:
+                    s0: _14 = true
+                    terminator: goto -> bb6
+                bb5 (cleanup):
+                    s0: _14 = false
+                    terminator: goto -> bb6
+                bb6:
+                    s0: _12 = copy _14
+                    terminator: switch copy _12 [1 -> bb7] otherwise -> bb8
+                bb7:
+                    s0: _4 = Add(copy _4, 1)
+                    s1: intrinsic Println "  %s ... ok
+" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
+                    s2: _17 = aggregate(tuple; [])
+                    s3: _16 = aggregate(tuple; [])
+                    terminator: goto -> bb9
+                bb8:
+                    s0: _5 = Add(copy _5, 1)
+                    s1: intrinsic Println "  %s ... FAILED
+" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
+                    s2: _18 = aggregate(tuple; [])
+                    s3: _16 = aggregate(tuple; [])
+                    terminator: goto -> bb9
+                bb9:
+                    s0: _6 = Add(copy _6, 1)
+                    terminator: goto -> bb1
+        body2 { arg_count: 0, locals: 1 }
+            return_local: _0
+            locals:
+                _0: (i64, i64, i64)
+            blocks:
+                bb0:
+                    terminator: call fn std::test::run_tests() -> _0 then bb1
+                bb1:
+                    terminator: return
+        body3 { arg_count: 0, locals: 5 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: i64
+                _2: i64
+                _3: i64
+                _4: ()
+            blocks:
+                bb0:
+                    s0: _1 = 40
+                    s1: _2 = 2
+                    s2: _3 = Add(copy _1, copy _2)
+                    s3: intrinsic Println "Bytecode VM says: %lld
+" [copy _3]
+                    s4: _4 = aggregate(tuple; [])
+                    terminator: return
+        body4 { arg_count: 1, locals: 2 }
+            return_local: _0
+            locals:
+                _0: ()
+                _1: <??>
+            blocks:
+                bb0:
+                    terminator: return
+}

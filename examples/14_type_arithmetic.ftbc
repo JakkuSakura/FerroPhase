@@ -1,0 +1,438 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 0
+    [10] 1
+    [11] 0
+    [12] 0
+    [13] 1
+    [14] 2
+    [15] 3
+    [16] 4
+    [17] 5
+    [18] 6
+    [19] 10
+    [20] 20
+    [21] 99
+    [22] 7
+    [23] 42
+    [24] 0
+    [25] 2
+    [26] 3
+    [27] 4
+    [28] 1
+    [29] 0
+    [30] fn describe_union
+    [31] 1
+    [32] 2
+    [33] 3
+    [34] 4
+    [35] 0
+    [36] 1
+    [37] 2
+    [38] 3
+    [39] 42
+    [40] true
+    [41] "hello"
+    [42] null
+    [43] "green"
+    [44] "()"
+    [45] 0
+    [46] 5
+    [47] 6
+    [48] 7
+    [49] fn print_display
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn describe_union(params: 1, locals: 11)
+      bb0:
+        load.place _1
+        store.place _2
+        load.place _2.0
+        load.const 9
+        binop Eq
+        store.place _3
+        load.place _3
+        terminator switch [1:bb2] otherwise bb3
+      bb1:
+        terminator return
+      bb2:
+        load.place _2.1
+        store.place _4
+        load.place _2.2
+        store.place _5
+        load.place _2.3
+        store.place _6
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _7
+        load.place _7
+        load.place _6
+        binop Add
+        store.place _0
+        terminator jump bb1
+      bb3:
+        load.place _2.0
+        load.const 10
+        binop Eq
+        store.place _8
+        load.place _8
+        terminator switch [1:bb4] otherwise bb5
+      bb4:
+        load.place _2.1
+        store.place _9
+        load.place _2.2
+        store.place _10
+        load.place _9
+        load.place _10
+        binop Add
+        store.place _0
+        terminator jump bb1
+      bb5:
+        make.tuple 0
+        store.place _0
+        terminator jump bb1
+    fn describe_optional(params: 1, locals: 9)
+      bb0:
+        load.place _1
+        store.place _2
+        load.place _2.0
+        load.const 11
+        binop Eq
+        store.place _3
+        load.place _3
+        terminator switch [1:bb2] otherwise bb3
+      bb1:
+        terminator return
+      bb2:
+        load.place _2.1
+        store.place _4
+        load.place _2.2
+        store.place _5
+        load.place _2.3
+        store.place _6
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _7
+        load.place _7
+        load.place _6
+        binop Add
+        store.place _0
+        terminator jump bb1
+      bb3:
+        terminator jump bb4
+      bb4:
+        load.place _2
+        store.place _8
+        load.const 12
+        store.place _0
+        terminator jump bb1
+      bb5:
+        terminator return
+    fn main(params: 0, locals: 51)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 14_type_arithmetic.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Type arithmetic examples: combining and relating types with operators.\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        load.const 13
+        load.const 14
+        load.const 15
+        make.tuple 3
+        store.place _6
+        load.place _6.0
+        load.place _6.1
+        load.place _6.2
+        intrinsic Println 3 "Foo a=%lld common=%lld foo=%lld\n"
+        make.tuple 0
+        store.place _7
+        load.const 16
+        load.const 17
+        make.tuple 2
+        store.place _8
+        load.place _8.0
+        load.place _8.1
+        intrinsic Println 2 "Bar common=%lld bar=%lld\n"
+        make.tuple 0
+        store.place _9
+        load.place _6
+        store.place _12
+        load.place _12.0
+        load.place _12.1
+        load.place _12.2
+        load.const 18
+        make.tuple 4
+        store.place _11
+        load.place _11
+        store.place _10
+        load.place _10.0
+        load.place _10.1
+        load.place _10.2
+        load.place _10.3
+        intrinsic Println 4 "FooPlusBar a=%lld common=%lld foo=%lld bar=%lld\n"
+        make.tuple 0
+        store.place _13
+        load.const 19
+        load.const 20
+        make.tuple 2
+        store.place _14
+        load.place _14.0
+        load.place _14.1
+        intrinsic Println 2 "FooMinusBar a=%lld foo=%lld\n"
+        make.tuple 0
+        store.place _15
+        load.const 21
+        make.tuple 1
+        store.place _16
+        load.place _16.0
+        intrinsic Println 1 "FooAndBar common=%lld\n"
+        make.tuple 0
+        store.place _17
+        load.const 22
+        load.const 23
+        make.tuple 2
+        store.place _18
+        load.place _18.0
+        load.place _18.1
+        intrinsic Println 2 "InlineRecord tag=%lld value=%lld\n"
+        make.tuple 0
+        store.place _19
+        load.const 24
+        load.const 25
+        load.const 26
+        load.const 27
+        make.tuple 4
+        store.place _20
+        load.const 28
+        load.place _8.0
+        load.place _8.1
+        load.const 29
+        make.tuple 4
+        store.place _21
+        load.const 30
+        store.place _22
+        load.place _20
+        terminator call Local(BytecodePlace { local: 22, projection: [] }) 1 -> _23 then bb1
+      bb1:
+        load.place _23
+        intrinsic Println 1 "FooOrBar left sum=%lld\n"
+        make.tuple 0
+        store.place _24
+        load.place _21
+        terminator call Local(BytecodePlace { local: 22, projection: [] }) 1 -> _25 then bb2
+      bb2:
+        load.place _25
+        intrinsic Println 1 "FooOrBar right sum=%lld\n"
+        make.tuple 0
+        store.place _26
+        load.const 31
+        load.const 32
+        load.const 33
+        load.const 34
+        make.array 4
+        store.place _28
+        load.place _28
+        store.place _27
+        load.const 35
+        store.place _29
+        load.const 36
+        store.place _30
+        load.const 37
+        store.place _31
+        load.const 38
+        store.place _32
+        load.place _27[_29]
+        load.place _27[_30]
+        load.place _27[_31]
+        load.place _27[_32]
+        intrinsic Println 4 "Int4[0]=%lld Int4[1]=%lld Int4[2]=%lld Int4[3]=%lld\n"
+        make.tuple 0
+        store.place _33
+        load.const 39
+        store.place _34
+        load.const 40
+        store.place _35
+        load.const 41
+        store.place _36
+        make.tuple 0
+        store.place _38
+        load.place _38
+        store.place _37
+        load.const 42
+        store.place _39
+        load.const 43
+        store.place _40
+        load.place _34
+        intrinsic Println 1 "LiteralInt %lld\n"
+        make.tuple 0
+        store.place _41
+        load.place _35
+        intrinsic Println 1 "LiteralBool %d\n"
+        make.tuple 0
+        store.place _42
+        load.place _36
+        intrinsic Println 1 "LiteralStr %s\n"
+        make.tuple 0
+        store.place _43
+        load.const 44
+        intrinsic Println 1 "LiteralUnit %s\n"
+        make.tuple 0
+        store.place _44
+        load.place _39
+        intrinsic Println 1 "LiteralNull %s\n"
+        make.tuple 0
+        store.place _45
+        load.place _40
+        intrinsic Println 1 "LiteralStrEnum %s\n"
+        make.tuple 0
+        store.place _46
+        load.const 45
+        load.const 46
+        load.const 47
+        load.const 48
+        make.tuple 4
+        store.place _47
+        load.place _47
+        terminator call Function("describe_optional") 1 -> _48 then bb3
+      bb3:
+        load.place _48
+        intrinsic Println 1 "FooMaybe sum=%lld\n"
+        make.tuple 0
+        store.place _49
+        load.const 49
+        store.place _50
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

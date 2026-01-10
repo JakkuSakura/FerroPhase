@@ -1,0 +1,248 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 16
+    [10] 24
+    [11] 2
+    [12] 3
+    [13] true
+    [14] false
+    [15] 0
+    [16] 0
+    [17] 0
+    [18] 0
+    [19] 255
+    [20] 0
+    [21] 0
+    [22] 16
+    [23] 24
+    [24] 40
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 30)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 04_struct_introspection.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Struct introspection demonstration\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        intrinsic Println 0 "=== Struct Introspection ===\n"
+        make.tuple 0
+        store.place _6
+        load.const 9
+        intrinsic Println 1 "Point size: %lld bytes\n"
+        make.tuple 0
+        store.place _7
+        load.const 10
+        intrinsic Println 1 "Color size: %lld bytes\n"
+        make.tuple 0
+        store.place _8
+        load.const 11
+        intrinsic Println 1 "Point fields: %lld\n"
+        make.tuple 0
+        store.place _9
+        load.const 12
+        intrinsic Println 1 "Color fields: %lld\n"
+        make.tuple 0
+        store.place _10
+        load.const 13
+        intrinsic Println 1 "Point has x: %d\n"
+        make.tuple 0
+        store.place _11
+        load.const 14
+        intrinsic Println 1 "Point has z: %d\n"
+        make.tuple 0
+        store.place _12
+        load.const 15
+        intrinsic Println 1 "Point methods: %lld\n"
+        make.tuple 0
+        store.place _13
+        load.const 16
+        intrinsic Println 1 "Color methods: %lld\n"
+        make.tuple 0
+        store.place _14
+        intrinsic Println 0 "\n✓ Introspection completed!\n"
+        make.tuple 0
+        store.place _15
+        intrinsic Println 0 "\n=== Transpilation Demo ===\n"
+        make.tuple 0
+        store.place _16
+        load.const 17
+        load.const 18
+        make.tuple 2
+        store.place _17
+        load.const 19
+        load.const 20
+        load.const 21
+        make.tuple 3
+        store.place _18
+        intrinsic Println 0 "Transpilation target sizes:\n"
+        make.tuple 0
+        store.place _19
+        load.const 22
+        store.place _20
+        load.place _20
+        intrinsic Println 1 "  Point: %llu bytes (const)\n"
+        make.tuple 0
+        store.place _21
+        load.const 23
+        store.place _22
+        load.place _22
+        intrinsic Println 1 "  Color: %llu bytes (const)\n"
+        make.tuple 0
+        store.place _23
+        load.const 24
+        store.place _24
+        load.place _24
+        intrinsic Println 1 "  Combined: %llu bytes\n"
+        make.tuple 0
+        store.place _25
+        intrinsic Println 0 "Runtime instances:\n"
+        make.tuple 0
+        store.place _26
+        load.place _17.0
+        load.place _17.1
+        intrinsic Println 2 "  Origin: (%f, %f)\n"
+        make.tuple 0
+        store.place _27
+        load.place _18.0
+        load.place _18.1
+        load.place _18.2
+        intrinsic Println 3 "  Red: rgb(%hhu, %hhu, %hhu)\n"
+        make.tuple 0
+        store.place _28
+        intrinsic Println 0 "\n✓ Introspection enables external code generation!\n"
+        make.tuple 0
+        store.place _29
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

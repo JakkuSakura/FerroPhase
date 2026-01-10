@@ -1,0 +1,273 @@
+fp-bytecode {
+  const_pool:
+    [0] "adds_two_numbers"
+    [1] fn adds_two_numbers
+    [2] "string_concat"
+    [3] fn string_concat
+    [4] "adds_two_numbers"
+    [5] fn adds_two_numbers
+    [6] "string_concat"
+    [7] fn string_concat
+    [8] 0
+    [9] 0
+    [10] 0
+    [11] 2
+    [12] true
+    [13] false
+    [14] 1
+    [15] 1
+    [16] 1
+    [17] 1
+    [18] 2
+    [19] 3
+    [20] "assertion failed: left != right"
+    [21] "hello, "
+    [22] "world"
+    [23] "hello, world"
+    [24] "assertion failed: left != right"
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 26)
+      bb0:
+        load.const 0
+        load.const 1
+        make.tuple 2
+        store.place _3
+        load.const 2
+        load.const 3
+        make.tuple 2
+        store.place _4
+        load.place _3
+        load.place _4
+        make.array 2
+        store.place _2
+        load.const 4
+        load.const 5
+        make.tuple 2
+        store.place _6
+        load.const 6
+        load.const 7
+        make.tuple 2
+        store.place _7
+        load.place _6
+        load.place _7
+        make.array 2
+        store.place _5
+        load.place _5
+        store.place _1
+        load.const 8
+        store.place _8
+        load.const 9
+        store.place _9
+        load.const 10
+        store.place _10
+        terminator jump bb1
+      bb1:
+        load.const 11
+        store.place _12
+        load.place _10
+        load.place _12
+        binop Lt
+        store.place _11
+        load.place _11
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _10
+        store.place _14
+        load.place _10
+        store.place _15
+        load.place _1[_15]
+        store.place _13
+        load.place _13
+        make.tuple 1
+        store.place _17
+        load.place _17
+        terminator call Function("__closure0_call") 1 -> _19 then bb4
+      bb3:
+        load.place _8
+        load.place _9
+        binop Add
+        store.place _24
+        load.place _24
+        store.place _23
+        load.place _8
+        load.place _9
+        load.place _23
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _25
+        load.place _23
+        load.place _8
+        load.place _9
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 12
+        store.place _18
+        terminator jump bb6
+      bb5:
+        load.const 13
+        store.place _18
+        terminator jump bb6
+      bb6:
+        load.place _18
+        store.place _16
+        load.place _16
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _8
+        load.const 14
+        binop Add
+        store.place _8
+        load.place _13.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _21
+        make.tuple 0
+        store.place _20
+        terminator jump bb9
+      bb8:
+        load.place _9
+        load.const 15
+        binop Add
+        store.place _9
+        load.place _13.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _22
+        make.tuple 0
+        store.place _20
+        terminator jump bb9
+      bb9:
+        load.place _10
+        load.const 16
+        binop Add
+        store.place _10
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 9)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 24_tests.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: minimal test harness using assert! macros\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: both tests pass with no assertion failures\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: test report shows 2 passed\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        intrinsic Println 0 "Running tests via std::test::run_tests:\n"
+        make.tuple 0
+        store.place _6
+        terminator call Function("std::test::run_tests") 0 -> _7 then bb1
+      bb1:
+        load.place _7.1
+        load.place _7.2
+        load.place _7.0
+        intrinsic Println 3 "Summary: %lld passed, %lld failed, %lld total\n"
+        make.tuple 0
+        store.place _8
+        terminator return
+    fn adds_two_numbers(params: 0, locals: 12)
+      bb0:
+        load.const 17
+        load.const 18
+        binop Add
+        store.place _2
+        load.place _2
+        store.place _1
+        load.const 19
+        store.place _3
+        load.place _1
+        store.place _5
+        load.place _3
+        store.place _6
+        load.place _5
+        load.place _6
+        binop Eq
+        store.place _9
+        load.place _9
+        unop Not
+        store.place _8
+        load.place _8
+        terminator switch [1:bb1] otherwise bb2
+      bb1:
+        load.const 20
+        terminator call Function("fp_panic") 1 -> _10 then bb4
+      bb2:
+        make.tuple 0
+        store.place _7
+        terminator jump bb3
+      bb3:
+        make.tuple 0
+        store.place _11
+        make.tuple 0
+        store.place _4
+        terminator return
+      bb4:
+        terminator unreachable
+      bb5:
+        make.tuple 0
+        store.place _7
+        terminator jump bb3
+    fn string_concat(params: 0, locals: 11)
+      bb0:
+        load.const 21
+        load.const 22
+        binop Add
+        store.place _2
+        load.place _2
+        store.place _1
+        load.place _1
+        store.place _4
+        load.const 23
+        store.place _5
+        load.place _4
+        load.place _5
+        binop Eq
+        store.place _8
+        load.place _8
+        unop Not
+        store.place _7
+        load.place _7
+        terminator switch [1:bb1] otherwise bb2
+      bb1:
+        load.const 24
+        terminator call Function("fp_panic") 1 -> _9 then bb4
+      bb2:
+        make.tuple 0
+        store.place _6
+        terminator jump bb3
+      bb3:
+        make.tuple 0
+        store.place _10
+        make.tuple 0
+        store.place _3
+        terminator return
+      bb4:
+        terminator unreachable
+      bb5:
+        make.tuple 0
+        store.place _6
+        terminator jump bb3
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

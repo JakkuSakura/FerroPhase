@@ -7346,15 +7346,15 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
 
-                    let place = if let Some(place_info) = self.lower_place(&arg.value)? {
+                    let place = if let Some(place_info) = self.lower_place(arg)? {
                         place_info.place
                     } else {
                         let arg_ty = expected.cloned().unwrap_or_else(|| Ty {
                             kind: TyKind::Tuple(Vec::new()),
                         });
-                        let local_id = self.allocate_temp(arg_ty.clone(), arg.value.span);
+                        let local_id = self.allocate_temp(arg_ty.clone(), arg.span);
                         let temp_place = mir::Place::from_local(local_id);
-                        self.lower_expr_into_place(&arg.value, temp_place.clone(), &arg_ty)?;
+                        self.lower_expr_into_place(arg, temp_place.clone(), &arg_ty)?;
                         temp_place
                     };
 
@@ -7902,7 +7902,7 @@ impl<'a> BodyBuilder<'a> {
                 if args.is_empty() {
                     "panic! macro triggered".to_string()
                 } else if args.len() == 1 {
-                    match arg_values[0].kind {
+                    match &args[0].value.kind {
                         hir::ExprKind::Literal(hir::Lit::Str(text)) => text.clone(),
                         _ => {
                             self.lowering.emit_error(
@@ -10058,7 +10058,7 @@ impl<'a> BodyBuilder<'a> {
                 let mut input_tys = Vec::with_capacity(args.len() + 1);
                 lowered_args.push(receiver_operand.operand.clone());
                 input_tys.push(receiver_operand.ty.clone());
-                for arg in args.iter() {
+                for arg in args {
                     let lowered = self.lower_operand(&arg.value, None)?;
                     input_tys.push(lowered.ty.clone());
                     lowered_args.push(lowered.operand);

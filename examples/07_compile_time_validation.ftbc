@@ -1,0 +1,222 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 24
+    [10] 3
+    [11] true
+    [12] false
+    [13] 32
+    [14] 4
+    [15] true
+    [16] "struct Data"
+    [17] "i64\n"
+    [18] "u8\n"
+    [19] true
+    [20] true
+    [21] true
+    [22] true
+    [23] 56
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn main(params: 0, locals: 27)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 07_compile_time_validation.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Compile-time validation using const expressions and introspection\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        load.const 9
+        store.place _6
+        load.const 10
+        store.place _7
+        load.place _6
+        load.place _7
+        intrinsic Println 2 "data: sizeof=%llu, fields=%llu\n"
+        make.tuple 0
+        store.place _8
+        load.const 11
+        store.place _9
+        load.const 12
+        store.place _10
+        load.place _9
+        load.place _10
+        intrinsic Println 2 "data: has_a=%d, has_x=%d\n"
+        make.tuple 0
+        store.place _11
+        load.const 13
+        store.place _12
+        load.const 14
+        store.place _13
+        load.const 15
+        store.place _14
+        load.place _12
+        load.place _13
+        load.place _14
+        intrinsic Println 3 "header: sizeof=%llu, fields=%llu, has_version=%d\n"
+        make.tuple 0
+        store.place _15
+        load.const 16
+        store.place _16
+        load.const 17
+        store.place _17
+        load.const 18
+        store.place _18
+        load.place _16
+        load.place _17
+        load.place _18
+        intrinsic Println 3 "types: data='%s' a='%s' version='%s'\n"
+        make.tuple 0
+        store.place _19
+        load.const 19
+        store.place _20
+        load.place _20
+        intrinsic Println 1 "data has to_string: %d\n"
+        make.tuple 0
+        store.place _21
+        load.const 20
+        store.place _22
+        load.const 21
+        store.place _23
+        load.const 22
+        store.place _24
+        load.const 23
+        store.place _25
+        load.place _22
+        load.place _23
+        load.place _24
+        load.place _25
+        intrinsic Println 4 "layout: data_ok=%d, header_ok=%d, total_ok=%d, total_size=%llu\n"
+        make.tuple 0
+        store.place _26
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}

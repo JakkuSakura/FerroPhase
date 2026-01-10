@@ -1,11 +1,11 @@
+use crate::intrinsics::IntrinsicCallPayload;
+use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use std::fmt::{self, Formatter};
 
-use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
-
 use super::{
-    BinOp, Block, Body, Const, Enum, Expr, ExprKind, Function, GenericArg, GenericParamKind,
-    Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path, Program, Stmt, StmtKind,
-    Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
+    BinOp, Block, Body, Const, Enum, Expr, ExprKind, FormatTemplatePart, Function, GenericArg,
+    GenericParamKind, Generics, Impl, ImplItemKind, Item, ItemKind, Lit, Pat, PatKind, Path,
+    Program, Stmt, StmtKind, Struct, TypeExpr, TypeExprKind, UnOp, Visibility,
 };
 
 impl PrettyPrintable for Program {
@@ -472,7 +472,7 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
             )
         }
         ExprKind::IntrinsicCall(call) => match &call.payload {
-            crate::intrinsics::IntrinsicCallPayload::Format { template } => {
+            IntrinsicCallPayload::Format { template } => {
                 let args = template
                     .args
                     .iter()
@@ -558,12 +558,12 @@ fn format_lit(lit: &Lit) -> String {
     }
 }
 
-fn summarize_format_parts(parts: &[crate::intrinsics::FormatTemplatePart]) -> String {
+fn summarize_format_parts(parts: &[FormatTemplatePart]) -> String {
     let mut buf = String::new();
     for part in parts {
         match part {
-            crate::intrinsics::FormatTemplatePart::Literal(text) => buf.push_str(text),
-            crate::intrinsics::FormatTemplatePart::Placeholder(_) => buf.push_str("{..}"),
+            FormatTemplatePart::Literal(text) => buf.push_str(text),
+            FormatTemplatePart::Placeholder(_) => buf.push_str("{..}"),
         }
     }
     buf

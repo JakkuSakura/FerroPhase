@@ -1,0 +1,424 @@
+fp-bytecode {
+  const_pool:
+    [0] 0
+    [1] 0
+    [2] 0
+    [3] 0
+    [4] true
+    [5] false
+    [6] 1
+    [7] 1
+    [8] 1
+    [9] 0
+    [10] "red"
+    [11] 1
+    [12] "green"
+    [13] 2
+    [14] "red rgb"
+    [15] 2
+    [16] "custom rgb"
+    [17] 0
+    [18] "zero"
+    [19] 0
+    [20] "negative"
+    [21] 2
+    [22] 0
+    [23] "even"
+    [24] "odd"
+    [25] 0
+    [26] 1
+    [27] 0
+    [28] 0
+    [29] 0
+    [30] 0
+    [31] 2
+    [32] 128
+    [33] 64
+    [34] 32
+    [35] 5
+    [36] 0
+    [37] 4
+    [38] 7
+    [39] 0
+    [40] 42
+    [41] 0
+    [42] 1
+    [43] 0
+    [44] 99
+    [45] 0
+  functions:
+    fn __closure0_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call Function("TestCase::run") 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 0
+        store.place _4
+        load.const 1
+        store.place _5
+        load.const 2
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 3
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
+        load.place _9
+        make.tuple 1
+        store.place _13
+        load.place _13
+        terminator call Function("__closure0_call") 1 -> _15 then bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _20
+        load.place _20
+        store.place _19
+        load.place _4
+        load.place _5
+        load.place _19
+        intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _21
+        load.place _19
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        load.const 4
+        store.place _14
+        terminator jump bb6
+      bb5:
+        load.const 5
+        store.place _14
+        terminator jump bb6
+      bb6:
+        load.place _14
+        store.place _12
+        load.place _12
+        terminator switch [1:bb7] otherwise bb8
+      bb7:
+        load.place _4
+        load.const 6
+        binop Add
+        store.place _4
+        load.place _9.0
+        intrinsic Println 1 "  %s ... ok\n"
+        make.tuple 0
+        store.place _17
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb8:
+        load.place _5
+        load.const 7
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _18
+        make.tuple 0
+        store.place _16
+        terminator jump bb9
+      bb9:
+        load.place _6
+        load.const 8
+        binop Add
+        store.place _6
+        terminator jump bb1
+    fn std::test::run(params: 0, locals: 1)
+      bb0:
+        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+      bb1:
+        terminator return
+    fn describe(params: 1, locals: 10)
+      bb0:
+        load.place _1
+        store.place _2
+        load.place _2.0
+        load.const 9
+        binop Eq
+        store.place _3
+        load.place _3
+        terminator switch [1:bb2] otherwise bb3
+      bb1:
+        terminator return
+      bb2:
+        load.const 10
+        store.place _0
+        terminator jump bb1
+      bb3:
+        load.place _2.0
+        load.const 11
+        binop Eq
+        store.place _4
+        load.place _4
+        terminator switch [1:bb4] otherwise bb5
+      bb4:
+        load.const 12
+        store.place _0
+        terminator jump bb1
+      bb5:
+        load.place _2.0
+        load.const 13
+        binop Eq
+        store.place _5
+        load.place _5
+        terminator switch [1:bb6] otherwise bb7
+      bb6:
+        load.const 14
+        store.place _0
+        terminator jump bb1
+      bb7:
+        load.place _2.0
+        load.const 15
+        binop Eq
+        store.place _6
+        load.place _6
+        terminator switch [1:bb8] otherwise bb9
+      bb8:
+        load.place _2.1
+        store.place _7
+        load.place _2.2
+        store.place _8
+        load.place _2.3
+        store.place _9
+        load.const 16
+        store.place _0
+        terminator jump bb1
+      bb9:
+        make.tuple 0
+        store.place _0
+        terminator jump bb1
+    fn classify(params: 1, locals: 9)
+      bb0:
+        load.place _1
+        store.place _2
+        load.place _2
+        load.const 17
+        binop Eq
+        store.place _3
+        load.place _3
+        terminator switch [1:bb2] otherwise bb3
+      bb1:
+        terminator return
+      bb2:
+        load.const 18
+        store.place _0
+        terminator jump bb1
+      bb3:
+        terminator jump bb4
+      bb4:
+        load.place _2
+        store.place _4
+        load.place _4
+        load.const 19
+        binop Lt
+        store.place _5
+        load.place _5
+        terminator switch [1:bb6] otherwise bb5
+      bb5:
+        terminator jump bb7
+      bb6:
+        load.const 20
+        store.place _0
+        terminator jump bb1
+      bb7:
+        load.place _2
+        store.place _6
+        load.place _6
+        load.const 21
+        binop Rem
+        store.place _8
+        load.place _8
+        load.const 22
+        binop Eq
+        store.place _7
+        load.place _7
+        terminator switch [1:bb9] otherwise bb8
+      bb8:
+        terminator jump bb10
+      bb9:
+        load.const 23
+        store.place _0
+        terminator jump bb1
+      bb10:
+        load.const 24
+        store.place _0
+        terminator jump bb1
+      bb11:
+        terminator return
+    fn unwrap_or(params: 2, locals: 7)
+      bb0:
+        load.place _1
+        store.place _3
+        load.place _3.0
+        load.const 25
+        binop Eq
+        store.place _4
+        load.place _4
+        terminator switch [1:bb2] otherwise bb3
+      bb1:
+        terminator return
+      bb2:
+        load.place _3.1
+        store.place _5
+        load.place _5
+        store.place _0
+        terminator jump bb1
+      bb3:
+        load.place _3.0
+        load.const 26
+        binop Eq
+        store.place _6
+        load.place _6
+        terminator switch [1:bb4] otherwise bb5
+      bb4:
+        load.place _2
+        store.place _0
+        terminator jump bb1
+      bb5:
+        make.tuple 0
+        store.place _0
+        terminator jump bb1
+    fn main(params: 0, locals: 32)
+      bb0:
+        intrinsic Println 0 "📘 Tutorial: 12_pattern_matching.fp\n"
+        make.tuple 0
+        store.place _1
+        intrinsic Println 0 "🧭 Focus: Pattern matching: match expressions with guards and destructuring\n"
+        make.tuple 0
+        store.place _2
+        intrinsic Println 0 "🧪 What to look for: labeled outputs below\n"
+        make.tuple 0
+        store.place _3
+        intrinsic Println 0 "✅ Expectation: outputs match labels\n"
+        make.tuple 0
+        store.place _4
+        intrinsic Println 0 "\n"
+        make.tuple 0
+        store.place _5
+        load.const 27
+        load.const 28
+        load.const 29
+        load.const 30
+        make.tuple 4
+        store.place _7
+        load.place _7
+        store.place _6
+        load.const 31
+        load.const 32
+        load.const 33
+        load.const 34
+        make.tuple 4
+        store.place _8
+        load.place _6
+        store.place _10
+        load.place _10
+        terminator call Function("describe") 1 -> _9 then bb1
+      bb1:
+        load.place _9
+        intrinsic Println 1 "describe(red) = %s\n"
+        make.tuple 0
+        store.place _11
+        load.place _8
+        store.place _13
+        load.place _13
+        terminator call Function("describe") 1 -> _12 then bb2
+      bb2:
+        load.place _12
+        intrinsic Println 1 "describe(rgb) = %s\n"
+        make.tuple 0
+        store.place _14
+        load.const 35
+        unop Neg
+        store.place _16
+        load.place _16
+        terminator call Function("classify") 1 -> _15 then bb3
+      bb3:
+        load.place _15
+        intrinsic Println 1 "classify(-5) = %s\n"
+        make.tuple 0
+        store.place _17
+        load.const 36
+        terminator call Function("classify") 1 -> _18 then bb4
+      bb4:
+        load.place _18
+        intrinsic Println 1 "classify(0) = %s\n"
+        make.tuple 0
+        store.place _19
+        load.const 37
+        terminator call Function("classify") 1 -> _20 then bb5
+      bb5:
+        load.place _20
+        intrinsic Println 1 "classify(4) = %s\n"
+        make.tuple 0
+        store.place _21
+        load.const 38
+        terminator call Function("classify") 1 -> _22 then bb6
+      bb6:
+        load.place _22
+        intrinsic Println 1 "classify(7) = %s\n"
+        make.tuple 0
+        store.place _23
+        load.const 39
+        load.const 40
+        make.tuple 2
+        store.place _25
+        load.place _25
+        load.const 41
+        terminator call Function("unwrap_or") 2 -> _24 then bb7
+      bb7:
+        load.place _24
+        intrinsic Println 1 "unwrap_or(Some(42), 0) = %lld\n"
+        make.tuple 0
+        store.place _26
+        load.const 42
+        load.const 43
+        make.tuple 2
+        store.place _28
+        load.place _28
+        load.const 44
+        terminator call Function("unwrap_or") 2 -> _27 then bb8
+      bb8:
+        load.place _27
+        intrinsic Println 1 "unwrap_or(None, 99) = %lld\n"
+        make.tuple 0
+        store.place _29
+        load.const 45
+        store.place _30
+        load.place _30
+        intrinsic Println 1 "0x%06X\n"
+        make.tuple 0
+        store.place _31
+        terminator return
+    fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+  entry: main
+}
