@@ -12,7 +12,6 @@ fi
 
 for f in examples/*.fp; do
   echo "==> ${f}"
-  cargo run --bin fp --release -- compile --backend text-bytecode --save-intermediates "${f}"
   cargo run --bin fp --release -- compile --backend bytecode --save-intermediates "${f}"
   fbc="${f%.fp}.fbc"
   if [[ ! -f "${fbc}" ]]; then

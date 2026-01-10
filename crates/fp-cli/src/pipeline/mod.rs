@@ -632,21 +632,34 @@ impl Pipeline {
                     let bytecode = fp_bytecode::lower_program(&mir.mir_program).map_err(|err| {
                         CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err))
                     })?;
-                    let bytecode_path = base_path.to_path_buf();
-                    if let Some(parent) = bytecode_path.parent() {
+                    let output_path = base_path.to_path_buf();
+                    if let Some(parent) = output_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    if bytecode_path.extension().and_then(|ext| ext.to_str()) == Some("ftbc") {
+                    let wants_text = output_path
+                        .extension()
+                        .and_then(|ext| ext.to_str())
+                        == Some("ftbc");
+
+                    if options.save_intermediates || wants_text {
                         let rendered = fp_bytecode::format_program(&bytecode);
-                        fs::write(&bytecode_path, rendered)?;
-                    } else {
+                        let text_path = output_path.with_extension("ftbc");
+                        fs::write(&text_path, rendered)?;
+                    }
+
+                    if !wants_text || options.save_intermediates {
                         let bytes = fp_bytecode::encode_file(&bytecode).map_err(|err| {
                             CliError::Compilation(format!("Bytecode encoding failed: {}", err))
                         })?;
-                        fs::write(&bytecode_path, bytes)?;
+                        let binary_path = if wants_text {
+                            output_path.with_extension("fbc")
+                        } else {
+                            output_path.clone()
+                        };
+                        fs::write(&binary_path, bytes)?;
                     }
 
-                    PipelineOutput::Binary(bytecode_path)
+                    PipelineOutput::Binary(output_path)
                 }
                 PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
             }

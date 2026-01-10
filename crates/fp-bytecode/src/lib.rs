@@ -594,7 +594,16 @@ fn parse_function_header_line(line: &str) -> Result<(String, u32, u32), Bytecode
             message: format!("invalid function name: {}", line),
         });
     }
-    let tail = tail.trim_end_matches(')').trim();
+    let tail = tail.trim();
+    let (tail, after) = tail.rsplit_once(')').ok_or_else(|| BytecodeError::Format {
+        message: format!("invalid function header: {}", line),
+    })?;
+    if !after.trim().is_empty() {
+        return Err(BytecodeError::Format {
+            message: format!("invalid function header: {}", line),
+        });
+    }
+    let tail = tail.trim();
     let mut params = None;
     let mut locals = None;
     for part in tail.split(',') {
@@ -849,7 +858,7 @@ fn parse_call(rest: &str) -> Result<BytecodeTerminator, BytecodeError> {
         before_arrow.rsplit_once(' ').ok_or_else(|| BytecodeError::Format {
             message: format!("invalid call format: {}", rest),
         })?;
-    let callee = parse_callee_debug(callee_part.trim())?;
+    let callee = parse_callee(callee_part.trim())?;
     let arg_count = parse_u32(arg_count_part.trim())?;
     let destination = if dest_part.trim() == "_" {
         None
@@ -878,7 +887,15 @@ fn parse_intrinsic(rest: &str) -> Result<BytecodeInstr, BytecodeError> {
     let kind = parse_intrinsic_kind(kind_part)?;
     let arg_count = parse_u32(count_part)?;
     let format = match format_part {
-        Some(raw) if !raw.is_empty() => Some(parse_debug_string(raw)?.0),
+        Some(raw) if !raw.is_empty() => {
+            let (value, rest) = parse_debug_string(raw)?;
+            if !rest.trim().is_empty() {
+                return Err(BytecodeError::Format {
+                    message: format!("invalid intrinsic format: {}", rest),
+                });
+            }
+            Some(value)
+        }
         _ => None,
     };
 
@@ -997,6 +1014,24 @@ fn parse_place(raw: &str) -> Result<BytecodePlace, BytecodeError> {
     Ok(BytecodePlace { local, projection })
 }
 
+fn parse_callee(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix("fn ") {
+        let name = rest.trim();
+        if name.is_empty() {
+            return Err(BytecodeError::Format {
+                message: format!("invalid function callee: {}", raw),
+            });
+        }
+        return Ok(BytecodeCallee::Function(name.to_string()));
+    }
+    if let Some(rest) = raw.strip_prefix("local ") {
+        let place = parse_place(rest.trim())?;
+        return Ok(BytecodeCallee::Local(place));
+    }
+    parse_callee_debug(raw)
+}
+
 fn parse_callee_debug(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
     if let Some(inner) = raw.strip_prefix("Function(").and_then(|s| s.strip_suffix(')')) {
         let (value, rest) = parse_debug_string(inner.trim())?;
@@ -1066,6 +1101,24 @@ fn parse_callee_debug(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
 
 fn parse_const_value(raw: &str) -> Result<BytecodeConst, BytecodeError> {
     let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix("u64 ") {
+        let value = rest.trim().parse::<u64>().map_err(|_| BytecodeError::Format {
+            message: format!("invalid u64 constant: {}", raw),
+        })?;
+        return Ok(BytecodeConst::UInt(value));
+    }
+    if let Some(rest) = raw.strip_prefix("i64 ") {
+        let value = rest.trim().parse::<i64>().map_err(|_| BytecodeError::Format {
+            message: format!("invalid i64 constant: {}", raw),
+        })?;
+        return Ok(BytecodeConst::Int(value));
+    }
+    if let Some(rest) = raw.strip_prefix("f64 ") {
+        let value = rest.trim().parse::<f64>().map_err(|_| BytecodeError::Format {
+            message: format!("invalid f64 constant: {}", raw),
+        })?;
+        return Ok(BytecodeConst::Float(value));
+    }
     if raw == "()" {
         return Ok(BytecodeConst::Unit);
     }
@@ -1785,8 +1838,8 @@ fn format_const(value: &BytecodeConst) -> String {
         BytecodeConst::Unit => "()".to_string(),
         BytecodeConst::Bool(value) => value.to_string(),
         BytecodeConst::Int(value) => value.to_string(),
-        BytecodeConst::UInt(value) => value.to_string(),
-        BytecodeConst::Float(value) => value.to_string(),
+        BytecodeConst::UInt(value) => format!("u64 {}", value),
+        BytecodeConst::Float(value) => format!("f64 {}", value),
         BytecodeConst::Str(value) => format!("{:?}", value),
         BytecodeConst::Function(name) => format!("fn {}", name),
         BytecodeConst::Null => "null".to_string(),
@@ -1875,12 +1928,22 @@ fn format_terminator(term: &BytecodeTerminator) -> String {
                 .map(format_place)
                 .unwrap_or_else(|| "_".to_string());
             format!(
-                "call {:?} {} -> {} then bb{}",
-                callee, arg_count, dest, target
+                "call {} {} -> {} then bb{}",
+                format_callee(callee),
+                arg_count,
+                dest,
+                target
             )
         }
         BytecodeTerminator::Abort => "abort".to_string(),
         BytecodeTerminator::Unreachable => "unreachable".to_string(),
+    }
+}
+
+fn format_callee(callee: &BytecodeCallee) -> String {
+    match callee {
+        BytecodeCallee::Function(name) => format!("fn {}", name),
+        BytecodeCallee::Local(place) => format!("local {}", format_place(place)),
     }
 }
 

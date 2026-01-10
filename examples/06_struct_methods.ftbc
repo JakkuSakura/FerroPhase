@@ -3,7 +3,7 @@ fp-bytecode {
     [0] 0
     [1] 0
     [2] 0
-    [3] 0
+    [3] u64 0
     [4] true
     [5] false
     [6] 1
@@ -22,7 +22,7 @@ fp-bytecode {
     fn __closure0_call(params: 1, locals: 2)
       bb0:
         load.place _1.0
-        terminator call Function("TestCase::run") 1 -> _0 then bb1
+        terminator call fn TestCase::run 1 -> _0 then bb1
       bb1:
         terminator return
     fn std::test::run_tests(params: 0, locals: 22)
@@ -60,7 +60,7 @@ fp-bytecode {
         make.tuple 1
         store.place _13
         load.place _13
-        terminator call Function("__closure0_call") 1 -> _15 then bb4
+        terminator call fn __closure0_call 1 -> _15 then bb4
       bb3:
         load.place _4
         load.place _5
@@ -125,7 +125,7 @@ fp-bytecode {
         terminator jump bb1
     fn std::test::run(params: 0, locals: 1)
       bb0:
-        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+        terminator call fn std::test::run_tests 0 -> _0 then bb1
       bb1:
         terminator return
     fn Point::new(params: 2, locals: 3)
@@ -227,11 +227,11 @@ fp-bytecode {
         store.place _6
         load.const 10
         load.const 11
-        terminator call Function("Point::new") 2 -> _7 then bb1
+        terminator call fn Point::new 2 -> _7 then bb1
       bb1:
         load.const 12
         load.const 13
-        terminator call Function("Point::new") 2 -> _8 then bb2
+        terminator call fn Point::new 2 -> _8 then bb2
       bb2:
         load.place _7.0
         load.place _7.1
@@ -251,7 +251,7 @@ fp-bytecode {
         load.place _12
         load.const 15
         load.place _13
-        terminator call Function("Point::translate") 3 -> _11 then bb3
+        terminator call fn Point::translate 3 -> _11 then bb3
       bb3:
         load.place _7.0
         load.place _7.1
@@ -264,7 +264,7 @@ fp-bytecode {
         store.place _17
         load.place _16
         load.place _17
-        terminator call Function("Point::distance2") 2 -> _15 then bb4
+        terminator call fn Point::distance2 2 -> _15 then bb4
       bb4:
         load.place _15
         intrinsic Println 1 "Distance²(p1, p2) = %lld\n"
@@ -272,7 +272,7 @@ fp-bytecode {
         store.place _18
         load.const 16
         load.const 17
-        terminator call Function("Rectangle::new") 2 -> _19 then bb5
+        terminator call fn Rectangle::new 2 -> _19 then bb5
       bb5:
         load.place _19.0
         load.place _19.1
@@ -282,7 +282,7 @@ fp-bytecode {
         load.place _19
         store.place _22
         load.place _22
-        terminator call Function("Rectangle::area") 1 -> _21 then bb6
+        terminator call fn Rectangle::area 1 -> _21 then bb6
       bb6:
         load.place _21
         intrinsic Println 1 "  area = %lld\n"
@@ -291,7 +291,7 @@ fp-bytecode {
         load.place _19
         store.place _25
         load.place _25
-        terminator call Function("Rectangle::perimeter") 1 -> _24 then bb7
+        terminator call fn Rectangle::perimeter 1 -> _24 then bb7
       bb7:
         load.place _24
         intrinsic Println 1 "  perimeter = %lld\n"
@@ -300,7 +300,7 @@ fp-bytecode {
         load.place _19
         store.place _28
         load.place _28
-        terminator call Function("Rectangle::is_square") 1 -> _27 then bb8
+        terminator call fn Rectangle::is_square 1 -> _27 then bb8
       bb8:
         load.place _27
         intrinsic Println 1 "  is_square = %d\n"

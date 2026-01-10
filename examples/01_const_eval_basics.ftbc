@@ -3,7 +3,7 @@ fp-bytecode {
     [0] 0
     [1] 0
     [2] 0
-    [3] 0
+    [3] u64 0
     [4] true
     [5] false
     [6] 1
@@ -26,7 +26,7 @@ fp-bytecode {
     fn __closure0_call(params: 1, locals: 2)
       bb0:
         load.place _1.0
-        terminator call Function("TestCase::run") 1 -> _0 then bb1
+        terminator call fn TestCase::run 1 -> _0 then bb1
       bb1:
         terminator return
     fn std::test::run_tests(params: 0, locals: 22)
@@ -64,7 +64,7 @@ fp-bytecode {
         make.tuple 1
         store.place _13
         load.place _13
-        terminator call Function("__closure0_call") 1 -> _15 then bb4
+        terminator call fn __closure0_call 1 -> _15 then bb4
       bb3:
         load.place _4
         load.place _5
@@ -129,7 +129,7 @@ fp-bytecode {
         terminator jump bb1
     fn std::test::run(params: 0, locals: 1)
       bb0:
-        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+        terminator call fn std::test::run_tests 0 -> _0 then bb1
       bb1:
         terminator return
     fn main(params: 0, locals: 21)

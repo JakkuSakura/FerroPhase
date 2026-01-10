@@ -3,7 +3,7 @@ fp-bytecode {
     [0] 0
     [1] 0
     [2] 0
-    [3] 0
+    [3] u64 0
     [4] true
     [5] false
     [6] 1
@@ -28,13 +28,13 @@ fp-bytecode {
     [25] 0
     [26] 1
     [27] 0
-    [28] 0
-    [29] 0
-    [30] 0
+    [28] u64 0
+    [29] u64 0
+    [30] u64 0
     [31] 2
-    [32] 128
-    [33] 64
-    [34] 32
+    [32] u64 128
+    [33] u64 64
+    [34] u64 32
     [35] 5
     [36] 0
     [37] 4
@@ -50,7 +50,7 @@ fp-bytecode {
     fn __closure0_call(params: 1, locals: 2)
       bb0:
         load.place _1.0
-        terminator call Function("TestCase::run") 1 -> _0 then bb1
+        terminator call fn TestCase::run 1 -> _0 then bb1
       bb1:
         terminator return
     fn std::test::run_tests(params: 0, locals: 22)
@@ -88,7 +88,7 @@ fp-bytecode {
         make.tuple 1
         store.place _13
         load.place _13
-        terminator call Function("__closure0_call") 1 -> _15 then bb4
+        terminator call fn __closure0_call 1 -> _15 then bb4
       bb3:
         load.place _4
         load.place _5
@@ -153,7 +153,7 @@ fp-bytecode {
         terminator jump bb1
     fn std::test::run(params: 0, locals: 1)
       bb0:
-        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+        terminator call fn std::test::run_tests 0 -> _0 then bb1
       bb1:
         terminator return
     fn describe(params: 1, locals: 10)
@@ -340,7 +340,7 @@ fp-bytecode {
         load.place _6
         store.place _10
         load.place _10
-        terminator call Function("describe") 1 -> _9 then bb1
+        terminator call fn describe 1 -> _9 then bb1
       bb1:
         load.place _9
         intrinsic Println 1 "describe(red) = %s\n"
@@ -349,7 +349,7 @@ fp-bytecode {
         load.place _8
         store.place _13
         load.place _13
-        terminator call Function("describe") 1 -> _12 then bb2
+        terminator call fn describe 1 -> _12 then bb2
       bb2:
         load.place _12
         intrinsic Println 1 "describe(rgb) = %s\n"
@@ -359,28 +359,28 @@ fp-bytecode {
         unop Neg
         store.place _16
         load.place _16
-        terminator call Function("classify") 1 -> _15 then bb3
+        terminator call fn classify 1 -> _15 then bb3
       bb3:
         load.place _15
         intrinsic Println 1 "classify(-5) = %s\n"
         make.tuple 0
         store.place _17
         load.const 36
-        terminator call Function("classify") 1 -> _18 then bb4
+        terminator call fn classify 1 -> _18 then bb4
       bb4:
         load.place _18
         intrinsic Println 1 "classify(0) = %s\n"
         make.tuple 0
         store.place _19
         load.const 37
-        terminator call Function("classify") 1 -> _20 then bb5
+        terminator call fn classify 1 -> _20 then bb5
       bb5:
         load.place _20
         intrinsic Println 1 "classify(4) = %s\n"
         make.tuple 0
         store.place _21
         load.const 38
-        terminator call Function("classify") 1 -> _22 then bb6
+        terminator call fn classify 1 -> _22 then bb6
       bb6:
         load.place _22
         intrinsic Println 1 "classify(7) = %s\n"
@@ -392,7 +392,7 @@ fp-bytecode {
         store.place _25
         load.place _25
         load.const 41
-        terminator call Function("unwrap_or") 2 -> _24 then bb7
+        terminator call fn unwrap_or 2 -> _24 then bb7
       bb7:
         load.place _24
         intrinsic Println 1 "unwrap_or(Some(42), 0) = %lld\n"
@@ -404,7 +404,7 @@ fp-bytecode {
         store.place _28
         load.place _28
         load.const 44
-        terminator call Function("unwrap_or") 2 -> _27 then bb8
+        terminator call fn unwrap_or 2 -> _27 then bb8
       bb8:
         load.place _27
         intrinsic Println 1 "unwrap_or(None, 99) = %lld\n"
