@@ -38,9 +38,9 @@ mir::Program {
 
         fn add__mono_d7ad91e83a08a980_29(arg0: f64, arg1: f64) -> f64 [body: body15]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body17]
+        fn BenchCase::run(arg0: <??>) -> () [body: body17]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body18]
+        fn TestCase::run(arg0: <??>) -> () [body: body18]
     bodies:
         body0 { arg_count: 2, locals: 3 }
             return_local: _0

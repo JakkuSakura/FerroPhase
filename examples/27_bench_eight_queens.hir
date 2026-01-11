@@ -75,8 +75,8 @@ hir::Program {
         pub run: fn() -> (),
     }
 
-    pub const std::bench::REGISTRY: [BenchCase; 0] =
-        [];
+    pub const std::bench::REGISTRY: [BenchCase; 1] =
+        [BenchCase { name: "bench_eight_queens", run: bench_eight_queens }];
 
     pub struct std::bench::BenchReport {
         pub total: i64,

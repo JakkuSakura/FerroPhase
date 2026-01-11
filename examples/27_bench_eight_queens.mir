@@ -26,9 +26,9 @@ mir::Program {
 
         fn main() -> () [body: body10]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body11]
+        fn BenchCase::run(arg0: <??>) -> () [body: body11]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body12]
+        fn TestCase::run(arg0: <??>) -> () [body: body12]
     bodies:
         body0 { arg_count: 1, locals: 2 }
             return_local: _0
@@ -60,213 +60,217 @@ mir::Program {
                     terminator: call fn TestCase::run(copy _1[Field(0, Ty { kind: Adt(AdtDef { did: 3, variants: [VariantDef { def_id: 4, ctor_def_id: None, ident: Symbol { name: "TestCase" }, discr: Relative(0), fields: [], ctor_kind: Const, is_recovered: false }], flags: AdtFlags(IS_STRUCT), repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags(0x0), field_shuffle_seed: 0 } }, []) })]) -> _0 then bb1
                 bb1:
                     terminator: return
-        body3 { arg_count: 0, locals: 60 }
+        body3 { arg_count: 0, locals: 62 }
             return_local: _0
             locals:
                 _0: (i64, i64, i64)
                 _1: <??>
                 _2: <??>
-                _3: <??>
-                _4: i64
-                _5: i64
+                _3: (<??>, <??>)
+                _4: <??>
+                _5: (<??>, <??>)
                 _6: i64
-                _7: bool
-                _8: usize
-                _9: (<??>, <??>)
-                _10: i64
-                _11: i64
-                _12: bool
-                _13: f64
-                _14: f64
+                _7: i64
+                _8: i64
+                _9: bool
+                _10: usize
+                _11: (<??>, <??>)
+                _12: i64
+                _13: i64
+                _14: bool
                 _15: f64
                 _16: f64
                 _17: f64
                 _18: f64
-                _19: i64
-                _20: bool
-                _21: f64
+                _19: f64
+                _20: f64
+                _21: i64
                 _22: bool
-                _23: ()
+                _23: f64
                 _24: bool
                 _25: ()
-                _26: ()
-                _27: bool
-                _28: f64
-                _29: f64
+                _26: bool
+                _27: ()
+                _28: ()
+                _29: bool
                 _30: f64
                 _31: f64
-                _32: i64
-                _33: ()
-                _34: bool
-                _35: bool
-                _36: f64
+                _32: f64
+                _33: f64
+                _34: i64
+                _35: ()
+                _36: bool
                 _37: bool
-                _38: bool
-                _39: ()
+                _38: f64
+                _39: bool
                 _40: bool
                 _41: ()
-                _42: ()
-                _43: bool
-                _44: f64
-                _45: f64
+                _42: bool
+                _43: ()
+                _44: ()
+                _45: bool
                 _46: f64
                 _47: f64
-                _48: ()
+                _48: f64
                 _49: f64
-                _50: f64
+                _50: ()
                 _51: f64
                 _52: f64
-                _53: bool
+                _53: f64
                 _54: f64
-                _55: ()
-                _56: ()
-                _57: i64
-                _58: i64
-                _59: ()
+                _55: bool
+                _56: f64
+                _57: ()
+                _58: ()
+                _59: i64
+                _60: i64
+                _61: ()
             blocks:
                 bb0:
-                    s0: _2 = aggregate(array [(<??>, <??>)]; [])
-                    s1: _3 = aggregate(array [(<??>, <??>)]; [])
-                    s2: _1 = copy _3
-                    s3: _4 = 0
-                    s4: _5 = 0
+                    s0: _3 = aggregate(tuple; ["bench_eight_queens", fn bench_eight_queens])
+                    s1: _2 = aggregate(array [(<??>, <??>)]; [copy _3])
+                    s2: _5 = aggregate(tuple; ["bench_eight_queens", fn bench_eight_queens])
+                    s3: _4 = aggregate(array [(<??>, <??>)]; [copy _5])
+                    s4: _1 = copy _4
                     s5: _6 = 0
+                    s6: _7 = 0
+                    s7: _8 = 0
                     terminator: goto -> bb1
                 bb1:
-                    s0: _8 = 0u
-                    s1: _7 = Lt(copy _6, copy _8)
-                    terminator: switch copy _7 [1 -> bb2] otherwise -> bb3
+                    s0: _10 = 1u
+                    s1: _9 = Lt(copy _8, copy _10)
+                    terminator: switch copy _9 [1 -> bb2] otherwise -> bb3
                 bb2:
-                    s0: _10 = copy _6
-                    s1: _11 = copy _6
-                    s2: _9 = copy _1[Index(11)]
-                    s3: _12 = true
-                    s4: _13 = 0.2
-                    s5: _14 = 0.5
-                    s6: _16 = intrinsic TimeNow "" []
-                    s7: _15 = copy _16
-                    s8: _18 = Add(copy _15, copy _13)
-                    s9: _17 = copy _18
-                    s10: _19 = 0
+                    s0: _12 = copy _8
+                    s1: _13 = copy _8
+                    s2: _11 = copy _1[Index(13)]
+                    s3: _14 = true
+                    s4: _15 = 0.2
+                    s5: _16 = 0.5
+                    s6: _18 = intrinsic TimeNow "" []
+                    s7: _17 = copy _18
+                    s8: _20 = Add(copy _17, copy _15)
+                    s9: _19 = copy _20
+                    s10: _21 = 0
                     terminator: goto -> bb4
                 bb3:
-                    s0: _58 = Add(copy _4, copy _5)
-                    s1: _57 = copy _58
+                    s0: _60 = Add(copy _6, copy _7)
+                    s1: _59 = copy _60
                     s2: intrinsic Println "bench result: %lld passed; %lld failed; %lld total
-" [copy _4, copy _5, copy _57]
-                    s3: _59 = aggregate(tuple; [])
-                    s4: _0 = aggregate(tuple; [copy _57, copy _4, copy _5])
+" [copy _6, copy _7, copy _59]
+                    s3: _61 = aggregate(tuple; [])
+                    s4: _0 = aggregate(tuple; [copy _59, copy _6, copy _7])
                     terminator: <none>
                 bb4:
-                    s0: _21 = intrinsic TimeNow "" []
-                    s1: _20 = Lt(copy _21, copy _17)
-                    terminator: switch copy _20 [1 -> bb5] otherwise -> bb6
+                    s0: _23 = intrinsic TimeNow "" []
+                    s1: _22 = Lt(copy _23, copy _19)
+                    terminator: switch copy _22 [1 -> bb5] otherwise -> bb6
                 bb5:
-                    s0: _23 = aggregate(tuple; [copy _9])
-                    terminator: call fn __closure0_call(copy _23) -> _25 then bb7, cleanup -> bb8
+                    s0: _25 = aggregate(tuple; [copy _11])
+                    terminator: call fn __closure0_call(copy _25) -> _27 then bb7, cleanup -> bb8
                 bb6:
-                    s0: _29 = intrinsic TimeNow "" []
-                    s1: _28 = copy _29
-                    s2: _31 = Add(copy _28, copy _14)
-                    s3: _30 = copy _31
-                    s4: _32 = 0
-                    terminator: switch copy _12 [1 -> bb14] otherwise -> bb15
+                    s0: _31 = intrinsic TimeNow "" []
+                    s1: _30 = copy _31
+                    s2: _33 = Add(copy _30, copy _16)
+                    s3: _32 = copy _33
+                    s4: _34 = 0
+                    terminator: switch copy _14 [1 -> bb14] otherwise -> bb15
                 bb7:
-                    s0: _24 = true
+                    s0: _26 = true
                     terminator: goto -> bb9
                 bb8 (cleanup):
-                    s0: _24 = false
+                    s0: _26 = false
                     terminator: goto -> bb9
                 bb9:
-                    s0: _22 = copy _24
-                    s1: _27 = Not(copy _22)
-                    terminator: switch copy _27 [1 -> bb10] otherwise -> bb11
+                    s0: _24 = copy _26
+                    s1: _29 = Not(copy _24)
+                    terminator: switch copy _29 [1 -> bb10] otherwise -> bb11
                 bb10:
-                    s0: _12 = false
+                    s0: _14 = false
                     terminator: goto -> bb6
                 bb11:
-                    s0: _26 = aggregate(tuple; [])
+                    s0: _28 = aggregate(tuple; [])
                     terminator: goto -> bb12
                 bb12:
-                    s0: _19 = Add(copy _19, 1)
+                    s0: _21 = Add(copy _21, 1)
                     terminator: goto -> bb4
                 bb13:
-                    s0: _26 = aggregate(tuple; [])
+                    s0: _28 = aggregate(tuple; [])
                     terminator: goto -> bb12
                 bb14:
                     terminator: goto -> bb17
                 bb15:
-                    s0: _33 = aggregate(tuple; [])
+                    s0: _35 = aggregate(tuple; [])
                     terminator: goto -> bb16
                 bb16:
-                    s0: _45 = intrinsic TimeNow "" []
-                    s1: _44 = copy _45
-                    s2: _47 = Sub(copy _44, copy _28)
-                    s3: _46 = copy _47
-                    terminator: switch copy _12 [1 -> bb27] otherwise -> bb28
+                    s0: _47 = intrinsic TimeNow "" []
+                    s1: _46 = copy _47
+                    s2: _49 = Sub(copy _46, copy _30)
+                    s3: _48 = copy _49
+                    terminator: switch copy _14 [1 -> bb27] otherwise -> bb28
                 bb17:
-                    s0: _36 = intrinsic TimeNow "" []
-                    s1: _35 = Lt(copy _36, copy _30)
-                    s2: _37 = Eq(copy _32, 0)
-                    s3: _34 = Or(copy _35, copy _37)
-                    terminator: switch copy _34 [1 -> bb18] otherwise -> bb19
+                    s0: _38 = intrinsic TimeNow "" []
+                    s1: _37 = Lt(copy _38, copy _32)
+                    s2: _39 = Eq(copy _34, 0)
+                    s3: _36 = Or(copy _37, copy _39)
+                    terminator: switch copy _36 [1 -> bb18] otherwise -> bb19
                 bb18:
-                    s0: _39 = aggregate(tuple; [copy _9])
-                    terminator: call fn __closure1_call(copy _39) -> _41 then bb20, cleanup -> bb21
+                    s0: _41 = aggregate(tuple; [copy _11])
+                    terminator: call fn __closure1_call(copy _41) -> _43 then bb20, cleanup -> bb21
                 bb19:
-                    s0: _33 = aggregate(tuple; [])
+                    s0: _35 = aggregate(tuple; [])
                     terminator: goto -> bb16
                 bb20:
-                    s0: _40 = true
+                    s0: _42 = true
                     terminator: goto -> bb22
                 bb21 (cleanup):
-                    s0: _40 = false
+                    s0: _42 = false
                     terminator: goto -> bb22
                 bb22:
-                    s0: _38 = copy _40
-                    s1: _43 = Not(copy _38)
-                    terminator: switch copy _43 [1 -> bb23] otherwise -> bb24
+                    s0: _40 = copy _42
+                    s1: _45 = Not(copy _40)
+                    terminator: switch copy _45 [1 -> bb23] otherwise -> bb24
                 bb23:
-                    s0: _12 = false
+                    s0: _14 = false
                     terminator: goto -> bb19
                 bb24:
-                    s0: _42 = aggregate(tuple; [])
+                    s0: _44 = aggregate(tuple; [])
                     terminator: goto -> bb25
                 bb25:
-                    s0: _32 = Add(copy _32, 1)
+                    s0: _34 = Add(copy _34, 1)
                     terminator: goto -> bb17
                 bb26:
-                    s0: _42 = aggregate(tuple; [])
+                    s0: _44 = aggregate(tuple; [])
                     terminator: goto -> bb25
                 bb27:
-                    s0: _4 = Add(copy _4, 1)
-                    s1: _50 = cast(Misc, copy _32, f64)
-                    s2: _49 = copy _50
-                    s3: _53 = Gt(copy _49, 0)
-                    terminator: switch copy _53 [1 -> bb30] otherwise -> bb31
+                    s0: _6 = Add(copy _6, 1)
+                    s1: _52 = cast(Misc, copy _34, f64)
+                    s2: _51 = copy _52
+                    s3: _55 = Gt(copy _51, 0)
+                    terminator: switch copy _55 [1 -> bb30] otherwise -> bb31
                 bb28:
-                    s0: _5 = Add(copy _5, 1)
+                    s0: _7 = Add(copy _7, 1)
                     s1: intrinsic Println "  %s ... FAILED
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
-                    s2: _56 = aggregate(tuple; [])
-                    s3: _48 = aggregate(tuple; [])
+" [copy _11[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
+                    s2: _58 = aggregate(tuple; [])
+                    s3: _50 = aggregate(tuple; [])
                     terminator: goto -> bb29
                 bb29:
-                    s0: _6 = Add(copy _6, 1)
+                    s0: _8 = Add(copy _8, 1)
                     terminator: goto -> bb1
                 bb30:
-                    s0: _54 = Div(copy _46, copy _49)
-                    s1: _52 = Mul(copy _54, 1000000000)
+                    s0: _56 = Div(copy _48, copy _51)
+                    s1: _54 = Mul(copy _56, 1000000000)
                     terminator: goto -> bb32
                 bb31:
-                    s0: _52 = 0
+                    s0: _54 = 0
                     terminator: goto -> bb32
                 bb32:
-                    s0: _51 = copy _52
+                    s0: _53 = copy _54
                     s1: intrinsic Println "  %s ... ok (iters: %lld, time: %.6fs, ns/iter: %.2f)
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })], copy _32, copy _46, copy _51]
-                    s2: _55 = aggregate(tuple; [])
-                    s3: _48 = aggregate(tuple; [])
+" [copy _11[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })], copy _34, copy _48, copy _53]
+                    s2: _57 = aggregate(tuple; [])
+                    s3: _50 = aggregate(tuple; [])
                     terminator: goto -> bb29
         body4 { arg_count: 0, locals: 22 }
             return_local: _0

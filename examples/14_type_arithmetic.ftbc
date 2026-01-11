@@ -52,26 +52,28 @@ fp-bytecode {
     [49] 2
     [50] 3
     [51] 4
-    [52] fn describe_union
-    [53] 1
-    [54] 2
-    [55] 3
-    [56] 4
-    [57] u64 0
-    [58] u64 1
-    [59] u64 2
-    [60] u64 3
-    [61] 42
-    [62] true
-    [63] "hello"
-    [64] null
-    [65] "green"
-    [66] "()"
-    [67] 0
-    [68] 5
-    [69] 6
-    [70] 7
-    [71] fn print_display
+    [52] 1
+    [53] 0
+    [54] fn describe_union
+    [55] 1
+    [56] 2
+    [57] 3
+    [58] 4
+    [59] u64 0
+    [60] u64 1
+    [61] u64 2
+    [62] u64 3
+    [63] 42
+    [64] true
+    [65] "hello"
+    [66] null
+    [67] "green"
+    [68] "()"
+    [69] 0
+    [70] 5
+    [71] 6
+    [72] 7
+    [73] fn print_display
   functions:
     fn __closure0_call(params: 1, locals: 2)
       bb0:
@@ -644,9 +646,13 @@ fp-bytecode {
         load.const 51
         make.tuple 4
         store.place _20
-        load.place _8
-        store.place _21
         load.const 52
+        load.place _8.0
+        load.place _8.1
+        load.const 53
+        make.tuple 4
+        store.place _21
+        load.const 54
         store.place _22
         load.place _20
         terminator call local _22 1 -> _23 then bb1
@@ -662,21 +668,21 @@ fp-bytecode {
         intrinsic Println 1 "FooOrBar right sum=%lld\n"
         make.tuple 0
         store.place _26
-        load.const 53
-        load.const 54
         load.const 55
         load.const 56
+        load.const 57
+        load.const 58
         make.array 4
         store.place _28
         load.place _28
         store.place _27
-        load.const 57
-        store.place _29
-        load.const 58
-        store.place _30
         load.const 59
-        store.place _31
+        store.place _29
         load.const 60
+        store.place _30
+        load.const 61
+        store.place _31
+        load.const 62
         store.place _32
         load.place _27[_29]
         load.place _27[_30]
@@ -685,19 +691,19 @@ fp-bytecode {
         intrinsic Println 4 "Int4[0]=%lld Int4[1]=%lld Int4[2]=%lld Int4[3]=%lld\n"
         make.tuple 0
         store.place _33
-        load.const 61
-        store.place _34
-        load.const 62
-        store.place _35
         load.const 63
+        store.place _34
+        load.const 64
+        store.place _35
+        load.const 65
         store.place _36
         make.tuple 0
         store.place _38
         load.place _38
         store.place _37
-        load.const 64
+        load.const 66
         store.place _39
-        load.const 65
+        load.const 67
         store.place _40
         load.place _34
         intrinsic Println 1 "LiteralInt %lld\n"
@@ -711,7 +717,7 @@ fp-bytecode {
         intrinsic Println 1 "LiteralStr %s\n"
         make.tuple 0
         store.place _43
-        load.const 66
+        load.const 68
         intrinsic Println 1 "LiteralUnit %s\n"
         make.tuple 0
         store.place _44
@@ -723,10 +729,10 @@ fp-bytecode {
         intrinsic Println 1 "LiteralStrEnum %s\n"
         make.tuple 0
         store.place _46
-        load.const 67
-        load.const 68
         load.const 69
         load.const 70
+        load.const 71
+        load.const 72
         make.tuple 4
         store.place _47
         load.place _47
@@ -736,7 +742,7 @@ fp-bytecode {
         intrinsic Println 1 "FooMaybe sum=%lld\n"
         make.tuple 0
         store.place _49
-        load.const 71
+        load.const 73
         store.place _50
         terminator return
     fn TestCase::run(params: 1, locals: 2)

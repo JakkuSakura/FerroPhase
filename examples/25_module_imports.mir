@@ -34,9 +34,9 @@ mir::Program {
 
         fn echo__mono_a7af9f593fdc4675_29(arg0: i64) -> () [body: body10]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body13]
+        fn BenchCase::run(arg0: <??>) -> () [body: body13]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body14]
+        fn TestCase::run(arg0: <??>) -> () [body: body14]
     bodies:
         body0 { arg_count: 1, locals: 2 }
             return_local: _0

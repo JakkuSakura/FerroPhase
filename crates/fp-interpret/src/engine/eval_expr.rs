@@ -1501,11 +1501,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         // Fallback: find by fully qualified name
-        if let Some(function) = self
-            .functions
-            .get(&locator.to_string())
-            .cloned()
-        {
+        if let Some(function) = self.functions.get(&locator.to_string()).cloned() {
             self.annotate_invoke_args_slice(args, &function.sig.params);
             Some(function)
         } else {

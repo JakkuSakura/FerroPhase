@@ -405,7 +405,7 @@ ast::File {
           run: fn() -> ()
         }
         pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}>
-          value [0 values]
+          value [2 values]
         pub struct TestReport {
           total: Expr(i64)
           passed: Expr(i64)

@@ -8,3 +8,4 @@ pub(super) mod lowering;
 pub(super) mod materialize;
 pub(super) mod normalize;
 pub(super) mod typing;
+pub(super) mod wasm;

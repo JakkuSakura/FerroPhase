@@ -828,10 +828,10 @@ fp-bytecode {
         binop Add
         store.place _31
         terminator jump bb11
-    fn BenchCase::run(params: 1, locals: 2)
+    fn TestCase::run(params: 1, locals: 2)
       bb0:
         terminator return
-    fn TestCase::run(params: 1, locals: 2)
+    fn BenchCase::run(params: 1, locals: 2)
       bb0:
         terminator return
   entry: main

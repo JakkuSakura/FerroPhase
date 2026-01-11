@@ -24,9 +24,9 @@ mir::Program {
 
         fn apply_ops__const_2(arg0: i32, arg1: i32) -> i32 [body: body9]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body10]
+        fn TestCase::run(arg0: <??>) -> () [body: body10]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body11]
+        fn BenchCase::run(arg0: <??>) -> () [body: body11]
     bodies:
         body0 { arg_count: 1, locals: 2 }
             return_local: _0

@@ -26,9 +26,9 @@ mir::Program {
 
         fn main() -> () [body: body10]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body11]
+        fn BenchCase::run(arg0: <??>) -> () [body: body11]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body12]
+        fn TestCase::run(arg0: <??>) -> () [body: body12]
     bodies:
         body0 { arg_count: 1, locals: 2 }
             return_local: _0

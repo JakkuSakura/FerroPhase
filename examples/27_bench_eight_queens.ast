@@ -94,7 +94,7 @@ ast::File {
           run: fn() -> ()
         }
         pub const REGISTRY: Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
-          value [0 values]
+          value [1 values]
         pub struct BenchReport {
           total: Expr(i64)
           passed: Expr(i64)

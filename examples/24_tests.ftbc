@@ -24,23 +24,31 @@ fp-bytecode {
     [21] 1
     [22] f64 1000000000
     [23] f64 0
-    [24] 0
-    [25] 0
-    [26] 0
-    [27] u64 0
-    [28] true
-    [29] false
-    [30] 1
-    [31] 1
-    [32] 1
-    [33] 1
-    [34] 2
-    [35] 3
-    [36] "assertion failed: left != right"
-    [37] "hello, "
-    [38] "world"
-    [39] "hello, world"
-    [40] "assertion failed: left != right"
+    [24] "adds_two_numbers"
+    [25] fn adds_two_numbers
+    [26] "string_concat"
+    [27] fn string_concat
+    [28] "adds_two_numbers"
+    [29] fn adds_two_numbers
+    [30] "string_concat"
+    [31] fn string_concat
+    [32] 0
+    [33] 0
+    [34] 0
+    [35] u64 2
+    [36] true
+    [37] false
+    [38] 1
+    [39] 1
+    [40] 1
+    [41] 1
+    [42] 2
+    [43] 3
+    [44] "assertion failed: left != right"
+    [45] "hello, "
+    [46] "world"
+    [47] "hello, world"
+    [48] "assertion failed: left != right"
   functions:
     fn __closure0_call(params: 1, locals: 2)
       bb0:
@@ -333,103 +341,123 @@ fp-bytecode {
         make.tuple 0
         store.place _48
         terminator jump bb29
-    fn std::test::run_tests(params: 0, locals: 22)
+    fn std::test::run_tests(params: 0, locals: 26)
       bb0:
-        make.array 0
-        store.place _2
-        make.array 0
-        store.place _3
-        load.place _3
-        store.place _1
         load.const 24
-        store.place _4
         load.const 25
-        store.place _5
+        make.tuple 2
+        store.place _3
         load.const 26
+        load.const 27
+        make.tuple 2
+        store.place _4
+        load.place _3
+        load.place _4
+        make.array 2
+        store.place _2
+        load.const 28
+        load.const 29
+        make.tuple 2
         store.place _6
+        load.const 30
+        load.const 31
+        make.tuple 2
+        store.place _7
+        load.place _6
+        load.place _7
+        make.array 2
+        store.place _5
+        load.place _5
+        store.place _1
+        load.const 32
+        store.place _8
+        load.const 33
+        store.place _9
+        load.const 34
+        store.place _10
         terminator jump bb1
       bb1:
-        load.const 27
-        store.place _8
-        load.place _6
-        load.place _8
+        load.const 35
+        store.place _12
+        load.place _10
+        load.place _12
         binop Lt
-        store.place _7
-        load.place _7
+        store.place _11
+        load.place _11
         terminator switch [1:bb2] otherwise bb3
       bb2:
-        load.place _6
-        store.place _10
-        load.place _6
-        store.place _11
-        load.place _1[_11]
-        store.place _9
-        load.place _9
-        make.tuple 1
+        load.place _10
+        store.place _14
+        load.place _10
+        store.place _15
+        load.place _1[_15]
         store.place _13
         load.place _13
-        terminator call fn __closure2_call 1 -> _15 then bb4
+        make.tuple 1
+        store.place _17
+        load.place _17
+        terminator call fn __closure2_call 1 -> _19 then bb4
       bb3:
-        load.place _4
-        load.place _5
+        load.place _8
+        load.place _9
         binop Add
-        store.place _20
-        load.place _20
-        store.place _19
-        load.place _4
-        load.place _5
-        load.place _19
+        store.place _24
+        load.place _24
+        store.place _23
+        load.place _8
+        load.place _9
+        load.place _23
         intrinsic Println 3 "test result: %lld passed; %lld failed; %lld total\n"
         make.tuple 0
-        store.place _21
-        load.place _19
-        load.place _4
-        load.place _5
+        store.place _25
+        load.place _23
+        load.place _8
+        load.place _9
         make.tuple 3
         store.place _0
         terminator return
       bb4:
-        load.const 28
-        store.place _14
+        load.const 36
+        store.place _18
         terminator jump bb6
       bb5:
-        load.const 29
-        store.place _14
+        load.const 37
+        store.place _18
         terminator jump bb6
       bb6:
-        load.place _14
-        store.place _12
-        load.place _12
+        load.place _18
+        store.place _16
+        load.place _16
         terminator switch [1:bb7] otherwise bb8
       bb7:
-        load.place _4
-        load.const 30
+        load.place _8
+        load.const 38
         binop Add
-        store.place _4
-        load.place _9.0
+        store.place _8
+        load.place _13.0
         intrinsic Println 1 "  %s ... ok\n"
         make.tuple 0
-        store.place _17
+        store.place _21
         make.tuple 0
-        store.place _16
+        store.place _20
         terminator jump bb9
       bb8:
-        load.place _5
-        load.const 31
+        load.place _9
+        load.const 39
         binop Add
-        store.place _5
-        load.place _9.0
+        store.place _9
+        load.place _13.0
         intrinsic Println 1 "  %s ... FAILED\n"
         make.tuple 0
-        store.place _18
+        store.place _22
         make.tuple 0
-        store.place _16
+        store.place _20
         terminator jump bb9
       bb9:
-        load.place _6
-        load.const 32
+        load.place _10
+        load.const 40
         binop Add
-        store.place _6
+        store.place _10
         terminator jump bb1
     fn std::test::run(params: 0, locals: 1)
       bb0:
@@ -472,13 +500,13 @@ fp-bytecode {
         terminator return
     fn adds_two_numbers(params: 0, locals: 12)
       bb0:
-        load.const 33
-        load.const 34
+        load.const 41
+        load.const 42
         binop Add
         store.place _2
         load.place _2
         store.place _1
-        load.const 35
+        load.const 43
         store.place _3
         load.place _1
         store.place _5
@@ -494,7 +522,7 @@ fp-bytecode {
         load.place _8
         terminator switch [1:bb1] otherwise bb2
       bb1:
-        load.const 36
+        load.const 44
         terminator call fn fp_panic 1 -> _10 then bb4
       bb2:
         make.tuple 0
@@ -514,15 +542,15 @@ fp-bytecode {
         terminator jump bb3
     fn string_concat(params: 0, locals: 11)
       bb0:
-        load.const 37
-        load.const 38
+        load.const 45
+        load.const 46
         binop Add
         store.place _2
         load.place _2
         store.place _1
         load.place _1
         store.place _4
-        load.const 39
+        load.const 47
         store.place _5
         load.place _4
         load.place _5
@@ -534,7 +562,7 @@ fp-bytecode {
         load.place _7
         terminator switch [1:bb1] otherwise bb2
       bb1:
-        load.const 40
+        load.const 48
         terminator call fn fp_panic 1 -> _9 then bb4
       bb2:
         make.tuple 0

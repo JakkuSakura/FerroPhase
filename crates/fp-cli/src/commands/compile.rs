@@ -212,6 +212,7 @@ async fn compile_file(
         "llvm" => PipelineTarget::Llvm,
         "binary" => PipelineTarget::Binary,
         "bytecode" => PipelineTarget::Bytecode,
+        "wasm" => PipelineTarget::Wasm,
         _ => PipelineTarget::Interpret,
     };
 

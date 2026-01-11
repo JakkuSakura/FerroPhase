@@ -266,83 +266,91 @@ mir::Program {
                     s2: _55 = aggregate(tuple; [])
                     s3: _48 = aggregate(tuple; [])
                     terminator: goto -> bb29
-        body4 { arg_count: 0, locals: 22 }
+        body4 { arg_count: 0, locals: 26 }
             return_local: _0
             locals:
                 _0: (i64, i64, i64)
                 _1: <??>
                 _2: <??>
-                _3: <??>
-                _4: i64
-                _5: i64
-                _6: i64
-                _7: bool
-                _8: usize
-                _9: (<??>, <??>)
+                _3: (<??>, <??>)
+                _4: (<??>, <??>)
+                _5: <??>
+                _6: (<??>, <??>)
+                _7: (<??>, <??>)
+                _8: i64
+                _9: i64
                 _10: i64
-                _11: i64
-                _12: bool
-                _13: ()
-                _14: bool
-                _15: ()
-                _16: ()
+                _11: bool
+                _12: usize
+                _13: (<??>, <??>)
+                _14: i64
+                _15: i64
+                _16: bool
                 _17: ()
-                _18: ()
-                _19: i64
-                _20: i64
+                _18: bool
+                _19: ()
+                _20: ()
                 _21: ()
+                _22: ()
+                _23: i64
+                _24: i64
+                _25: ()
             blocks:
                 bb0:
-                    s0: _2 = aggregate(array [(<??>, <??>)]; [])
-                    s1: _3 = aggregate(array [(<??>, <??>)]; [])
-                    s2: _1 = copy _3
-                    s3: _4 = 0
-                    s4: _5 = 0
-                    s5: _6 = 0
+                    s0: _3 = aggregate(tuple; ["adds_two_numbers", fn adds_two_numbers])
+                    s1: _4 = aggregate(tuple; ["string_concat", fn string_concat])
+                    s2: _2 = aggregate(array [(<??>, <??>)]; [copy _3, copy _4])
+                    s3: _6 = aggregate(tuple; ["adds_two_numbers", fn adds_two_numbers])
+                    s4: _7 = aggregate(tuple; ["string_concat", fn string_concat])
+                    s5: _5 = aggregate(array [(<??>, <??>)]; [copy _6, copy _7])
+                    s6: _1 = copy _5
+                    s7: _8 = 0
+                    s8: _9 = 0
+                    s9: _10 = 0
                     terminator: goto -> bb1
                 bb1:
-                    s0: _8 = 0u
-                    s1: _7 = Lt(copy _6, copy _8)
-                    terminator: switch copy _7 [1 -> bb2] otherwise -> bb3
+                    s0: _12 = 2u
+                    s1: _11 = Lt(copy _10, copy _12)
+                    terminator: switch copy _11 [1 -> bb2] otherwise -> bb3
                 bb2:
-                    s0: _10 = copy _6
-                    s1: _11 = copy _6
-                    s2: _9 = copy _1[Index(11)]
-                    s3: _13 = aggregate(tuple; [copy _9])
-                    terminator: call fn __closure2_call(copy _13) -> _15 then bb4, cleanup -> bb5
+                    s0: _14 = copy _10
+                    s1: _15 = copy _10
+                    s2: _13 = copy _1[Index(15)]
+                    s3: _17 = aggregate(tuple; [copy _13])
+                    terminator: call fn __closure2_call(copy _17) -> _19 then bb4, cleanup -> bb5
                 bb3:
-                    s0: _20 = Add(copy _4, copy _5)
-                    s1: _19 = copy _20
+                    s0: _24 = Add(copy _8, copy _9)
+                    s1: _23 = copy _24
                     s2: intrinsic Println "test result: %lld passed; %lld failed; %lld total
-" [copy _4, copy _5, copy _19]
-                    s3: _21 = aggregate(tuple; [])
-                    s4: _0 = aggregate(tuple; [copy _19, copy _4, copy _5])
+" [copy _8, copy _9, copy _23]
+                    s3: _25 = aggregate(tuple; [])
+                    s4: _0 = aggregate(tuple; [copy _23, copy _8, copy _9])
                     terminator: <none>
                 bb4:
-                    s0: _14 = true
+                    s0: _18 = true
                     terminator: goto -> bb6
                 bb5 (cleanup):
-                    s0: _14 = false
+                    s0: _18 = false
                     terminator: goto -> bb6
                 bb6:
-                    s0: _12 = copy _14
-                    terminator: switch copy _12 [1 -> bb7] otherwise -> bb8
+                    s0: _16 = copy _18
+                    terminator: switch copy _16 [1 -> bb7] otherwise -> bb8
                 bb7:
-                    s0: _4 = Add(copy _4, 1)
+                    s0: _8 = Add(copy _8, 1)
                     s1: intrinsic Println "  %s ... ok
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
-                    s2: _17 = aggregate(tuple; [])
-                    s3: _16 = aggregate(tuple; [])
+" [copy _13[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
+                    s2: _21 = aggregate(tuple; [])
+                    s3: _20 = aggregate(tuple; [])
                     terminator: goto -> bb9
                 bb8:
-                    s0: _5 = Add(copy _5, 1)
+                    s0: _9 = Add(copy _9, 1)
                     s1: intrinsic Println "  %s ... FAILED
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
-                    s2: _18 = aggregate(tuple; [])
-                    s3: _16 = aggregate(tuple; [])
+" [copy _13[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
+                    s2: _22 = aggregate(tuple; [])
+                    s3: _20 = aggregate(tuple; [])
                     terminator: goto -> bb9
                 bb9:
-                    s0: _6 = Add(copy _6, 1)
+                    s0: _10 = Add(copy _10, 1)
                     terminator: goto -> bb1
         body5 { arg_count: 0, locals: 1 }
             return_local: _0

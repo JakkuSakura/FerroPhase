@@ -53,6 +53,7 @@ const STAGE_MIR_TO_LIR: &str = "mir→lir";
 const STAGE_RUNTIME_MATERIALIZE: &str = "materialize-runtime";
 const STAGE_TYPE_POST_MATERIALIZE: &str = "ast→typed(post-materialize)";
 const STAGE_LINK_BINARY: &str = "link-binary";
+const STAGE_EMIT_WASM: &str = "emit-wasm";
 const STAGE_INTRINSIC_NORMALIZE: &str = "intrinsic-normalize";
 const STAGE_AST_INTERPRET: &str = "ast-interpret";
 
@@ -310,6 +311,7 @@ impl Pipeline {
                         PipelineTarget::Llvm => "Missing base path for LLVM generation",
                         PipelineTarget::Binary => "Missing base path for binary generation",
                         PipelineTarget::Bytecode => "Missing base path for bytecode generation",
+                        PipelineTarget::Wasm => "Missing base path for wasm generation",
                         PipelineTarget::Interpret => unreachable!(),
                     };
                     CliError::Compilation(msg.to_string())
@@ -564,7 +566,11 @@ impl Pipeline {
         };
         self.last_const_eval = Some(outcome.clone());
 
-        if matches!(target, PipelineTarget::Llvm | PipelineTarget::Binary) && !did_const_eval {
+        if matches!(
+            target,
+            PipelineTarget::Llvm | PipelineTarget::Binary | PipelineTarget::Wasm
+        ) && !did_const_eval
+        {
             self.inject_runtime_std(&mut ast, options)?;
         }
 
@@ -658,6 +664,19 @@ impl Pipeline {
                     }
 
                     PipelineOutput::Binary(output_path)
+                }
+                PipelineTarget::Wasm => {
+                    let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                    let llvm = self.generate_llvm_artifacts(
+                        &lir.lir_program,
+                        base_path,
+                        input_path,
+                        true,
+                        options,
+                    )?;
+                    let wasm_path = self.stage_emit_wasm(&llvm.ir_path, base_path, options)?;
+                    PipelineOutput::Binary(wasm_path)
                 }
                 PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
             }
@@ -1352,7 +1371,7 @@ mod tests {
             }
         }
 
-        fn materialize_runtime(&self, ast: &mut Node, target: PipelineTarget) {
+        fn materialize_runtime(&mut self, ast: &mut Node, target: PipelineTarget) {
             if let Err(err) =
                 self.pipeline
                     .stage_materialize_runtime_intrinsics(ast, &target, &self.options)

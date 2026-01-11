@@ -289,9 +289,7 @@ fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {
 
         Ok(FormatPlaceholder {
             arg_ref,
-            format_spec: Some(
-                FormatSpec::parse(format_spec).map_err(fp_core::error::Error::from)?,
-            ),
+            format_spec: Some(FormatSpec::parse(format_spec).map_err(fp_core::error::Error::from)?),
         })
     } else {
         let arg_ref = if let Ok(index) = content.parse::<usize>() {

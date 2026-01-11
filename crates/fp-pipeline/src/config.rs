@@ -56,6 +56,7 @@ pub enum PipelineTarget {
     Binary,
     /// Generate bytecode for the virtual machine backend
     Bytecode,
+    Wasm,
 }
 
 /// Runtime configuration
@@ -151,6 +152,7 @@ impl From<&PipelineConfig> for PipelineOptions {
             "llvm" => PipelineTarget::Llvm,
             "binary" => PipelineTarget::Binary,
             "bytecode" => PipelineTarget::Bytecode,
+            "wasm" => PipelineTarget::Wasm,
             _ => PipelineTarget::Interpret,
         };
 

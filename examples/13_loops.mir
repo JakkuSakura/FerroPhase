@@ -30,9 +30,9 @@ mir::Program {
 
         fn main() -> () [body: body12]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body13]
+        fn TestCase::run(arg0: <??>) -> () [body: body13]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body14]
+        fn BenchCase::run(arg0: <??>) -> () [body: body14]
     bodies:
         body0 { arg_count: 1, locals: 2 }
             return_local: _0

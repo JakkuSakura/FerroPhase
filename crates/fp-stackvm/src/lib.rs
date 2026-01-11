@@ -367,6 +367,15 @@ fn execute_instr(
 }
 
 fn eval_binop(op: &BytecodeBinOp, left: Value, right: Value) -> Result<Value, VmError> {
+    fn as_float(value: &Value) -> Option<f64> {
+        match value {
+            Value::Float(value) => Some(*value),
+            Value::Int(value) => Some(*value as f64),
+            Value::UInt(value) => Some(*value as f64),
+            _ => None,
+        }
+    }
+
     match (op, left, right) {
         (BytecodeBinOp::Add, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
         (BytecodeBinOp::Sub, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
@@ -383,6 +392,46 @@ fn eval_binop(op: &BytecodeBinOp, left: Value, right: Value) -> Result<Value, Vm
         (BytecodeBinOp::Mul, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a * b)),
         (BytecodeBinOp::Div, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a / b)),
         (BytecodeBinOp::Rem, Value::Float(a), Value::Float(b)) => Ok(Value::Float(a % b)),
+        (BytecodeBinOp::Add, left, right)
+            if matches!(left, Value::Float(_) | Value::Int(_) | Value::UInt(_))
+                && matches!(right, Value::Float(_) | Value::Int(_) | Value::UInt(_)) =>
+        {
+            Ok(Value::Float(
+                as_float(&left).unwrap() + as_float(&right).unwrap(),
+            ))
+        }
+        (BytecodeBinOp::Sub, left, right)
+            if matches!(left, Value::Float(_) | Value::Int(_) | Value::UInt(_))
+                && matches!(right, Value::Float(_) | Value::Int(_) | Value::UInt(_)) =>
+        {
+            Ok(Value::Float(
+                as_float(&left).unwrap() - as_float(&right).unwrap(),
+            ))
+        }
+        (BytecodeBinOp::Mul, left, right)
+            if matches!(left, Value::Float(_) | Value::Int(_) | Value::UInt(_))
+                && matches!(right, Value::Float(_) | Value::Int(_) | Value::UInt(_)) =>
+        {
+            Ok(Value::Float(
+                as_float(&left).unwrap() * as_float(&right).unwrap(),
+            ))
+        }
+        (BytecodeBinOp::Div, left, right)
+            if matches!(left, Value::Float(_) | Value::Int(_) | Value::UInt(_))
+                && matches!(right, Value::Float(_) | Value::Int(_) | Value::UInt(_)) =>
+        {
+            Ok(Value::Float(
+                as_float(&left).unwrap() / as_float(&right).unwrap(),
+            ))
+        }
+        (BytecodeBinOp::Rem, left, right)
+            if matches!(left, Value::Float(_) | Value::Int(_) | Value::UInt(_))
+                && matches!(right, Value::Float(_) | Value::Int(_) | Value::UInt(_)) =>
+        {
+            Ok(Value::Float(
+                as_float(&left).unwrap() % as_float(&right).unwrap(),
+            ))
+        }
         (BytecodeBinOp::Eq, a, b) => Ok(Value::Bool(values_equal(&a, &b))),
         (BytecodeBinOp::Ne, a, b) => Ok(Value::Bool(!values_equal(&a, &b))),
         (BytecodeBinOp::Lt, Value::Int(a), Value::Int(b)) => Ok(Value::Bool(a < b)),
@@ -421,6 +470,22 @@ fn eval_binop(op: &BytecodeBinOp, left: Value, right: Value) -> Result<Value, Vm
         (BytecodeBinOp::Le, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a <= b)),
         (BytecodeBinOp::Gt, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a > b)),
         (BytecodeBinOp::Ge, Value::Float(a), Value::Float(b)) => Ok(Value::Bool(a >= b)),
+        (BytecodeBinOp::Lt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a < b as f64)),
+        (BytecodeBinOp::Le, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a <= b as f64)),
+        (BytecodeBinOp::Gt, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a > b as f64)),
+        (BytecodeBinOp::Ge, Value::Float(a), Value::Int(b)) => Ok(Value::Bool(a >= b as f64)),
+        (BytecodeBinOp::Lt, Value::Float(a), Value::UInt(b)) => Ok(Value::Bool(a < b as f64)),
+        (BytecodeBinOp::Le, Value::Float(a), Value::UInt(b)) => Ok(Value::Bool(a <= b as f64)),
+        (BytecodeBinOp::Gt, Value::Float(a), Value::UInt(b)) => Ok(Value::Bool(a > b as f64)),
+        (BytecodeBinOp::Ge, Value::Float(a), Value::UInt(b)) => Ok(Value::Bool(a >= b as f64)),
+        (BytecodeBinOp::Lt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) < b)),
+        (BytecodeBinOp::Le, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) <= b)),
+        (BytecodeBinOp::Gt, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) > b)),
+        (BytecodeBinOp::Ge, Value::Int(a), Value::Float(b)) => Ok(Value::Bool((a as f64) >= b)),
+        (BytecodeBinOp::Lt, Value::UInt(a), Value::Float(b)) => Ok(Value::Bool((a as f64) < b)),
+        (BytecodeBinOp::Le, Value::UInt(a), Value::Float(b)) => Ok(Value::Bool((a as f64) <= b)),
+        (BytecodeBinOp::Gt, Value::UInt(a), Value::Float(b)) => Ok(Value::Bool((a as f64) > b)),
+        (BytecodeBinOp::Ge, Value::UInt(a), Value::Float(b)) => Ok(Value::Bool((a as f64) >= b)),
         (BytecodeBinOp::BitAnd, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a & b)),
         (BytecodeBinOp::BitOr, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a | b)),
         (BytecodeBinOp::BitXor, Value::Int(a), Value::Int(b)) => Ok(Value::Int(a ^ b)),

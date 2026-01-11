@@ -152,8 +152,8 @@ hir::Program {
         pub run: fn() -> (),
     }
 
-    pub const std::test::REGISTRY: [TestCase; 0] =
-        [];
+    pub const std::test::REGISTRY: [TestCase; 2] =
+        [TestCase { name: "adds_two_numbers", run: adds_two_numbers }, TestCase { name: "string_concat", run: string_concat }];
 
     pub struct std::test::TestReport {
         pub total: i64,
