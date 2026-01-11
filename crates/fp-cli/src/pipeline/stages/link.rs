@@ -6,6 +6,8 @@ pub(crate) struct LinkContext {
     pub llvm_ir_path: PathBuf,
     pub base_path: PathBuf,
     pub options: PipelineOptions,
+    #[cfg(feature = "native-backend")]
+    pub native_lir: Option<fp_core::lir::LirProgram>,
 }
 
 pub(crate) struct LinkStage;
@@ -30,6 +32,31 @@ impl PipelineStage for LinkStage {
                 "out"
             },
         );
+
+        // If enabled and we have a LIR payload, prefer fp-native.
+        #[cfg(feature = "native-backend")]
+        {
+            if let Some(lir_program) = context.native_lir {
+                let cfg = fp_native::config::NativeConfig::executable(&binary_path)
+                    .with_linker_args({
+                        // If the user requested a non-default linker driver, pass it to fp-native.
+                        // The native backend currently uses clang by default; for now we translate
+                        // the option into a `-fuse-ld`/driver selection later as the backend grows.
+                        let mut args = Vec::new();
+                        if let Some(linker) = context.options.linker.as_deref() {
+                            // fp-native uses `clang` internally today; we’ll evolve this into a
+                            // proper link-driver selection when the backend starts emitting more.
+                            // Keep the value available as a flag-like argument for now.
+                            args.push(format!("--driver={}", linker));
+                        }
+                        args
+                    });
+                let compiler = fp_native::NativeCompiler::new(cfg);
+                return compiler
+                    .compile(lir_program, None)
+                    .map_err(|e| PipelineError::new(STAGE_LINK_BINARY, e.to_string()));
+            }
+        }
 
         if let Some(parent) = binary_path.parent() {
             if let Err(err) = fs::create_dir_all(parent) {
@@ -61,20 +88,25 @@ impl PipelineStage for LinkStage {
 
         let llvm_ir_text = fs::read_to_string(&context.llvm_ir_path).unwrap_or_default();
         let requires_eh = llvm_ir_text.contains("landingpad") || llvm_ir_text.contains("invoke");
-        let linker = if requires_eh { "clang++" } else { "clang" };
+        let default_linker = if requires_eh { "clang++" } else { "clang" };
+        let linker = context
+            .options
+            .linker
+            .as_deref()
+            .unwrap_or(default_linker);
         if requires_eh {
-            let clangxx_available = Command::new("clang++").arg("--version").output();
+            let clangxx_available = Command::new(linker).arg("--version").output();
             if matches!(clangxx_available, Err(_)) {
                 diagnostics.push(
-                    Diagnostic::error(
-                        "`clang++` not found in PATH; install LLVM toolchain to produce binaries with unwind support"
-                            .to_string(),
-                    )
+                    Diagnostic::error(format!(
+                        "`{}` not found in PATH; install toolchain to produce binaries with unwind support",
+                        linker
+                    ))
                     .with_source_context(STAGE_LINK_BINARY),
                 );
                 return Err(PipelineError::new(
                     STAGE_LINK_BINARY,
-                    "`clang++` not found in PATH",
+                    "linker not found in PATH",
                 ));
             }
         }
@@ -165,6 +197,25 @@ impl Pipeline {
             llvm_ir_path: llvm_ir_path.to_path_buf(),
             base_path: base_path.to_path_buf(),
             options: options.clone(),
+            #[cfg(feature = "native-backend")]
+            native_lir: None,
+        };
+        self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
+    }
+
+    #[cfg(feature = "native-backend")]
+    pub(crate) fn stage_link_binary_native(
+        &self,
+        lir_program: &fp_core::lir::LirProgram,
+        base_path: &Path,
+        options: &PipelineOptions,
+    ) -> Result<PathBuf, CliError> {
+        let stage = LinkStage;
+        let context = LinkContext {
+            llvm_ir_path: base_path.with_extension("ll"),
+            base_path: base_path.to_path_buf(),
+            options: options.clone(),
+            native_lir: Some(lir_program.clone()),
         };
         self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
     }

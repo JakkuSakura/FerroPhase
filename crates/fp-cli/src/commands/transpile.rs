@@ -67,10 +67,12 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
     let compile_args = CompileArgs {
         input: args.input,
         backend: args.backend.unwrap_or_else(|| "rust".to_string()),
+        codegen_backend: "llvm".to_string(),
         target_triple: None,
         target_cpu: None,
         target_features: None,
         target_sysroot: None,
+        linker: "clang".to_string(),
         target_linker: None,
         output: args.output,
         opt_level: args.opt_level,

@@ -233,6 +233,10 @@ fn scrub_any_expressions(file: &mut File) {
                 }
             }
             ExprKind::Macro(_) | ExprKind::Locator(_) | ExprKind::Id(_) => {}
+
+            // New/rare expression kinds: we don't attempt to scrub recursively yet.
+            // The important invariant is: do not introduce `AnyBox` payloads into the snapshot.
+            _ => {}
         }
     }
 

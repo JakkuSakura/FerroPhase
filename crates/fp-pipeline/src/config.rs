@@ -6,6 +6,8 @@ use std::path::PathBuf;
 pub struct PipelineOptions {
     /// Compilation target
     pub target: PipelineTarget,
+    /// Code generation backend to use when producing native artifacts (e.g. "llvm", "native").
+    pub codegen_backend: Option<String>,
     /// Target triple for codegen (defaults to host when unset)
     pub target_triple: Option<String>,
     /// Target CPU for codegen (optional)
@@ -14,6 +16,8 @@ pub struct PipelineOptions {
     pub target_features: Option<String>,
     /// Target sysroot for linking (optional)
     pub target_sysroot: Option<PathBuf>,
+    /// Linker driver to invoke (e.g. "clang", "clang++", "gcc", "ld"). Defaults to clang.
+    pub linker: Option<String>,
     /// Explicit linker override for target (optional)
     pub target_linker: Option<PathBuf>,
     /// Runtime configuration
@@ -107,10 +111,12 @@ impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
             target: PipelineTarget::Interpret,
+            codegen_backend: None,
             target_triple: None,
             target_cpu: None,
             target_features: None,
             target_sysroot: None,
+            linker: None,
             target_linker: None,
             runtime: RuntimeConfig {
                 runtime_type: "literal".to_string(),
@@ -158,10 +164,12 @@ impl From<&PipelineConfig> for PipelineOptions {
 
         Self {
             target,
+            codegen_backend: None,
             target_triple: None,
             target_cpu: None,
             target_features: None,
             target_sysroot: None,
+            linker: None,
             target_linker: None,
             runtime: RuntimeConfig {
                 runtime_type: config.runtime.clone(),

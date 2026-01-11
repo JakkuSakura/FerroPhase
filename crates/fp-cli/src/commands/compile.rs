@@ -28,6 +28,13 @@ pub struct CompileArgs {
     #[arg(short = 'b', long, default_value = "binary")]
     pub backend: String,
 
+    /// Codegen backend engine (e.g. "llvm" or "native").
+    ///
+    /// This is only used for native codegen targets (like `--backend binary`).
+    /// Default is `llvm`.
+    #[arg(long = "codegen-backend", default_value = "llvm")]
+    pub codegen_backend: String,
+
     /// Target triple for codegen (defaults to host if omitted)
     #[arg(long = "target")]
     pub target_triple: Option<String>,
@@ -44,8 +51,14 @@ pub struct CompileArgs {
     #[arg(long = "sysroot")]
     pub target_sysroot: Option<PathBuf>,
 
-    /// Explicit linker override for target (optional)
-    #[arg(long = "linker")]
+    /// Linker driver to invoke (defaults to `clang`).
+    ///
+    /// Examples: `clang`, `clang++`, `gcc`.
+    #[arg(long = "linker", default_value = "clang")]
+    pub linker: String,
+
+    /// Explicit link editor override (passed as `-fuse-ld=<path>` to clang).
+    #[arg(long = "fuse-ld")]
     pub target_linker: Option<PathBuf>,
 
     /// Output file or directory
@@ -228,10 +241,12 @@ async fn compile_file(
 
     let pipeline_options = PipelineOptions {
         target,
+        codegen_backend: Some(args.codegen_backend.clone()),
         target_triple: args.target_triple.clone(),
         target_cpu: args.target_cpu.clone(),
         target_features: args.target_features.clone(),
         target_sysroot: args.target_sysroot.clone(),
+        linker: Some(args.linker.clone()),
         target_linker: args.target_linker.clone(),
         runtime: RuntimeConfig {
             runtime_type: "literal".to_string(),

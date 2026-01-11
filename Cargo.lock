@@ -803,6 +803,7 @@ dependencies = [
  "fp-jsonschema",
  "fp-lang",
  "fp-llvm",
+ "fp-native",
  "fp-optimize",
  "fp-pipeline",
  "fp-prql",
@@ -932,6 +933,17 @@ dependencies = [
  "thiserror 1.0.69",
  "tracing",
  "which",
+]
+
+[[package]]
+name = "fp-native"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fp-core",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tracing",
 ]
 
 [[package]]

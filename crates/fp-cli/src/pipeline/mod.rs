@@ -245,7 +245,7 @@ impl Pipeline {
         }
 
         register_threadlocal_serializer(serializer.clone());
-        self.serializer = Some(serializer.clone());
+        self.serializer = Some(serializer);
         self.intrinsic_normalizer = intrinsic_normalizer;
         self.frontend_snapshot = snapshot;
         self.source_language = Some(frontend.language().to_string());
@@ -621,17 +621,38 @@ impl Pipeline {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
 
-                    let llvm = self.generate_llvm_artifacts(
-                        &lir.lir_program,
-                        base_path,
-                        input_path,
-                        true,
-                        options,
-                    )?;
+                    let backend = options
+                        .codegen_backend
+                        .as_deref()
+                        .unwrap_or("llvm")
+                        .to_lowercase();
 
-                    let binary_path = self.stage_link_binary(&llvm.ir_path, base_path, options)?;
-
-                    PipelineOutput::Binary(binary_path)
+                    if backend == "native" || backend == "fp-native" {
+                        #[cfg(feature = "native-backend")]
+                        {
+                            let binary_path =
+                                self.stage_link_binary_native(&lir.lir_program, base_path, options)?;
+                            PipelineOutput::Binary(binary_path)
+                        }
+                        #[cfg(not(feature = "native-backend"))]
+                        {
+                            return Err(CliError::Compilation(
+                                "native backend requested but fp-cli was not built with --features native-backend"
+                                    .to_string(),
+                            ));
+                        }
+                    } else {
+                        let llvm = self.generate_llvm_artifacts(
+                            &lir.lir_program,
+                            base_path,
+                            input_path,
+                            true,
+                            options,
+                        )?;
+                        let binary_path =
+                            self.stage_link_binary(&llvm.ir_path, base_path, options)?;
+                        PipelineOutput::Binary(binary_path)
+                    }
                 }
                 PipelineTarget::Bytecode => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
