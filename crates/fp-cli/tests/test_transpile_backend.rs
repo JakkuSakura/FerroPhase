@@ -21,7 +21,6 @@ fn main() {
 
     let args = TranspileArgs {
         input: vec![input_file],
-        target: None,
         output: Some(output_file.clone()),
         opt_level: 0,
         debug: false,
@@ -31,6 +30,7 @@ fn main() {
         max_errors: 10,
         source_language: None,
         disable_stage: Vec::new(),
+        backend: None,
     };
 
     let config = CliConfig::default();

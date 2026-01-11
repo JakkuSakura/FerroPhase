@@ -1828,11 +1828,10 @@ fn main() {
             .stage_type_check_for_tests(&mut ast)
             .expect("type checking should succeed for struct methods");
 
-        let result = pipeline.stage_const_eval(&mut ast, &options);
-        assert!(
-            result.is_err(),
-            "method calls are not yet supported in const eval"
-        );
+        let outcome = pipeline
+            .stage_const_eval(&mut ast, &options)
+            .expect("method calls should now be supported in const eval");
+        assert_stdout_contains(&outcome, "52");
     }
 
     #[test]
@@ -2216,10 +2215,9 @@ fn main() {
 
         options.execute_main = true;
 
-        let result = pipeline.stage_const_eval(&mut ast, &options);
-        assert!(
-            result.is_err(),
-            "array indexing is not yet supported during const eval"
-        );
-    }
+        let outcome = pipeline
+            .stage_const_eval(&mut ast, &options)
+            .expect("array indexing should now be supported during const eval");
+        assert_stdout_contains(&outcome, "3");
+     }
 }

@@ -133,18 +133,31 @@ async fn compile_example(example_name: &str) {
 
     let args = CompileArgs {
         input: vec![source_path.clone()],
-        target: "binary".to_string(),
+        backend: "binary".to_string(),
+        // Prefer fp-native in tests when the crate is built with the native backend,
+        // because the LLVM pipeline is still under active development.
+        codegen_backend: if cfg!(feature = "native-backend") {
+            "native".to_string()
+        } else {
+            "llvm".to_string()
+        },
+        target_triple: None,
+        target_cpu: None,
+        target_features: None,
+        target_sysroot: None,
+        linker: "clang".to_string(),
+        target_linker: None,
         output: Some(output_path.clone()),
         opt_level: 0,
         debug: true,
+        release: false,
         include: Vec::new(),
         define: Vec::new(),
         exec: false,
+        save_intermediates: false,
         error_tolerance: false,
         max_errors: 0,
-        save_intermediates: false,
         source_language: None,
-        release: false,
         disable_stage: Vec::new(),
     };
 

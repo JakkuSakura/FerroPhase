@@ -1,10 +1,10 @@
 pub mod config;
 pub mod emitter;
 pub mod link;
+mod macho;
 
 use crate::config::{EmitKind, NativeConfig};
-use crate::emitter::emit_object_macho_minimal;
-use crate::link::link_with_clang;
+use crate::emitter::{emit_executable_macho_minimal, emit_object_macho_minimal};
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
@@ -37,15 +37,11 @@ impl NativeCompiler {
                 Ok(out)
             }
             EmitKind::Executable => {
-                let obj_path = out.with_extension("o");
-                emit_object_macho_minimal(&obj_path)?;
-                link_with_clang(&obj_path, &out, &self.config.linker_args)?;
-                if !self.config.keep_object {
-                    let _ = std::fs::remove_file(&obj_path);
-                }
+                // No external linker: write a minimal Mach-O executable directly.
+                let _ = &self.config.linker_args; // reserved for future in-process linking options
+                emit_executable_macho_minimal(&out)?;
                 Ok(out)
             }
         }
     }
 }
-

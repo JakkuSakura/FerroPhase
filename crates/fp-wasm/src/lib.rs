@@ -82,7 +82,12 @@ impl<'a> WasmEmitter<'a> {
 
         self.collect_external_functions();
 
-        let stack_ptr_global = self.emit_globals(&mut globals)?;
+        // Important: global/data offsets must be known before emitting code, but the final stack
+        // base depends on *all* data written (including print literals emitted while lowering
+        // functions). We therefore build global data up-front, emit code (which may append to
+        // `data_bytes`), and only then finalize the runtime globals with the correct stack base.
+        self.build_global_data()?;
+        let stack_ptr_global = 0_u32;
 
         for func in &self.program.functions {
             let signature = self.lower_signature(&func.signature);
@@ -118,6 +123,10 @@ impl<'a> WasmEmitter<'a> {
             wasm_fn.instruction(&Instruction::End);
             code.function(&wasm_fn);
         }
+
+        // Finalize runtime globals after all code emission so `stack_base` accounts for any
+        // additional data (e.g. print literals) appended during lowering.
+        let _ = self.emit_runtime_globals(&mut globals)?;
 
         self.emit_memory(&mut memory, &mut data)?;
 
@@ -179,8 +188,7 @@ impl<'a> WasmEmitter<'a> {
         }
     }
 
-    fn emit_globals(&mut self, globals: &mut GlobalSection) -> Result<u32> {
-        self.build_global_data()?;
+    fn emit_runtime_globals(&mut self, globals: &mut GlobalSection) -> Result<u32> {
         let stack_base = align_to(self.data_bytes.len() as u64, STACK_ALIGN);
         let stack_ptr_idx = globals.len();
         globals.global(
@@ -200,7 +208,9 @@ impl<'a> WasmEmitter<'a> {
             },
             &ConstExpr::f64_const(0.0),
         );
-        self.global_addr.insert("__fp_stack_ptr".to_string(), stack_base);
+        self.global_addr
+            .insert("__fp_stack_ptr".to_string(), stack_base);
+        // Kept for compatibility with existing tooling that may look this up.
         self.global_addr
             .insert("__fp_time_now".to_string(), time_idx as u64);
         Ok(stack_ptr_idx as u32)
