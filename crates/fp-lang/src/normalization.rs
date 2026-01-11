@@ -1,12 +1,10 @@
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprFormatString, ExprIf,
-    ExprIntrinsicCall, ExprKind, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatTemplatePart,
+    BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprKind,
+    ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
     Ident, StmtLet, Value,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::{
-    IntrinsicCallKind, IntrinsicCallPayload, IntrinsicNormalizer, NormalizeOutcome,
-};
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_rust::normalization::RustIntrinsicNormalizer;
 
@@ -98,11 +96,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     ExprKind::Value(value) => match value.as_ref() {
                         Value::String(string) => {
                             let parts = parse_format_template(&string.value)?;
-                            ExprFormatString {
-                                parts,
-                                args: args[1..].to_vec(),
-                                kwargs: Vec::new(),
-                            }
+                            ExprStringTemplate { parts }
                         }
                         _ => {
                             return Err(fp_core::error::Error::from(
@@ -110,10 +104,8 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                             ));
                         }
                     },
-                    ExprKind::FormatString(format) => ExprFormatString {
+                    ExprKind::FormatString(format) => ExprStringTemplate {
                         parts: format.parts.clone(),
-                        args: format.args.clone(),
-                        kwargs: format.kwargs.clone(),
                     },
                     _ => {
                         return Err(fp_core::error::Error::from(
@@ -122,8 +114,17 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                     }
                 };
 
-                let replacement =
-                    Expr::from_parts(ty_slot.clone(), ExprKind::FormatString(template));
+                let mut call_args = Vec::with_capacity(args.len());
+                call_args.push(Expr::new(ExprKind::FormatString(template)));
+                call_args.extend(args[1..].iter().cloned());
+                let replacement = Expr::from_parts(
+                    ty_slot.clone(),
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        IntrinsicCallKind::Format,
+                        call_args,
+                        Vec::new(),
+                    )),
+                );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
         }
@@ -248,7 +249,10 @@ fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>> {
             }
             parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
                 arg_ref: FormatArgRef::Implicit,
-                format_spec: Some(format!("%{}", spec)),
+                format_spec: Some(
+                    FormatSpec::parse(&format!("%{}", spec))
+                        .map_err(fp_core::error::Error::from)?,
+                ),
             }));
             continue;
         }
@@ -285,7 +289,9 @@ fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {
 
         Ok(FormatPlaceholder {
             arg_ref,
-            format_spec: Some(format_spec.to_string()),
+            format_spec: Some(
+                FormatSpec::parse(format_spec).map_err(fp_core::error::Error::from)?,
+            ),
         })
     } else {
         let arg_ref = if let Ok(index) = content.parse::<usize>() {
@@ -365,7 +371,8 @@ fn panic_macro(args: Vec<Expr>) -> Expr {
     } else {
         Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
             IntrinsicCallKind::Panic,
-            IntrinsicCallPayload::Args { args },
+            args,
+            Vec::new(),
         )))
     };
     Expr::block(ExprBlock::new_stmts_expr(
@@ -379,8 +386,7 @@ fn panic_macro(args: Vec<Expr>) -> Expr {
 fn panic_call_with_message(message: &str) -> Expr {
     Expr::new(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
         IntrinsicCallKind::Panic,
-        IntrinsicCallPayload::Args {
-            args: vec![Expr::value(Value::string(message.to_string()))],
-        },
+        vec![Expr::value(Value::string(message.to_string()))],
+        Vec::new(),
     )))
 }

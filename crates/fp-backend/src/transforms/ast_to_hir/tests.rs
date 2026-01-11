@@ -311,21 +311,11 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 collect_paths(cond, out);
                 collect_paths_from_block(block, out);
             }
-            hir::ExprKind::IntrinsicCall(call) => match &call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    for arg in &template.args {
-                        collect_paths(arg, out);
-                    }
-                    for kwarg in &template.kwargs {
-                        collect_paths(&kwarg.value, out);
-                    }
+            hir::ExprKind::IntrinsicCall(call) => {
+                for arg in &call.callargs {
+                    collect_paths(&arg.value, out);
                 }
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    for arg in args {
-                        collect_paths(arg, out);
-                    }
-                }
-            },
+            }
             hir::ExprKind::Cast(expr, _) => collect_paths(expr, out),
             hir::ExprKind::Array(elements) => {
                 for elem in elements {

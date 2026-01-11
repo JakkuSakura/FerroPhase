@@ -88,6 +88,317 @@ ast::File {
                   block (0 stmts)
         }
       }
+      pub module bench {
+        pub struct BenchCase {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values]
+        pub struct BenchReport {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_benches() -> Expr(BenchReport) : fn() -> BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts)
+            let benches
+              init:
+                locator REGISTRY
+            let mut passed
+              init:
+                value 0
+            let mut failed
+              init:
+                value 0
+            let mut idx
+              init:
+                value 0
+            expr_stmt (value)
+              while
+                cond:
+                  binop <
+                    lhs:
+                      locator idx
+                    rhs:
+                      invoke
+                        target: benches.len
+                body:
+                  block (16 stmts)
+                    let bench
+                      init:
+                        index
+                          value:
+                            locator benches
+                          index:
+                            locator idx
+                    let mut ok
+                      init:
+                        value true
+                    let warmup_secs
+                      init:
+                        value 0.2
+                    let measure_secs
+                      init:
+                        value 0.5
+                    let warmup_start
+                      init:
+                        intrinsic time_now
+                          args: []
+                          kwargs: []
+                    let warmup_deadline
+                      init:
+                        binop +
+                          lhs:
+                            locator warmup_start
+                          rhs:
+                            locator warmup_secs
+                    let mut warmup_iters
+                      init:
+                        value 0
+                    expr_stmt (value)
+                      while
+                        cond:
+                          binop <
+                            lhs:
+                              intrinsic time_now
+                                args: []
+                                kwargs: []
+                            rhs:
+                              locator warmup_deadline
+                        body:
+                          block (3 stmts)
+                            let warm_ok
+                              init:
+                                intrinsic catch_unwind
+                                  args:
+                                    closure ()
+                                      invoke
+                                        target: bench.run
+                                  kwargs: []
+                            expr_stmt (value)
+                              if
+                                cond:
+                                  unop !
+                                    value:
+                                      locator warm_ok
+                                then:
+                                  block (2 stmts)
+                                    expr_stmt ;
+                                      assign
+                                        target:
+                                          locator ok
+                                        value:
+                                          value false
+                                    expr_stmt ;
+                                      break
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator warmup_iters
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator warmup_iters
+                                    rhs:
+                                      value 1
+                    let measure_start
+                      init:
+                        intrinsic time_now
+                          args: []
+                          kwargs: []
+                    let measure_deadline
+                      init:
+                        binop +
+                          lhs:
+                            locator measure_start
+                          rhs:
+                            locator measure_secs
+                    let mut measure_iters
+                      init:
+                        value 0
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (1 stmt)
+                            expr_stmt (value)
+                              while
+                                cond:
+                                  binop ||
+                                    lhs:
+                                      binop <
+                                        lhs:
+                                          intrinsic time_now
+                                            args: []
+                                            kwargs: []
+                                        rhs:
+                                          locator measure_deadline
+                                    rhs:
+                                      binop ==
+                                        lhs:
+                                          locator measure_iters
+                                        rhs:
+                                          value 0
+                                body:
+                                  block (3 stmts)
+                                    let run_ok
+                                      init:
+                                        intrinsic catch_unwind
+                                          args:
+                                            closure ()
+                                              invoke
+                                                target: bench.run
+                                          kwargs: []
+                                    expr_stmt (value)
+                                      if
+                                        cond:
+                                          unop !
+                                            value:
+                                              locator run_ok
+                                        then:
+                                          block (2 stmts)
+                                            expr_stmt ;
+                                              assign
+                                                target:
+                                                  locator ok
+                                                value:
+                                                  value false
+                                            expr_stmt ;
+                                              break
+                                    expr_stmt ;
+                                      assign
+                                        target:
+                                          locator measure_iters
+                                        value:
+                                          binop +
+                                            lhs:
+                                              locator measure_iters
+                                            rhs:
+                                              value 1
+                    let measure_end
+                      init:
+                        intrinsic time_now
+                          args: []
+                          kwargs: []
+                    let elapsed
+                      init:
+                        binop -
+                          lhs:
+                            locator measure_end
+                          rhs:
+                            locator measure_start
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (4 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator passed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator passed
+                                    rhs:
+                                      value 1
+                            let iters_f
+                              init:
+                                cast -> Expr(f64)
+                                  locator measure_iters
+                            let ns_per_iter
+                              init:
+                                if
+                                  cond:
+                                    binop >
+                                      lhs:
+                                        locator iters_f
+                                      rhs:
+                                        value 0
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt (value)
+                                        binop *
+                                          lhs:
+                                            binop /
+                                              lhs:
+                                                locator elapsed
+                                              rhs:
+                                                locator iters_f
+                                          rhs:
+                                            value 1000000000
+                                  else:
+                                    block (1 stmt)
+                                      expr_stmt (value)
+                                        value 0
+                            expr_stmt ;
+                              intrinsic println
+                                args:
+                                  format_string "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"
+                                  select .name [field]
+                                    object:
+                                      locator bench
+                                  locator measure_iters
+                                  locator elapsed
+                                  locator ns_per_iter
+                                kwargs: []
+                        else:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator failed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator failed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                args:
+                                  format_string "  {} ... FAILED"
+                                  select .name [field]
+                                    object:
+                                      locator bench
+                                kwargs: []
+                    expr_stmt ;
+                      assign
+                        target:
+                          locator idx
+                        value:
+                          binop +
+                            lhs:
+                              locator idx
+                            rhs:
+                              value 1
+            let total
+              init:
+                binop +
+                  lhs:
+                    locator passed
+                  rhs:
+                    locator failed
+            expr_stmt ;
+              intrinsic println
+                args:
+                  format_string "bench result: {} passed; {} failed; {} total"
+                  locator passed
+                  locator failed
+                  locator total
+                kwargs: []
+            expr_stmt (value)
+              struct BenchReport
+                total:
+                  locator total
+                passed:
+                  locator passed
+                failed:
+                  locator failed
+      }
       pub module test {
         pub struct TestCase {
           name: Expr(str)
@@ -139,6 +450,7 @@ ast::File {
                             closure ()
                               invoke
                                 target: test.run
+                          kwargs: []
                     expr_stmt (value)
                       if
                         cond:
@@ -157,7 +469,12 @@ ast::File {
                                       value 1
                             expr_stmt ;
                               intrinsic println
-                                template: "  {} ... ok" test.name
+                                args:
+                                  format_string "  {} ... ok"
+                                  select .name [field]
+                                    object:
+                                      locator test
+                                kwargs: []
                         else:
                           block (2 stmts)
                             expr_stmt ;
@@ -172,7 +489,12 @@ ast::File {
                                       value 1
                             expr_stmt ;
                               intrinsic println
-                                template: "  {} ... FAILED" test.name
+                                args:
+                                  format_string "  {} ... FAILED"
+                                  select .name [field]
+                                    object:
+                                      locator test
+                                kwargs: []
                     expr_stmt ;
                       assign
                         target:
@@ -192,7 +514,12 @@ ast::File {
                     locator failed
             expr_stmt ;
               intrinsic println
-                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+                args:
+                  format_string "test result: {} passed; {} failed; {} total"
+                  locator passed
+                  locator failed
+                  locator total
+                kwargs: []
             expr_stmt (value)
               struct TestReport
                 total:
@@ -207,24 +534,42 @@ ast::File {
               invoke
                 target: run_tests
       }
+      pub module time {
+        pub fn now() -> Expr(f64) : fn() -> f64
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic time_now
+                args: []
+                kwargs: []
+      }
     }
     pub fn main() -> () : fn() -> ()
       block (39 stmts)
         expr_stmt ;
           intrinsic println
-            template: "📘 Tutorial: 04_struct_introspection.fp"
+            args:
+              format_string "📘 Tutorial: 04_struct_introspection.fp"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "🧭 Focus: Struct introspection demonstration"
+            args:
+              format_string "🧭 Focus: Struct introspection demonstration"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "🧪 What to look for: labeled outputs below"
+            args:
+              format_string "🧪 What to look for: labeled outputs below"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "✅ Expectation: outputs match labels"
+            args:
+              format_string "✅ Expectation: outputs match labels"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: ""
+            args:
+              format_string ""
+            kwargs: []
         pub struct Point {
           x: Expr(f64)
           y: Expr(f64)
@@ -252,37 +597,67 @@ ast::File {
           value 0
         expr_stmt ;
           intrinsic println
-            template: "=== Struct Introspection ==="
+            args:
+              format_string "=== Struct Introspection ==="
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Point size: {} bytes" 16
+            args:
+              format_string "Point size: {} bytes"
+              value 16
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Color size: {} bytes" 24
+            args:
+              format_string "Color size: {} bytes"
+              value 24
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Point fields: {}" 2
+            args:
+              format_string "Point fields: {}"
+              value 2
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Color fields: {}" 3
+            args:
+              format_string "Color fields: {}"
+              value 3
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Point has x: {}" true
+            args:
+              format_string "Point has x: {}"
+              value true
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Point has z: {}" false
+            args:
+              format_string "Point has z: {}"
+              value false
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Point methods: {}" 0
+            args:
+              format_string "Point methods: {}"
+              value 0
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Color methods: {}" 0
+            args:
+              format_string "Color methods: {}"
+              value 0
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "\n✓ Introspection completed!"
+            args:
+              format_string "\n✓ Introspection completed!"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "\n=== Transpilation Demo ==="
+            args:
+              format_string "\n=== Transpilation Demo ==="
+            kwargs: []
         pub const POINT_SIZE_CONST: u64
           value 16
         pub const COLOR_SIZE_CONST: u64
@@ -307,26 +682,60 @@ ast::File {
                 value 0
         expr_stmt ;
           intrinsic println
-            template: "Transpilation target sizes:"
+            args:
+              format_string "Transpilation target sizes:"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "  Point: {} bytes (const)" POINT_SIZE_CONST
+            args:
+              format_string "  Point: {} bytes (const)"
+              locator POINT_SIZE_CONST
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "  Color: {} bytes (const)" COLOR_SIZE_CONST
+            args:
+              format_string "  Color: {} bytes (const)"
+              locator COLOR_SIZE_CONST
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "  Combined: {} bytes" TOTAL_SIZE
+            args:
+              format_string "  Combined: {} bytes"
+              locator TOTAL_SIZE
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "Runtime instances:"
+            args:
+              format_string "Runtime instances:"
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "  Origin: ({}, {})" origin.x, origin.y
+            args:
+              format_string "  Origin: ({}, {})"
+              select .x [field]
+                object:
+                  locator origin
+              select .y [field]
+                object:
+                  locator origin
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "  Red: rgb({}, {}, {})" red.r, red.g, red.b
+            args:
+              format_string "  Red: rgb({}, {}, {})"
+              select .r [field]
+                object:
+                  locator red
+              select .g [field]
+                object:
+                  locator red
+              select .b [field]
+                object:
+                  locator red
+            kwargs: []
         expr_stmt ;
           intrinsic println
-            template: "\n✓ Introspection enables external code generation!"
+            args:
+              format_string "\n✓ Introspection enables external code generation!"
+            kwargs: []
 }

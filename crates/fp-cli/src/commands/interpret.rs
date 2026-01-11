@@ -1,6 +1,10 @@
 //! Interpret FerroPhase source or bytecode files.
 
-use crate::{CliError, Result, cli::CliConfig, pipeline::{Pipeline, PipelineInput, PipelineOutput}};
+use crate::{
+    CliError, Result,
+    cli::CliConfig,
+    pipeline::{Pipeline, PipelineInput, PipelineOutput},
+};
 use clap::Args;
 use fp_pipeline::{PipelineOptions, PipelineTarget};
 use std::path::{Path, PathBuf};

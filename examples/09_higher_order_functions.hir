@@ -9,20 +9,38 @@ hir::Program {
     }
 
     struct __Closure1 {
-        pub test: TestCase,
+        pub bench: BenchCase,
     }
 
     fn __closure1_call(__env: __Closure1) -> () {
         // params: [__env: __Closure1]
-        __env.test.run()
+        __env.bench.run()
     }
 
     struct __Closure2 {
+        pub bench: BenchCase,
+    }
+
+    fn __closure2_call(__env: __Closure2) -> () {
+        // params: [__env: __Closure2]
+        __env.bench.run()
+    }
+
+    struct __Closure3 {
+        pub test: TestCase,
+    }
+
+    fn __closure3_call(__env: __Closure3) -> () {
+        // params: [__env: __Closure3]
+        __env.test.run()
+    }
+
+    struct __Closure4 {
         pub __fp_no_capture: i8,
     }
 
-    fn __closure2_call(__env: __Closure2, x: i64) -> i64 {
-        // params: [__env: __Closure2, x: i64]
+    fn __closure4_call(__env: __Closure4, x: i64) -> i64 {
+        // params: [__env: __Closure4, x: i64]
         (x * 2)
     }
 
@@ -70,6 +88,83 @@ hir::Program {
         }
     }
 
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: [BenchCase; 0] =
+        [];
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 0.2;
+                    let measure_secs = 0.5;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = __Closure2 { bench: bench });
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
     pub struct std::test::TestCase {
         pub name: str,
         pub run: fn() -> (),
@@ -93,21 +188,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(arg0 = __Closure1 { test: test });
+                    let ok = std::catch_unwind(arg0 = __Closure3 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
+                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
+            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -118,10 +213,16 @@ hir::Program {
         }
     }
 
+    pub fn std::time::now() -> f64 {
+        {
+            std::time_now()
+        }
+    }
+
     pub fn apply<T>(a: T, b: T, op: fn(T, T) -> T) -> () {
         // params: [a: T, b: T, op: fn(T, T) -> T]
         {
-            std::Println(format = "apply({}, {}) = {}", args = [arg0 = a, arg1 = b, arg2 = op(arg0 = a, arg1 = b)]);
+            std::println(arg0 = format_string("apply({}, {}) = {}"), arg1 = a, arg2 = b, arg3 = op(arg0 = a, arg1 = b));
         }
     }
 
@@ -155,23 +256,23 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::Println(format = "📘 Tutorial: 09_higher_order_functions.fp");
-            std::Println(format = "🧭 Focus: Higher-order functions: passing functions as arguments and closures");
-            std::Println(format = "🧪 What to look for: labeled outputs below");
-            std::Println(format = "✅ Expectation: outputs match labels");
-            std::Println(format = "");
-            std::Println(format = "Generic operations:");
+            std::println(arg0 = format_string("📘 Tutorial: 09_higher_order_functions.fp"));
+            std::println(arg0 = format_string("🧭 Focus: Higher-order functions: passing functions as arguments and closures"));
+            std::println(arg0 = format_string("🧪 What to look for: labeled outputs below"));
+            std::println(arg0 = format_string("✅ Expectation: outputs match labels"));
+            std::println(arg0 = format_string(""));
+            std::println(arg0 = format_string("Generic operations:"));
             apply(a = 10, b = 20, op = add);
             apply(a = 1.5, b = 2.5, op = add);
-            std::Println(format = "\nConditional:");
-            std::Println(format = "apply_if(true, 5, 3) = {}", args = [arg0 = apply_if(cond = true, a = 5, b = 3, op = add__spec0)]);
-            std::Println(format = "apply_if(false, 5, 3) = {}", args = [arg0 = apply_if(cond = false, a = 5, b = 3, op = add__spec0)]);
-            std::Println(format = "\nClosure factory:");
+            std::println(arg0 = format_string("\nConditional:"));
+            std::println(arg0 = format_string("apply_if(true, 5, 3) = {}"), arg1 = apply_if(cond = true, a = 5, b = 3, op = add__spec0));
+            std::println(arg0 = format_string("apply_if(false, 5, 3) = {}"), arg1 = apply_if(cond = false, a = 5, b = 3, op = add__spec0));
+            std::println(arg0 = format_string("\nClosure factory:"));
             pub const add_10: __Closure0 =
                 make_adder(n = 10);
-            std::Println(format = "add_10(5) = {}", args = [arg0 = __closure0_call(__env = add_10, x = 5)]);
-            let double = __Closure2 { __fp_no_capture: 0 };
-            std::Println(format = "double(7) = {}", args = [arg0 = __closure2_call(__env = double, x = 7)]);
+            std::println(arg0 = format_string("add_10(5) = {}"), arg1 = __closure0_call(__env = add_10, x = 5));
+            let double = __Closure4 { __fp_no_capture: 0 };
+            std::println(arg0 = format_string("double(7) = {}"), arg1 = __closure4_call(__env = double, x = 7));
         }
     }
 

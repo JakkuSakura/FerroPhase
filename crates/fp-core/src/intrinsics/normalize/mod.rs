@@ -1,6 +1,6 @@
 use crate::ast::{
-    BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall, ExprIntrinsicContainer,
-    ExprInvoke, ExprInvokeTarget, ExprKind, Item, ItemKind, Node, NodeKind, Ty, Value,
+    BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, Item, ItemKind, Node, NodeKind, Ty, Value,
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
@@ -401,15 +401,10 @@ fn normalize_invoke(invoke: &mut ExprInvoke, strategy: &dyn IntrinsicNormalizer)
 }
 
 fn normalize_format_string(
-    format_expr: &mut ExprFormatString,
+    format_expr: &mut ExprStringTemplate,
     strategy: &dyn IntrinsicNormalizer,
 ) -> Result<()> {
-    for arg in &mut format_expr.args {
-        normalize_expr(arg, strategy)?;
-    }
-    for kwarg in &mut format_expr.kwargs {
-        normalize_expr(&mut kwarg.value, strategy)?;
-    }
+    let _ = (format_expr, strategy);
     Ok(())
 }
 
@@ -450,22 +445,29 @@ fn normalize_intrinsic_call(
     call: &mut ExprIntrinsicCall,
     strategy: &dyn IntrinsicNormalizer,
 ) -> Result<()> {
-    match &mut call.payload {
-        crate::intrinsics::IntrinsicCallPayload::Format { template } => {
-            normalize_format_string(template, strategy)?;
-        }
-        crate::intrinsics::IntrinsicCallPayload::Args { args } => {
-            for arg in args.iter_mut() {
-                normalize_expr(arg, strategy)?;
-            }
-            if matches!(
-                call.kind,
-                crate::intrinsics::IntrinsicCallKind::Print
-                    | crate::intrinsics::IntrinsicCallKind::Println
-            ) {
-                if let Some(template) = format::convert_print_args_to_format(args) {
-                    call.payload = crate::intrinsics::IntrinsicCallPayload::Format { template };
-                }
+    for arg in call.args.iter_mut() {
+        normalize_expr(arg, strategy)?;
+    }
+    for kwarg in call.kwargs.iter_mut() {
+        normalize_expr(&mut kwarg.value, strategy)?;
+    }
+
+    if matches!(
+        call.kind,
+        crate::intrinsics::IntrinsicCallKind::Print | crate::intrinsics::IntrinsicCallKind::Println
+    ) {
+        if !matches!(
+            call.args.first().map(|arg| arg.kind()),
+            Some(crate::ast::ExprKind::FormatString(_))
+        ) {
+            if let Some((template, skip)) = format::convert_print_args_to_template(&call.args) {
+                let rest: Vec<_> = call.args.drain(skip..).collect();
+                call.args.clear();
+                let mut args = Vec::with_capacity(1 + rest.len());
+                args.push(Expr::new(crate::ast::ExprKind::FormatString(template)));
+                args.extend(rest);
+                call.args = args;
+                call.kwargs.clear();
             }
         }
     }
@@ -480,10 +482,11 @@ mod tests {
     use crate::intrinsics::normalize::bootstrap as b;
 
     #[test]
-    fn test_convert_print_args_to_format() {
+    fn test_convert_print_args_to_template() {
         let lit = Expr::new(ExprKind::Value(Box::new(Value::string("hello".into()))));
-        let out = crate::intrinsics::normalize::format::convert_print_args_to_format(&[lit])
-            .expect("format");
+        let (out, _skip) =
+            crate::intrinsics::normalize::format::convert_print_args_to_template(&[lit])
+                .expect("format");
         assert_eq!(out.parts.len(), 1);
         match &out.parts[0] {
             FormatTemplatePart::Literal(s) => assert_eq!(s, "hello"),

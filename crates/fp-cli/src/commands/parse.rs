@@ -189,33 +189,19 @@ fn scrub_any_expressions(file: &mut File) {
             ExprKind::Closure(ExprClosure { body, .. }) => scrub_expr(body.as_mut()),
             ExprKind::Closured(inner) => scrub_expr(inner.expr.as_mut()),
             ExprKind::Paren(ExprParen { expr: e }) => scrub_expr(e.as_mut()),
-            ExprKind::FormatString(fmt) => {
-                for a in fmt.args.iter_mut() {
-                    scrub_expr(a);
-                }
-                for kw in fmt.kwargs.iter_mut() {
-                    scrub_expr(&mut kw.value);
-                }
-            }
+            ExprKind::FormatString(_) => {}
             ExprKind::Quote(q) => scrub_block(&mut q.block),
             ExprKind::Splice(s) => scrub_expr(s.token.as_mut()),
             ExprKind::Item(item) => scrub_item(item.as_mut()),
             ExprKind::Value(_) => {}
-            ExprKind::IntrinsicCall(call) => match &mut call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    for a in args.iter_mut() {
-                        scrub_expr(a);
-                    }
+            ExprKind::IntrinsicCall(call) => {
+                for a in call.args.iter_mut() {
+                    scrub_expr(a);
                 }
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    for a in template.args.iter_mut() {
-                        scrub_expr(a);
-                    }
-                    for kw in template.kwargs.iter_mut() {
-                        scrub_expr(&mut kw.value);
-                    }
+                for kw in call.kwargs.iter_mut() {
+                    scrub_expr(&mut kw.value);
                 }
-            },
+            }
             ExprKind::IntrinsicContainer(coll) => match coll {
                 fp_core::ast::ExprIntrinsicContainer::VecElements { elements } => {
                     for e in elements.iter_mut() {

@@ -487,6 +487,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     // removed unused: take_pending_closure
 
     pub(super) fn set_pending_expr_ty(&mut self, ty: Option<Ty>) {
+        if self.typer.is_none() {
+            return;
+        }
         let ty = ty.unwrap_or_else(|| Ty::Unit(TypeUnit));
         self.pending_expr_ty = Some(ty);
     }

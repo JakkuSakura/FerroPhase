@@ -371,7 +371,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::For(for_expr) => self.eval_for_runtime(for_expr),
             ExprKind::Try(expr_try) => self.eval_expr_runtime(expr_try.expr.as_mut()),
             ExprKind::FormatString(template) => {
-                if let Ok(output) = self.render_format_template_runtime(template) {
+                let mut args = Vec::new();
+                let mut kwargs = Vec::new();
+                if let Ok(output) =
+                    self.render_format_template_runtime(template, &mut args, &mut kwargs)
+                {
                     self.stdout.push(output);
                 }
                 RuntimeFlow::Value(Value::unit())
@@ -676,13 +680,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let kind = call.kind;
                 let mut assign_target: Option<String> = None;
                 if matches!(kind, IntrinsicCallKind::AddField) {
-                    if let fp_core::intrinsics::IntrinsicCallPayload::Args { args } = &call.payload
-                    {
-                        if let Some(first) = args.first() {
-                            if let ExprKind::Locator(locator) = first.kind() {
-                                if let Some(ident) = locator.as_ident() {
-                                    assign_target = Some(ident.as_str().to_string());
-                                }
+                    if let Some(first) = call.args.first() {
+                        if let ExprKind::Locator(locator) = first.kind() {
+                            if let Some(ident) = locator.as_ident() {
+                                assign_target = Some(ident.as_str().to_string());
                             }
                         }
                     }
@@ -833,7 +834,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                                 Value::List(list.clone()),
                                             );
                                             self.mark_mutated();
-                                            self.pending_expr_ty = Some(Ty::unit());
+                                            self.set_pending_expr_ty(Some(Ty::unit()));
                                             return Value::unit();
                                         }
                                         other => {
@@ -854,7 +855,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                                     Value::List(list.clone()),
                                                 );
                                                 self.mark_mutated();
-                                                self.pending_expr_ty = Some(Ty::unit());
+                                                self.set_pending_expr_ty(Some(Ty::unit()));
                                                 return Value::unit();
                                             }
                                             other => {
@@ -879,7 +880,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
             if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                 let value = self.eval_expr(select.obj.as_mut());
-                self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))));
                 return match value {
                     Value::List(list) => Value::int(list.values.len() as i64),
                     Value::Map(map) => Value::int(map.len() as i64),
@@ -932,7 +933,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return Value::undefined();
                     }
                 };
-                self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::Bool));
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::Bool)));
                 let result = match select.field.name.as_str() {
                     "starts_with" => hay.starts_with(&needle),
                     "ends_with" => hay.ends_with(&needle),
@@ -944,7 +945,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
             if select.field.name.as_str() == "to_string" && invoke.args.is_empty() {
                 let value = self.eval_expr(select.obj.as_mut());
-                self.pending_expr_ty = Some(Ty::Primitive(TypePrimitive::String));
+                self.set_pending_expr_ty(Some(Ty::Primitive(TypePrimitive::String)));
                 return match value {
                     Value::String(_) => value,
                     Value::Int(int_val) => Value::string(int_val.value.to_string()),

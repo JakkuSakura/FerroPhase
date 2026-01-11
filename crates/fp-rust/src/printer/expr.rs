@@ -5,16 +5,18 @@ use quote::{format_ident, quote};
 use std::str::FromStr;
 use syn::LitStr;
 
+use eyre::eyre;
+
 use fp_core::ast::{
     BlockStmt, Expr, ExprArray, ExprArrayRepeat, ExprAssign, ExprAwait, ExprBinOp, ExprBlock,
-    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFor, ExprFormatString, ExprIf,
-    ExprIndex, ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprLet, ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
-    ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStruct, ExprStructural, ExprTuple,
-    ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item, MacroDelimiter, StmtLet, Ty,
-    Value, ValueList, Visibility,
+    ExprCast, ExprClosure, ExprDereference, ExprField, ExprFor, ExprIf, ExprIndex,
+    ExprIntrinsicCall, ExprIntrinsicContainer, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLet,
+    ExprLoop, ExprMacro, ExprMatch, ExprParen, ExprRange, ExprRangeLimit, ExprReference,
+    ExprSelect, ExprSelectType, ExprSplat, ExprSplatDict, ExprStringTemplate, ExprStruct,
+    ExprStructural, ExprTuple, ExprUnOp, ExprWhile, FormatArgRef, FormatTemplatePart, Item,
+    MacroDelimiter, StmtLet, Ty, Value, ValueList, Visibility,
 };
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 
 use crate::printer::RustPrinter;
@@ -722,16 +724,10 @@ impl RustPrinter {
             | IntrinsicCallKind::FieldCount
             | IntrinsicCallKind::MethodCount
             | IntrinsicCallKind::TypeName => {
-                let args = match &call.payload {
-                    IntrinsicCallPayload::Args { args } => args,
-                    IntrinsicCallPayload::Format { .. } => {
-                        bail!("intrinsic expects args payload")
-                    }
-                };
-                if args.len() != 1 {
+                if call.args.len() != 1 {
                     bail!("intrinsic {:?} expects exactly 1 argument", call.kind)
                 }
-                let ty = match args[0].kind() {
+                let ty = match call.args[0].kind() {
                     ExprKind::Locator(locator) => self.print_locator(locator)?,
                     _ => bail!("intrinsic {:?} expects a type locator", call.kind),
                 };
@@ -751,20 +747,14 @@ impl RustPrinter {
                 }
             }
             IntrinsicCallKind::HasField | IntrinsicCallKind::HasMethod => {
-                let args = match &call.payload {
-                    IntrinsicCallPayload::Args { args } => args,
-                    IntrinsicCallPayload::Format { .. } => {
-                        bail!("intrinsic expects args payload")
-                    }
-                };
-                if args.len() != 2 {
+                if call.args.len() != 2 {
                     bail!("intrinsic {:?} expects exactly 2 arguments", call.kind)
                 }
-                let ty = match args[0].kind() {
+                let ty = match call.args[0].kind() {
                     ExprKind::Locator(locator) => self.print_locator(locator)?,
                     _ => bail!("intrinsic {:?} expects a type locator", call.kind),
                 };
-                let name = self.print_expr(&args[1])?;
+                let name = self.print_expr(&call.args[1])?;
                 match call.kind {
                     IntrinsicCallKind::HasField => Ok(quote!(
                         ::fp_rust::intrinsic_has_field::<#ty>(#name)
@@ -781,14 +771,9 @@ impl RustPrinter {
     }
 
     fn print_print_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
-        let template = match &call.payload {
-            IntrinsicCallPayload::Format { template } => template,
-            IntrinsicCallPayload::Args { .. } => {
-                bail!("print intrinsics expect format payloads")
-            }
-        };
-
-        let (literal, args) = self.prepare_format_args(template)?;
+        let (template, args, kwargs) = extract_format_call(call)
+            .ok_or_else(|| eyre!("print intrinsics expect format templates"))?;
+        let (literal, args) = self.prepare_format_args(template, args, kwargs)?;
         let macro_ident = if matches!(call.kind, IntrinsicCallKind::Println) {
             format_ident!("println")
         } else {
@@ -802,28 +787,20 @@ impl RustPrinter {
     }
 
     fn print_format_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
-        let template = match &call.payload {
-            IntrinsicCallPayload::Format { template } => template,
-            IntrinsicCallPayload::Args { .. } => {
-                bail!("format intrinsic expects format payloads")
-            }
-        };
-
-        let (literal, args) = self.prepare_format_args(template)?;
+        let (template, args, kwargs) =
+            extract_format_call(call).ok_or_else(|| eyre!("format intrinsic expects template"))?;
+        let (literal, args) = self.prepare_format_args(template, args, kwargs)?;
         let args_iter = args.iter();
         Ok(quote!(format!(#literal #(, #args_iter)* )))
     }
 
     fn print_generic_intrinsic(&self, call: &ExprIntrinsicCall) -> Result<TokenStream> {
         let ident = self.intrinsic_function_ident(call.kind);
-        let args: Vec<TokenStream> = match &call.payload {
-            IntrinsicCallPayload::Args { args } => {
-                args.iter().map(|arg| self.print_expr(arg)).try_collect()?
-            }
-            IntrinsicCallPayload::Format { template } => {
-                vec![self.print_expr_format_string(template)?]
-            }
-        };
+        let args: Vec<TokenStream> = call
+            .args
+            .iter()
+            .map(|arg| self.print_expr(arg))
+            .try_collect()?;
 
         if args.is_empty() {
             Ok(quote!(#ident()))
@@ -846,6 +823,7 @@ impl RustPrinter {
             IntrinsicCallKind::Input => quote!(intrinsic_input),
             IntrinsicCallKind::Panic => quote!(intrinsic_panic),
             IntrinsicCallKind::CatchUnwind => quote!(intrinsic_catch_unwind),
+            IntrinsicCallKind::TimeNow => quote!(intrinsic_time_now),
             IntrinsicCallKind::SizeOf => quote!(intrinsic_size_of),
             IntrinsicCallKind::ReflectFields => quote!(intrinsic_reflect_fields),
             IntrinsicCallKind::HasMethod => quote!(intrinsic_has_method),
@@ -866,7 +844,9 @@ impl RustPrinter {
 
     fn prepare_format_args(
         &self,
-        template: &ExprFormatString,
+        template: &ExprStringTemplate,
+        args: &[Expr],
+        kwargs: &[fp_core::ast::ExprKwArg],
     ) -> Result<(LitStr, Vec<TokenStream>)> {
         let mut literal = String::new();
         for part in &template.parts {
@@ -881,20 +861,19 @@ impl RustPrinter {
                     }
                     if let Some(spec) = &placeholder.format_spec {
                         literal.push(':');
-                        literal.push_str(spec);
+                        literal.push_str(&spec.raw);
                     }
                     literal.push('}');
                 }
             }
         }
 
-        let mut args: Vec<TokenStream> = template
-            .args
+        let mut args: Vec<TokenStream> = args
             .iter()
             .map(|arg| self.print_print_arg(arg))
             .try_collect()?;
 
-        for kwarg in &template.kwargs {
+        for kwarg in kwargs {
             let ident = format_ident!("{}", kwarg.name);
             let value = self.print_expr(&kwarg.value)?;
             args.push(quote!(#ident = #value));
@@ -913,8 +892,8 @@ impl RustPrinter {
         }
     }
 
-    fn print_expr_format_string(&self, template: &ExprFormatString) -> Result<TokenStream> {
-        let (literal, args) = self.prepare_format_args(template)?;
+    fn print_expr_format_string(&self, template: &ExprStringTemplate) -> Result<TokenStream> {
+        let (literal, args) = self.prepare_format_args(template, &[], &[])?;
         let args_iter = args.iter();
         Ok(quote!(format!(#literal #(, #args_iter)* )))
     }
@@ -953,6 +932,17 @@ fn is_const_like_expr(expr: &Expr) -> bool {
         // Be conservative: closures, invokes, loops, macros, etc. are not const-like.
         _ => false,
     }
+}
+
+fn extract_format_call(
+    call: &ExprIntrinsicCall,
+) -> Option<(&ExprStringTemplate, &[Expr], &[fp_core::ast::ExprKwArg])> {
+    let first = call.args.first()?;
+    let template = match first.kind() {
+        ExprKind::FormatString(format) => format,
+        _ => return None,
+    };
+    Some((template, &call.args[1..], &call.kwargs))
 }
 
 fn is_iter_enumerate_over_iter(expr: &Expr) -> bool {

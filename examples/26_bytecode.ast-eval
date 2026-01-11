@@ -98,6 +98,317 @@ ast::File {
                   block (0 stmts) : ()
         }
       }
+      pub module bench : () {
+        pub struct BenchCase : BenchCase{name: Expr(str), run: fn() -> ()} {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<BenchCase{name: Expr(str), run: fn() -> ()}> : Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+          value [0 values] : Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+        pub struct BenchReport : BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_benches() -> Expr(BenchReport) : fn() -> BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)} : fn() -> BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+          block (8 stmts) : BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+            let benches
+              init:
+                locator REGISTRY : Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+            let mut passed
+              init:
+                value 0 : i64
+            let mut failed
+              init:
+                value 0 : i64
+            let mut idx
+              init:
+                value 0 : i64
+            expr_stmt (value)
+              while : ()
+                cond:
+                  binop < : bool
+                    lhs:
+                      locator idx : i64
+                    rhs:
+                      invoke : i64
+                        target: benches.len
+                body:
+                  block (16 stmts) : ()
+                    let bench
+                      init:
+                        index : BenchCase{name: Expr(str), run: fn() -> ()}
+                          value:
+                            locator benches : Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+                          index:
+                            locator idx : i64
+                    let mut ok
+                      init:
+                        value true : bool
+                    let warmup_secs
+                      init:
+                        value 0.2 : f64
+                    let measure_secs
+                      init:
+                        value 0.5 : f64
+                    let warmup_start
+                      init:
+                        intrinsic time_now : any
+                          args: []
+                          kwargs: []
+                    let warmup_deadline
+                      init:
+                        binop + : any
+                          lhs:
+                            locator warmup_start : any
+                          rhs:
+                            locator warmup_secs : f64
+                    let mut warmup_iters
+                      init:
+                        value 0 : i64
+                    expr_stmt (value)
+                      while : ()
+                        cond:
+                          binop < : bool
+                            lhs:
+                              intrinsic time_now : any
+                                args: []
+                                kwargs: []
+                            rhs:
+                              locator warmup_deadline : any
+                        body:
+                          block (3 stmts) : ()
+                            let warm_ok
+                              init:
+                                intrinsic catch_unwind : bool
+                                  args:
+                                    closure () : fn() -> ()
+                                      invoke : ()
+                                        target: bench.run
+                                  kwargs: []
+                            expr_stmt (value)
+                              if : ()
+                                cond:
+                                  unop ! : bool
+                                    value:
+                                      locator warm_ok : bool
+                                then:
+                                  block (2 stmts) : ()
+                                    expr_stmt ;
+                                      assign : bool
+                                        target:
+                                          locator ok : bool
+                                        value:
+                                          value false : bool
+                                    expr_stmt ;
+                                      break : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator warmup_iters : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator warmup_iters : i64
+                                    rhs:
+                                      value 1 : i64
+                    let measure_start
+                      init:
+                        intrinsic time_now : any
+                          args: []
+                          kwargs: []
+                    let measure_deadline
+                      init:
+                        binop + : any
+                          lhs:
+                            locator measure_start : any
+                          rhs:
+                            locator measure_secs : f64
+                    let mut measure_iters
+                      init:
+                        value 0 : i64
+                    expr_stmt (value)
+                      if : ()
+                        cond:
+                          locator ok : bool
+                        then:
+                          block (1 stmt) : ()
+                            expr_stmt (value)
+                              while : ()
+                                cond:
+                                  binop || : bool
+                                    lhs:
+                                      binop < : bool
+                                        lhs:
+                                          intrinsic time_now : any
+                                            args: []
+                                            kwargs: []
+                                        rhs:
+                                          locator measure_deadline : any
+                                    rhs:
+                                      binop == : bool
+                                        lhs:
+                                          locator measure_iters : i64
+                                        rhs:
+                                          value 0 : i64
+                                body:
+                                  block (3 stmts) : ()
+                                    let run_ok
+                                      init:
+                                        intrinsic catch_unwind : bool
+                                          args:
+                                            closure () : fn() -> ()
+                                              invoke : ()
+                                                target: bench.run
+                                          kwargs: []
+                                    expr_stmt (value)
+                                      if : ()
+                                        cond:
+                                          unop ! : bool
+                                            value:
+                                              locator run_ok : bool
+                                        then:
+                                          block (2 stmts) : ()
+                                            expr_stmt ;
+                                              assign : bool
+                                                target:
+                                                  locator ok : bool
+                                                value:
+                                                  value false : bool
+                                            expr_stmt ;
+                                              break : ()
+                                    expr_stmt ;
+                                      assign : i64
+                                        target:
+                                          locator measure_iters : i64
+                                        value:
+                                          binop + : i64
+                                            lhs:
+                                              locator measure_iters : i64
+                                            rhs:
+                                              value 1 : i64
+                    let measure_end
+                      init:
+                        intrinsic time_now : any
+                          args: []
+                          kwargs: []
+                    let elapsed
+                      init:
+                        binop - : any
+                          lhs:
+                            locator measure_end : any
+                          rhs:
+                            locator measure_start : any
+                    expr_stmt (value)
+                      if : ()
+                        cond:
+                          locator ok : bool
+                        then:
+                          block (4 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator passed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator passed : i64
+                                    rhs:
+                                      value 1 : i64
+                            let iters_f
+                              init:
+                                cast : f64 -> Expr(f64)
+                                  locator measure_iters : i64
+                            let ns_per_iter
+                              init:
+                                if : any
+                                  cond:
+                                    binop > : bool
+                                      lhs:
+                                        locator iters_f : f64
+                                      rhs:
+                                        value 0 : f64
+                                  then:
+                                    block (1 stmt) : any
+                                      expr_stmt (value)
+                                        binop * : any
+                                          lhs:
+                                            binop / : any
+                                              lhs:
+                                                locator elapsed : any
+                                              rhs:
+                                                locator iters_f : f64
+                                          rhs:
+                                            value 1000000000 : f64
+                                  else:
+                                    block (1 stmt) : f64
+                                      expr_stmt (value)
+                                        value 0 : f64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                args:
+                                  format_string "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})" : string
+                                  select .name [field] : string
+                                    object:
+                                      locator bench : BenchCase{name: Expr(str), run: fn() -> ()}
+                                  locator measure_iters : i64
+                                  locator elapsed : any
+                                  locator ns_per_iter : any
+                                kwargs: []
+                        else:
+                          block (2 stmts) : ()
+                            expr_stmt ;
+                              assign : i64
+                                target:
+                                  locator failed : i64
+                                value:
+                                  binop + : i64
+                                    lhs:
+                                      locator failed : i64
+                                    rhs:
+                                      value 1 : i64
+                            expr_stmt ;
+                              intrinsic println : ()
+                                args:
+                                  format_string "  {} ... FAILED" : string
+                                  select .name [field] : string
+                                    object:
+                                      locator bench : BenchCase{name: Expr(str), run: fn() -> ()}
+                                kwargs: []
+                    expr_stmt ;
+                      assign : i64
+                        target:
+                          locator idx : i64
+                        value:
+                          binop + : i64
+                            lhs:
+                              locator idx : i64
+                            rhs:
+                              value 1 : i64
+            let total
+              init:
+                binop + : i64
+                  lhs:
+                    locator passed : i64
+                  rhs:
+                    locator failed : i64
+            expr_stmt ;
+              intrinsic println : ()
+                args:
+                  format_string "bench result: {} passed; {} failed; {} total" : string
+                  locator passed : i64
+                  locator failed : i64
+                  locator total : i64
+                kwargs: []
+            expr_stmt (value)
+              struct BenchReport : BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+                total:
+                  locator total : i64
+                passed:
+                  locator passed : i64
+                failed:
+                  locator failed : i64
+      }
       pub module test : () {
         pub struct TestCase : TestCase{name: Expr(str), run: fn() -> ()} {
           name: Expr(str)
@@ -149,6 +460,7 @@ ast::File {
                             closure () : fn() -> ()
                               invoke : ()
                                 target: test.run
+                          kwargs: []
                     expr_stmt (value)
                       if : ()
                         cond:
@@ -167,7 +479,12 @@ ast::File {
                                       value 1 : i64
                             expr_stmt ;
                               intrinsic println : ()
-                                template: "  {} ... ok" test.name
+                                args:
+                                  format_string "  {} ... ok" : string
+                                  select .name [field] : string
+                                    object:
+                                      locator test : TestCase{name: Expr(str), run: fn() -> ()}
+                                kwargs: []
                         else:
                           block (2 stmts) : ()
                             expr_stmt ;
@@ -182,7 +499,12 @@ ast::File {
                                       value 1 : i64
                             expr_stmt ;
                               intrinsic println : ()
-                                template: "  {} ... FAILED" test.name
+                                args:
+                                  format_string "  {} ... FAILED" : string
+                                  select .name [field] : string
+                                    object:
+                                      locator test : TestCase{name: Expr(str), run: fn() -> ()}
+                                kwargs: []
                     expr_stmt ;
                       assign : i64
                         target:
@@ -202,7 +524,12 @@ ast::File {
                     locator failed : i64
             expr_stmt ;
               intrinsic println : ()
-                template: "test result: {} passed; {} failed; {} total" passed, failed, total
+                args:
+                  format_string "test result: {} passed; {} failed; {} total" : string
+                  locator passed : i64
+                  locator failed : i64
+                  locator total : i64
+                kwargs: []
             expr_stmt (value)
               struct TestReport : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
                 total:
@@ -217,6 +544,14 @@ ast::File {
               invoke : TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
                 target: run_tests
       }
+      pub module time : () {
+        pub fn now() -> Expr(f64) : fn() -> f64 : fn() -> f64
+          block (1 stmt) : any
+            expr_stmt (value)
+              intrinsic time_now : any
+                args: []
+                kwargs: []
+      }
     }
     pub fn main() -> () : fn() -> () : fn() -> ()
       block (3 stmts) : ()
@@ -228,5 +563,12 @@ ast::File {
             value 2 : i64
         expr_stmt ;
           intrinsic println : ()
-            template: "Bytecode VM says: {}" (a + b)
+            args:
+              format_string "Bytecode VM says: {}" : string
+              binop + : i64
+                lhs:
+                  locator a : i64
+                rhs:
+                  locator b : i64
+            kwargs: []
 }

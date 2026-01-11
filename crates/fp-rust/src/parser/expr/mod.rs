@@ -5,7 +5,7 @@ use fp_core::ast::Ident;
 use fp_core::ast::*;
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use itertools::Itertools;
 use proc_macro2::{Span, TokenStream, TokenTree};
@@ -846,28 +846,22 @@ impl<'a> ExprParser<'a> {
         if !args.is_empty() {
             if let ExprKind::Value(value) = args[0].kind() {
                 if let Value::String(format_str) = &**value {
-                    let format_args = args[1..].to_vec();
                     let parts = parse_format_template(&format_str.value)?;
-                    let format = ExprFormatString {
-                        parts,
-                        args: format_args,
-                        kwargs: Vec::new(),
-                    };
-
+                    let format = ExprStringTemplate { parts };
+                    let mut args_out = Vec::with_capacity(args.len());
+                    args_out.push(Expr::new(ExprKind::FormatString(format)));
+                    args_out.extend(args[1..].iter().cloned());
                     return Ok(ExprIntrinsicCall::new(
                         IntrinsicCallKind::Format,
-                        IntrinsicCallPayload::Format { template: format },
+                        args_out,
+                        Vec::new(),
                     )
                     .into());
                 }
             }
         }
 
-        Ok(ExprIntrinsicCall::new(
-            IntrinsicCallKind::Format,
-            IntrinsicCallPayload::Args { args },
-        )
-        .into())
+        Ok(ExprIntrinsicCall::new(IntrinsicCallKind::Format, args, Vec::new()).into())
     }
 
     // moved to parser/expr_logging.rs
@@ -889,13 +883,10 @@ impl<'a> ExprParser<'a> {
 
         ExprIntrinsicCall::new(
             IntrinsicCallKind::Println,
-            IntrinsicCallPayload::Format {
-                template: ExprFormatString {
-                    parts: vec![FormatTemplatePart::Literal(literal)],
-                    args: Vec::new(),
-                    kwargs: Vec::new(),
-                },
-            },
+            vec![Expr::new(ExprKind::FormatString(ExprStringTemplate {
+                parts: vec![FormatTemplatePart::Literal(literal)],
+            }))],
+            Vec::new(),
         )
         .into()
     }
@@ -1040,11 +1031,7 @@ impl<'a> ExprParser<'a> {
     }
 
     pub(super) fn debug_assertions_intrinsic(&self) -> Expr {
-        ExprIntrinsicCall::new(
-            IntrinsicCallKind::DebugAssertions,
-            IntrinsicCallPayload::Args { args: Vec::new() },
-        )
-        .into()
+        ExprIntrinsicCall::new(IntrinsicCallKind::DebugAssertions, Vec::new(), Vec::new()).into()
     }
 
     fn parse_input_macro(&self, mac: &syn::Macro) -> Result<Expr> {
@@ -1068,11 +1055,7 @@ impl<'a> ExprParser<'a> {
                 .collect::<Result<Vec<_>>>()?
         };
 
-        Ok(ExprIntrinsicCall::new(
-            IntrinsicCallKind::Input,
-            IntrinsicCallPayload::Args { args },
-        )
-        .into())
+        Ok(ExprIntrinsicCall::new(IntrinsicCallKind::Input, args, Vec::new()).into())
     }
 
     fn parse_expr_const_block(&self, block: syn::Block) -> Result<Expr> {
@@ -1105,13 +1088,10 @@ impl<'a> ExprParser<'a> {
         if tokens_str.trim().is_empty() {
             let println_expr = ExprIntrinsicCall::new(
                 kind,
-                IntrinsicCallPayload::Format {
-                    template: ExprFormatString {
-                        parts: vec![FormatTemplatePart::Literal(String::new())],
-                        args: Vec::new(),
-                        kwargs: Vec::new(),
-                    },
-                },
+                vec![Expr::new(ExprKind::FormatString(ExprStringTemplate {
+                    parts: vec![FormatTemplatePart::Literal(String::new())],
+                }))],
+                Vec::new(),
             )
             .into();
             return Ok(println_expr);
@@ -1132,22 +1112,17 @@ impl<'a> ExprParser<'a> {
                         if let Value::String(format_str) = &**value {
                             let format_args = args[1..].to_vec();
                             let parts = parse_format_template(&format_str.value)?;
-                            let format = ExprFormatString {
-                                parts,
-                                args: format_args,
-                                kwargs: Vec::new(),
-                            };
+                            let format = ExprStringTemplate { parts };
+                            let mut args_out = Vec::with_capacity(1 + format_args.len());
+                            args_out.push(Expr::new(ExprKind::FormatString(format)));
+                            args_out.extend(format_args);
 
-                            return Ok(ExprIntrinsicCall::new(
-                                kind,
-                                IntrinsicCallPayload::Format { template: format },
-                            )
-                            .into());
+                            return Ok(ExprIntrinsicCall::new(kind, args_out, Vec::new()).into());
                         }
                     }
                 }
 
-                Ok(ExprIntrinsicCall::new(kind, IntrinsicCallPayload::Args { args }).into())
+                Ok(ExprIntrinsicCall::new(kind, args, Vec::new()).into())
             }
             Err(e) => self.err(
                 format!(
@@ -1172,7 +1147,7 @@ impl<'a> ExprParser<'a> {
     ) -> Result<Expr> {
         let args = self.parse_intrinsic_args(mac)?;
 
-        Ok(ExprIntrinsicCall::new(kind, IntrinsicCallPayload::Args { args }).into())
+        Ok(ExprIntrinsicCall::new(kind, args, Vec::new()).into())
     }
 
     fn parse_intrinsic_args(&self, mac: &syn::Macro) -> Result<Vec<Expr>> {
@@ -1693,7 +1668,12 @@ fn parse_format_template(template: &str) -> Result<Vec<fp_core::ast::FormatTempl
             parts.push(fp_core::ast::FormatTemplatePart::Placeholder(
                 fp_core::ast::FormatPlaceholder {
                     arg_ref: fp_core::ast::FormatArgRef::Implicit,
-                    format_spec: Some(format!("%{}", spec)),
+                    format_spec: Some(FormatSpec::parse(&format!("%{}", spec)).map_err(|err| {
+                        fp_core::error::Error::from(format!(
+                            "invalid format spec (%{}): {err}",
+                            spec
+                        ))
+                    })?),
                 },
             ));
         } else {
@@ -1730,7 +1710,9 @@ fn parse_placeholder_content(content: &str) -> Result<fp_core::ast::FormatPlaceh
 
         Ok(fp_core::ast::FormatPlaceholder {
             arg_ref,
-            format_spec: Some(format_spec.to_string()),
+            format_spec: Some(FormatSpec::parse(format_spec).map_err(|err| {
+                fp_core::error::Error::from(format!("invalid format spec: {err}"))
+            })?),
         })
     } else {
         let arg_ref = if let Ok(index) = content.parse::<usize>() {

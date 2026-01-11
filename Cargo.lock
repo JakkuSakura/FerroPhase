@@ -931,6 +931,7 @@ dependencies = [
  "eyre",
  "fp-core",
  "itertools 0.13.0",
+ "serde_json",
 ]
 
 [[package]]

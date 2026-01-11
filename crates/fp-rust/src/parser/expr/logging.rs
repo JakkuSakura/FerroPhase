@@ -33,11 +33,7 @@ impl<'a> ExprParser<'a> {
                     .map(|expr| self.parse_expr(expr))
                     .collect::<Result<Vec<_>>>()?;
 
-                let template = ExprFormatString {
-                    parts,
-                    args: parsed_args,
-                    kwargs: Vec::new(),
-                };
+                let template = ExprStringTemplate { parts };
 
                 if fmt_index > 0 {
                     let macro_name = mac.path.to_token_stream().to_string();
@@ -59,9 +55,13 @@ impl<'a> ExprParser<'a> {
                     }
                 }
 
+                let mut args_out = Vec::with_capacity(1 + parsed_args.len());
+                args_out.push(Expr::new(ExprKind::FormatString(template)));
+                args_out.extend(parsed_args);
                 return Ok(ExprIntrinsicCall::new(
                     IntrinsicCallKind::Println,
-                    IntrinsicCallPayload::Format { template },
+                    args_out,
+                    Vec::new(),
                 )
                 .into());
             }

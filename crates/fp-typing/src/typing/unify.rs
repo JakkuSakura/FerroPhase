@@ -345,7 +345,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
                     Ok(())
                 } else {
-                    Err(Error::from("primitive type mismatch"))
+                    Err(Error::from(format!(
+                        "primitive type mismatch: {} vs {}",
+                        int_a, int_b
+                    )))
                 }
             }
             (TypeVarKind::Bound(term_a), TypeVarKind::Bound(term_b)) => {
@@ -390,7 +393,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if pa == pb {
                     Ok(())
                 } else {
-                    Err(Error::from("primitive type mismatch"))
+                    Err(Error::from(format!(
+                        "primitive type mismatch: {} vs {}",
+                        pa, pb
+                    )))
                 }
             }
             (TypeTerm::Unit, TypeTerm::Unit)
@@ -401,7 +407,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if sa == sb {
                     Ok(())
                 } else {
-                    Err(Error::from("struct type mismatch"))
+                    Err(Error::from(format!(
+                        "struct type mismatch: {} vs {}",
+                        sa.name, sb.name
+                    )))
                 }
             }
             (TypeTerm::Structural(sa), TypeTerm::Structural(sb)) => {

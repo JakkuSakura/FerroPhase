@@ -1,18 +1,26 @@
 use fp_core::ast::{
-    Expr, ExprFormatString, ExprKind, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Value,
+    Expr, ExprIntrinsicCall, ExprKind, ExprStringTemplate, FormatArgRef, FormatPlaceholder,
+    FormatTemplatePart, Value,
 };
 use fp_core::context::SharedScopedContext;
-use fp_core::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_interpret::engine::{AstInterpreter, InterpreterOptions};
 
 fn intrinsic_args_expr(kind: IntrinsicCallKind, values: Vec<Value>) -> Expr {
     let args = values.into_iter().map(Expr::value).collect();
-    let call = IntrinsicCall::new(kind, IntrinsicCallPayload::Args { args });
+    let call = ExprIntrinsicCall::new(kind, args, Vec::new());
     Expr::new(ExprKind::IntrinsicCall(call))
 }
 
-fn intrinsic_format_expr(kind: IntrinsicCallKind, template: ExprFormatString) -> Expr {
-    let call = IntrinsicCall::new(kind, IntrinsicCallPayload::Format { template });
+fn intrinsic_format_expr(
+    kind: IntrinsicCallKind,
+    template: ExprStringTemplate,
+    args: Vec<Expr>,
+) -> Expr {
+    let mut call_args = Vec::with_capacity(1 + args.len());
+    call_args.push(Expr::new(ExprKind::FormatString(template)));
+    call_args.extend(args);
+    let call = ExprIntrinsicCall::new(kind, call_args, Vec::new());
     Expr::new(ExprKind::IntrinsicCall(call))
 }
 
@@ -52,7 +60,7 @@ fn println_renders_format_template_placeholders() {
     let ctx = SharedScopedContext::new();
     let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());
 
-    let template = ExprFormatString {
+    let template = ExprStringTemplate {
         parts: vec![
             FormatTemplatePart::Literal("total=".to_owned()),
             FormatTemplatePart::Placeholder(FormatPlaceholder {
@@ -60,11 +68,13 @@ fn println_renders_format_template_placeholders() {
                 format_spec: None,
             }),
         ],
-        args: vec![Expr::value(Value::int(42))],
-        kwargs: vec![],
     };
 
-    let mut expr = intrinsic_format_expr(IntrinsicCallKind::Println, template);
+    let mut expr = intrinsic_format_expr(
+        IntrinsicCallKind::Println,
+        template,
+        vec![Expr::value(Value::int(42))],
+    );
     interpreter.evaluate_expression(&mut expr);
 
     let outcome = interpreter.take_outcome();
@@ -92,16 +102,14 @@ fn println_with_missing_placeholder_argument_emits_diagnostic() {
     let ctx = SharedScopedContext::new();
     let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());
 
-    let template = ExprFormatString {
+    let template = ExprStringTemplate {
         parts: vec![FormatTemplatePart::Placeholder(FormatPlaceholder {
             arg_ref: FormatArgRef::Implicit,
             format_spec: None,
         })],
-        args: vec![],
-        kwargs: vec![],
     };
 
-    let mut expr = intrinsic_format_expr(IntrinsicCallKind::Println, template);
+    let mut expr = intrinsic_format_expr(IntrinsicCallKind::Println, template, Vec::new());
     interpreter.evaluate_expression(&mut expr);
 
     let outcome = interpreter.take_outcome();

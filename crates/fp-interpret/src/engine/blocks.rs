@@ -295,12 +295,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::Closure(closure) => self.evaluate_function_body(closure.body.as_mut()),
             ExprKind::Try(expr_try) => self.evaluate_function_body(expr_try.expr.as_mut()),
             ExprKind::FormatString(template) => {
-                for arg in template.args.iter_mut() {
-                    self.evaluate_function_body(arg);
-                }
-                for kwarg in template.kwargs.iter_mut() {
-                    self.evaluate_function_body(&mut kwarg.value);
-                }
+                let _ = template;
             }
             ExprKind::ArrayRepeat(repeat) => {
                 self.evaluate_function_body(repeat.elem.as_mut());

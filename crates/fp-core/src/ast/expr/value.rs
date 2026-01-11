@@ -5,7 +5,7 @@ use crate::ast::{
     get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, Locator,
     Pattern, Ty, Value, ValueFunction,
 };
-use crate::intrinsics::{IntrinsicCall, IntrinsicCallKind, IntrinsicCallPayload};
+use crate::intrinsics::IntrinsicCallKind;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::{common_enum, common_struct};
 
@@ -68,13 +68,9 @@ impl Display for ExprInvoke {
 }
 
 common_struct! {
-    pub struct ExprFormatString {
+    pub struct ExprStringTemplate {
         /// Template parts - alternating literals and placeholders
         pub parts: Vec<FormatTemplatePart>,
-        /// Positional arguments to substitute into placeholders
-        pub args: Vec<Expr>,
-        /// Named keyword arguments for named placeholders
-        pub kwargs: Vec<FormatKwArg>,
     }
 }
 
@@ -91,8 +87,45 @@ common_struct! {
     pub struct FormatPlaceholder {
         /// Argument reference - can be positional index, name, or implicit
         pub arg_ref: FormatArgRef,
-        /// Optional format specification (e.g., ":02d", ":.2f")
-        pub format_spec: Option<String>,
+        /// Optional format specification (Rust-like, raw form preserved)
+        pub format_spec: Option<FormatSpec>,
+    }
+}
+
+common_struct! {
+    pub struct FormatSpec {
+        pub raw: String,
+        pub parsed: Option<RustFormatSpec>,
+    }
+}
+
+common_struct! {
+    pub struct RustFormatSpec {
+        pub fill: Option<char>,
+        pub align: Option<FormatAlign>,
+        pub sign: Option<FormatSign>,
+        pub alternate: bool,
+        pub zero: bool,
+        pub width: Option<usize>,
+        pub precision: Option<usize>,
+        pub ty: Option<char>,
+    }
+}
+
+common_enum! {
+    pub enum FormatAlign {
+        Left,
+        Right,
+        Center,
+        SignAware,
+    }
+}
+
+common_enum! {
+    pub enum FormatSign {
+        Plus,
+        Minus,
+        Space,
     }
 }
 
@@ -108,7 +141,7 @@ common_enum! {
 }
 
 common_struct! {
-    pub struct FormatKwArg {
+    pub struct ExprKwArg {
         /// The keyword name
         pub name: String,
         /// The expression value
@@ -116,7 +149,19 @@ common_struct! {
     }
 }
 
-pub type ExprIntrinsicCall = IntrinsicCall<IntrinsicCallPayload<Expr, ExprFormatString>>;
+common_struct! {
+    pub struct ExprIntrinsicCall {
+        pub kind: IntrinsicCallKind,
+        pub args: Vec<Expr>,
+        pub kwargs: Vec<ExprKwArg>,
+    }
+}
+
+impl ExprIntrinsicCall {
+    pub fn new(kind: IntrinsicCallKind, args: Vec<Expr>, kwargs: Vec<ExprKwArg>) -> Self {
+        Self { kind, args, kwargs }
+    }
+}
 
 // === Quoting & Splicing (AST-level keywords) ===
 
@@ -167,21 +212,14 @@ common_struct! {
     }
 }
 
-impl Display for ExprFormatString {
+impl Display for ExprStringTemplate {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "format!(\"")?;
-        // Reconstruct the template string from parts
+        write!(f, "template!(\"")?;
+        // Reconstruct the template string from parts.
         for part in &self.parts {
             write!(f, "{}", part)?;
         }
-        write!(f, "\"")?;
-        for arg in &self.args {
-            write!(f, ", {}", arg)?;
-        }
-        for kwarg in &self.kwargs {
-            write!(f, ", {}={}", kwarg.name, kwarg.value)?;
-        }
-        write!(f, ")")
+        write!(f, "\")")
     }
 }
 
@@ -198,7 +236,7 @@ impl Display for FormatPlaceholder {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.arg_ref)?;
         if let Some(spec) = &self.format_spec {
-            write!(f, ":{}", spec)?;
+            write!(f, ":{}", spec.raw)?;
         }
         Ok(())
     }
@@ -214,10 +252,160 @@ impl Display for FormatArgRef {
     }
 }
 
-impl Display for FormatKwArg {
+impl Display for ExprKwArg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}={}", self.name, self.value)
     }
+}
+
+impl FormatSpec {
+    pub fn parse(raw: &str) -> Result<Self, String> {
+        if raw.starts_with('%') {
+            return Ok(Self {
+                raw: raw.to_string(),
+                parsed: None,
+            });
+        }
+
+        let parsed = parse_rust_format_spec(raw)?;
+        Ok(Self {
+            raw: raw.to_string(),
+            parsed: Some(parsed),
+        })
+    }
+}
+
+fn parse_rust_format_spec(raw: &str) -> Result<RustFormatSpec, String> {
+    if raw.is_empty() {
+        return Ok(RustFormatSpec {
+            fill: None,
+            align: None,
+            sign: None,
+            alternate: false,
+            zero: false,
+            width: None,
+            precision: None,
+            ty: None,
+        });
+    }
+
+    let bytes = raw.as_bytes();
+    let mut idx = 0usize;
+
+    let mut fill = None;
+    let mut align = None;
+
+    if idx + 1 < bytes.len() && is_align(bytes[idx + 1]) {
+        fill = Some(bytes[idx] as char);
+        align = Some(parse_align(bytes[idx + 1])?);
+        idx += 2;
+    } else if idx < bytes.len() && is_align(bytes[idx]) {
+        align = Some(parse_align(bytes[idx])?);
+        idx += 1;
+    }
+
+    let mut sign = None;
+    if idx < bytes.len() {
+        sign = match bytes[idx] {
+            b'+' => {
+                idx += 1;
+                Some(FormatSign::Plus)
+            }
+            b'-' => {
+                idx += 1;
+                Some(FormatSign::Minus)
+            }
+            b' ' => {
+                idx += 1;
+                Some(FormatSign::Space)
+            }
+            _ => None,
+        };
+    }
+
+    let mut alternate = false;
+    if idx < bytes.len() && bytes[idx] == b'#' {
+        alternate = true;
+        idx += 1;
+    }
+
+    let mut zero = false;
+    if idx < bytes.len() && bytes[idx] == b'0' {
+        zero = true;
+        idx += 1;
+    }
+
+    let (width, next) = parse_decimal(bytes, idx)?;
+    idx = next;
+
+    let mut precision = None;
+    if idx < bytes.len() && bytes[idx] == b'.' {
+        idx += 1;
+        let (parsed, next_idx) = parse_decimal(bytes, idx)?;
+        if parsed.is_none() {
+            return Err("format precision requires digits".to_string());
+        }
+        precision = parsed;
+        idx = next_idx;
+    }
+
+    let mut ty = None;
+    if idx < bytes.len() {
+        if idx + 1 != bytes.len() {
+            return Err(format!(
+                "format spec has trailing characters: {}",
+                &raw[idx..]
+            ));
+        }
+        ty = Some(bytes[idx] as char);
+        idx += 1;
+    }
+
+    if idx != bytes.len() {
+        return Err("format spec parsing did not consume input".to_string());
+    }
+
+    Ok(RustFormatSpec {
+        fill,
+        align,
+        sign,
+        alternate,
+        zero,
+        width,
+        precision,
+        ty,
+    })
+}
+
+fn is_align(byte: u8) -> bool {
+    matches!(byte, b'<' | b'>' | b'^' | b'=')
+}
+
+fn parse_align(byte: u8) -> Result<FormatAlign, String> {
+    match byte {
+        b'<' => Ok(FormatAlign::Left),
+        b'>' => Ok(FormatAlign::Right),
+        b'^' => Ok(FormatAlign::Center),
+        b'=' => Ok(FormatAlign::SignAware),
+        _ => Err("invalid alignment specifier".to_string()),
+    }
+}
+
+fn parse_decimal(bytes: &[u8], mut idx: usize) -> Result<(Option<usize>, usize), String> {
+    let start = idx;
+    let mut value: usize = 0;
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        let digit = (bytes[idx] - b'0') as usize;
+        value = value
+            .checked_mul(10)
+            .and_then(|v| v.checked_add(digit))
+            .ok_or_else(|| "format width/precision overflow".to_string())?;
+        idx += 1;
+    }
+    if idx == start {
+        return Ok((None, idx));
+    }
+    Ok((Some(value), idx))
 }
 
 /// Attempt to recognise canonical intrinsic calls inside a generic invoke expression.
@@ -230,28 +418,32 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
     match kind {
         IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
             let newline = matches!(kind, IntrinsicCallKind::Println);
-            let format = build_format_string_from_args(&invoke.args, newline)?;
-            Some(IntrinsicCall::new(
-                kind,
-                IntrinsicCallPayload::Format { template: format },
-            ))
+            let (template, skip) = build_string_template_from_args(&invoke.args, newline)?;
+            let mut args = Vec::with_capacity(1 + invoke.args.len().saturating_sub(skip));
+            args.push(Expr::new(ExprKind::FormatString(template)));
+            args.extend(invoke.args.iter().skip(skip).cloned());
+            Some(ExprIntrinsicCall::new(kind, args, Vec::new()))
         }
         IntrinsicCallKind::Len => {
             if invoke.args.len() != 1 {
                 return None;
             }
-            Some(IntrinsicCall::new(
+            Some(ExprIntrinsicCall::new(
                 kind,
-                IntrinsicCallPayload::Args {
-                    args: vec![invoke.args[0].clone()],
-                },
+                vec![invoke.args[0].clone()],
+                Vec::new(),
             ))
         }
-        IntrinsicCallKind::CatchUnwind => Some(IntrinsicCall::new(
+        IntrinsicCallKind::TimeNow => {
+            if !invoke.args.is_empty() {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(kind, Vec::new(), Vec::new()))
+        }
+        IntrinsicCallKind::CatchUnwind => Some(ExprIntrinsicCall::new(
             kind,
-            IntrinsicCallPayload::Args {
-                args: invoke.args.clone(),
-            },
+            invoke.args.clone(),
+            Vec::new(),
         )),
         IntrinsicCallKind::Format => None,
         IntrinsicCallKind::DebugAssertions
@@ -292,6 +484,7 @@ fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
                 ["std", "len"] | ["std", "builtins", "len"] | ["len"] => {
                     Some(IntrinsicCallKind::Len)
                 }
+                ["std", "time", "now"] => Some(IntrinsicCallKind::TimeNow),
                 _ => None,
             }
         }
@@ -299,31 +492,30 @@ fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
     }
 }
 
-fn build_format_string_from_args(args: &[Expr], _newline: bool) -> Option<ExprFormatString> {
+fn build_string_template_from_args(
+    args: &[Expr],
+    _newline: bool,
+) -> Option<(ExprStringTemplate, usize)> {
     if args.is_empty() {
-        return Some(ExprFormatString {
-            parts: vec![FormatTemplatePart::Literal(String::new())],
-            args: Vec::new(),
-            kwargs: Vec::new(),
-        });
+        return Some((
+            ExprStringTemplate {
+                parts: vec![FormatTemplatePart::Literal(String::new())],
+            },
+            0,
+        ));
     }
 
     match args[0].kind() {
-        ExprKind::FormatString(fmt) => {
-            let mut format = fmt.clone();
-            if args.len() > 1 {
-                format.args.extend(args[1..].iter().cloned());
-            }
-            Some(format)
-        }
+        ExprKind::FormatString(fmt) => Some((fmt.clone(), 1)),
         ExprKind::Value(value) => {
             if let Value::String(str_val) = &**value {
                 if args.len() == 1 {
-                    return Some(ExprFormatString {
-                        parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
-                        args: Vec::new(),
-                        kwargs: Vec::new(),
-                    });
+                    return Some((
+                        ExprStringTemplate {
+                            parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
+                        },
+                        1,
+                    ));
                 }
 
                 // When extra args are provided, decide whether the first string literal
@@ -331,13 +523,10 @@ fn build_format_string_from_args(args: &[Expr], _newline: bool) -> Option<ExprFo
                 let template = str_val.value.clone();
                 let looks_like_format_template = template.contains('{');
                 if looks_like_format_template {
-                    let mut format = ExprFormatString {
+                    let format = ExprStringTemplate {
                         parts: vec![FormatTemplatePart::Literal(template)],
-                        args: Vec::new(),
-                        kwargs: Vec::new(),
                     };
-                    format.args.extend(args[1..].iter().cloned());
-                    return Some(format);
+                    return Some((format, 1));
                 }
 
                 // Otherwise treat it like a multi-arg print: prefix + placeholders.
@@ -359,16 +548,24 @@ fn build_format_string_from_args(args: &[Expr], _newline: bool) -> Option<ExprFo
                     }
                 }
 
-                Some(ExprFormatString {
-                    parts,
-                    args: args[1..].to_vec(),
-                    kwargs: Vec::new(),
-                })
+                Some((ExprStringTemplate { parts }, 1))
             } else {
                 None
             }
         }
-        _ => None,
+        _ => {
+            let mut parts = Vec::new();
+            for idx in 0..args.len() {
+                parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                    arg_ref: FormatArgRef::Implicit,
+                    format_spec: None,
+                }));
+                if idx + 1 < args.len() {
+                    parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                }
+            }
+            Some((ExprStringTemplate { parts }, 0))
+        }
     }
 }
 

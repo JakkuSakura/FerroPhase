@@ -1,6 +1,6 @@
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_optimize::transformations::HirGenerator;
 use fp_rust::parser::RustParser;
 use std::path::PathBuf;
@@ -254,9 +254,9 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
     };
 
     assert_eq!(call.kind, IntrinsicCallKind::Println);
-    let template = match &call.payload {
-        IntrinsicCallPayload::Format { template } => template,
-        other => panic!("println payload should be format template, got {:?}", other),
+    let template = match call.callargs.first().map(|arg| &arg.value.kind) {
+        Some(hir::ExprKind::FormatString(template)) => template,
+        other => panic!("println expects format template argument, got {:?}", other),
     };
 
     assert!(
@@ -264,7 +264,7 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
         "expected literal prefix in println template"
     );
     assert_eq!(
-        template.args.len(),
+        call.callargs.len() - 1,
         2,
         "println forwards positional arguments"
     );
@@ -301,19 +301,18 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
     };
 
     assert_eq!(call.kind, IntrinsicCallKind::Print);
-    match &call.payload {
-        IntrinsicCallPayload::Format { template } => {
-            assert_eq!(template.args.len(), 1);
-            assert!(
-                matches!(
-                    template.parts.first(),
-                    Some(FormatTemplatePart::Literal(lit)) if lit == "prefix: "
-                ),
-                "expected literal prefix in print template"
-            );
-        }
-        other => panic!("print payload should be format template, got {:?}", other),
-    }
+    let template = match call.callargs.first().map(|arg| &arg.value.kind) {
+        Some(hir::ExprKind::FormatString(template)) => template,
+        other => panic!("print expects format template argument, got {:?}", other),
+    };
+    assert_eq!(call.callargs.len() - 1, 1);
+    assert!(
+        matches!(
+            template.parts.first(),
+            Some(FormatTemplatePart::Literal(lit)) if lit == "prefix: "
+        ),
+        "expected literal prefix in print template"
+    );
 
     Ok(())
 }
@@ -339,11 +338,11 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
                 match call.kind {
                     IntrinsicCallKind::SizeOf => {
                         saw_sizeof = true;
-                        assert!(matches!(call.payload, IntrinsicCallPayload::Args { .. }));
+                        assert_eq!(call.callargs.len(), 1);
                     }
                     IntrinsicCallKind::FieldCount => {
                         saw_field_count = true;
-                        assert!(matches!(call.payload, IntrinsicCallPayload::Args { .. }));
+                        assert_eq!(call.callargs.len(), 1);
                     }
                     _ => {}
                 }

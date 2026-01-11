@@ -1,4 +1,6 @@
 use super::*;
+use fp_core::ast::ExprKwArg;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 impl<'ctx> AstInterpreter<'ctx> {
     // Runtime intrinsic evaluation that propagates control-flow.
@@ -37,13 +39,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Panic(Value::string(message))
             }
             IntrinsicCallKind::CatchUnwind => {
-                let args = match &mut call.payload {
-                    IntrinsicCallPayload::Args { args } => args,
-                    IntrinsicCallPayload::Format { .. } => {
-                        self.emit_error("catch_unwind does not accept formatted payloads");
-                        return RuntimeFlow::Value(Value::bool(false));
-                    }
-                };
+                if !call.kwargs.is_empty() {
+                    self.emit_error("catch_unwind does not accept named arguments");
+                    return RuntimeFlow::Value(Value::bool(false));
+                }
+                let args = &mut call.args;
                 if args.len() != 1 {
                     self.emit_error("catch_unwind expects exactly one callable argument");
                     return RuntimeFlow::Value(Value::bool(false));
@@ -59,6 +59,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                     RuntimeFlow::Panic(_) => RuntimeFlow::Value(Value::bool(false)),
                     other => {
                         RuntimeFlow::Value(Value::bool(matches!(other, RuntimeFlow::Value(_))))
+                    }
+                }
+            }
+            IntrinsicCallKind::TimeNow => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("time::now intrinsic does not accept named arguments");
+                }
+                if !call.args.is_empty() {
+                    self.emit_error("time::now intrinsic expects no arguments");
+                }
+                match SystemTime::now().duration_since(UNIX_EPOCH) {
+                    Ok(duration) => RuntimeFlow::Value(Value::decimal(duration.as_secs_f64())),
+                    Err(_) => {
+                        self.emit_error("system clock is before UNIX_EPOCH");
+                        RuntimeFlow::Value(Value::decimal(0.0))
                     }
                 }
             }
@@ -135,17 +150,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 };
 
-                let args = match &mut call.payload {
-                    fp_core::intrinsics::IntrinsicCallPayload::Args { args } => args,
-                    fp_core::intrinsics::IntrinsicCallPayload::Format { .. } => {
-                        self.emit_error(
-                            "format-style intrinsics are not supported in const evaluation",
-                        );
-                        return Value::undefined();
-                    }
-                };
-
-                let evaluated: Vec<_> = args.iter_mut().map(|expr| self.eval_expr(expr)).collect();
+                let mut evaluated = Vec::with_capacity(call.args.len() + call.kwargs.len());
+                for arg in call.args.iter_mut() {
+                    evaluated.push(self.eval_expr(arg));
+                }
+                for kwarg in call.kwargs.iter_mut() {
+                    evaluated.push(self.eval_expr(&mut kwarg.value));
+                }
                 if matches!(call.kind, IntrinsicCallKind::CompileWarning) {
                     if let Some(Value::String(message)) = evaluated.first() {
                         self.emit_warning(message.value.clone());
@@ -182,41 +193,24 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
 
-        match &mut call.payload {
-            IntrinsicCallPayload::Format { template } => {
-                for arg in template.args.iter_mut() {
-                    self.evaluate_function_body(arg);
-                }
-                for kwarg in template.kwargs.iter_mut() {
-                    self.evaluate_function_body(&mut kwarg.value);
-                }
-            }
-            IntrinsicCallPayload::Args { args } => {
-                for arg in args.iter_mut() {
-                    self.evaluate_function_body(arg);
-                }
-            }
+        for arg in call.args.iter_mut() {
+            self.evaluate_function_body(arg);
+        }
+        for kwarg in call.kwargs.iter_mut() {
+            self.evaluate_function_body(&mut kwarg.value);
         }
     }
 
     fn intrinsic_panic_message(&mut self, call: &mut ExprIntrinsicCall) -> String {
-        match &mut call.payload {
-            IntrinsicCallPayload::Args { args } => {
-                if args.is_empty() {
-                    return "panic! macro triggered".to_string();
-                }
-                if args.len() > 1 {
-                    self.emit_error("panic expects zero or one argument");
-                }
-                let flow = self.eval_expr_runtime(&mut args[0]);
-                let value = self.finish_runtime_flow(flow);
-                format!("{}", value)
-            }
-            IntrinsicCallPayload::Format { .. } => {
-                self.emit_error("panic does not accept formatted payloads");
-                "panic! macro triggered".to_string()
-            }
+        if call.args.is_empty() {
+            return "panic! macro triggered".to_string();
         }
+        if call.args.len() > 1 {
+            self.emit_error("panic expects zero or one argument");
+        }
+        let flow = self.eval_expr_runtime(&mut call.args[0]);
+        let value = self.finish_runtime_flow(flow);
+        format!("{}", value)
     }
 
     fn invoke_runtime_callable(&mut self, value: Value, args: Vec<Value>) -> RuntimeFlow {
@@ -240,56 +234,57 @@ impl<'ctx> AstInterpreter<'ctx> {
         &mut self,
         call: &mut ExprIntrinsicCall,
     ) -> std::result::Result<String, String> {
-        match &mut call.payload {
-            fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                self.render_format_template(template)
-            }
-            fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                let mut rendered = Vec::with_capacity(args.len());
-                for expr in args.iter_mut() {
-                    let value = self.eval_expr(expr);
-                    let text =
-                        format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
-                    rendered.push(text);
-                }
-                Ok(rendered.join(" "))
-            }
+        if let Some((template, args, kwargs)) = split_format_call(call) {
+            return self.render_format_template(template, args, kwargs);
         }
+
+        let mut rendered = Vec::with_capacity(call.args.len() + call.kwargs.len());
+        for expr in call.args.iter_mut() {
+            let value = self.eval_expr(expr);
+            let text = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+            rendered.push(text);
+        }
+        for kwarg in call.kwargs.iter_mut() {
+            let value = self.eval_expr(&mut kwarg.value);
+            let text = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+            rendered.push(text);
+        }
+        Ok(rendered.join(" "))
     }
 
     fn render_intrinsic_call_runtime(
         &mut self,
         call: &mut ExprIntrinsicCall,
     ) -> std::result::Result<String, String> {
-        match &mut call.payload {
-            fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                self.render_format_template_runtime(template)
-            }
-            fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                let mut rendered = Vec::with_capacity(args.len());
-                for expr in args.iter_mut() {
-                    let flow = self.eval_expr_runtime(expr);
-                    let value = self.finish_runtime_flow(flow);
-                    let text =
-                        format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
-                    rendered.push(text);
-                }
-                Ok(rendered.join(" "))
-            }
+        if let Some((template, args, kwargs)) = split_format_call(call) {
+            return self.render_format_template_runtime(template, args, kwargs);
         }
+
+        let mut rendered = Vec::with_capacity(call.args.len() + call.kwargs.len());
+        for expr in call.args.iter_mut() {
+            let flow = self.eval_expr_runtime(expr);
+            let value = self.finish_runtime_flow(flow);
+            let text = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+            rendered.push(text);
+        }
+        for kwarg in call.kwargs.iter_mut() {
+            let flow = self.eval_expr_runtime(&mut kwarg.value);
+            let value = self.finish_runtime_flow(flow);
+            let text = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+            rendered.push(text);
+        }
+        Ok(rendered.join(" "))
     }
 
     pub(super) fn render_format_template(
         &mut self,
-        template: &mut ExprFormatString,
+        template: &mut ExprStringTemplate,
+        args: &mut [Expr],
+        kwargs: &mut [ExprKwArg],
     ) -> std::result::Result<String, String> {
-        let positional: Vec<Value> = template
-            .args
-            .iter_mut()
-            .map(|expr| self.eval_expr(expr))
-            .collect();
+        let positional: Vec<Value> = args.iter_mut().map(|expr| self.eval_expr(expr)).collect();
 
-        for (expr, value) in template.args.iter_mut().zip(positional.iter()) {
+        for (expr, value) in args.iter_mut().zip(positional.iter()) {
             if let Some(kind) = match expr.kind() {
                 ExprKind::IntrinsicCall(call) => Some(call.kind),
                 _ => None,
@@ -304,7 +299,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         let mut named = HashMap::new();
-        for kwarg in template.kwargs.iter_mut() {
+        for kwarg in kwargs.iter_mut() {
             let value = self.eval_expr(&mut kwarg.value);
             named.insert(kwarg.name.clone(), value);
         }
@@ -339,9 +334,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                         ),
                     })?;
 
-                    let formatted =
-                        format_value_with_spec(value, placeholder.format_spec.as_deref())
-                            .map_err(|err| err.to_string())?;
+                    let formatted = format_value_with_spec(
+                        value,
+                        placeholder
+                            .format_spec
+                            .as_ref()
+                            .map(|spec| spec.raw.as_str()),
+                    )
+                    .map_err(|err| err.to_string())?;
                     output.push_str(&formatted);
                 }
             }
@@ -352,10 +352,11 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn render_format_template_runtime(
         &mut self,
-        template: &mut ExprFormatString,
+        template: &mut ExprStringTemplate,
+        args: &mut [Expr],
+        kwargs: &mut [ExprKwArg],
     ) -> std::result::Result<String, String> {
-        let positional: Vec<Value> = template
-            .args
+        let positional: Vec<Value> = args
             .iter_mut()
             .map(|expr| {
                 let flow = self.eval_expr_runtime(expr);
@@ -364,7 +365,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             .collect();
 
         let mut named = HashMap::new();
-        for kwarg in template.kwargs.iter_mut() {
+        for kwarg in kwargs.iter_mut() {
             let flow = self.eval_expr_runtime(&mut kwarg.value);
             let value = self.finish_runtime_flow(flow);
             named.insert(kwarg.name.clone(), value);
@@ -387,9 +388,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                         FormatArgRef::Named(name) => named.get(name),
                     };
                     if let Some(value) = value {
-                        let rendered =
-                            format_value_with_spec(value, placeholder.format_spec.as_deref())
-                                .map_err(|err| err.to_string())?;
+                        let rendered = format_value_with_spec(
+                            value,
+                            placeholder
+                                .format_spec
+                                .as_ref()
+                                .map(|spec| spec.raw.as_str()),
+                        )
+                        .map_err(|err| err.to_string())?;
                         output.push_str(&rendered);
                     } else {
                         return Err("format placeholder out of range".to_string());
@@ -399,5 +405,15 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         Ok(output)
+    }
+}
+
+fn split_format_call(
+    call: &mut ExprIntrinsicCall,
+) -> Option<(&mut ExprStringTemplate, &mut [Expr], &mut [ExprKwArg])> {
+    let (first, rest) = call.args.split_first_mut()?;
+    match first.kind_mut() {
+        ExprKind::FormatString(template) => Some((template, rest, call.kwargs.as_mut_slice())),
+        _ => None,
     }
 }

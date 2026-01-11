@@ -5,11 +5,29 @@ hir::Program {
     }
 
     struct __Closure0 {
-        pub test: TestCase,
+        pub bench: BenchCase,
     }
 
     fn __closure0_call(__env: __Closure0) -> () {
         // params: [__env: __Closure0]
+        __env.bench.run()
+    }
+
+    struct __Closure1 {
+        pub bench: BenchCase,
+    }
+
+    fn __closure1_call(__env: __Closure1) -> () {
+        // params: [__env: __Closure1]
+        __env.bench.run()
+    }
+
+    struct __Closure2 {
+        pub test: TestCase,
+    }
+
+    fn __closure2_call(__env: __Closure2) -> () {
+        // params: [__env: __Closure2]
         __env.test.run()
     }
 
@@ -57,6 +75,83 @@ hir::Program {
         }
     }
 
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: [BenchCase; 0] =
+        [];
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 0.2;
+                    let measure_secs = 0.5;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
     pub struct std::test::TestCase {
         pub name: str,
         pub run: fn() -> (),
@@ -80,21 +175,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::CatchUnwind(arg0 = __Closure0 { test: test });
+                    let ok = std::catch_unwind(arg0 = __Closure2 { test: test });
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::Println(format = "  {} ... ok", args = [arg0 = test.name]);
+                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::Println(format = "  {} ... FAILED", args = [arg0 = test.name]);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::Println(format = "test result: {} passed; {} failed; {} total", args = [arg0 = passed, arg1 = failed, arg2 = total]);
+            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -102,6 +197,12 @@ hir::Program {
     pub fn std::test::run() -> TestReport {
         {
             run_tests()
+        }
+    }
+
+    pub fn std::time::now() -> f64 {
+        {
+            std::time_now()
         }
     }
 
@@ -124,12 +225,12 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::Println(format = "📘 Tutorial: 08_metaprogramming_patterns.fp");
-            std::Println(format = "🧭 Focus: Metaprogramming: const metadata + quote/splice execution");
-            std::Println(format = "🧪 What to look for: labeled outputs below");
-            std::Println(format = "✅ Expectation: outputs match labels");
-            std::Println(format = "");
-            std::Println(format = "=== Part 1: Const Metadata ===");
+            std::println(arg0 = format_string("📘 Tutorial: 08_metaprogramming_patterns.fp"));
+            std::println(arg0 = format_string("🧭 Focus: Metaprogramming: const metadata + quote/splice execution"));
+            std::println(arg0 = format_string("🧪 What to look for: labeled outputs below"));
+            std::println(arg0 = format_string("✅ Expectation: outputs match labels"));
+            std::println(arg0 = format_string(""));
+            std::println(arg0 = format_string("=== Part 1: Const Metadata ==="));
             pub const FIELD_COUNT: i64 =
                 3;
             pub const POINT_NAME: &str =
@@ -140,40 +241,40 @@ hir::Program {
                 [__structural_value_c06222709673fe0f { name: "x", type_name: "i64\n" }, __structural_value_c06222709673fe0f { name: "y", type_name: "i64\n" }, __structural_value_c06222709673fe0f { name: "z", type_name: "i64\n" }];
             pub const X_TYPE: &str =
                 "i64\n";
-            std::Println(format = "{} has {} fields (size={})", args = [arg0 = POINT_NAME, arg1 = FIELD_COUNT, arg2 = SIZE]);
-            std::Println(format = "x type: {}", args = [arg0 = X_TYPE]);
-            std::Println(format = "fields:");
+            std::println(arg0 = format_string("{} has {} fields (size={})"), arg1 = POINT_NAME, arg2 = FIELD_COUNT, arg3 = SIZE);
+            std::println(arg0 = format_string("x type: {}"), arg1 = X_TYPE);
+            std::println(arg0 = format_string("fields:"));
             {
-                let mut __fp_idx331 = 0;
-                while ((__fp_idx331 < 3))
+                let mut __fp_idx629 = 0;
+                while ((__fp_idx629 < 3))
                     {
-                        let field = FIELDS[__fp_idx331];
-                        std::Println(format = "  {}: {}", args = [arg0 = field.name, arg1 = field.type_name]);
-                        __fp_idx331 = (__fp_idx331 + 1);
+                        let field = FIELDS[__fp_idx629];
+                        std::println(arg0 = format_string("  {}: {}"), arg1 = field.name, arg2 = field.type_name);
+                        __fp_idx629 = (__fp_idx629 + 1);
                     }
             }
             let p = Point3D { x: 1, y: 2, z: 3 };
-            std::Println(format = "point=({}, {}, {})", args = [arg0 = p.x, arg1 = p.y, arg2 = p.z]);
+            std::println(arg0 = format_string("point=({}, {}, {})"), arg1 = p.x, arg2 = p.y, arg3 = p.z);
             let lp = LabeledPoint { x: 4, y: 5, z: 6, label: "origin" };
-            std::Println(format = "labeled=({}, {}, {}, {})", args = [arg0 = lp.x, arg1 = lp.y, arg2 = lp.z, arg3 = lp.label]);
-            std::Println(format = "");
-            std::Println(format = "=== Part 2: Execute Quoted Code ===");
+            std::println(arg0 = format_string("labeled=({}, {}, {}, {})"), arg1 = lp.x, arg2 = lp.y, arg3 = lp.z, arg4 = lp.label);
+            std::println(arg0 = format_string(""));
+            std::println(arg0 = format_string("=== Part 2: Execute Quoted Code ==="));
             let score = 20;
-            std::Println(format = "expr splice => {}", args = [arg0 = score]);
+            std::println(arg0 = format_string("expr splice => {}"), arg1 = score);
             pub const fn_name: &&str =
                 "inspected";
-            std::Println(format = "quote<fn> inspect => name={}", args = [arg0 = fn_name]);
+            std::println(arg0 = format_string("quote<fn> inspect => name={}"), arg1 = fn_name);
             pub const fn_count: i64 =
                 2;
-            std::Println(format = "quote<[item]> count => {}", args = [arg0 = fn_count]);
+            std::println(arg0 = format_string("quote<[item]> count => {}"), arg1 = fn_count);
             let step = 21;
-            std::Println(format = "stmt splice => step={}", args = [arg0 = step]);
+            std::println(arg0 = format_string("stmt splice => step={}"), arg1 = step);
             pub struct Banner {
                 pub title: &str,
                 pub rank: i64,
             }
             let banner = Banner { title: "metaprogramming", rank: score };
-            std::Println(format = "item splice => {} #{}", args = [arg0 = banner.title, arg1 = banner.rank]);
+            std::println(arg0 = format_string("item splice => {} #{}"), arg1 = banner.title, arg2 = banner.rank);
         }
     }
 }

@@ -854,6 +854,7 @@ impl LirGenerator {
             mir::Rvalue::IntrinsicCall { kind, format, args } => {
                 let lir_kind = match kind {
                     IntrinsicCallKind::Format => lir::LirIntrinsicKind::Format,
+                    IntrinsicCallKind::TimeNow => lir::LirIntrinsicKind::TimeNow,
                     IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                         return Err(fp_core::error::Error::from(
                             "print/println must be emitted as statements".to_string(),

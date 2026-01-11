@@ -6,9 +6,9 @@ use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
 use fp_core::ast::Pattern;
 use fp_core::ast::{
-    AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprFormatString,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
-    ExprRangeLimit, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
+    AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprIntrinsicCall,
+    ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
+    ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
     ItemImport, ItemImportTree, ItemKind, Node, NodeKind, Path, QuoteFragmentKind, QuoteTokenValue,
     StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
     TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple,
@@ -19,7 +19,7 @@ use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
@@ -487,13 +487,15 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn fallback_attr_locator(&self, locator: &Locator) -> Option<Locator> {
         let ident = locator.as_ident()?;
-        if ident.as_str() != "test" {
+        let name = ident.as_str();
+        if name != "test" && name != "bench" {
             return None;
         }
+        let module = if name == "bench" { "bench" } else { "test" };
         let path = Path::new(vec![
             Ident::new("std"),
-            Ident::new("test"),
-            Ident::new(ident.as_str()),
+            Ident::new(module),
+            Ident::new(name),
         ]);
         Some(Locator::path(path))
     }
@@ -1942,28 +1944,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.rewrite_expr_types(paren.expr.as_mut(), subst, local_types);
             }
             ExprKind::FormatString(format) => {
-                for arg in &mut format.args {
+                let _ = format;
+            }
+            ExprKind::IntrinsicCall(call) => {
+                for arg in &mut call.args {
                     self.rewrite_expr_types(arg, subst, local_types);
                 }
-                for kwarg in &mut format.kwargs {
+                for kwarg in &mut call.kwargs {
                     self.rewrite_expr_types(&mut kwarg.value, subst, local_types);
                 }
             }
-            ExprKind::IntrinsicCall(call) => match &mut call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    for arg in args {
-                        self.rewrite_expr_types(arg, subst, local_types);
-                    }
-                }
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    for arg in &mut template.args {
-                        self.rewrite_expr_types(arg, subst, local_types);
-                    }
-                    for kwarg in &mut template.kwargs {
-                        self.rewrite_expr_types(&mut kwarg.value, subst, local_types);
-                    }
-                }
-            },
             ExprKind::Value(value) => match value.as_mut() {
                 Value::Expr(inner) => {
                     self.rewrite_expr_types(inner.as_mut(), subst, local_types);
@@ -3697,22 +3687,24 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn update_mutable_constant(&mut self, name: &str, value: Value) {
-        let suffix = format!("::{}", name);
-        let keys: Vec<String> = self
-            .evaluated_constants
-            .keys()
-            .filter(|key| key.as_str() == name || key.ends_with(&suffix))
-            .cloned()
-            .collect();
+        let qualified = self.qualified_name(name);
+        let mut keys = Vec::new();
+        if self.evaluated_constants.contains_key(&qualified) {
+            keys.push(qualified.clone());
+        }
+        if self.evaluated_constants.contains_key(name) && name != qualified {
+            keys.push(name.to_string());
+        }
         for key in keys {
             self.evaluated_constants.insert(key, value.clone());
         }
-        let target_keys: Vec<String> = self
-            .mutable_const_targets
-            .keys()
-            .filter(|key| key.as_str() == name || key.ends_with(&suffix))
-            .cloned()
-            .collect();
+        let mut target_keys = Vec::new();
+        if self.mutable_const_targets.contains_key(&qualified) {
+            target_keys.push(qualified);
+        }
+        if self.mutable_const_targets.contains_key(name) {
+            target_keys.push(name.to_string());
+        }
         for key in target_keys {
             if let Some(target) = self.mutable_const_targets.get(&key) {
                 let mut expr_value = Expr::value(value.clone());

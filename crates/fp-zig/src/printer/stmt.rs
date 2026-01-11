@@ -127,9 +127,9 @@ impl ZigEmitter {
     }
 
     fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<bool> {
-        match call.kind() {
+        match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                let newline = matches!(call.kind(), IntrinsicCallKind::Println);
+                let newline = matches!(call.kind, IntrinsicCallKind::Println);
                 if let Some(rendered) = self.render_print_call(call, newline) {
                     self.push_line(&rendered);
                     return Ok(true);

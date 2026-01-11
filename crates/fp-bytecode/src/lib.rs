@@ -2,10 +2,10 @@ pub use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use winnow::ModalResult;
 use winnow::Parser;
 use winnow::error::{ContextError, ErrMode};
 use winnow::token::{literal, take_till, take_while};
-use winnow::ModalResult;
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"FPBC";
 pub const BYTECODE_VERSION: u32 = 1;
@@ -495,9 +495,8 @@ fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
             break;
         }
         let line = next_non_empty_line(input)?.ok_or(ErrMode::Cut(ContextError::new()))?;
-        let (index, value) = parse_const_pool_entry_line(line).map_err(|_| {
-            ErrMode::Cut(ContextError::new())
-        })?;
+        let (index, value) =
+            parse_const_pool_entry_line(line).map_err(|_| ErrMode::Cut(ContextError::new()))?;
         if index != const_pool.len() as u32 {
             return Err(ErrMode::Cut(ContextError::new()));
         }
@@ -521,9 +520,8 @@ fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
             continue;
         }
         if line.starts_with("fn ") {
-            let (name, params, locals) = parse_function_header_line(line).map_err(|_| {
-                ErrMode::Cut(ContextError::new())
-            })?;
+            let (name, params, locals) =
+                parse_function_header_line(line).map_err(|_| ErrMode::Cut(ContextError::new()))?;
             let mut blocks = Vec::new();
             loop {
                 ws0.parse_next(input)?;
@@ -533,13 +531,12 @@ fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
                 if peek.starts_with("fn ") || peek.starts_with("entry:") || peek == "}" {
                     break;
                 }
-                let block_line = next_non_empty_line(input)?.ok_or(ErrMode::Cut(ContextError::new()))?;
-                let block_id = parse_block_header_line(block_line).map_err(|_| {
-                    ErrMode::Cut(ContextError::new())
-                })?;
-                let block = parse_block_winnow(input, block_id).map_err(|_| {
-                    ErrMode::Cut(ContextError::new())
-                })?;
+                let block_line =
+                    next_non_empty_line(input)?.ok_or(ErrMode::Cut(ContextError::new()))?;
+                let block_id = parse_block_header_line(block_line)
+                    .map_err(|_| ErrMode::Cut(ContextError::new()))?;
+                let block = parse_block_winnow(input, block_id)
+                    .map_err(|_| ErrMode::Cut(ContextError::new()))?;
                 blocks.push(block);
             }
 
@@ -571,9 +568,12 @@ fn parse_const_pool_entry_line(line: &str) -> Result<(u32, BytecodeConst), Bytec
     let (index_part, value_part) = rest.split_once(']').ok_or_else(|| BytecodeError::Format {
         message: format!("invalid const pool entry: {}", line),
     })?;
-    let index = index_part.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-        message: format!("invalid const pool index: {}", line),
-    })?;
+    let index = index_part
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| BytecodeError::Format {
+            message: format!("invalid const pool index: {}", line),
+        })?;
     let value = parse_const_value(value_part.trim())?;
     Ok((index, value))
 }
@@ -609,13 +609,23 @@ fn parse_function_header_line(line: &str) -> Result<(String, u32, u32), Bytecode
     for part in tail.split(',') {
         let part = part.trim();
         if let Some(value) = part.strip_prefix("params:") {
-            params = Some(value.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-                message: format!("invalid params count: {}", line),
-            })?);
+            params = Some(
+                value
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| BytecodeError::Format {
+                        message: format!("invalid params count: {}", line),
+                    })?,
+            );
         } else if let Some(value) = part.strip_prefix("locals:") {
-            locals = Some(value.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-                message: format!("invalid locals count: {}", line),
-            })?);
+            locals = Some(
+                value
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| BytecodeError::Format {
+                        message: format!("invalid locals count: {}", line),
+                    })?,
+            );
         }
     }
     let params = params.ok_or_else(|| BytecodeError::Format {
@@ -635,9 +645,12 @@ fn parse_block_header_line(line: &str) -> Result<u32, BytecodeError> {
         });
     };
     let rest = rest.trim_end_matches(':');
-    let id = rest.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-        message: format!("invalid block header: {}", line),
-    })?;
+    let id = rest
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| BytecodeError::Format {
+            message: format!("invalid block header: {}", line),
+        })?;
     Ok(id)
 }
 
@@ -801,11 +814,11 @@ fn parse_terminator(line: &str) -> Result<BytecodeTerminator, BytecodeError> {
 }
 
 fn parse_jump_pair(rest: &str) -> Result<(u32, u32), BytecodeError> {
-    let (target_part, otherwise_part) = rest.split_once(" else bb").ok_or_else(|| {
-        BytecodeError::Format {
-            message: format!("invalid jump format: {}", rest),
-        }
-    })?;
+    let (target_part, otherwise_part) =
+        rest.split_once(" else bb")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid jump format: {}", rest),
+            })?;
     let target = parse_u32(target_part)?;
     let otherwise = parse_u32(otherwise_part)?;
     Ok((target, otherwise))
@@ -825,12 +838,17 @@ fn parse_switch(rest: &str) -> Result<BytecodeTerminator, BytecodeError> {
         if entry.is_empty() {
             continue;
         }
-        let (value, target) = entry.split_once(":bb").ok_or_else(|| BytecodeError::Format {
-            message: format!("invalid switch entry: {}", entry),
-        })?;
-        let value = value.trim().parse::<u128>().map_err(|_| BytecodeError::Format {
-            message: format!("invalid switch value: {}", value),
-        })?;
+        let (value, target) = entry
+            .split_once(":bb")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid switch entry: {}", entry),
+            })?;
+        let value = value
+            .trim()
+            .parse::<u128>()
+            .map_err(|_| BytecodeError::Format {
+                message: format!("invalid switch value: {}", value),
+            })?;
         let target = parse_u32(target)?;
         values.push(value);
         targets.push(target);
@@ -844,20 +862,23 @@ fn parse_switch(rest: &str) -> Result<BytecodeTerminator, BytecodeError> {
 }
 
 fn parse_call(rest: &str) -> Result<BytecodeTerminator, BytecodeError> {
-    let (before_arrow, after_arrow) = rest.split_once(" -> ").ok_or_else(|| {
-        BytecodeError::Format {
-            message: format!("invalid call format: {}", rest),
-        }
-    })?;
-    let (dest_part, target_part) = after_arrow
-        .split_once(" then bb")
-        .ok_or_else(|| BytecodeError::Format {
-            message: format!("invalid call format: {}", rest),
-        })?;
+    let (before_arrow, after_arrow) =
+        rest.split_once(" -> ")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid call format: {}", rest),
+            })?;
+    let (dest_part, target_part) =
+        after_arrow
+            .split_once(" then bb")
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid call format: {}", rest),
+            })?;
     let (callee_part, arg_count_part) =
-        before_arrow.rsplit_once(' ').ok_or_else(|| BytecodeError::Format {
-            message: format!("invalid call format: {}", rest),
-        })?;
+        before_arrow
+            .rsplit_once(' ')
+            .ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid call format: {}", rest),
+            })?;
     let callee = parse_callee(callee_part.trim())?;
     let arg_count = parse_u32(arg_count_part.trim())?;
     let destination = if dest_part.trim() == "_" {
@@ -1033,7 +1054,10 @@ fn parse_callee(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
 }
 
 fn parse_callee_debug(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
-    if let Some(inner) = raw.strip_prefix("Function(").and_then(|s| s.strip_suffix(')')) {
+    if let Some(inner) = raw
+        .strip_prefix("Function(")
+        .and_then(|s| s.strip_suffix(')'))
+    {
         let (value, rest) = parse_debug_string(inner.trim())?;
         if !rest.trim().is_empty() {
             return Err(BytecodeError::Format {
@@ -1046,20 +1070,24 @@ fn parse_callee_debug(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
         let inner = inner.trim();
         let local_prefix = "BytecodePlace { local: ";
         let projection_prefix = ", projection: ";
-        let local_start = inner
-            .strip_prefix(local_prefix)
-            .ok_or_else(|| BytecodeError::Format {
-                message: format!("invalid local callee: {}", raw),
-            })?;
+        let local_start =
+            inner
+                .strip_prefix(local_prefix)
+                .ok_or_else(|| BytecodeError::Format {
+                    message: format!("invalid local callee: {}", raw),
+                })?;
         let (local_part, rest) =
             local_start
                 .split_once(projection_prefix)
                 .ok_or_else(|| BytecodeError::Format {
                     message: format!("invalid local callee: {}", raw),
                 })?;
-        let local = local_part.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-            message: format!("invalid local index: {}", local_part),
-        })?;
+        let local = local_part
+            .trim()
+            .parse::<u32>()
+            .map_err(|_| BytecodeError::Format {
+                message: format!("invalid local index: {}", local_part),
+            })?;
         let rest = rest.trim();
         let projections = rest
             .strip_prefix('[')
@@ -1073,17 +1101,27 @@ fn parse_callee_debug(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
             if part.is_empty() {
                 continue;
             }
-            if let Some(inner) = part.strip_prefix("Field(").and_then(|s| s.strip_suffix(')')) {
-                let index = inner.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-                    message: format!("invalid field index: {}", part),
-                })?;
-                projection.push(BytecodePlaceElem::Field(index));
-            } else if let Some(inner) =
-                part.strip_prefix("Index(").and_then(|s| s.strip_suffix(')'))
+            if let Some(inner) = part
+                .strip_prefix("Field(")
+                .and_then(|s| s.strip_suffix(')'))
             {
-                let index = inner.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-                    message: format!("invalid index projection: {}", part),
-                })?;
+                let index = inner
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| BytecodeError::Format {
+                        message: format!("invalid field index: {}", part),
+                    })?;
+                projection.push(BytecodePlaceElem::Field(index));
+            } else if let Some(inner) = part
+                .strip_prefix("Index(")
+                .and_then(|s| s.strip_suffix(')'))
+            {
+                let index = inner
+                    .trim()
+                    .parse::<u32>()
+                    .map_err(|_| BytecodeError::Format {
+                        message: format!("invalid index projection: {}", part),
+                    })?;
                 projection.push(BytecodePlaceElem::Index(index));
             } else {
                 return Err(BytecodeError::Format {
@@ -1102,21 +1140,30 @@ fn parse_callee_debug(raw: &str) -> Result<BytecodeCallee, BytecodeError> {
 fn parse_const_value(raw: &str) -> Result<BytecodeConst, BytecodeError> {
     let raw = raw.trim();
     if let Some(rest) = raw.strip_prefix("u64 ") {
-        let value = rest.trim().parse::<u64>().map_err(|_| BytecodeError::Format {
-            message: format!("invalid u64 constant: {}", raw),
-        })?;
+        let value = rest
+            .trim()
+            .parse::<u64>()
+            .map_err(|_| BytecodeError::Format {
+                message: format!("invalid u64 constant: {}", raw),
+            })?;
         return Ok(BytecodeConst::UInt(value));
     }
     if let Some(rest) = raw.strip_prefix("i64 ") {
-        let value = rest.trim().parse::<i64>().map_err(|_| BytecodeError::Format {
-            message: format!("invalid i64 constant: {}", raw),
-        })?;
+        let value = rest
+            .trim()
+            .parse::<i64>()
+            .map_err(|_| BytecodeError::Format {
+                message: format!("invalid i64 constant: {}", raw),
+            })?;
         return Ok(BytecodeConst::Int(value));
     }
     if let Some(rest) = raw.strip_prefix("f64 ") {
-        let value = rest.trim().parse::<f64>().map_err(|_| BytecodeError::Format {
-            message: format!("invalid f64 constant: {}", raw),
-        })?;
+        let value = rest
+            .trim()
+            .parse::<f64>()
+            .map_err(|_| BytecodeError::Format {
+                message: format!("invalid f64 constant: {}", raw),
+            })?;
         return Ok(BytecodeConst::Float(value));
     }
     if raw == "()" {
@@ -1213,10 +1260,14 @@ fn parse_map_entries(raw: &str) -> Result<Vec<(BytecodeConst, BytecodeConst)>, B
         if entry.is_empty() {
             continue;
         }
-        let (key, value) = split_once_top_level(entry, "=>").ok_or_else(|| BytecodeError::Format {
-            message: format!("invalid map entry: {}", entry),
-        })?;
-        entries.push((parse_const_value(key.trim())?, parse_const_value(value.trim())?));
+        let (key, value) =
+            split_once_top_level(entry, "=>").ok_or_else(|| BytecodeError::Format {
+                message: format!("invalid map entry: {}", entry),
+            })?;
+        entries.push((
+            parse_const_value(key.trim())?,
+            parse_const_value(value.trim())?,
+        ));
     }
     Ok(entries)
 }
@@ -1290,12 +1341,16 @@ fn split_once_top_level<'a>(input: &'a str, needle: &str) -> Option<(&'a str, &'
 }
 
 fn parse_u32(raw: &str) -> Result<u32, BytecodeError> {
-    raw.trim().parse::<u32>().map_err(|_| BytecodeError::Format {
-        message: format!("invalid number: {}", raw),
-    })
+    raw.trim()
+        .parse::<u32>()
+        .map_err(|_| BytecodeError::Format {
+            message: format!("invalid number: {}", raw),
+        })
 }
 
-fn parse_number_token(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<u32, BytecodeError> {
+fn parse_number_token(
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> Result<u32, BytecodeError> {
     let mut digits = String::new();
     while let Some(ch) = chars.peek().copied() {
         if ch.is_ascii_digit() {
@@ -1358,11 +1413,10 @@ fn parse_debug_string(raw: &str) -> Result<(String, &str), BytecodeError> {
                             }
                             hex.push(ch);
                         }
-                        let value = u32::from_str_radix(&hex, 16).map_err(|_| {
-                            BytecodeError::Format {
+                        let value =
+                            u32::from_str_radix(&hex, 16).map_err(|_| BytecodeError::Format {
                                 message: format!("invalid unicode escape: {}", hex),
-                            }
-                        })?;
+                            })?;
                         if let Some(ch) = char::from_u32(value) {
                             output.push(ch);
                         } else {

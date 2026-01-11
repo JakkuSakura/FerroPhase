@@ -1,5 +1,5 @@
 use crate::ast::{TypeBinaryOpKind, TypePrimitive};
-use crate::intrinsics::{IntrinsicCall, IntrinsicCallPayload as GenericIntrinsicCallPayload};
+use crate::intrinsics::IntrinsicCallKind;
 use std::collections::HashMap;
 
 pub mod ident;
@@ -152,6 +152,7 @@ pub enum ExprKind {
     Match(Box<Expr>, Vec<MatchArm>),
     Block(Block),
     IntrinsicCall(IntrinsicCallExpr),
+    FormatString(FormatString),
     Let(Pat, Box<TypeExpr>, Option<Box<Expr>>),
     Assign(Box<Expr>, Box<Expr>),
     Return(Option<Box<Expr>>),
@@ -187,8 +188,6 @@ pub struct CallArg {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormatString {
     pub parts: Vec<FormatTemplatePart>,
-    pub args: Vec<CallArg>,
-    pub kwargs: Vec<CallArg>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -200,7 +199,7 @@ pub enum FormatTemplatePart {
 #[derive(Debug, Clone, PartialEq)]
 pub struct FormatPlaceholder {
     pub arg_ref: FormatArgRef,
-    pub format_spec: Option<String>,
+    pub format_spec: Option<crate::ast::FormatSpec>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -210,8 +209,11 @@ pub enum FormatArgRef {
     Named(String),
 }
 
-pub type IntrinsicCallExpr = IntrinsicCall<HirIntrinsicCallPayload>;
-pub type HirIntrinsicCallPayload = GenericIntrinsicCallPayload<CallArg, FormatString>;
+#[derive(Debug, Clone, PartialEq)]
+pub struct IntrinsicCallExpr {
+    pub kind: IntrinsicCallKind,
+    pub callargs: Vec<CallArg>,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Block {

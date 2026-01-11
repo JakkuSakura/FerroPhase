@@ -3,7 +3,7 @@ use crate::typing_error;
 use crate::{AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.
@@ -795,20 +795,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_intrinsic(&mut self, call: &mut ExprIntrinsicCall) -> Result<TypeVarId> {
         let mut arg_vars = Vec::new();
 
-        match &mut call.payload {
-            IntrinsicCallPayload::Args { args } => {
-                for arg in args {
-                    arg_vars.push(self.infer_expr(arg)?);
-                }
-            }
-            IntrinsicCallPayload::Format { template } => {
-                for arg in &mut template.args {
-                    arg_vars.push(self.infer_expr(arg)?);
-                }
-                for kwarg in &mut template.kwargs {
-                    arg_vars.push(self.infer_expr(&mut kwarg.value)?);
-                }
-            }
+        for arg in &mut call.args {
+            arg_vars.push(self.infer_expr(arg)?);
+        }
+        for kwarg in &mut call.kwargs {
+            arg_vars.push(self.infer_expr(&mut kwarg.value)?);
         }
 
         match call.kind {

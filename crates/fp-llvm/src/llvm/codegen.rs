@@ -921,6 +921,52 @@ impl<'a> LirCodegen<'a> {
                             self.record_result(instr_id, Some(hint), loaded);
                         }
                     }
+                    lir::LirIntrinsicKind::TimeNow => {
+                        let i64_ty = self.llvm_ctx.context.i64_type();
+                        let ptr_ty = self
+                            .llvm_ctx
+                            .context
+                            .ptr_type(inkwell::AddressSpace::default());
+                        let time_fn =
+                            self.llvm_ctx
+                                .module
+                                .get_function("time")
+                                .unwrap_or_else(|| {
+                                    let fn_type = i64_ty.fn_type(&[ptr_ty.into()], false);
+                                    self.llvm_ctx.module.add_function(
+                                        "time",
+                                        fn_type,
+                                        Some(inkwell::module::Linkage::External),
+                                    )
+                                });
+                        let null_ptr = ptr_ty.const_null();
+                        let call_site = self
+                            .llvm_ctx
+                            .builder
+                            .build_call(time_fn, &[null_ptr.into()], "time_now")
+                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                        let seconds = match call_site.try_as_basic_value().basic() {
+                            Some(value) => value.into_int_value(),
+                            None => {
+                                return Err(fp_core::error::Error::from(
+                                    "time() did not return a value".to_string(),
+                                ))
+                            }
+                        };
+                        let f64_ty = self.llvm_ctx.context.f64_type();
+                        let seconds_f64 = self
+                            .llvm_ctx
+                            .builder
+                            .build_signed_int_to_float(seconds, f64_ty, "time_now_f64")
+                            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                        if let Some(hint) = ty_hint {
+                            self.record_result(
+                                instr_id,
+                                Some(hint),
+                                seconds_f64.as_basic_value_enum(),
+                            );
+                        }
+                    }
                 }
             }
             lir::LirInstructionKind::LandingPad {

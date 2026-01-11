@@ -3,8 +3,7 @@ use fp_core::ast::{
     TypePrimitive, Visibility,
 };
 use fp_core::intrinsics::{
-    ensure_function_decl, make_function_decl, IntrinsicCall, IntrinsicCallKind,
-    IntrinsicCallPayload, StdIntrinsic,
+    ensure_function_decl, make_function_decl, IntrinsicCallKind, StdIntrinsic,
 };
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -137,48 +136,6 @@ fn std_intrinsic_variants_are_hashable() {
     set.insert(StdIntrinsic::IoPrintln);
     assert_eq!(set.len(), 2);
     assert!(set.contains(&StdIntrinsic::IoPrint));
-}
-
-#[test]
-fn intrinsic_call_maps_payload() {
-    let call: IntrinsicCall<IntrinsicCallPayload<i32, String>> = IntrinsicCall::new(
-        IntrinsicCallKind::Println,
-        IntrinsicCallPayload::Args { args: vec![1] },
-    );
-
-    let mapped = call.map_payload(|payload| match payload {
-        IntrinsicCallPayload::Args { mut args } => {
-            args.push(2);
-            IntrinsicCallPayload::Args { args }
-        }
-        other => other,
-    });
-
-    match mapped.payload {
-        IntrinsicCallPayload::Args { args } => assert_eq!(args, vec![1, 2]),
-        _ => panic!("expected args payload"),
-    }
-}
-
-#[test]
-fn intrinsic_call_payload_maps_exprs_and_format() {
-    let payload: IntrinsicCallPayload<i32, String> = IntrinsicCallPayload::Args {
-        args: vec![1, 2, 3],
-    };
-    let mapped = payload.map_exprs(|value| value + 1);
-    match mapped {
-        IntrinsicCallPayload::Args { args } => assert_eq!(args, vec![2, 3, 4]),
-        _ => panic!("expected args payload"),
-    }
-
-    let payload: IntrinsicCallPayload<i32, String> = IntrinsicCallPayload::Format {
-        template: String::from("{}"),
-    };
-    let mapped = payload.map_format(|template| template + "!");
-    match mapped {
-        IntrinsicCallPayload::Format { template } => assert_eq!(template, "{}!"),
-        _ => panic!("expected format payload"),
-    }
 }
 
 #[test]

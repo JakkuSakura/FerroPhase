@@ -2,14 +2,14 @@ use std::collections::{HashMap, HashSet};
 
 use eyre::eyre;
 use fp_core::ast::{
-    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprFormatString, ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, ExprUnOp, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Item, ItemKind, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
-    TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
-    ValueTuple,
+    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, ExprUnOp, FormatArgRef,
+    FormatTemplatePart, FunctionParam, Item, ItemKind, Node, NodeKind, Pattern, Ty, TypeEnum,
+    TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry,
+    ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::UnOpKind;
 use itertools::Itertools;
 
@@ -287,17 +287,17 @@ impl PythonEmitter {
     }
 
     fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<()> {
-        match call.kind() {
+        match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                let rendered_args = match &call.payload {
-                    IntrinsicCallPayload::Format { template } => {
-                        vec![self.render_format_string(template)?]
-                    }
-                    IntrinsicCallPayload::Args { args } => args
-                        .iter()
-                        .map(|expr| self.render_expr(expr))
-                        .collect::<Result<Vec<_>>>()?,
-                };
+                let rendered_args =
+                    if let Some((template, args, kwargs)) = extract_format_call(call) {
+                        vec![self.render_format_string(template, args, kwargs)?]
+                    } else {
+                        call.args
+                            .iter()
+                            .map(|expr| self.render_expr(expr))
+                            .collect::<Result<Vec<_>>>()?
+                    };
                 let joined = rendered_args.join(", ");
                 self.push_line(&format!("print({})", joined));
                 Ok(())
@@ -346,7 +346,7 @@ impl PythonEmitter {
                 render_bin_op(&bin_op.kind),
                 self.render_expr(bin_op.rhs.as_ref())?
             )),
-            ExprKind::FormatString(format) => self.render_format_string(format),
+            ExprKind::FormatString(format) => Ok(self.render_template_literal(format)),
             ExprKind::Struct(struct_expr) => self.render_struct_literal(struct_expr),
             ExprKind::Array(array) => {
                 let values = array
@@ -433,14 +433,22 @@ impl PythonEmitter {
     }
 
     fn render_intrinsic_expr(&mut self, call: &ExprIntrinsicCall) -> Result<String> {
-        match call.kind() {
-            IntrinsicCallKind::Len => match &call.payload {
-                IntrinsicCallPayload::Args { args } if !args.is_empty() => {
-                    Ok(format!("len({})", self.render_expr(&args[0])?))
+        match call.kind {
+            IntrinsicCallKind::Format => {
+                if let Some((template, args, kwargs)) = extract_format_call(call) {
+                    self.render_format_string(template, args, kwargs)
+                } else {
+                    Err(eyre!("format intrinsic expects a format template").into())
                 }
-                _ => Err(eyre!("len intrinsic expects an argument").into()),
-            },
-            _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind()).into()),
+            }
+            IntrinsicCallKind::Len => {
+                if !call.args.is_empty() {
+                    Ok(format!("len({})", self.render_expr(&call.args[0])?))
+                } else {
+                    Err(eyre!("len intrinsic expects an argument").into())
+                }
+            }
+            _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind).into()),
         }
     }
 
@@ -475,7 +483,12 @@ impl PythonEmitter {
         Ok(format!("{{{}}}", entries.join(", ")))
     }
 
-    fn render_format_string(&mut self, format: &ExprFormatString) -> Result<String> {
+    fn render_format_string(
+        &mut self,
+        format: &ExprStringTemplate,
+        args: &[Expr],
+        kwargs: &[fp_core::ast::ExprKwArg],
+    ) -> Result<String> {
         let mut template = String::from("f\"");
         let mut implicit_index = 0usize;
         for part in &format.parts {
@@ -487,18 +500,16 @@ impl PythonEmitter {
                     template.push_str("{");
                     let expr = match &placeholder.arg_ref {
                         FormatArgRef::Implicit => {
-                            let expr = format.args.get(implicit_index).ok_or_else(|| {
+                            let expr = args.get(implicit_index).ok_or_else(|| {
                                 eyre!("Missing implicit argument for format placeholder")
                             })?;
                             implicit_index += 1;
                             expr
                         }
-                        FormatArgRef::Positional(index) => format
-                            .args
+                        FormatArgRef::Positional(index) => args
                             .get(*index)
                             .ok_or_else(|| eyre!("Missing positional argument {}", index))?,
-                        FormatArgRef::Named(name) => format
-                            .kwargs
+                        FormatArgRef::Named(name) => kwargs
                             .iter()
                             .find(|kw| &kw.name == name)
                             .map(|kw| &kw.value)
@@ -507,7 +518,7 @@ impl PythonEmitter {
                     template.push_str(&self.render_expr(expr)?);
                     if let Some(spec) = &placeholder.format_spec {
                         template.push(':');
-                        template.push_str(spec);
+                        template.push_str(&spec.raw);
                     }
                     template.push('}');
                 }
@@ -515,6 +526,40 @@ impl PythonEmitter {
         }
         template.push('"');
         Ok(template)
+    }
+
+    fn render_template_literal(&self, format: &ExprStringTemplate) -> String {
+        let mut template = String::from("f\"");
+        let mut implicit_index = 0usize;
+        for part in &format.parts {
+            match part {
+                FormatTemplatePart::Literal(text) => {
+                    template.push_str(&escape_fstring(text));
+                }
+                FormatTemplatePart::Placeholder(placeholder) => {
+                    template.push('{');
+                    match &placeholder.arg_ref {
+                        FormatArgRef::Implicit => {
+                            template.push_str(&format!("_arg{}", implicit_index));
+                            implicit_index += 1;
+                        }
+                        FormatArgRef::Positional(index) => {
+                            template.push_str(&format!("_arg{}", index));
+                        }
+                        FormatArgRef::Named(name) => {
+                            template.push_str(name);
+                        }
+                    }
+                    if let Some(spec) = &placeholder.format_spec {
+                        template.push(':');
+                        template.push_str(&spec.raw);
+                    }
+                    template.push('}');
+                }
+            }
+        }
+        template.push('"');
+        template
     }
 
     fn render_locator(&self, locator: &ast::Locator) -> String {
@@ -715,6 +760,17 @@ impl PythonEmitter {
 
         output
     }
+}
+
+fn extract_format_call(
+    call: &ExprIntrinsicCall,
+) -> Option<(&ExprStringTemplate, &[Expr], &[fp_core::ast::ExprKwArg])> {
+    let first = call.args.first()?;
+    let template = match first.kind() {
+        ExprKind::FormatString(format) => format,
+        _ => return None,
+    };
+    Some((template, &call.args[1..], &call.kwargs))
 }
 
 fn render_bin_op(kind: &fp_core::ops::BinOpKind) -> &'static str {

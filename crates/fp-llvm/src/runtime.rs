@@ -1,12 +1,12 @@
 use fp_core::ast::{
     DecimalType, Expr, ExprDereference, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind,
-    ExprSelect, FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot, TypeAny, TypeInt,
-    TypeNothing, TypePrimitive, TypeUnit, Value,
+    ExprSelect, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot,
+    TypeAny, TypeInt, TypeNothing, TypePrimitive, TypeUnit, Value,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::intrinsics::{ensure_function_decl, make_function_decl, IntrinsicMaterializer};
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
 pub struct LlvmRuntimeIntrinsicMaterializer;
@@ -34,17 +34,17 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
             call.kind,
             IntrinsicCallKind::Print | IntrinsicCallKind::Println
         ) {
-            if let IntrinsicCallPayload::Format { template } = &call.payload {
-                if template.args.iter().any(|arg| arg.ty().is_none()) {
-                    return Ok(None);
-                }
-                if template
-                    .args
-                    .iter()
-                    .any(|arg| is_missing_printf_type_info(arg))
-                {
-                    return Ok(None);
-                }
+            let Some((_template, args, kwargs)) = extract_format_call(call) else {
+                return Ok(None);
+            };
+            if !kwargs.is_empty() {
+                return Ok(None);
+            }
+            if args.iter().any(|arg| arg.ty().is_none()) {
+                return Ok(None);
+            }
+            if args.iter().any(|arg| is_missing_printf_type_info(arg)) {
+                return Ok(None);
             }
             match build_printf_invoke(expr_ty.clone(), call.clone()) {
                 Ok(expr) => Ok(Some(expr)),
@@ -58,24 +58,19 @@ impl IntrinsicMaterializer for LlvmRuntimeIntrinsicMaterializer {
 
 fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr> {
     let newline = matches!(call.kind, IntrinsicCallKind::Println);
-    let payload = match call.payload {
-        IntrinsicCallPayload::Format { template } => template,
-        IntrinsicCallPayload::Args { .. } => {
-            return Err(fp_core::error::Error::from(
-                "printf lowering requires format payload; found positional args".to_string(),
-            ));
-        }
-    };
-
-    if !payload.kwargs.is_empty() {
+    let (template, args, kwargs) = extract_format_call(&call).ok_or_else(|| {
+        fp_core::error::Error::from(
+            "printf lowering requires format template as the first argument".to_string(),
+        )
+    })?;
+    if !kwargs.is_empty() {
         return Err(fp_core::error::Error::from(
             "named arguments are not supported in runtime printf lowering".to_string(),
         ));
     }
 
-    let fp_core::ast::ExprFormatString { parts, args, .. } = payload;
-    let mut args = args;
-    let printf_format = build_printf_format(&parts, &mut args, newline)?;
+    let mut args = args.to_vec();
+    let printf_format = build_printf_format(&template.parts, &mut args, newline)?;
 
     let mut invoke_args = Vec::with_capacity(args.len() + 1);
     invoke_args.push(make_string_literal_expr(printf_format));
@@ -88,6 +83,17 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
     });
 
     Ok(Expr::with_ty(invoke, expr_ty))
+}
+
+fn extract_format_call(
+    call: &ExprIntrinsicCall,
+) -> Option<(&ExprStringTemplate, &[Expr], &[fp_core::ast::ExprKwArg])> {
+    let first = call.args.first()?;
+    let template = match first.kind() {
+        ExprKind::FormatString(format) => format,
+        _ => return None,
+    };
+    Some((template, &call.args[1..], &call.kwargs))
 }
 
 fn make_string_literal_expr(literal: String) -> Expr {
@@ -169,10 +175,10 @@ fn build_printf_format(
                     ))
                 })?;
 
-                let (spec, replacement) = if let Some(explicit) = placeholder.format_spec.clone() {
-                    let trimmed = explicit.trim();
+                let (spec, replacement) = if let Some(explicit) = placeholder.format_spec.as_ref() {
+                    let trimmed = explicit.raw.trim();
                     if trimmed.starts_with('%') {
-                        (explicit, None)
+                        (explicit.raw.clone(), None)
                     } else if trimmed.chars().any(|c| c.is_ascii_alphabetic()) {
                         (format!("%{}", trimmed), None)
                     } else {

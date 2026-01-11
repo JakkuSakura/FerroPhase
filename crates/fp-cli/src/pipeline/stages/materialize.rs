@@ -363,17 +363,7 @@ fn materialize_expr(
             paren.expr = Box::new(materialize_expr(*paren.expr, strategy)?);
             ast::Expr::with_ty(ast::ExprKind::Paren(paren), ty)
         }
-        ast::ExprKind::FormatString(mut format) => {
-            let mut args = Vec::with_capacity(format.args.len());
-            for arg in format.args {
-                args.push(materialize_expr(arg, strategy)?);
-            }
-            format.args = args;
-            for kwarg in &mut format.kwargs {
-                let value =
-                    std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
-                kwarg.value = materialize_expr(value, strategy)?;
-            }
+        ast::ExprKind::FormatString(format) => {
             ast::Expr::with_ty(ast::ExprKind::FormatString(format), ty)
         }
         ast::ExprKind::Item(item) => ast::Expr::with_ty(
@@ -385,28 +375,15 @@ fn materialize_expr(
             ast::Expr::with_ty(ast::ExprKind::Value(Box::new(value)), ty)
         }
         ast::ExprKind::IntrinsicCall(mut call) => {
-            match &mut call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    let mut args = Vec::with_capacity(template.args.len());
-                    for arg in template.args.drain(..) {
-                        args.push(materialize_expr(arg, strategy)?);
-                    }
-                    template.args = args;
-                    for kwarg in &mut template.kwargs {
-                        let value = std::mem::replace(
-                            &mut kwarg.value,
-                            ast::Expr::value(ast::Value::unit()),
-                        );
-                        kwarg.value = materialize_expr(value, strategy)?;
-                    }
-                }
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    let mut next = Vec::with_capacity(args.len());
-                    for arg in args.drain(..) {
-                        next.push(materialize_expr(arg, strategy)?);
-                    }
-                    *args = next;
-                }
+            let mut args = Vec::with_capacity(call.args.len());
+            for arg in call.args.drain(..) {
+                args.push(materialize_expr(arg, strategy)?);
+            }
+            call.args = args;
+            for kwarg in &mut call.kwargs {
+                let value =
+                    std::mem::replace(&mut kwarg.value, ast::Expr::value(ast::Value::unit()));
+                kwarg.value = materialize_expr(value, strategy)?;
             }
 
             if let Some(expr) = strategy.materialize_call(&mut call, &expr_ty)? {

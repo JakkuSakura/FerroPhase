@@ -10,7 +10,7 @@ use crate::ast;
 use crate::ast::{
     Pattern, PatternKind, PatternStructField, SchemaDocument, SchemaKind, SchemaNode,
 };
-use crate::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use crate::intrinsics::IntrinsicCallKind;
 use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use crate::query;
 
@@ -305,22 +305,30 @@ impl PrettyPrintable for ast::Expr {
                     f,
                     format!("intrinsic {}{}", render_intrinsic_kind(call.kind), suffix),
                 )?;
-                ctx.with_indent(|ctx| match &call.payload {
-                    IntrinsicCallPayload::Format { template } => {
-                        ctx.writeln(f, format!("template: {}", render_format_template(template)))
+                ctx.with_indent(|ctx| {
+                    if call.args.is_empty() {
+                        ctx.writeln(f, "args: []")?;
+                    } else {
+                        ctx.writeln(f, "args:")?;
+                        ctx.with_indent(|ctx| {
+                            for arg in &call.args {
+                                arg.fmt_pretty(f, ctx)?;
+                            }
+                            Ok(())
+                        })?;
                     }
-                    IntrinsicCallPayload::Args { args } => {
-                        if args.is_empty() {
-                            ctx.writeln(f, "args: []")
-                        } else {
-                            ctx.writeln(f, "args:")?;
-                            ctx.with_indent(|ctx| {
-                                for arg in args {
-                                    arg.fmt_pretty(f, ctx)?;
-                                }
-                                Ok(())
-                            })
-                        }
+
+                    if call.kwargs.is_empty() {
+                        ctx.writeln(f, "kwargs: []")
+                    } else {
+                        ctx.writeln(f, "kwargs:")?;
+                        ctx.with_indent(|ctx| {
+                            for arg in &call.kwargs {
+                                ctx.writeln(f, format!("{} =", arg.name))?;
+                                ctx.with_indent(|ctx| arg.value.fmt_pretty(f, ctx))?;
+                            }
+                            Ok(())
+                        })
                     }
                 })
             }
@@ -1546,6 +1554,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::Input => "input",
         IntrinsicCallKind::Panic => "panic",
         IntrinsicCallKind::CatchUnwind => "catch_unwind",
+        IntrinsicCallKind::TimeNow => "time_now",
         IntrinsicCallKind::SizeOf => "size_of",
         IntrinsicCallKind::ReflectFields => "reflect_fields",
         IntrinsicCallKind::HasMethod => "has_method",
@@ -1564,35 +1573,13 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
     }
 }
 
-fn render_format_template(template: &ast::ExprFormatString) -> String {
+fn render_format_template(template: &ast::ExprStringTemplate) -> String {
     let mut out = String::new();
     out.push('"');
     for part in &template.parts {
         out.push_str(&render_format_part(part));
     }
     out.push('"');
-    if !template.args.is_empty() || !template.kwargs.is_empty() {
-        out.push(' ');
-        let args = template
-            .args
-            .iter()
-            .map(render_expr_inline)
-            .collect::<Vec<_>>()
-            .join(", ");
-        out.push_str(&args);
-        if !template.kwargs.is_empty() {
-            if !args.is_empty() {
-                out.push_str(", ");
-            }
-            let kwargs = template
-                .kwargs
-                .iter()
-                .map(|kwarg| format!("{}={}", kwarg.name, render_expr_inline(&kwarg.value)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            out.push_str(&kwargs);
-        }
-    }
     out
 }
 
@@ -1609,7 +1596,7 @@ fn render_format_placeholder(placeholder: &ast::FormatPlaceholder) -> String {
     let mut out = render_format_arg_ref(&placeholder.arg_ref);
     if let Some(spec) = &placeholder.format_spec {
         out.push(':');
-        out.push_str(spec);
+        out.push_str(&spec.raw);
     }
     out
 }

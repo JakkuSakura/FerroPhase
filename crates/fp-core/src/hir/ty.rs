@@ -373,7 +373,7 @@ pub struct VariantDef {
 pub struct FieldDef {
     pub did: DefId,
     pub ident: Symbol,
-    pub vis: Visibility,
+    pub vis: TyVisibility,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -390,7 +390,7 @@ pub enum VariantDiscr {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum Visibility {
+pub enum TyVisibility {
     Public,
     Crate,
     Restricted {

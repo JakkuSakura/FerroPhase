@@ -2,7 +2,6 @@ use fp_core::ast::{
     Expr, ExprAssign, ExprBinOp, ExprField, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
     ExprKind, ExprStruct, ExprUnOp, FormatTemplatePart, Locator, Value,
 };
-use fp_core::intrinsics::IntrinsicCallPayload;
 
 use super::{utils::escape_zig_string, ZigEmitter};
 
@@ -104,50 +103,47 @@ impl ZigEmitter {
     }
 
     fn render_print_payload(&self, call: &ExprIntrinsicCall) -> Option<(String, Vec<String>)> {
-        match &call.payload {
-            IntrinsicCallPayload::Format { template } => {
-                if !template.kwargs.is_empty() {
-                    return None;
-                }
-                let mut fmt = String::new();
-                for part in &template.parts {
-                    match part {
-                        FormatTemplatePart::Literal(literal) => fmt.push_str(literal),
-                        FormatTemplatePart::Placeholder(_) => fmt.push_str("{any}"),
-                    }
-                }
-                let mut args = Vec::new();
-                for expr in &template.args {
-                    args.push(self.render_expr(expr)?);
-                }
-                Some((fmt, args))
+        if let Some((template, args, kwargs)) = extract_format_call(call) {
+            if !kwargs.is_empty() {
+                return None;
             }
-            IntrinsicCallPayload::Args { args } => {
-                let mut rendered_args = Vec::new();
-                for expr in args {
-                    rendered_args.push(self.render_expr(expr)?);
+            let mut fmt = String::new();
+            for part in &template.parts {
+                match part {
+                    FormatTemplatePart::Literal(literal) => fmt.push_str(literal),
+                    FormatTemplatePart::Placeholder(_) => fmt.push_str("{any}"),
                 }
+            }
+            let mut rendered = Vec::new();
+            for expr in args {
+                rendered.push(self.render_expr(expr)?);
+            }
+            return Some((fmt, rendered));
+        }
 
-                if args.len() == 1 {
-                    if let ExprKind::Value(value) = args[0].kind() {
-                        if let Value::String(str_val) = value.as_ref() {
-                            return Some((str_val.value.clone(), Vec::new()));
-                        }
-                    }
+        let mut rendered_args = Vec::new();
+        for expr in &call.args {
+            rendered_args.push(self.render_expr(expr)?);
+        }
+
+        if call.args.len() == 1 {
+            if let ExprKind::Value(value) = call.args[0].kind() {
+                if let Value::String(str_val) = value.as_ref() {
+                    return Some((str_val.value.clone(), Vec::new()));
                 }
-
-                let fmt = if rendered_args.is_empty() {
-                    String::new()
-                } else {
-                    std::iter::repeat("{any}")
-                        .take(rendered_args.len())
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                };
-
-                Some((fmt, rendered_args))
             }
         }
+
+        let fmt = if rendered_args.is_empty() {
+            String::new()
+        } else {
+            std::iter::repeat("{any}")
+                .take(rendered_args.len())
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        Some((fmt, rendered_args))
     }
 
     fn render_struct_field(&self, field: &ExprField) -> Option<String> {
@@ -159,4 +155,19 @@ impl ZigEmitter {
             None => Some(format!(".{}", field.name.name)),
         }
     }
+}
+
+fn extract_format_call(
+    call: &ExprIntrinsicCall,
+) -> Option<(
+    &fp_core::ast::ExprStringTemplate,
+    &[Expr],
+    &[fp_core::ast::ExprKwArg],
+)> {
+    let first = call.args.first()?;
+    let template = match first.kind() {
+        ExprKind::FormatString(format) => format,
+        _ => return None,
+    };
+    Some((template, &call.args[1..], &call.kwargs))
 }

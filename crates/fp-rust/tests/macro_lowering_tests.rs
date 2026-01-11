@@ -3,7 +3,7 @@ use std::sync::Arc;
 use eyre::Result;
 use fp_core::ast::*;
 use fp_core::ast::{ExprKind as AstExprKind, Node, NodeKind};
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_rust::normalization::lower_macro_for_ast;
 use fp_rust::printer::RustPrinter;
@@ -45,7 +45,10 @@ fn emit_macro_lowers_to_splice_of_quote_without_kind() -> Result<()> {
     Ok(())
 }
 
-fn expect_println_template<'a>(stmt: &'a BlockStmt, expected_prefix: &str) -> &'a ExprFormatString {
+fn expect_println_template<'a>(
+    stmt: &'a BlockStmt,
+    expected_prefix: &str,
+) -> (&'a ExprStringTemplate, usize) {
     let BlockStmt::Expr(expr_stmt) = stmt else {
         panic!("expected expression statement, found {:?}", stmt);
     };
@@ -58,8 +61,9 @@ fn expect_println_template<'a>(stmt: &'a BlockStmt, expected_prefix: &str) -> &'
         IntrinsicCallKind::Println,
         "expected println! intrinsic"
     );
-    let IntrinsicCallPayload::Format { template } = &call.payload else {
-        panic!("expected println! to use format payload");
+    let template = match call.args.first().map(|arg| arg.kind()) {
+        Some(ExprKind::FormatString(template)) => template,
+        _ => panic!("expected println! to use format template argument"),
     };
     assert!(
         matches!(
@@ -70,10 +74,11 @@ fn expect_println_template<'a>(stmt: &'a BlockStmt, expected_prefix: &str) -> &'
         template.parts
     );
     assert!(
-        template.kwargs.is_empty(),
+        call.kwargs.is_empty(),
         "println! lowering should not produce keyword args"
     );
-    template
+    let arg_count = call.args.len().saturating_sub(1);
+    (template, arg_count)
 }
 
 fn expect_abort(stmt: &BlockStmt) {
@@ -104,16 +109,16 @@ fn expect_abort(stmt: &BlockStmt) {
 fn expect_assert_failure_block<'a>(
     block: &'a ExprBlock,
     expected_prefix: &str,
-) -> &'a ExprFormatString {
+) -> (&'a ExprStringTemplate, usize) {
     let stmts = &block.stmts;
     assert_eq!(
         stmts.len(),
         2,
         "expected failure path to contain println! + abort"
     );
-    let template = expect_println_template(&stmts[0], expected_prefix);
+    let (template, arg_count) = expect_println_template(&stmts[0], expected_prefix);
     expect_abort(&stmts[1]);
-    template
+    (template, arg_count)
 }
 
 #[test]
@@ -125,10 +130,9 @@ fn panic_macro_lowering_emits_message_and_abort() -> Result<()> {
         panic!("panic! should lower to a block expression");
     };
     assert_eq!(block.stmts.len(), 2);
-    let template = expect_println_template(&block.stmts[0], "panic! macro triggered");
+    let (_template, arg_count) = expect_println_template(&block.stmts[0], "panic! macro triggered");
     assert_eq!(
-        template.args.len(),
-        0,
+        arg_count, 0,
         "panic! without message should not forward arguments"
     );
     assert_eq!(
@@ -170,10 +174,10 @@ fn assert_macro_uses_default_message() -> Result<()> {
     let ExprKind::Block(failure_block) = if_expr.then.as_ref().kind() else {
         panic!("assert! failure path should stay as a block");
     };
-    let template = expect_println_template(&failure_block.stmts[0], "assertion failed");
+    let (_template, arg_count) =
+        expect_println_template(&failure_block.stmts[0], "assertion failed");
     assert_eq!(
-        template.args.len(),
-        0,
+        arg_count, 0,
         "plain assert! should not forward interpolation arguments"
     );
     expect_abort(&failure_block.stmts[1]);
@@ -239,10 +243,9 @@ fn assert_eq_lowering_binds_operands_once() -> Result<()> {
     let ExprKind::Block(failure_block) = if_expr.then.as_ref().kind() else {
         panic!("expected assert_eq! failure block");
     };
-    let template = expect_assert_failure_block(failure_block, "assertion failed");
+    let (_template, arg_count) = expect_assert_failure_block(failure_block, "assertion failed");
     assert_eq!(
-        template.args.len(),
-        2,
+        arg_count, 2,
         "assert_eq! should forward operands for formatting"
     );
 
@@ -291,9 +294,9 @@ fn assert_with_side_effect_arguments_preserves_order() -> Result<()> {
     };
     assert_eq!(locator.to_string(), "log_error");
 
-    let template = expect_println_template(&stmts[1], "assertion failed");
-    assert!(
-        template.args.is_empty(),
+    let (_template, arg_count) = expect_println_template(&stmts[1], "assertion failed");
+    assert_eq!(
+        arg_count, 0,
         "default assert! failure should not interpolate values"
     );
     expect_abort(&stmts[2]);

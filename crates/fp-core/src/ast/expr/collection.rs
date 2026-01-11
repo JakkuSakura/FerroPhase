@@ -300,28 +300,23 @@ mod tests {
         let expr = container.into_const_expr();
         // Expect an intrinsic const block wrapping a Vec::from(array)
         match expr.kind() {
-            ExprKind::IntrinsicCall(call) => match &call.payload {
-                IntrinsicCallPayload::Args { args } => {
-                    assert_eq!(args.len(), 1);
-                    let inner = match args[0].kind() {
-                        ExprKind::Block(block) => {
-                            block.last_expr().cloned().unwrap_or_else(Expr::unit)
+            ExprKind::IntrinsicCall(call) => {
+                assert_eq!(call.args.len(), 1);
+                let inner = match call.args[0].kind() {
+                    ExprKind::Block(block) => block.last_expr().cloned().unwrap_or_else(Expr::unit),
+                    other => call.args[0].clone(),
+                };
+                match inner.kind() {
+                    ExprKind::Invoke(invoke) => match &invoke.target {
+                        ExprInvokeTarget::Function(loc) => {
+                            let segs = super::locator_segments(loc);
+                            assert!(super::ends_with(&segs, &["Vec", "from"]))
                         }
-                        other => args[0].clone(),
-                    };
-                    match inner.kind() {
-                        ExprKind::Invoke(invoke) => match &invoke.target {
-                            ExprInvokeTarget::Function(loc) => {
-                                let segs = super::locator_segments(loc);
-                                assert!(super::ends_with(&segs, &["Vec", "from"]))
-                            }
-                            _ => panic!("not a function call"),
-                        },
-                        other => panic!("unexpected inner kind: {:?}", other),
-                    }
+                        _ => panic!("not a function call"),
+                    },
+                    other => panic!("unexpected inner kind: {:?}", other),
                 }
-                _ => panic!("unexpected payload"),
-            },
+            }
             other => panic!("unexpected expr: {:?}", other),
         }
     }

@@ -6,11 +6,11 @@ use crate::lexer::tokenizer::strip_number_suffix;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
-    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
-    ExprFormatString, ExprIf, ExprIndex, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop,
-    ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
-    ExprSelectType, ExprSplice, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
-    FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ident, ImplTraits, Locator,
+    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor, ExprIf,
+    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
+    ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprSelectType,
+    ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
+    FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits, Locator,
     MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern,
     PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
@@ -19,6 +19,7 @@ use fp_core::ast::{
     TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 
 #[derive(Debug, thiserror::Error)]
@@ -685,8 +686,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprString))?;
             if raw.starts_with("f\"") {
-                let format = parse_f_string_literal(&raw)?;
-                Ok(ExprKind::FormatString(format).into())
+                parse_f_string_literal(&raw)
             } else if raw.starts_with("t\"") {
                 Err(LowerError::Unsupported(
                     "t-strings are not supported yet".to_string(),
@@ -1457,13 +1457,22 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     Some(inner.to_string())
 }
 
-fn parse_f_string_literal(raw: &str) -> Result<ExprFormatString, LowerError> {
+fn parse_f_string_literal(raw: &str) -> Result<Expr, LowerError> {
     let Some(decoded) = strip_string_prefix(raw, "f") else {
         return Err(LowerError::Unsupported(
             "invalid f-string literal".to_string(),
         ));
     };
-    parse_f_string_template(&decoded)
+    let (template, args) = parse_f_string_template(&decoded)?;
+    let mut call_args = Vec::with_capacity(1 + args.len());
+    call_args.push(Expr::new(ExprKind::FormatString(template)));
+    call_args.extend(args);
+    Ok(ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+        IntrinsicCallKind::Format,
+        call_args,
+        Vec::new(),
+    ))
+    .into())
 }
 
 fn strip_string_prefix(raw: &str, prefix: &str) -> Option<String> {
@@ -1474,7 +1483,7 @@ fn strip_string_prefix(raw: &str, prefix: &str) -> Option<String> {
     decode_string_literal(rest)
 }
 
-fn parse_f_string_template(input: &str) -> Result<ExprFormatString, LowerError> {
+fn parse_f_string_template(input: &str) -> Result<(ExprStringTemplate, Vec<Expr>), LowerError> {
     let mut parts = Vec::new();
     let mut args = Vec::new();
     let mut current_literal = String::new();
@@ -1521,7 +1530,13 @@ fn parse_f_string_template(input: &str) -> Result<ExprFormatString, LowerError> 
             args.push(expr);
             parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
                 arg_ref: FormatArgRef::Implicit,
-                format_spec: format_spec.filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                format_spec: format_spec
+                    .filter(|s| !s.is_empty())
+                    .map(|s| FormatSpec::parse(s))
+                    .transpose()
+                    .map_err(|err| {
+                        LowerError::Unsupported(format!("invalid format spec: {err}"))
+                    })?,
             }));
             continue;
         }
@@ -1543,11 +1558,7 @@ fn parse_f_string_template(input: &str) -> Result<ExprFormatString, LowerError> 
         parts.push(FormatTemplatePart::Literal(current_literal));
     }
 
-    Ok(ExprFormatString {
-        parts,
-        args,
-        kwargs: Vec::new(),
-    })
+    Ok((ExprStringTemplate { parts }, args))
 }
 
 fn parse_f_string_expr(src: &str) -> Result<Expr, LowerError> {

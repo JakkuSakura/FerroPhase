@@ -3,30 +3,66 @@ fp-bytecode {
     [0] 0
     [1] 0
     [2] 0
-    [3] 0
+    [3] u64 0
     [4] true
-    [5] false
-    [6] 1
-    [7] 1
-    [8] 1
-    [9] "Hello"
-    [10] "Ferro"
-    [11] "module imports"
-    [12] "external module"
-    [13] 2025
-    [14] 8
-    [15] 34
-    [16] 10
-    [17] 32
-    [18] "file module"
+    [5] f64 0.2
+    [6] f64 0.5
+    [7] 0
+    [8] 0
+    [9] true
+    [10] false
+    [11] false
+    [12] 1
+    [13] 0
+    [14] true
+    [15] false
+    [16] false
+    [17] 1
+    [18] 1
+    [19] f64 0
+    [20] 1
+    [21] 1
+    [22] f64 1000000000
+    [23] f64 0
+    [24] 0
+    [25] 0
+    [26] 0
+    [27] u64 0
+    [28] true
+    [29] false
+    [30] 1
+    [31] 1
+    [32] 1
+    [33] "Hello"
+    [34] "Ferro"
+    [35] "module imports"
+    [36] "external module"
+    [37] 2025
+    [38] 8
+    [39] 34
+    [40] 10
+    [41] 32
+    [42] "file module"
   functions:
     fn __closure0_call(params: 1, locals: 2)
       bb0:
         load.place _1.0
-        terminator call Function("TestCase::run") 1 -> _0 then bb1
+        terminator call fn BenchCase::run 1 -> _0 then bb1
       bb1:
         terminator return
-    fn std::test::run_tests(params: 0, locals: 22)
+    fn __closure1_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call fn BenchCase::run 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn __closure2_call(params: 1, locals: 2)
+      bb0:
+        load.place _1.0
+        terminator call fn TestCase::run 1 -> _0 then bb1
+      bb1:
+        terminator return
+    fn std::bench::run_benches(params: 0, locals: 60)
       bb0:
         make.array 0
         store.place _2
@@ -57,11 +93,284 @@ fp-bytecode {
         store.place _11
         load.place _1[_11]
         store.place _9
+        load.const 4
+        store.place _12
+        load.const 5
+        store.place _13
+        load.const 6
+        store.place _14
+        intrinsic TimeNow 0
+        store.place _16
+        load.place _16
+        store.place _15
+        load.place _15
+        load.place _13
+        binop Add
+        store.place _18
+        load.place _18
+        store.place _17
+        load.const 7
+        store.place _19
+        terminator jump bb4
+      bb3:
+        load.place _4
+        load.place _5
+        binop Add
+        store.place _58
+        load.place _58
+        store.place _57
+        load.place _4
+        load.place _5
+        load.place _57
+        intrinsic Println 3 "bench result: %lld passed; %lld failed; %lld total\n"
+        make.tuple 0
+        store.place _59
+        load.place _57
+        load.place _4
+        load.place _5
+        make.tuple 3
+        store.place _0
+        terminator return
+      bb4:
+        intrinsic TimeNow 0
+        store.place _21
+        load.place _21
+        load.place _17
+        binop Lt
+        store.place _20
+        load.place _20
+        terminator switch [1:bb5] otherwise bb6
+      bb5:
+        load.place _9
+        make.tuple 1
+        store.place _23
+        load.place _23
+        terminator call fn __closure0_call 1 -> _25 then bb7
+      bb6:
+        intrinsic TimeNow 0
+        store.place _29
+        load.place _29
+        store.place _28
+        load.place _28
+        load.place _14
+        binop Add
+        store.place _31
+        load.place _31
+        store.place _30
+        load.const 8
+        store.place _32
+        load.place _12
+        terminator switch [1:bb14] otherwise bb15
+      bb7:
+        load.const 9
+        store.place _24
+        terminator jump bb9
+      bb8:
+        load.const 10
+        store.place _24
+        terminator jump bb9
+      bb9:
+        load.place _24
+        store.place _22
+        load.place _22
+        unop Not
+        store.place _27
+        load.place _27
+        terminator switch [1:bb10] otherwise bb11
+      bb10:
+        load.const 11
+        store.place _12
+        terminator jump bb6
+      bb11:
+        make.tuple 0
+        store.place _26
+        terminator jump bb12
+      bb12:
+        load.place _19
+        load.const 12
+        binop Add
+        store.place _19
+        terminator jump bb4
+      bb13:
+        make.tuple 0
+        store.place _26
+        terminator jump bb12
+      bb14:
+        terminator jump bb17
+      bb15:
+        make.tuple 0
+        store.place _33
+        terminator jump bb16
+      bb16:
+        intrinsic TimeNow 0
+        store.place _45
+        load.place _45
+        store.place _44
+        load.place _44
+        load.place _28
+        binop Sub
+        store.place _47
+        load.place _47
+        store.place _46
+        load.place _12
+        terminator switch [1:bb27] otherwise bb28
+      bb17:
+        intrinsic TimeNow 0
+        store.place _36
+        load.place _36
+        load.place _30
+        binop Lt
+        store.place _35
+        load.place _32
+        load.const 13
+        binop Eq
+        store.place _37
+        load.place _35
+        load.place _37
+        binop Or
+        store.place _34
+        load.place _34
+        terminator switch [1:bb18] otherwise bb19
+      bb18:
+        load.place _9
+        make.tuple 1
+        store.place _39
+        load.place _39
+        terminator call fn __closure1_call 1 -> _41 then bb20
+      bb19:
+        make.tuple 0
+        store.place _33
+        terminator jump bb16
+      bb20:
+        load.const 14
+        store.place _40
+        terminator jump bb22
+      bb21:
+        load.const 15
+        store.place _40
+        terminator jump bb22
+      bb22:
+        load.place _40
+        store.place _38
+        load.place _38
+        unop Not
+        store.place _43
+        load.place _43
+        terminator switch [1:bb23] otherwise bb24
+      bb23:
+        load.const 16
+        store.place _12
+        terminator jump bb19
+      bb24:
+        make.tuple 0
+        store.place _42
+        terminator jump bb25
+      bb25:
+        load.place _32
+        load.const 17
+        binop Add
+        store.place _32
+        terminator jump bb17
+      bb26:
+        make.tuple 0
+        store.place _42
+        terminator jump bb25
+      bb27:
+        load.place _4
+        load.const 18
+        binop Add
+        store.place _4
+        load.place _32
+        store.place _50
+        load.place _50
+        store.place _49
+        load.place _49
+        load.const 19
+        binop Gt
+        store.place _53
+        load.place _53
+        terminator switch [1:bb30] otherwise bb31
+      bb28:
+        load.place _5
+        load.const 20
+        binop Add
+        store.place _5
+        load.place _9.0
+        intrinsic Println 1 "  %s ... FAILED\n"
+        make.tuple 0
+        store.place _56
+        make.tuple 0
+        store.place _48
+        terminator jump bb29
+      bb29:
+        load.place _6
+        load.const 21
+        binop Add
+        store.place _6
+        terminator jump bb1
+      bb30:
+        load.place _46
+        load.place _49
+        binop Div
+        store.place _54
+        load.place _54
+        load.const 22
+        binop Mul
+        store.place _52
+        terminator jump bb32
+      bb31:
+        load.const 23
+        store.place _52
+        terminator jump bb32
+      bb32:
+        load.place _52
+        store.place _51
+        load.place _9.0
+        load.place _32
+        load.place _46
+        load.place _51
+        intrinsic Println 4 "  %s ... ok (iters: %lld, time: %.6fs, ns/iter: %.2f)\n"
+        make.tuple 0
+        store.place _55
+        make.tuple 0
+        store.place _48
+        terminator jump bb29
+    fn std::test::run_tests(params: 0, locals: 22)
+      bb0:
+        make.array 0
+        store.place _2
+        make.array 0
+        store.place _3
+        load.place _3
+        store.place _1
+        load.const 24
+        store.place _4
+        load.const 25
+        store.place _5
+        load.const 26
+        store.place _6
+        terminator jump bb1
+      bb1:
+        load.const 27
+        store.place _8
+        load.place _6
+        load.place _8
+        binop Lt
+        store.place _7
+        load.place _7
+        terminator switch [1:bb2] otherwise bb3
+      bb2:
+        load.place _6
+        store.place _10
+        load.place _6
+        store.place _11
+        load.place _1[_11]
+        store.place _9
         load.place _9
         make.tuple 1
         store.place _13
         load.place _13
-        terminator call Function("__closure0_call") 1 -> _15 then bb4
+        terminator call fn __closure2_call 1 -> _15 then bb4
       bb3:
         load.place _4
         load.place _5
@@ -82,11 +391,11 @@ fp-bytecode {
         store.place _0
         terminator return
       bb4:
-        load.const 4
+        load.const 28
         store.place _14
         terminator jump bb6
       bb5:
-        load.const 5
+        load.const 29
         store.place _14
         terminator jump bb6
       bb6:
@@ -96,7 +405,7 @@ fp-bytecode {
         terminator switch [1:bb7] otherwise bb8
       bb7:
         load.place _4
-        load.const 6
+        load.const 30
         binop Add
         store.place _4
         load.place _9.0
@@ -108,7 +417,7 @@ fp-bytecode {
         terminator jump bb9
       bb8:
         load.place _5
-        load.const 7
+        load.const 31
         binop Add
         store.place _5
         load.place _9.0
@@ -120,18 +429,23 @@ fp-bytecode {
         terminator jump bb9
       bb9:
         load.place _6
-        load.const 8
+        load.const 32
         binop Add
         store.place _6
         terminator jump bb1
     fn std::test::run(params: 0, locals: 1)
       bb0:
-        terminator call Function("std::test::run_tests") 0 -> _0 then bb1
+        terminator call fn std::test::run_tests 0 -> _0 then bb1
       bb1:
+        terminator return
+    fn std::time::now(params: 0, locals: 1)
+      bb0:
+        intrinsic TimeNow 0
+        store.place _0
         terminator return
     fn helpers::greet(params: 1, locals: 4)
       bb0:
-        load.const 9
+        load.const 33
         store.place _2
         load.place _2
         load.place _1
@@ -160,29 +474,29 @@ fp-bytecode {
         intrinsic Println 0 "\n"
         make.tuple 0
         store.place _4
-        load.const 10
-        terminator call Function("helpers::greet") 1 -> _5 then bb1
+        load.const 34
+        terminator call fn helpers::greet 1 -> _5 then bb1
       bb1:
-        load.const 11
-        terminator call Function("helpers::greet") 1 -> _6 then bb2
+        load.const 35
+        terminator call fn helpers::greet 1 -> _6 then bb2
       bb2:
-        load.const 12
-        terminator call Function("modules::helpers::greet_from_file") 1 -> _7 then bb3
+        load.const 36
+        terminator call fn modules::helpers::greet_from_file 1 -> _7 then bb3
       bb3:
-        load.const 13
-        terminator call Function("echo__mono_a7af9f593fdc4675_18") 1 -> _8 then bb4
+        load.const 37
+        terminator call fn echo__mono_a7af9f593fdc4675_29 1 -> _8 then bb4
       bb4:
-        load.const 14
-        load.const 15
-        terminator call Function("helpers::math::add") 2 -> _9 then bb5
+        load.const 38
+        load.const 39
+        terminator call fn helpers::math::add 2 -> _9 then bb5
       bb5:
         load.place _9
         intrinsic Println 1 "math.add(8, 34) = %lld\n"
         make.tuple 0
         store.place _10
-        load.const 16
-        load.const 17
-        terminator call Function("modules::helpers::math::add") 2 -> _11 then bb6
+        load.const 40
+        load.const 41
+        terminator call fn modules::helpers::math::add 2 -> _11 then bb6
       bb6:
         load.place _11
         intrinsic Println 1 "file_math.add(10, 32) = %lld\n"
@@ -191,7 +505,7 @@ fp-bytecode {
         terminator return
     fn modules::helpers::greet_from_file(params: 1, locals: 4)
       bb0:
-        load.const 18
+        load.const 42
         store.place _2
         load.place _2
         load.place _1
@@ -206,7 +520,7 @@ fp-bytecode {
         binop Add
         store.place _0
         terminator return
-    fn echo__mono_a7af9f593fdc4675_18(params: 1, locals: 3)
+    fn echo__mono_a7af9f593fdc4675_29(params: 1, locals: 3)
       bb0:
         load.place _1
         intrinsic Println 1 "echo: %lld\n"
@@ -214,6 +528,9 @@ fp-bytecode {
         store.place _2
         terminator return
     fn TestCase::run(params: 1, locals: 2)
+      bb0:
+        terminator return
+    fn BenchCase::run(params: 1, locals: 2)
       bb0:
         terminator return
   entry: main

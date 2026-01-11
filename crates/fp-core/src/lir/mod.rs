@@ -232,6 +232,7 @@ pub enum LirIntrinsicKind {
     Print,
     Println,
     Format,
+    TimeNow,
 }
 
 #[derive(Debug, Clone, PartialEq)]

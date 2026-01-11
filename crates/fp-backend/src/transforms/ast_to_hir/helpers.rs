@@ -61,11 +61,12 @@ impl HirGenerator {
         }
 
         if resolved.is_none() {
-            // Try resolve against current scope using the last segment
-            resolved = segments.last().and_then(|segment| match scope {
-                PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
-                PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
-            });
+            if segments.len() == 1 {
+                resolved = segments.last().and_then(|segment| match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+                    PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                });
+            }
         }
 
         // Fallback to global symbol tables based on canonicalized segments

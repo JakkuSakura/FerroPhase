@@ -1,24 +1,63 @@
 use crate::ast::{
-    Expr, ExprFormatString, ExprKind, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Value,
+    Expr, ExprKind, ExprStringTemplate, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Value,
 };
 
-pub fn convert_print_args_to_format(args: &[Expr]) -> Option<ExprFormatString> {
+pub fn convert_print_args_to_template(args: &[Expr]) -> Option<(ExprStringTemplate, usize)> {
     if args.is_empty() {
-        return Some(ExprFormatString {
-            parts: vec![FormatTemplatePart::Literal(String::new())],
-            args: Vec::new(),
-            kwargs: Vec::new(),
-        });
+        return Some((
+            ExprStringTemplate {
+                parts: vec![FormatTemplatePart::Literal(String::new())],
+            },
+            0,
+        ));
     }
 
-    if args.len() == 1 {
-        if let Some(literal) = extract_string_literal(&args[0]) {
-            return Some(ExprFormatString {
-                parts: vec![FormatTemplatePart::Literal(literal)],
-                args: Vec::new(),
-                kwargs: Vec::new(),
-            });
+    match args[0].kind() {
+        ExprKind::FormatString(template) => {
+            return Some((template.clone(), 1));
         }
+        ExprKind::Value(value) => {
+            if let Value::String(str_val) = &**value {
+                if args.len() == 1 {
+                    return Some((
+                        ExprStringTemplate {
+                            parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
+                        },
+                        1,
+                    ));
+                }
+
+                let template = str_val.value.clone();
+                let looks_like_format_template = template.contains('{');
+                if looks_like_format_template {
+                    return Some((
+                        ExprStringTemplate {
+                            parts: vec![FormatTemplatePart::Literal(template)],
+                        },
+                        1,
+                    ));
+                }
+
+                let mut parts = vec![FormatTemplatePart::Literal(template)];
+                if !matches!(
+                    parts.last(),
+                    Some(FormatTemplatePart::Literal(lit)) if lit.is_empty()
+                ) {
+                    parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                }
+                for (idx, _arg) in args[1..].iter().enumerate() {
+                    parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                        arg_ref: FormatArgRef::Implicit,
+                        format_spec: None,
+                    }));
+                    if idx + 1 < args.len() - 1 {
+                        parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                    }
+                }
+                return Some((ExprStringTemplate { parts }, 1));
+            }
+        }
+        _ => {}
     }
 
     let mut parts = Vec::new();
@@ -31,13 +70,10 @@ pub fn convert_print_args_to_format(args: &[Expr]) -> Option<ExprFormatString> {
             parts.push(FormatTemplatePart::Literal(" ".to_string()));
         }
     }
-    Some(ExprFormatString {
-        parts,
-        args: args.to_vec(),
-        kwargs: Vec::new(),
-    })
+    Some((ExprStringTemplate { parts }, 0))
 }
 
+#[cfg(test)]
 fn extract_string_literal(expr: &Expr) -> Option<String> {
     match expr.kind() {
         ExprKind::Value(value) => match value.as_ref() {

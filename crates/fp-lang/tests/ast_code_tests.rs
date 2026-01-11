@@ -166,12 +166,10 @@ fn node_contains_splice_quote(node: &Node) -> bool {
                 expr_contains(rep.elem.as_ref()) || expr_contains(rep.len.as_ref())
             }
             ExprKind::Quote(q) => expr_contains(&Expr::block(q.block.clone())),
-            ExprKind::IntrinsicCall(call) => match &call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    args.iter().any(expr_contains)
-                }
-                _ => false,
-            },
+            ExprKind::IntrinsicCall(call) => {
+                call.args.iter().any(expr_contains)
+                    || call.kwargs.iter().any(|kw| expr_contains(&kw.value))
+            }
             _ => false,
         }
     }

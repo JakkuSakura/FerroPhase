@@ -636,10 +636,8 @@ impl Pipeline {
                     if let Some(parent) = output_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
-                    let wants_text = output_path
-                        .extension()
-                        .and_then(|ext| ext.to_str())
-                        == Some("ftbc");
+                    let wants_text =
+                        output_path.extension().and_then(|ext| ext.to_str()) == Some("ftbc");
 
                     if options.save_intermediates || wants_text {
                         let rendered = fp_bytecode::format_program(&bytecode);
@@ -877,7 +875,9 @@ fn runtime_std_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     vec![
         root.join("../../src/std/collection/hashmap.fp"),
+        root.join("../../src/std/bench/mod.fp"),
         root.join("../../src/std/test/mod.fp"),
+        root.join("../../src/std/time/mod.fp"),
     ]
 }
 
@@ -1542,9 +1542,7 @@ mod tests {
                     ast::ExprKind::Try(expr_try) => self.visit_expr(&expr_try.expr),
                     ast::ExprKind::Paren(paren) => self.visit_expr(&paren.expr),
                     ast::ExprKind::FormatString(format) => {
-                        for arg in &format.args {
-                            self.visit_expr(arg);
-                        }
+                        let _ = format;
                     }
                     ast::ExprKind::Quote(q) => {
                         for stmt in &q.block.stmts {

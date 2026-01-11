@@ -1,4 +1,4 @@
-use crate::intrinsics::IntrinsicCallPayload;
+use crate::intrinsics::IntrinsicCallKind;
 use crate::pretty::{escape_char, escape_string, PrettyCtx, PrettyPrintable};
 use std::fmt::{self, Formatter};
 
@@ -364,6 +364,13 @@ fn write_expr(expr: &Expr, f: &mut Formatter<'_>, ctx: &mut PrettyCtx<'_>) -> fm
             })?;
             ctx.writeln(f, "}")
         }
+        ExprKind::FormatString(template) => {
+            let format_text = summarize_format_parts(&template.parts);
+            ctx.writeln(
+                f,
+                format!("format_string(\"{}\")", escape_string(&format_text)),
+            )
+        }
         ExprKind::Return(value) => {
             let suffix = value
                 .as_ref()
@@ -387,6 +394,10 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
     match &expr.kind {
         ExprKind::Literal(lit) => format_lit(lit),
         ExprKind::Path(path) => fmt_path(path, ctx),
+        ExprKind::FormatString(template) => {
+            let format_text = summarize_format_parts(&template.parts);
+            format!("format_string(\"{}\")", escape_string(&format_text))
+        }
         ExprKind::Binary(op, lhs, rhs) => format!(
             "({} {} {})",
             format_expr_inline(lhs, ctx),
@@ -471,42 +482,15 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
                 arms
             )
         }
-        ExprKind::IntrinsicCall(call) => match &call.payload {
-            IntrinsicCallPayload::Format { template } => {
-                let format_text = summarize_format_parts(&template.parts);
-                let format_literal = format!("\"{}\"", escape_string(&format_text));
-                let args = template
-                    .args
-                    .iter()
-                    .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let kwargs = template
-                    .kwargs
-                    .iter()
-                    .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let mut pieces = Vec::new();
-                pieces.push(format!("format = {}", format_literal));
-                if !args.is_empty() {
-                    pieces.push(format!("args = [{}]", args));
-                }
-                if !kwargs.is_empty() {
-                    pieces.push(format!("kwargs = [{}]", kwargs));
-                }
-                format!("std::{:?}({})", call.kind, pieces.join(", "))
-            }
-            crate::intrinsics::IntrinsicCallPayload::Args { args } => {
-                let args = args
-                    .iter()
-                    .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                format!("std::{:?}({})", call.kind, args)
-            }
-        },
-
+        ExprKind::IntrinsicCall(call) => {
+            let args = call
+                .callargs
+                .iter()
+                .map(|arg| format!("{} = {}", arg.name, format_expr_inline(&arg.value, ctx)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!("std::{}({})", render_intrinsic_kind(call.kind), args)
+        }
         ExprKind::Let(pat, ty, value) => {
             let pat_str = format_pat(pat, ctx);
             let ty_str = if ctx.options.show_types {
@@ -567,7 +551,7 @@ fn summarize_format_parts(parts: &[FormatTemplatePart]) -> String {
                 buf.push_str(&format_arg_ref(&placeholder.arg_ref));
                 if let Some(spec) = &placeholder.format_spec {
                     buf.push(':');
-                    buf.push_str(spec);
+                    buf.push_str(&spec.raw);
                 }
                 buf.push('}');
             }
@@ -581,6 +565,35 @@ fn format_arg_ref(arg_ref: &FormatArgRef) -> String {
         FormatArgRef::Implicit => String::new(),
         FormatArgRef::Positional(index) => index.to_string(),
         FormatArgRef::Named(name) => name.clone(),
+    }
+}
+
+fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
+    match kind {
+        IntrinsicCallKind::Println => "println",
+        IntrinsicCallKind::Print => "print",
+        IntrinsicCallKind::Format => "format",
+        IntrinsicCallKind::Len => "len",
+        IntrinsicCallKind::DebugAssertions => "debug_assertions",
+        IntrinsicCallKind::Input => "input",
+        IntrinsicCallKind::Panic => "panic",
+        IntrinsicCallKind::CatchUnwind => "catch_unwind",
+        IntrinsicCallKind::TimeNow => "time_now",
+        IntrinsicCallKind::SizeOf => "size_of",
+        IntrinsicCallKind::ReflectFields => "reflect_fields",
+        IntrinsicCallKind::HasMethod => "has_method",
+        IntrinsicCallKind::TypeName => "type_name",
+        IntrinsicCallKind::CreateStruct => "create_struct",
+        IntrinsicCallKind::CloneStruct => "clone_struct",
+        IntrinsicCallKind::AddField => "add_field",
+        IntrinsicCallKind::HasField => "has_field",
+        IntrinsicCallKind::FieldCount => "field_count",
+        IntrinsicCallKind::MethodCount => "method_count",
+        IntrinsicCallKind::FieldType => "field_type",
+        IntrinsicCallKind::StructSize => "struct_size",
+        IntrinsicCallKind::GenerateMethod => "generate_method",
+        IntrinsicCallKind::CompileError => "compile_error",
+        IntrinsicCallKind::CompileWarning => "compile_warning",
     }
 }
 

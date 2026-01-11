@@ -4,14 +4,14 @@ use std::sync::RwLock;
 
 use eyre::eyre;
 use fp_core::ast::{
-    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprFormatString,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprStruct, FormatArgRef,
-    FormatTemplatePart, FunctionParam, Ident, Item, Locator, Node, NodeKind, Pattern, Ty, TypeEnum,
-    TypePrimitive, TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry,
-    ValueStruct, ValueTuple,
+    self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprIntrinsicCall, ExprInvoke,
+    ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, FormatArgRef, FormatTemplatePart,
+    FunctionParam, Ident, Item, Locator, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
+    TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
+    ValueTuple,
 };
 use fp_core::error::Result;
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::UnOpKind;
 use itertools::Itertools;
 
@@ -630,17 +630,17 @@ impl ScriptEmitter {
     }
 
     fn emit_intrinsic_statement(&mut self, call: &ExprIntrinsicCall) -> Result<()> {
-        match call.kind() {
+        match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-                let rendered_args = match &call.payload {
-                    IntrinsicCallPayload::Format { template } => {
-                        vec![self.render_format_string(template)?]
-                    }
-                    IntrinsicCallPayload::Args { args } => args
-                        .iter()
-                        .map(|expr| self.render_expr(expr))
-                        .collect::<Result<Vec<_>>>()?,
-                };
+                let rendered_args =
+                    if let Some((template, args, kwargs)) = extract_format_call(call) {
+                        vec![self.render_format_string(template, args, kwargs)?]
+                    } else {
+                        call.args
+                            .iter()
+                            .map(|expr| self.render_expr(expr))
+                            .collect::<Result<Vec<_>>>()?
+                    };
                 let joined = rendered_args.join(", ");
                 self.push_line(&format!("console.log({});", joined));
                 Ok(())
@@ -693,7 +693,7 @@ impl ScriptEmitter {
                 UnOpKind::Not => Ok(format!("(!{})", self.render_expr(un_op.val.as_ref())?)),
                 other => Err(eyre!("Unsupported unary op in transpiler: {:?}", other).into()),
             },
-            ExprKind::FormatString(format) => self.render_format_string(format),
+            ExprKind::FormatString(format) => Ok(render_template_literal(format)),
             ExprKind::Struct(struct_expr) => self.render_struct_literal(struct_expr),
             ExprKind::Array(array) => {
                 let values = array
@@ -786,45 +786,49 @@ impl ScriptEmitter {
     }
 
     fn render_intrinsic_expr(&mut self, call: &ExprIntrinsicCall) -> Result<String> {
-        match call.kind() {
-            IntrinsicCallKind::Format => match &call.payload {
-                IntrinsicCallPayload::Format { template } => self.render_format_string(template),
-                IntrinsicCallPayload::Args { .. } => {
-                    Err(eyre!("format intrinsic expects format payload").into())
+        match call.kind {
+            IntrinsicCallKind::Format => {
+                if let Some((template, args, kwargs)) = extract_format_call(call) {
+                    self.render_format_string(template, args, kwargs)
+                } else {
+                    Err(eyre!("format intrinsic expects a format template").into())
                 }
-            },
-            IntrinsicCallKind::Len => match &call.payload {
-                IntrinsicCallPayload::Args { args } if !args.is_empty() => {
-                    Ok(format!("{}.length", self.render_expr(&args[0])?))
+            }
+            IntrinsicCallKind::Len => {
+                if !call.args.is_empty() {
+                    Ok(format!("{}.length", self.render_expr(&call.args[0])?))
+                } else {
+                    Err(eyre!("len intrinsic expects an argument").into())
                 }
-                _ => Err(eyre!("len intrinsic expects an argument").into()),
-            },
-            IntrinsicCallKind::SizeOf => match &call.payload {
-                IntrinsicCallPayload::Args { args } if args.len() == 1 => {
-                    if let Some(ty_name) = self.extract_type_name(&args[0]) {
+            }
+            IntrinsicCallKind::SizeOf => {
+                if call.args.len() == 1 {
+                    if let Some(ty_name) = self.extract_type_name(&call.args[0]) {
                         Ok(format!("{}_SIZE", to_upper_snake(&ty_name)))
                     } else {
                         Ok("0".to_string())
                     }
+                } else {
+                    Ok("0".to_string())
                 }
-                _ => Ok("0".to_string()),
-            },
-            IntrinsicCallKind::FieldCount => match &call.payload {
-                IntrinsicCallPayload::Args { args } if args.len() == 1 => {
-                    if let Some(ty_name) = self.extract_type_name(&args[0]) {
+            }
+            IntrinsicCallKind::FieldCount => {
+                if call.args.len() == 1 {
+                    if let Some(ty_name) = self.extract_type_name(&call.args[0]) {
                         Ok(format!("{}_SIZE", to_upper_snake(&ty_name)))
                     } else {
                         Ok("0".to_string())
                     }
+                } else {
+                    Ok("0".to_string())
                 }
-                _ => Ok("0".to_string()),
-            },
-            IntrinsicCallKind::HasField => match &call.payload {
-                IntrinsicCallPayload::Args { args } if args.len() >= 2 => {
-                    let Some(ty_name) = self.extract_type_name(&args[0]) else {
+            }
+            IntrinsicCallKind::HasField => {
+                if call.args.len() >= 2 {
+                    let Some(ty_name) = self.extract_type_name(&call.args[0]) else {
                         return Ok("false".to_string());
                     };
-                    let Some(field) = self.extract_string_literal(&args[1]) else {
+                    let Some(field) = self.extract_string_literal(&call.args[1]) else {
                         return Ok("false".to_string());
                     };
                     let has = self
@@ -832,11 +836,12 @@ impl ScriptEmitter {
                         .get(&ty_name)
                         .is_some_and(|def| def.fields.iter().any(|f| f.name.name == field));
                     Ok(if has { "true" } else { "false" }.to_string())
+                } else {
+                    Ok("false".to_string())
                 }
-                _ => Ok("false".to_string()),
-            },
+            }
             IntrinsicCallKind::MethodCount => Ok("0".to_string()),
-            _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind()).into()),
+            _ => Err(eyre!("Unsupported intrinsic call {:?}", call.kind).into()),
         }
     }
 
@@ -882,7 +887,12 @@ impl ScriptEmitter {
         Ok(format!("{{{}}}", entries.join(", ")))
     }
 
-    fn render_format_string(&mut self, format: &ExprFormatString) -> Result<String> {
+    fn render_format_string(
+        &mut self,
+        format: &ExprStringTemplate,
+        args: &[Expr],
+        kwargs: &[fp_core::ast::ExprKwArg],
+    ) -> Result<String> {
         let mut uses_placeholders = false;
         for part in &format.parts {
             if matches!(part, FormatTemplatePart::Placeholder(_)) {
@@ -891,7 +901,7 @@ impl ScriptEmitter {
             }
         }
 
-        if !uses_placeholders && format.kwargs.is_empty() {
+        if !uses_placeholders && kwargs.is_empty() {
             let literal = format
                 .parts
                 .iter()
@@ -917,18 +927,16 @@ impl ScriptEmitter {
                     template.push_str("${");
                     let expr = match &placeholder.arg_ref {
                         FormatArgRef::Implicit => {
-                            let expr = format.args.get(implicit_index).ok_or_else(|| {
+                            let expr = args.get(implicit_index).ok_or_else(|| {
                                 eyre!("Missing implicit argument for format placeholder")
                             })?;
                             implicit_index += 1;
                             expr
                         }
-                        FormatArgRef::Positional(index) => format
-                            .args
+                        FormatArgRef::Positional(index) => args
                             .get(*index)
                             .ok_or_else(|| eyre!("Missing positional argument {}", index))?,
-                        FormatArgRef::Named(name) => format
-                            .kwargs
+                        FormatArgRef::Named(name) => kwargs
                             .iter()
                             .find(|kw| &kw.name == name)
                             .map(|kw| &kw.value)
@@ -1232,6 +1240,28 @@ fn to_upper_snake(name: &str) -> String {
     } else {
         result
     }
+}
+
+fn extract_format_call(
+    call: &ExprIntrinsicCall,
+) -> Option<(&ExprStringTemplate, &[Expr], &[fp_core::ast::ExprKwArg])> {
+    let first = call.args.first()?;
+    let template = match first.kind() {
+        ExprKind::FormatString(format) => format,
+        _ => return None,
+    };
+    Some((template, &call.args[1..], &call.kwargs))
+}
+
+fn render_template_literal(format: &ExprStringTemplate) -> String {
+    let mut literal = String::new();
+    for part in &format.parts {
+        match part {
+            FormatTemplatePart::Literal(text) => literal.push_str(text),
+            FormatTemplatePart::Placeholder(_) => literal.push_str("{...}"),
+        }
+    }
+    serde_json::to_string(&literal).unwrap_or_else(|_| "\"\"".into())
 }
 
 fn map_ident_to_ts(name: &str) -> String {

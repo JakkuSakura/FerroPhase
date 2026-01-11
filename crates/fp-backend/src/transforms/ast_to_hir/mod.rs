@@ -144,7 +144,10 @@ impl HirGenerator {
             ast::ItemImportTree::Ident(ident) => {
                 let mut target = base;
                 target.push(ident.name.clone());
-                out.push(ImportBinding { target, alias: None });
+                out.push(ImportBinding {
+                    target,
+                    alias: None,
+                });
                 Ok(())
             }
             ast::ItemImportTree::Rename(rename) => {
@@ -246,8 +249,7 @@ impl HirGenerator {
             self.record_value_symbol(&alias, res, visibility);
         }
         if let Some(res) = self.lookup_symbol(&key, &self.global_type_defs) {
-            self.current_type_scope()
-                .insert(alias.clone(), res.clone());
+            self.current_type_scope().insert(alias.clone(), res.clone());
             self.record_type_symbol(&alias, res, visibility);
         }
     }
@@ -2378,12 +2380,7 @@ impl ClosureLowering {
                 }
             }
             ast::ExprKind::FormatString(format) => {
-                for arg in &mut format.args {
-                    self.rewrite_in_expr(arg)?;
-                }
-                for kwarg in &mut format.kwargs {
-                    self.rewrite_in_expr(&mut kwarg.value)?;
-                }
+                let _ = format;
             }
             ast::ExprKind::Try(expr_try) => self.rewrite_in_expr(expr_try.expr.as_mut())?,
             ast::ExprKind::Value(value) => match value.as_mut() {
@@ -2394,21 +2391,14 @@ impl ClosureLowering {
             ast::ExprKind::Splat(splat) => self.rewrite_in_expr(splat.iter.as_mut())?,
             ast::ExprKind::SplatDict(dict) => self.rewrite_in_expr(dict.dict.as_mut())?,
             ast::ExprKind::Item(item) => self.rewrite_in_item(item.as_mut())?,
-            ast::ExprKind::IntrinsicCall(call) => match &mut call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    for arg in args {
-                        self.rewrite_in_expr(arg)?;
-                    }
+            ast::ExprKind::IntrinsicCall(call) => {
+                for arg in &mut call.args {
+                    self.rewrite_in_expr(arg)?;
                 }
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    for arg in &mut template.args {
-                        self.rewrite_in_expr(arg)?;
-                    }
-                    for kwarg in &mut template.kwargs {
-                        self.rewrite_in_expr(&mut kwarg.value)?;
-                    }
+                for kwarg in &mut call.kwargs {
+                    self.rewrite_in_expr(&mut kwarg.value)?;
                 }
-            },
+            }
             ast::ExprKind::Paren(paren) => self.rewrite_in_expr(paren.expr.as_mut())?,
             ast::ExprKind::IntrinsicContainer(_) => {
                 unreachable!("intrinsic collections should have been expanded")
@@ -2668,12 +2658,7 @@ impl CaptureCollector {
                 }
             }
             ast::ExprKind::FormatString(format) => {
-                for arg in &format.args {
-                    self.visit(arg);
-                }
-                for kwarg in &format.kwargs {
-                    self.visit(&kwarg.value);
-                }
+                let _ = format;
             }
             ast::ExprKind::Range(range) => {
                 if let Some(start) = range.start.as_ref() {
@@ -2709,21 +2694,14 @@ impl CaptureCollector {
             ast::ExprKind::Splat(splat) => self.visit(splat.iter.as_ref()),
             ast::ExprKind::SplatDict(dict) => self.visit(dict.dict.as_ref()),
             ast::ExprKind::Item(item) => self.visit_item(item.as_ref()),
-            ast::ExprKind::IntrinsicCall(call) => match &call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    for arg in args {
-                        self.visit(arg);
-                    }
+            ast::ExprKind::IntrinsicCall(call) => {
+                for arg in &call.args {
+                    self.visit(arg);
                 }
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    for arg in &template.args {
-                        self.visit(arg);
-                    }
-                    for kwarg in &template.kwargs {
-                        self.visit(&kwarg.value);
-                    }
+                for kwarg in &call.kwargs {
+                    self.visit(&kwarg.value);
                 }
-            },
+            }
             ast::ExprKind::Any(_) | ast::ExprKind::Id(_) => {}
         }
     }
@@ -2982,12 +2960,7 @@ impl CaptureReplacer {
                 }
             }
             ast::ExprKind::FormatString(format) => {
-                for arg in &mut format.args {
-                    self.visit(arg);
-                }
-                for kwarg in &mut format.kwargs {
-                    self.visit(&mut kwarg.value);
-                }
+                let _ = format;
             }
             ast::ExprKind::Try(expr_try) => self.visit(expr_try.expr.as_mut()),
             ast::ExprKind::Value(value) => match value.as_mut() {
@@ -2999,21 +2972,14 @@ impl CaptureReplacer {
             ast::ExprKind::Splat(splat) => self.visit(splat.iter.as_mut()),
             ast::ExprKind::SplatDict(dict) => self.visit(dict.dict.as_mut()),
             ast::ExprKind::Item(item) => self.visit_item(item.as_mut()),
-            ast::ExprKind::IntrinsicCall(call) => match &mut call.payload {
-                fp_core::intrinsics::IntrinsicCallPayload::Args { args } => {
-                    for arg in args {
-                        self.visit(arg);
-                    }
+            ast::ExprKind::IntrinsicCall(call) => {
+                for arg in &mut call.args {
+                    self.visit(arg);
                 }
-                fp_core::intrinsics::IntrinsicCallPayload::Format { template } => {
-                    for arg in &mut template.args {
-                        self.visit(arg);
-                    }
-                    for kwarg in &mut template.kwargs {
-                        self.visit(&mut kwarg.value);
-                    }
+                for kwarg in &mut call.kwargs {
+                    self.visit(&mut kwarg.value);
                 }
-            },
+            }
             ast::ExprKind::Quote(q) => {
                 for stmt in &mut q.block.stmts {
                     self.visit_stmt(stmt);

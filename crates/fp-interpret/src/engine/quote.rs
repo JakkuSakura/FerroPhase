@@ -336,28 +336,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::FormatString(template) => {
-                for arg in template.args.iter_mut() {
+                let _ = template;
+            }
+            ExprKind::IntrinsicCall(call) => {
+                for arg in call.args.iter_mut() {
                     self.materialize_quote_expr(arg);
                 }
-                for kwarg in template.kwargs.iter_mut() {
+                for kwarg in call.kwargs.iter_mut() {
                     self.materialize_quote_expr(&mut kwarg.value);
                 }
             }
-            ExprKind::IntrinsicCall(call) => match &mut call.payload {
-                IntrinsicCallPayload::Args { args } => {
-                    for arg in args.iter_mut() {
-                        self.materialize_quote_expr(arg);
-                    }
-                }
-                IntrinsicCallPayload::Format { template } => {
-                    for arg in template.args.iter_mut() {
-                        self.materialize_quote_expr(arg);
-                    }
-                    for kwarg in template.kwargs.iter_mut() {
-                        self.materialize_quote_expr(&mut kwarg.value);
-                    }
-                }
-            },
             ExprKind::Range(range) => {
                 if let Some(start) = range.start.as_mut() {
                     self.materialize_quote_expr(start.as_mut());

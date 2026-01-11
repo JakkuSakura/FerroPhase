@@ -1,0 +1,255 @@
+hir::Program {
+    struct __Closure0 {
+        pub bench: BenchCase,
+    }
+
+    fn __closure0_call(__env: __Closure0) -> () {
+        // params: [__env: __Closure0]
+        __env.bench.run()
+    }
+
+    struct __Closure1 {
+        pub bench: BenchCase,
+    }
+
+    fn __closure1_call(__env: __Closure1) -> () {
+        // params: [__env: __Closure1]
+        __env.bench.run()
+    }
+
+    struct __Closure2 {
+        pub test: TestCase,
+    }
+
+    fn __closure2_call(__env: __Closure2) -> () {
+        // params: [__env: __Closure2]
+        __env.test.run()
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: [BenchCase; 0] =
+        [];
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 0.2;
+                    let measure_secs = 0.5;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::catch_unwind(arg0 = __Closure2 { test: test });
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub fn std::time::now() -> f64 {
+        {
+            std::time_now()
+        }
+    }
+
+    pub fn solve(row: i64, cols: &[i64; 8], diag1: &[i64; 15], diag2: &[i64; 15], positions: &[i64; 8]) -> i64 {
+        // params: [row: i64, cols: &[i64; 8], diag1: &[i64; 15], diag2: &[i64; 15], positions: &[i64; 8]]
+        {
+            if ((row == 8))
+                {
+                    return 1;
+                }
+            let mut count = 0;
+            {
+                let mut col = 0;
+                while ((col < 8))
+                    {
+                        let d1 = (row + col);
+                        let d2 = ((row - col) + 7);
+                        <control-flow>;
+                        col = (col + 1);
+                    }
+            }
+            count
+        }
+    }
+
+    pub fn run_solver() -> i64 {
+        {
+            let cols: [i64; 8] = [0; 8];
+            let diag1: [i64; 15] = [0; 15];
+            let diag2: [i64; 15] = [0; 15];
+            let positions: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
+            solve(row = 0, cols = cols, diag1 = diag1, diag2 = diag2, positions = positions)
+        }
+    }
+
+    pub fn bench_eight_queens() -> () {
+        {
+            let mut idx = 0;
+            while ((idx < 5))
+                {
+                    let total = run_solver();
+                    <control-flow>;
+                    idx = (idx + 1);
+                }
+        }
+    }
+
+    pub fn main() -> () {
+        {
+            std::println(arg0 = format_string("Running 8-queens benchmark demo"));
+            let report = std::bench::run_benches();
+            std::println(arg0 = format_string("Summary: {} passed, {} failed, {} total"), arg1 = report.passed, arg2 = report.failed, arg3 = report.total);
+        }
+    }
+}

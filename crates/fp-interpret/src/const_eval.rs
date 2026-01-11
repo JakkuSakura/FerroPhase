@@ -10,7 +10,6 @@ use fp_core::error::Result as CoreResult;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineOptions, PipelineStage};
 
 use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
-use fp_typing::AstTypeInferencer;
 
 pub const STAGE_CONST_EVAL: &str = "const-eval";
 
@@ -71,12 +70,6 @@ impl ConstEvaluationOrchestrator {
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
-
-        // Initialize the typer with the full AST context before using it incrementally
-        // so the interpreter can resolve declarations during const evaluation.
-        let mut typer = AstTypeInferencer::new().with_context(ctx);
-        typer.initialize_from_node(ast);
-        interpreter.set_typer(typer);
 
         interpreter.interpret(ast);
 

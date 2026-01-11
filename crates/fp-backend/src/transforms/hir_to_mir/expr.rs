@@ -9,12 +9,11 @@ use fp_core::ast::{
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result;
 use fp_core::hir;
-use fp_core::hir::CallArg;
 
-fn call_arg_values(args: &[CallArg]) -> Vec<&hir::Expr> {
+fn call_arg_values(args: &[hir::CallArg]) -> Vec<&hir::Expr> {
     args.iter().map(|arg| &arg.value).collect()
 }
-use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicCallPayload};
+use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir::ty::{
     AdtDef, AdtFlags, ConstKind, ConstValue, CtorKind, ErrorGuaranteed, FloatTy, IntTy, Mutability,
     ReprFlags, ReprOptions, Scalar, ScalarInt, Ty, TyKind, TypeAndMut, UintTy, VariantDef,
@@ -23,7 +22,7 @@ use fp_core::mir::ty::{
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
-use std::collections::{HashMap, HashSet, hash_map::DefaultHasher};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
@@ -1383,12 +1382,12 @@ impl MirLowering {
 
             self.struct_defs.insert(
                 def_id,
-                    StructDefinition {
-                        name: format!("__structural_{}", def_id),
-                        generics: Vec::new(),
-                        fields: fields.clone(),
-                        field_index,
-                    },
+                StructDefinition {
+                    name: format!("__structural_{}", def_id),
+                    generics: Vec::new(),
+                    fields: fields.clone(),
+                    field_index,
+                },
             );
             self.structural_defs.insert(key, def_id);
             def_id
@@ -3034,15 +3033,13 @@ impl MirLowering {
     ) -> Option<(usize, StructFieldInfo)> {
         let def = self.struct_defs.get(&def_id)?;
         let idx = *def.field_index.get(name)?;
-        let layout = self
-            .struct_layout_for_ty(struct_ty)
-            .or_else(|| {
-                if self.is_opaque_ty(struct_ty) {
-                    self.struct_layout_for_instance(def_id, &[], span)
-                } else {
-                    None
-                }
-            })?;
+        let layout = self.struct_layout_for_ty(struct_ty).or_else(|| {
+            if self.is_opaque_ty(struct_ty) {
+                self.struct_layout_for_instance(def_id, &[], span)
+            } else {
+                None
+            }
+        })?;
         let ty = layout.field_tys.get(idx)?.clone();
         Some((
             idx,
@@ -5230,7 +5227,7 @@ impl<'a> BodyBuilder<'a> {
         place: mir::Place,
         variant: &EnumVariantInfo,
         layout: &EnumLayout,
-        args: &[CallArg],
+        args: &[hir::CallArg],
         span: Span,
     ) -> Result<()> {
         let payload_tys = layout
@@ -5340,7 +5337,7 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         variant: &EnumVariantInfo,
         layout: &EnumLayout,
-        args: &[CallArg],
+        args: &[hir::CallArg],
         span: Span,
     ) -> Result<OperandInfo> {
         let local_id = self.allocate_temp(layout.enum_ty.clone(), span);
@@ -5379,9 +5376,9 @@ impl<'a> BodyBuilder<'a> {
         ) {
             if let Some(layout) = self.lowering.enum_layout_for_def(variant.enum_def, span) {
                 if layout.enum_ty == *expected_ty {
-                    let payload_args: Vec<CallArg> = fields
+                    let payload_args: Vec<hir::CallArg> = fields
                         .iter()
-                        .map(|field| CallArg {
+                        .map(|field| hir::CallArg {
                             name: field.name.clone(),
                             value: field.expr.clone(),
                         })
@@ -5429,9 +5426,9 @@ impl<'a> BodyBuilder<'a> {
                     .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned())
                     .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
                 if let Some(layout) = layout {
-                    let payload_args: Vec<CallArg> = fields
+                    let payload_args: Vec<hir::CallArg> = fields
                         .iter()
-                        .map(|field| CallArg {
+                        .map(|field| hir::CallArg {
                             name: field.name.clone(),
                             value: field.expr.clone(),
                         })
@@ -5478,9 +5475,9 @@ impl<'a> BodyBuilder<'a> {
                 .and_then(|ty| self.lowering.enum_layout_for_ty(ty).cloned())
                 .or_else(|| self.lowering.enum_layout_for_def(variant.enum_def, span));
             if let Some(layout) = layout {
-                let payload_args: Vec<CallArg> = fields
+                let payload_args: Vec<hir::CallArg> = fields
                     .iter()
-                    .map(|field| CallArg {
+                    .map(|field| hir::CallArg {
                         name: field.name.clone(),
                         value: field.expr.clone(),
                     })
@@ -5743,7 +5740,7 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         expr: &hir::Expr,
         callee: &hir::Expr,
-        args: &[CallArg],
+        args: &[hir::CallArg],
         destination: Option<(mir::Place, Ty)>,
     ) -> Result<Option<PlaceInfo>> {
         let arg_values = call_arg_values(args);
@@ -6353,9 +6350,7 @@ impl<'a> BodyBuilder<'a> {
                     || match &expected_ty.kind {
                         TyKind::FnPtr(poly_sig) => {
                             let sig = &poly_sig.binder.value;
-                            sig.inputs
-                                .iter()
-                                .any(|ty| self.lowering.is_opaque_ty(ty))
+                            sig.inputs.iter().any(|ty| self.lowering.is_opaque_ty(ty))
                                 || self.lowering.is_opaque_ty(&sig.output)
                         }
                         _ => false,
@@ -7022,10 +7017,7 @@ impl<'a> BodyBuilder<'a> {
                         );
                     }
                     if let Some(const_info) = self.lowering.const_values.get(def_id).cloned() {
-                        if resolved_path
-                            .segments
-                            .last()
-                            .map(|seg| seg.name.as_str())
+                        if resolved_path.segments.last().map(|seg| seg.name.as_str())
                             == Some("REGISTRY")
                         {
                             self.lowering.emit_warning(
@@ -7547,26 +7539,36 @@ impl<'a> BodyBuilder<'a> {
                 if call.kind == IntrinsicCallKind::CatchUnwind {
                     return self.lower_catch_unwind(expr, call, None);
                 }
-                if call.kind == IntrinsicCallKind::Len {
-                    let args = match &call.payload {
-                        IntrinsicCallPayload::Args { args } => args,
-                        IntrinsicCallPayload::Format { .. } => {
-                            self.lowering.emit_error(
-                                expr.span,
-                                "len intrinsic does not accept formatted payloads",
-                            );
-                            return Ok(OperandInfo {
-                                operand: mir::Operand::Constant(mir::Constant {
-                                    span: expr.span,
-                                    user_ty: None,
-                                    literal: mir::ConstantKind::UInt(0),
-                                }),
-                                ty: Ty {
-                                    kind: TyKind::Uint(UintTy::U64),
-                                },
-                            });
-                        }
+                if call.kind == IntrinsicCallKind::TimeNow {
+                    let args = &call.callargs;
+                    if !args.is_empty() {
+                        self.lowering
+                            .emit_error(expr.span, "time::now intrinsic expects no arguments");
+                    }
+                    let now_ty = Ty {
+                        kind: TyKind::Float(FloatTy::F64),
                     };
+                    let local_id = self.allocate_temp(now_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: IntrinsicCallKind::TimeNow,
+                                format: String::new(),
+                                args: Vec::new(),
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: now_ty,
+                    });
+                }
+                if call.kind == IntrinsicCallKind::Len {
+                    let args = &call.callargs;
                     let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
                     let Some(arg) = arg_values.first() else {
@@ -7805,16 +7807,18 @@ impl<'a> BodyBuilder<'a> {
         call: &hir::IntrinsicCallExpr,
         span: Span,
     ) -> Option<(mir::ConstantKind, Ty)> {
-        let args = match &call.payload {
-            IntrinsicCallPayload::Args { args } => args,
-            IntrinsicCallPayload::Format { .. } => {
-                self.lowering.emit_warning(
-                    span,
-                    "treating formatted intrinsic payload as opaque during MIR lowering",
-                );
-                return None;
-            }
-        };
+        let args = &call.callargs;
+        if call
+            .callargs
+            .first()
+            .is_some_and(|arg| matches!(arg.value.kind, hir::ExprKind::FormatString(_)))
+        {
+            self.lowering.emit_warning(
+                span,
+                "treating formatted intrinsic payload as opaque during MIR lowering",
+            );
+            return None;
+        }
         let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
         match call.kind {
@@ -7966,23 +7970,12 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn emit_printf_call(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
-        let template = match &call.payload {
-            IntrinsicCallPayload::Format { template } => template,
-            IntrinsicCallPayload::Args { .. } => {
-                self.lowering
-                    .emit_error(span, "printf lowering requires format payload");
-                return Ok(());
-            }
+        let Some((template, call_args)) = self.format_call_parts(call, span) else {
+            return Ok(());
         };
 
-        if !template.kwargs.is_empty() {
-            self.lowering
-                .emit_error(span, "named arguments are not supported in printf lowering");
-            return Ok(());
-        }
-
-        let mut lowered_args = Vec::with_capacity(template.args.len());
-        for arg in &template.args {
+        let mut lowered_args = Vec::with_capacity(call_args.len());
+        for arg in call_args {
             if let Some(formatted) = self.try_format_const_expr_for_printf(&arg.value, span) {
                 lowered_args.push(formatted);
             } else {
@@ -8030,9 +8023,9 @@ impl<'a> BodyBuilder<'a> {
                     };
 
                     if let Some(explicit) = &placeholder.format_spec {
-                        let trimmed = explicit.trim();
+                        let trimmed = explicit.raw.trim();
                         if trimmed.starts_with('%') {
-                            format.push_str(explicit);
+                            format.push_str(&explicit.raw);
                         } else {
                             format.push('%');
                             format.push_str(trimmed);
@@ -8072,23 +8065,12 @@ impl<'a> BodyBuilder<'a> {
         call: &hir::IntrinsicCallExpr,
         span: Span,
     ) -> Result<(String, Vec<mir::Operand>)> {
-        let template = match &call.payload {
-            IntrinsicCallPayload::Format { template } => template,
-            IntrinsicCallPayload::Args { .. } => {
-                self.lowering
-                    .emit_error(span, "format intrinsic requires format payload");
-                return Ok((String::new(), Vec::new()));
-            }
+        let Some((template, call_args)) = self.format_call_parts(call, span) else {
+            return Ok((String::new(), Vec::new()));
         };
 
-        if !template.kwargs.is_empty() {
-            self.lowering
-                .emit_error(span, "named arguments are not supported in format lowering");
-            return Ok((String::new(), Vec::new()));
-        }
-
-        let mut lowered_args = Vec::with_capacity(template.args.len());
-        for arg in &template.args {
+        let mut lowered_args = Vec::with_capacity(call_args.len());
+        for arg in call_args {
             if let Some(formatted) = self.try_format_const_expr_for_printf(&arg.value, span) {
                 lowered_args.push(formatted);
             } else {
@@ -8136,9 +8118,9 @@ impl<'a> BodyBuilder<'a> {
                     };
 
                     if let Some(explicit) = &placeholder.format_spec {
-                        let trimmed = explicit.trim();
+                        let trimmed = explicit.raw.trim();
                         if trimmed.starts_with('%') {
-                            format.push_str(explicit);
+                            format.push_str(&explicit.raw);
                         } else {
                             format.push('%');
                             format.push_str(trimmed);
@@ -8161,47 +8143,77 @@ impl<'a> BodyBuilder<'a> {
         Ok((format, operands))
     }
 
-    fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
-        let message = match &call.payload {
-            IntrinsicCallPayload::Args { args } => {
-                if args.is_empty() {
-                    "panic! macro triggered".to_string()
-                } else if args.len() == 1 {
-                    match &args[0].value.kind {
-                        hir::ExprKind::Literal(hir::Lit::Str(text)) => text.clone(),
-                        _ => {
-                            self.lowering.emit_error(
-                                span,
-                                "panic expects a string literal in compiled backends",
-                            );
-                            "<panic message unavailable>".to_string()
-                        }
-                    }
-                } else {
-                    self.lowering
-                        .emit_error(span, "panic expects zero or one argument");
-                    "<panic message unavailable>".to_string()
-                }
+    fn format_call_parts(
+        &mut self,
+        call: &hir::IntrinsicCallExpr,
+        span: Span,
+    ) -> Option<(hir::FormatString, Vec<hir::CallArg>)> {
+        let Some(first) = call.callargs.first() else {
+            self.lowering
+                .emit_error(span, "format intrinsic requires a template argument");
+            return None;
+        };
+
+        let hir::ExprKind::FormatString(template) = &first.value.kind else {
+            self.lowering
+                .emit_error(span, "format intrinsic requires a template argument");
+            return None;
+        };
+
+        let mut positional = Vec::new();
+        for arg in &call.callargs[1..] {
+            let name = arg.name.as_str();
+            if name.starts_with("arg") && name[3..].chars().all(|ch| ch.is_ascii_digit()) {
+                positional.push(arg.clone());
+            } else {
+                self.lowering
+                    .emit_error(span, "named arguments are not supported in format lowering");
+                return None;
             }
-            IntrinsicCallPayload::Format { template } => {
-                if template.args.is_empty() && template.kwargs.is_empty() {
-                    template
+        }
+
+        Some((template.clone(), positional))
+    }
+
+    fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
+        let message = if call.callargs.is_empty() {
+            "panic! macro triggered".to_string()
+        } else if call.callargs.len() == 1 {
+            match &call.callargs[0].value.kind {
+                hir::ExprKind::Literal(hir::Lit::Str(text)) => text.clone(),
+                hir::ExprKind::FormatString(template) => {
+                    let has_placeholders = template
                         .parts
                         .iter()
-                        .map(|part| match part {
-                            hir::FormatTemplatePart::Literal(text) => text.as_str(),
-                            hir::FormatTemplatePart::Placeholder(_) => "{...}",
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                } else {
-                    self.lowering.emit_error(
-                        span,
-                        "panic format payload is not supported in compiled backends",
-                    );
+                        .any(|part| matches!(part, hir::FormatTemplatePart::Placeholder(_)));
+                    if has_placeholders {
+                        self.lowering.emit_error(
+                            span,
+                            "panic format payload is not supported in compiled backends",
+                        );
+                        "<panic message unavailable>".to_string()
+                    } else {
+                        template
+                            .parts
+                            .iter()
+                            .map(|part| match part {
+                                hir::FormatTemplatePart::Literal(text) => text.as_str(),
+                                hir::FormatTemplatePart::Placeholder(_) => "",
+                            })
+                            .collect::<Vec<_>>()
+                            .join("")
+                    }
+                }
+                _ => {
+                    self.lowering
+                        .emit_error(span, "panic expects a string literal in compiled backends");
                     "<panic message unavailable>".to_string()
                 }
             }
+        } else {
+            self.lowering
+                .emit_error(span, "panic expects zero or one argument");
+            "<panic message unavailable>".to_string()
         };
 
         let sig = mir::FunctionSig {
@@ -8251,14 +8263,7 @@ impl<'a> BodyBuilder<'a> {
         call: &hir::IntrinsicCallExpr,
         destination: Option<mir::Place>,
     ) -> Result<OperandInfo> {
-        let args = match &call.payload {
-            IntrinsicCallPayload::Args { args } => args,
-            IntrinsicCallPayload::Format { .. } => {
-                self.lowering
-                    .emit_error(expr.span, "catch_unwind does not accept formatted payloads");
-                return Ok(self.constant_bool_operand(false, expr.span));
-            }
-        };
+        let args = &call.callargs;
         let arg_values: Vec<&hir::Expr> = args.iter().map(|arg| &arg.value).collect();
 
         if args.len() != 1 {
@@ -9070,18 +9075,19 @@ impl<'a> BodyBuilder<'a> {
                     }
                 };
 
-                let (field_index, field_info) =
-                    match self
-                        .lowering
-                        .struct_field(struct_def, &base_ty, field.as_str(), expr.span)
-                    {
-                        Some(data) => data,
-                        None => {
-                            self.lowering
-                                .emit_error(expr.span, format!("unknown field `{}`", field));
-                            return Ok(None);
-                        }
-                    };
+                let (field_index, field_info) = match self.lowering.struct_field(
+                    struct_def,
+                    &base_ty,
+                    field.as_str(),
+                    expr.span,
+                ) {
+                    Some(data) => data,
+                    None => {
+                        self.lowering
+                            .emit_error(expr.span, format!("unknown field `{}`", field));
+                        return Ok(None);
+                    }
+                };
 
                 place
                     .projection
@@ -9461,6 +9467,26 @@ impl<'a> BodyBuilder<'a> {
                 }
                 IntrinsicCallKind::CatchUnwind => {
                     self.lower_catch_unwind(expr, call, Some(place.clone()))?;
+                    return Ok(());
+                }
+                IntrinsicCallKind::TimeNow => {
+                    let args = &call.callargs;
+                    if !args.is_empty() {
+                        self.lowering
+                            .emit_error(expr.span, "time::now intrinsic expects no arguments");
+                    }
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: IntrinsicCallKind::TimeNow,
+                                format: String::new(),
+                                args: Vec::new(),
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
                     return Ok(());
                 }
                 _ => {
@@ -10394,7 +10420,10 @@ impl<'a> BodyBuilder<'a> {
                                 if (place.local as usize) < self.locals.len() {
                                     let existing = self.locals[place.local as usize].ty.clone();
                                     if MirLowering::is_unit_ty(&existing)
-                                        || matches!(existing.kind, TyKind::Infer(_) | TyKind::Error(_))
+                                        || matches!(
+                                            existing.kind,
+                                            TyKind::Infer(_) | TyKind::Error(_)
+                                        )
                                     {
                                         self.locals[place.local as usize].ty =
                                             expected_input.clone();

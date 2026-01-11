@@ -1,4 +1,5 @@
 use std::fmt::Debug;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
@@ -127,4 +128,11 @@ pub fn intrinsic_has_field<T: 'static>(_name: &str) -> bool {
 pub fn intrinsic_has_method<T: 'static>(_name: &str) -> bool {
     let _ = std::any::TypeId::of::<T>();
     false
+}
+
+pub fn intrinsic_time_now() -> f64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or(0.0)
 }
