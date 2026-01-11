@@ -446,8 +446,11 @@ impl<'a> LirCodegen<'a> {
             }
             lir::LirInstructionKind::Not(value) => {
                 let operand = self.convert_lir_value_to_basic_value(value)?;
-                let int_value = self.coerce_to_int(operand, self.default_int_type())?;
-                let mask = self.default_int_type().const_all_ones();
+                let int_value = match operand {
+                    BasicValueEnum::IntValue(int_value) => int_value,
+                    _ => self.coerce_to_int(operand, self.default_int_type())?,
+                };
+                let mask = int_value.get_type().const_all_ones();
                 let result = self
                     .llvm_ctx
                     .builder
@@ -1404,6 +1407,21 @@ impl<'a> LirCodegen<'a> {
     {
         let lhs_value = self.convert_lir_value_to_basic_value(lhs)?;
         let rhs_value = self.convert_lir_value_to_basic_value(rhs)?;
+        if let (BasicValueEnum::IntValue(lhs_int), BasicValueEnum::IntValue(rhs_int)) =
+            (lhs_value, rhs_value)
+        {
+            if lhs_int.get_type().get_bit_width() == rhs_int.get_type().get_bit_width() {
+                let result = op(
+                    &self.llvm_ctx.builder,
+                    lhs_int,
+                    rhs_int,
+                    &format!("iop_{}", instr_id),
+                )
+                .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                return Ok(result.into());
+            }
+        }
+
         let int_ty = self.default_int_type();
         let lhs_int = self.coerce_to_int(lhs_value, int_ty)?;
         let rhs_int = self.coerce_to_int(rhs_value, int_ty)?;

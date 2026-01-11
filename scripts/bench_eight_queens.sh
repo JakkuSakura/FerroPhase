@@ -18,10 +18,20 @@ bench_cmd() {
 
   echo ""
   echo "==> ${label}"
+  local status=0
   if command -v hyperfine >/dev/null 2>&1; then
+    set +e
     hyperfine --warmup 1 --runs 5 "${cmd}"
+    status=$?
+    set -e
   else
+    set +e
     /usr/bin/time -l bash -c "${cmd}"
+    status=$?
+    set -e
+  fi
+  if [[ $status -ne 0 ]]; then
+    echo "command failed with status ${status}"
   fi
 }
 
@@ -70,20 +80,29 @@ JS
 }
 
 echo "==> native rust (criterion)"
-cargo bench -p fp-rust --bench eight_queens
+cargo bench -p fp --bench eight_queens
 
-BIN_OUT="${OUT_DIR}/eight_queens_bin"
+BIN_OUT="${OUT_DIR}/eight_queens_bin.out"
 bench_cmd "fp compile (binary)" \
   "${FP_BIN} compile --backend binary --release --output ${BIN_OUT} ${EXAMPLE}"
 bench_cmd "fp binary run" "${BIN_OUT}"
 
-BYTECODE_OUT="${OUT_DIR}/eight_queens"
+BYTECODE_OUT="${OUT_DIR}/eight_queens.fbc"
 bench_cmd "fp compile (bytecode)" \
   "${FP_BIN} compile --backend bytecode --save-intermediates --output ${BYTECODE_OUT} ${EXAMPLE}"
 bench_cmd "fp interpret (bytecode)" \
-  "${FP_BIN} interpret ${BYTECODE_OUT}.fbc"
+  "${FP_BIN} interpret ${BYTECODE_OUT}"
 
 WASM_OUT="${OUT_DIR}/eight_queens_wasm"
-bench_cmd "fp compile (wasm)" \
-  "${FP_BIN} compile --backend wasm --release --output ${WASM_OUT} ${EXAMPLE}"
-bench_cmd "fp run (wasm)" "bash -c '$(declare -f run_wasm); run_wasm ${WASM_OUT}.wasm'"
+if command -v clang >/dev/null 2>&1 && clang --target=wasm32-unknown-unknown -c -x c /dev/null -o "${OUT_DIR}/wasm_check.o" >/dev/null 2>&1; then
+  bench_cmd "fp compile (wasm)" \
+    "${FP_BIN} compile --backend wasm --release --output ${WASM_OUT} ${EXAMPLE}"
+  bench_cmd "fp run (wasm)" "bash -c '$(declare -f run_wasm); run_wasm ${WASM_OUT}.wasm'"
+else
+  echo ""
+  echo "==> fp compile (wasm)"
+  echo "skipping wasm: clang target wasm32-unknown-unknown not available"
+  echo ""
+  echo "==> fp run (wasm)"
+  echo "skipping wasm: no wasm output"
+fi
