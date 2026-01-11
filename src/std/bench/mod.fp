@@ -27,8 +27,8 @@ mod std {
             while idx < benches.len() {
                 let bench = benches[idx];
                 let mut ok = true;
-                let warmup_secs = 0.2f64;
-                let measure_secs = 0.5f64;
+                let warmup_secs = 5.0f64;
+                let measure_secs = 15.0f64;
 
                 let warmup_start = std::time::now();
                 let warmup_deadline = warmup_start + warmup_secs;
