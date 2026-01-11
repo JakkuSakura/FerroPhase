@@ -2,6 +2,7 @@ use fp_bytecode::{
     BytecodeBinOp, BytecodeCallee, BytecodeConst, BytecodeInstr, BytecodePlace, BytecodePlaceElem,
     BytecodeProgram, BytecodeTerminator, BytecodeUnOp, IntrinsicCallKind,
 };
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -488,6 +489,19 @@ fn exec_intrinsic(
                 }
             };
             Ok(Some(Value::Int(len)))
+        }
+        IntrinsicCallKind::TimeNow => {
+            if !args.is_empty() {
+                return Err(VmError::Runtime {
+                    message: "time::now expects no arguments".to_string(),
+                });
+            }
+            match SystemTime::now().duration_since(UNIX_EPOCH) {
+                Ok(duration) => Ok(Some(Value::Float(duration.as_secs_f64()))),
+                Err(_) => Err(VmError::Runtime {
+                    message: "system clock is before UNIX_EPOCH".to_string(),
+                }),
+            }
         }
         _ => Err(VmError::Unsupported {
             message: format!("unsupported intrinsic {:?}", kind),
