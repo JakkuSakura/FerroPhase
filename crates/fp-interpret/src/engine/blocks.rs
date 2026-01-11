@@ -106,7 +106,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
-                    if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
+                    if let Some(function) = self.resolve_function_call(
+                        locator,
+                        &mut invoke.args,
+                        ResolutionMode::Default,
+                    ) {
                         let const_params: Vec<_> = function
                             .sig
                             .params

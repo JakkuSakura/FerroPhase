@@ -56,6 +56,12 @@ pub enum InterpreterMode {
     RunTime,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ResolutionMode {
+    Default,
+    Attribute,
+}
+
 #[derive(Debug, Clone)]
 pub struct InterpreterOptions {
     pub mode: InterpreterMode,
@@ -528,14 +534,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                 target: ExprInvokeTarget::Function(locator.clone()),
                 args: vec![expr],
             };
-            let function = if let Some(function) =
-                self.resolve_function_call(&mut locator, &mut invoke.args)
-            {
+            let function = if let Some(function) = self.resolve_function_call(
+                &mut locator,
+                &mut invoke.args,
+                ResolutionMode::Attribute,
+            ) {
                 Some(function)
             } else if let Some(fallback) = self.fallback_attr_locator(&locator) {
                 locator = fallback;
                 invoke.target = ExprInvokeTarget::Function(locator.clone());
-                self.resolve_function_call(&mut locator, &mut invoke.args)
+                self.resolve_function_call(
+                    &mut locator,
+                    &mut invoke.args,
+                    ResolutionMode::Attribute,
+                )
             } else {
                 None
             };

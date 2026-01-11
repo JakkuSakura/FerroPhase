@@ -1018,11 +1018,19 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return value;
                 }
 
-                if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
+                if let Some(function) =
+                    self.resolve_function_call(locator, &mut invoke.args, ResolutionMode::Default)
+                {
                     // Call user-defined const function
                     let evaluated = self.evaluate_args(&mut invoke.args);
-                    let value = self.call_function(function, evaluated);
-                    return value;
+                    if let Some(stack) = Self::module_stack_from_locator(locator) {
+                        let saved = std::mem::take(&mut self.module_stack);
+                        self.module_stack = stack;
+                        let value = self.call_function(function, evaluated);
+                        self.module_stack = saved;
+                        return value;
+                    }
+                    return self.call_function(function, evaluated);
                 }
 
                 if let Some(Value::Function(function)) = self.lookup_callable_value(locator) {
@@ -1060,6 +1068,36 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprInvokeTarget::Method(_) => unreachable!(),
         }
+    }
+
+    fn module_stack_from_locator(locator: &Locator) -> Option<Vec<String>> {
+        let path = match locator {
+            Locator::Path(path) => path,
+            Locator::ParameterPath(param_path) => {
+                if param_path.segments.len() <= 1 {
+                    return None;
+                }
+                return Some(
+                    param_path
+                        .segments
+                        .iter()
+                        .take(param_path.segments.len().saturating_sub(1))
+                        .map(|seg| seg.ident.as_str().to_string())
+                        .collect(),
+                );
+            }
+            _ => return None,
+        };
+        if path.segments.len() <= 1 {
+            return None;
+        }
+        Some(
+            path.segments
+                .iter()
+                .take(path.segments.len().saturating_sub(1))
+                .map(|seg| seg.name.clone())
+                .collect(),
+        )
     }
 
     fn try_eval_method_chain(&mut self, locator: &Locator) -> Option<Value> {
@@ -1186,7 +1224,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
 
-                if let Some(function) = self.resolve_function_call(locator, &mut invoke.args) {
+                if let Some(function) =
+                    self.resolve_function_call(locator, &mut invoke.args, ResolutionMode::Default)
+                {
                     let mut impl_context = None;
                     let segments = Self::locator_segments(locator);
                     if segments.len() >= 2 {
@@ -1424,12 +1464,19 @@ impl<'ctx> AstInterpreter<'ctx> {
         &mut self,
         locator: &mut Locator,
         args: &mut [Expr],
+        mode: ResolutionMode,
     ) -> Option<ItemDefFunction> {
+        if matches!(mode, ResolutionMode::Attribute) && !Self::locator_is_qualified(locator) {
+            return None;
+        }
+
         let mut candidate_names = vec![locator.to_string()];
-        if let Some(ident) = locator.as_ident() {
-            let simple = ident.as_str().to_string();
-            if !candidate_names.contains(&simple) {
-                candidate_names.push(simple);
+        if matches!(mode, ResolutionMode::Default) {
+            if let Some(ident) = locator.as_ident() {
+                let simple = ident.as_str().to_string();
+                if !candidate_names.contains(&simple) {
+                    candidate_names.push(simple);
+                }
             }
         }
 
@@ -1454,19 +1501,23 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         // Fallback: find by fully qualified name
-        if let Some(function) = {
-            if let Some(ident) = locator.as_ident() {
-                self.functions.get(ident.as_str()).cloned()
-            } else {
-                None
-            }
-        }
-        .or_else(|| self.functions.get(&locator.to_string()).cloned())
+        if let Some(function) = self
+            .functions
+            .get(&locator.to_string())
+            .cloned()
         {
             self.annotate_invoke_args_slice(args, &function.sig.params);
             Some(function)
         } else {
             None
+        }
+    }
+
+    fn locator_is_qualified(locator: &Locator) -> bool {
+        match locator {
+            Locator::Ident(_) => false,
+            Locator::Path(path) => path.segments.len() > 1,
+            Locator::ParameterPath(path) => path.segments.len() > 1,
         }
     }
 
