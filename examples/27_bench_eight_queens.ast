@@ -137,10 +137,10 @@ ast::File {
                         value true
                     let warmup_secs
                       init:
-                        value 0.2
+                        value 5
                     let measure_secs
                       init:
-                        value 0.5
+                        value 15
                     let warmup_start
                       init:
                         intrinsic time_now

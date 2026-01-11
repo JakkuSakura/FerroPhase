@@ -812,6 +812,7 @@ dependencies = [
  "fp-stackvm",
  "fp-typescript",
  "fp-typing",
+ "fp-wasm",
  "fp-wit",
  "fp-zig",
  "futures-executor",
@@ -1040,6 +1041,14 @@ version = "0.1.0"
 dependencies = [
  "fp-core",
  "tracing",
+]
+
+[[package]]
+name = "fp-wasm"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
+ "wasm-encoder",
 ]
 
 [[package]]
@@ -1472,6 +1481,12 @@ name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
+
+[[package]]
+name = "leb128"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "884e2677b40cc8c339eaefcb701c32ef1fd2493d71118dc0ca4b6a736c93bd67"
 
 [[package]]
 name = "libc"
@@ -3088,6 +3103,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bad67dc8b2a1a6e5448428adec4c3e84c43e561d8c9ee8a9e5aabeb193ec41d1"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "wasm-encoder"
+version = "0.205.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "90e95b3563d164f33c1cfb0a7efbd5940c37710019be10cd09f800fdec8b0e5c"
+dependencies = [
+ "leb128",
 ]
 
 [[package]]

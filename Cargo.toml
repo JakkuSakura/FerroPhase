@@ -10,6 +10,10 @@ fp-rust = { path = "crates/fp-rust" }
 [dev-dependencies]
 criterion = "0.8"
 
+[[bench]]
+name = "eight_queens"
+harness = false
+
 
 [workspace]
 resolver = "2"

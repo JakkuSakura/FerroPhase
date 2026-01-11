@@ -1,0 +1,8 @@
+[package]
+name = "fp-wasm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+wasm-encoder = "0.205"

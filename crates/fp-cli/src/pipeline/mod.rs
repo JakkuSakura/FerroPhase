@@ -668,14 +668,7 @@ impl Pipeline {
                 PipelineTarget::Wasm => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
-                    let llvm = self.generate_llvm_artifacts(
-                        &lir.lir_program,
-                        base_path,
-                        input_path,
-                        true,
-                        options,
-                    )?;
-                    let wasm_path = self.stage_emit_wasm(&llvm.ir_path, base_path, options)?;
+                    let wasm_path = self.stage_emit_wasm(&lir.lir_program, base_path, options)?;
                     PipelineOutput::Binary(wasm_path)
                 }
                 PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),

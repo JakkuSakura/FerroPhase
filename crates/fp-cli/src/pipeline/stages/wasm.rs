@@ -1,16 +1,14 @@
 use crate::pipeline::{Pipeline, STAGE_EMIT_WASM};
 use crate::CliError;
 use fp_core::diagnostics::Diagnostic;
+use fp_core::lir;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineOptions, PipelineStage};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use tracing::debug;
 
 pub(crate) struct WasmEmitContext {
-    pub llvm_ir_path: PathBuf,
+    pub lir_program: lir::LirProgram,
     pub base_path: PathBuf,
-    pub options: PipelineOptions,
 }
 
 pub(crate) struct WasmEmitStage;
@@ -42,105 +40,39 @@ impl PipelineStage for WasmEmitStage {
             }
         }
 
-        let (mut cmd, uses_driver) = if let Some(linker_path) = context.options.target_linker.as_ref()
-        {
-            let is_direct = is_direct_wasm_linker(linker_path);
-            (Command::new(linker_path), !is_direct)
-        } else {
-            (Command::new("clang"), true)
-        };
-
-        cmd.arg(&context.llvm_ir_path);
-        let target = context
-            .options
-            .target_triple
-            .as_deref()
-            .unwrap_or("wasm32-unknown-unknown");
-        if uses_driver {
-            cmd.arg(format!("--target={}", target));
-            if let Some(sysroot) = context.options.target_sysroot.as_ref() {
-                cmd.arg(format!("--sysroot={}", sysroot.display()));
-            }
-            cmd.arg("-nostdlib");
-            cmd.arg("-Wl,--no-entry");
-            cmd.arg("-Wl,--export-all");
-            cmd.arg("-Wl,--allow-undefined");
-            if context.options.release {
-                cmd.arg("-O2");
-            }
-        } else {
-            cmd.arg("--no-entry");
-            cmd.arg("--export-all");
-            cmd.arg("--allow-undefined");
-        }
-        cmd.arg("-o").arg(&wasm_path);
-
-        let output = match cmd.output() {
-            Ok(output) => output,
+        let wasm_bytes = match fp_wasm::emit_wasm(&context.lir_program) {
+            Ok(bytes) => bytes,
             Err(err) => {
                 diagnostics.push(
-                    Diagnostic::error(format!("Failed to invoke clang: {}", err))
+                    Diagnostic::error(format!("Failed to emit wasm: {}", err))
                         .with_source_context(STAGE_EMIT_WASM),
                 );
-                return Err(PipelineError::new(
-                    STAGE_EMIT_WASM,
-                    "Failed to invoke clang",
-                ));
+                return Err(PipelineError::new(STAGE_EMIT_WASM, "wasm emit failed"));
             }
         };
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut message = stderr.trim().to_string();
-            if message.is_empty() {
-                message = stdout.trim().to_string();
-            }
-            if message.is_empty() {
-                message = "clang failed without diagnostics".to_string();
-            }
+        if let Err(err) = fs::write(&wasm_path, wasm_bytes) {
             diagnostics.push(
-                Diagnostic::error(format!("clang failed: {}", message))
+                Diagnostic::error(format!("Failed to write wasm output: {}", err))
                     .with_source_context(STAGE_EMIT_WASM),
             );
-            return Err(PipelineError::new(STAGE_EMIT_WASM, "clang failed"));
-        }
-
-        if !context.options.save_intermediates {
-            if let Err(err) = fs::remove_file(&context.llvm_ir_path) {
-                debug!(
-                    error = %err,
-                    path = %context.llvm_ir_path.display(),
-                    "failed to remove intermediate LLVM IR file after wasm emit"
-                );
-            }
+            return Err(PipelineError::new(STAGE_EMIT_WASM, "wasm write failed"));
         }
 
         Ok(wasm_path)
     }
 }
 
-fn is_direct_wasm_linker(path: &Path) -> bool {
-    let name = path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or_default()
-        .to_lowercase();
-    name.contains("wasm-ld") || name == "ld.lld"
-}
-
 impl Pipeline {
     pub(crate) fn stage_emit_wasm(
         &self,
-        llvm_ir_path: &Path,
+        lir_program: &lir::LirProgram,
         base_path: &Path,
         options: &PipelineOptions,
     ) -> Result<PathBuf, CliError> {
         let stage = WasmEmitStage;
         let context = WasmEmitContext {
-            llvm_ir_path: llvm_ir_path.to_path_buf(),
+            lir_program: lir_program.clone(),
             base_path: base_path.to_path_buf(),
-            options: options.clone(),
         };
         self.run_pipeline_stage(STAGE_EMIT_WASM, stage, context, options)
     }

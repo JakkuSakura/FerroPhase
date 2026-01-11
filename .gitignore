@@ -13,3 +13,4 @@ project/project
 *.out
 *.o
 *.fbc
+*.wasm

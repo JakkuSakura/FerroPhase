@@ -94,8 +94,8 @@ hir::Program {
                 {
                     let bench = benches[idx];
                     let mut ok = true;
-                    let warmup_secs = 0.2;
-                    let measure_secs = 0.5;
+                    let warmup_secs = 5;
+                    let measure_secs = 15;
                     let warmup_start = std::time_now();
                     let warmup_deadline = (warmup_start + warmup_secs);
                     let mut warmup_iters = 0;

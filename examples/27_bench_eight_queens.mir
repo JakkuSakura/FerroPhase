@@ -145,8 +145,8 @@ mir::Program {
                     s1: _13 = copy _8
                     s2: _11 = copy _1[Index(13)]
                     s3: _14 = true
-                    s4: _15 = 0.2
-                    s5: _16 = 0.5
+                    s4: _15 = 5
+                    s5: _16 = 15
                     s6: _18 = intrinsic TimeNow "" []
                     s7: _17 = copy _18
                     s8: _20 = Add(copy _17, copy _15)
