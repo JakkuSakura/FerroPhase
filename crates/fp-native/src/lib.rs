@@ -1,47 +1,63 @@
 pub mod config;
-pub mod emitter;
+pub mod emit;
 pub mod link;
-mod macho;
 
 use crate::config::{EmitKind, NativeConfig};
-use crate::emitter::{emit_executable_macho_minimal, emit_object_macho_minimal};
+use crate::emit::detect_target;
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
 
 /// Native (LLVM-free) compiler entry point.
 ///
-/// Current scope: macOS-only prototype backend that can emit a minimal Mach-O object
-/// containing a program entry that returns 0, then link it into an executable
-/// via the system toolchain.
+/// Current scope: minimal native backend that can emit a tiny binary stub for
+/// Mach-O/ELF/PE targets, then link it into an executable in-process.
 ///
 /// This is intended as an incremental replacement for `fp-llvm`.
-pub struct NativeCompiler {
+pub struct NativeEmitter {
     config: NativeConfig,
 }
 
-impl NativeCompiler {
+impl NativeEmitter {
     pub fn new(config: NativeConfig) -> Self {
         Self { config }
     }
 
-    /// Compile LIR into an object or executable.
-    ///
-    /// Note: this initial implementation ignores most of `lir_program`; it is a
-    /// plumbing + format prototype.
-    pub fn compile(&self, _lir_program: LirProgram, _source_file: Option<&Path>) -> Result<PathBuf> {
+    /// Emit LIR into an object or executable.
+    pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+        let _ = source_file;
+
+        // Ensure output directory exists.
+        if let Some(parent) = self.config.output_path.parent() {
+            std::fs::create_dir_all(parent).map_err(fp_core::error::Error::from)?;
+        }
+
+        self.emit_impl(&lir_program)
+    }
+
+    /// Back-compat for older callers.
+    pub fn compile(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
+        self.emit(lir_program, source_file)
+    }
+
+    fn emit_impl(&self, lir_program: &LirProgram) -> Result<PathBuf> {
         let out = self.config.output_path.clone();
+
+        let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
+
         match self.config.emit {
             EmitKind::Object => {
-                emit_object_macho_minimal(&out)?;
+                let plan = emit::emit_plan_minimal(lir_program, format, arch)?;
+                emit::write_object_minimal(&out, &plan)?;
                 Ok(out)
             }
             EmitKind::Executable => {
-                // No external linker: write a minimal Mach-O executable directly.
-                let _ = &self.config.linker_args; // reserved for future in-process linking options
-                emit_executable_macho_minimal(&out)?;
+                let plan = emit::emit_plan_minimal(lir_program, format, arch)?;
+                emit::write_executable_minimal(&out, &plan)?;
                 Ok(out)
             }
         }
     }
 }
+
+pub type NativeCompiler = NativeEmitter;

@@ -2,22 +2,51 @@ use fp_core::error::{Error, Result};
 use std::fs;
 use std::path::Path;
 
-use crate::macho::{
-    align_up, ensure, put_bytes_fixed, put_i32, put_u16, put_u32, put_u64,
-};
+use super::TargetArch;
+
+fn align_up(value: u64, align: u64) -> u64 {
+    debug_assert!(align.is_power_of_two());
+    (value + (align - 1)) & !(align - 1)
+}
+
+fn put_u32(out: &mut Vec<u8>, x: u32) {
+    out.extend_from_slice(&x.to_le_bytes());
+}
+
+fn put_u64(out: &mut Vec<u8>, x: u64) {
+    out.extend_from_slice(&x.to_le_bytes());
+}
+
+fn put_i32(out: &mut Vec<u8>, x: i32) {
+    out.extend_from_slice(&x.to_le_bytes());
+}
+
+fn put_bytes_fixed<const N: usize>(out: &mut Vec<u8>, s: &str) {
+    let mut buf = [0u8; N];
+    let b = s.as_bytes();
+    let n = b.len().min(N);
+    buf[..n].copy_from_slice(&b[..n]);
+    out.extend_from_slice(&buf);
+}
+
+fn ensure(condition: bool, msg: &'static str) -> Result<()> {
+    if condition {
+        Ok(())
+    } else {
+        Err(Error::from(msg))
+    }
+}
 
 /// Emit a minimal 64-bit Mach-O executable (`MH_EXECUTE`) that starts at `_main`
 /// and returns 0.
 ///
 /// This intentionally avoids the system linker. It does not support dynamic
 /// libraries, relocations, or any calls into libc yet.
-pub fn emit_executable_macho_minimal(path: &Path) -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Err(Error::from(
-            "fp-native minimal executable emitter currently supports macOS host only",
-        ));
-    }
-
+pub fn emit_executable_macho_minimal(
+    path: &Path,
+    arch: TargetArch,
+    text_bytes: &[u8],
+) -> Result<()> {
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
     const MH_EXECUTE: u32 = 0x2;
@@ -35,21 +64,17 @@ pub fn emit_executable_macho_minimal(path: &Path) -> Result<()> {
     // Choose architecture and machine code.
     // - x86_64: xor eax,eax; ret
     // - arm64: mov w0, #0; ret
-    let (cputype, cpusubtype, text_bytes): (u32, u32, Vec<u8>) = if cfg!(target_arch = "aarch64") {
-        const CPU_TYPE_ARM64: u32 = 0x0100000c;
-        const CPU_SUBTYPE_ARM64_ALL: u32 = 0;
-        let mut t = Vec::new();
-        t.extend_from_slice(&0x5280_0000u32.to_le_bytes());
-        t.extend_from_slice(&0xD65F_03C0u32.to_le_bytes());
-        (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, t)
-    } else if cfg!(target_arch = "x86_64") {
-        const CPU_TYPE_X86_64: u32 = 0x01000007;
-        const CPU_SUBTYPE_X86_64_ALL: u32 = 3;
-        (CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL, vec![0x31, 0xC0, 0xC3])
-    } else {
-        return Err(Error::from(
-            "fp-native minimal executable emitter supports only aarch64 and x86_64 hosts",
-        ));
+    let (cputype, cpusubtype): (u32, u32) = match arch {
+        TargetArch::Aarch64 => {
+            const CPU_TYPE_ARM64: u32 = 0x0100000c;
+            const CPU_SUBTYPE_ARM64_ALL: u32 = 0;
+            (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL)
+        }
+        TargetArch::X86_64 => {
+            const CPU_TYPE_X86_64: u32 = 0x01000007;
+            const CPU_SUBTYPE_X86_64_ALL: u32 = 3;
+            (CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL)
+        }
     };
 
     // File layout:
@@ -79,7 +104,7 @@ pub fn emit_executable_macho_minimal(path: &Path) -> Result<()> {
     let vmsize_text = filesize_text;
 
     // Entry point is the start of __text.
-    let entryoff = (text_off_in_file) as u64;
+    let entryoff = text_off_in_file;
 
     let mut out = Vec::new();
 
@@ -129,14 +154,17 @@ pub fn emit_executable_macho_minimal(path: &Path) -> Result<()> {
     put_u64(&mut out, entryoff);
     put_u64(&mut out, 0); // stacksize
 
-    ensure(out.len() as u64 == header_size + sizeofcmds as u64, "internal Mach-O layout error (sizeofcmds mismatch)")?;
+    ensure(
+        out.len() as u64 == header_size + sizeofcmds as u64,
+        "internal Mach-O layout error (sizeofcmds mismatch)",
+    )?;
 
     // Pad to text section file offset
     if out.len() as u64 > text_off_in_file {
         return Err(Error::from("internal Mach-O layout error (text offset)"));
     }
     out.resize(text_off_in_file as usize, 0);
-    out.extend_from_slice(&text_bytes);
+    out.extend_from_slice(text_bytes);
     out.resize((fileoff_text + filesize_text) as usize, 0);
 
     fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
@@ -145,20 +173,17 @@ pub fn emit_executable_macho_minimal(path: &Path) -> Result<()> {
 
 /// Emit a minimal 64-bit Mach-O object file that defines `_main` and returns 0.
 ///
-/// This is a macOS-only bootstrapping emitter to validate the pipeline and
-/// linker integration without LLVM/Cranelift.
+/// This is a bootstrapping emitter to validate the pipeline and linker
+/// integration without LLVM/Cranelift.
 ///
 /// Limitations:
-/// - host-arch only (arm64 or x86_64)
 /// - no debug info, relocations, or external calls
 /// - ignores input LIR
-pub fn emit_object_macho_minimal(path: &Path) -> Result<()> {
-    if !cfg!(target_os = "macos") {
-        return Err(Error::from(
-            "fp-native minimal emitter currently supports macOS host only",
-        ));
-    }
-
+pub fn emit_object_macho_minimal(
+    path: &Path,
+    arch: TargetArch,
+    text_bytes: &[u8],
+) -> Result<()> {
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
     const MH_OBJECT: u32 = 0x1;
@@ -181,26 +206,20 @@ pub fn emit_object_macho_minimal(path: &Path) -> Result<()> {
     // Choose architecture and machine code.
     // - x86_64: xor eax,eax; ret
     // - arm64: mov w0, #0; ret
-    let (cputype, cpusubtype, text_bytes): (u32, u32, Vec<u8>) = if cfg!(target_arch = "aarch64") {
-         // CPU_TYPE_ARM64 = CPU_TYPE_ARM | CPU_ARCH_ABI64
-         // CPU_TYPE_ARM = 12
-         const CPU_TYPE_ARM64: u32 = 0x0100000c;
-         const CPU_SUBTYPE_ARM64_ALL: u32 = 0;
-         // mov w0, #0  => 0x52800000
-         // ret         => 0xD65F03C0
-         let mut t = Vec::new();
-         t.extend_from_slice(&0x5280_0000u32.to_le_bytes());
-         t.extend_from_slice(&0xD65F_03C0u32.to_le_bytes());
-         (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL, t)
-     } else if cfg!(target_arch = "x86_64") {
-         const CPU_TYPE_X86_64: u32 = 0x01000007;
-         const CPU_SUBTYPE_X86_64_ALL: u32 = 3;
-         (CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL, vec![0x31, 0xC0, 0xC3])
-     } else {
-         return Err(Error::from(
-             "fp-native minimal emitter supports only aarch64 and x86_64 hosts",
-         ));
-     };
+    let (cputype, cpusubtype): (u32, u32) = match arch {
+        TargetArch::Aarch64 => {
+            // CPU_TYPE_ARM64 = CPU_TYPE_ARM | CPU_ARCH_ABI64
+            // CPU_TYPE_ARM = 12
+            const CPU_TYPE_ARM64: u32 = 0x0100000c;
+            const CPU_SUBTYPE_ARM64_ALL: u32 = 0;
+            (CPU_TYPE_ARM64, CPU_SUBTYPE_ARM64_ALL)
+        }
+        TargetArch::X86_64 => {
+            const CPU_TYPE_X86_64: u32 = 0x01000007;
+            const CPU_SUBTYPE_X86_64_ALL: u32 = 3;
+            (CPU_TYPE_X86_64, CPU_SUBTYPE_X86_64_ALL)
+        }
+    };
 
     fn pad_to(v: &mut Vec<u8>, align: usize) {
         while v.len() % align != 0 {
@@ -325,7 +344,7 @@ pub fn emit_object_macho_minimal(path: &Path) -> Result<()> {
         ));
     }
     out.resize(text_offset, 0);
-    out.extend_from_slice(&text_bytes);
+    out.extend_from_slice(text_bytes);
 
     // Align to symoff
     pad_to(&mut out, 8);

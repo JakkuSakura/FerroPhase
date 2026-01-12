@@ -38,22 +38,16 @@ impl PipelineStage for LinkStage {
         {
             if let Some(lir_program) = context.native_lir {
                 let cfg = fp_native::config::NativeConfig::executable(&binary_path)
-                    .with_linker_args({
-                        // If the user requested a non-default linker driver, pass it to fp-native.
-                        // The native backend currently uses clang by default; for now we translate
-                        // the option into a `-fuse-ld`/driver selection later as the backend grows.
-                        let mut args = Vec::new();
-                        if let Some(linker) = context.options.linker.as_deref() {
-                            // fp-native uses `clang` internally today; we’ll evolve this into a
-                            // proper link-driver selection when the backend starts emitting more.
-                            // Keep the value available as a flag-like argument for now.
-                            args.push(format!("--driver={}", linker));
-                        }
-                        args
-                    });
-                let compiler = fp_native::NativeCompiler::new(cfg);
-                return compiler
-                    .compile(lir_program, None)
+                    .with_target_triple(context.options.target_triple.clone())
+                    .with_target_cpu(context.options.target_cpu.clone())
+                    .with_target_features(context.options.target_features.clone())
+                    .with_sysroot(context.options.target_sysroot.clone())
+                    .with_fuse_ld(context.options.target_linker.clone())
+                    .with_linker_driver(context.options.linker.clone())
+                    .with_release(context.options.release);
+                let emitter = fp_native::NativeEmitter::new(cfg);
+                return emitter
+                    .emit(lir_program, None)
                     .map_err(|e| PipelineError::new(STAGE_LINK_BINARY, e.to_string()));
             }
         }
@@ -89,11 +83,14 @@ impl PipelineStage for LinkStage {
         let llvm_ir_text = fs::read_to_string(&context.llvm_ir_path).unwrap_or_default();
         let requires_eh = llvm_ir_text.contains("landingpad") || llvm_ir_text.contains("invoke");
         let default_linker = if requires_eh { "clang++" } else { "clang" };
-        let linker = context
-            .options
-            .linker
-            .as_deref()
-            .unwrap_or(default_linker);
+        // If unwind/exception support is required and the user didn't override the default
+        // linker driver (CLI defaults to `clang`), use `clang++` to ensure the C++ runtime
+        // and ABI libraries are linked correctly.
+        let linker = match context.options.linker.as_deref() {
+            Some("clang") if requires_eh => "clang++",
+            Some(other) => other,
+            None => default_linker,
+        };
         if requires_eh {
             let clangxx_available = Command::new(linker).arg("--version").output();
             if matches!(clangxx_available, Err(_)) {
@@ -117,6 +114,13 @@ impl PipelineStage for LinkStage {
                 .join("../../crates/fp-llvm/runtime/fp_unwind.cc");
             cmd.arg(runtime_path);
             cmd.arg("-fexceptions");
+
+            // On Apple platforms, the exception ABI lives in libc++abi and is not always
+            // pulled in transitively. Link it explicitly to satisfy __cxa_* and typeinfo.
+            if is_apple_target(context.options.target_triple.as_deref()) {
+                cmd.arg("-lc++");
+                cmd.arg("-lc++abi");
+            }
         }
         if let Some(target_triple) = context.options.target_triple.as_deref() {
             cmd.arg("--target").arg(target_triple);
@@ -183,6 +187,14 @@ fn is_windows_target(target_triple: Option<&str>) -> bool {
         None => return cfg!(target_os = "windows"),
     };
     triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw")
+}
+
+fn is_apple_target(target_triple: Option<&str>) -> bool {
+    let triple = match target_triple {
+        Some(triple) => triple,
+        None => return cfg!(any(target_os = "macos", target_os = "ios")),
+    };
+    triple.contains("apple") || triple.contains("darwin") || triple.contains("macos")
 }
 
 impl Pipeline {
