@@ -230,10 +230,10 @@ pub fn emit_executable_macho(
 
     let dyld_path = b"/usr/lib/dyld\0";
     let dylib_path = b"/usr/lib/libSystem.B.dylib\0";
-    let lc_dylinker_size = align_up((24 + dyld_path.len()) as u64, 8);
+    let lc_dylinker_size = align_up((12 + dyld_path.len()) as u64, 8);
     let lc_dylib_size = align_up((24 + dylib_path.len()) as u64, 8);
 
-    let ncmds = 6u32;
+    let ncmds = 9u32;
     let sizeofcmds = (lc_segment_text_size
         + lc_segment_data_size
         + lc_segment_linkedit_size
@@ -440,15 +440,17 @@ pub fn emit_executable_macho(
     }
 
     // LC_LOAD_DYLINKER
+    let dylinker_start = out.len() as u64;
     put_u32(&mut out, LC_LOAD_DYLINKER);
     put_u32(&mut out, lc_dylinker_size as u32);
     put_u32(&mut out, 12);
     out.extend_from_slice(dyld_path);
-    while out.len() as u64 % 8 != 0 {
+    while (out.len() as u64 - dylinker_start) < lc_dylinker_size {
         out.push(0);
     }
 
     // LC_LOAD_DYLIB
+    let dylib_start = out.len() as u64;
     put_u32(&mut out, LC_LOAD_DYLIB);
     put_u32(&mut out, lc_dylib_size as u32);
     put_u32(&mut out, 24);
@@ -456,7 +458,7 @@ pub fn emit_executable_macho(
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
     out.extend_from_slice(dylib_path);
-    while out.len() as u64 % 8 != 0 {
+    while (out.len() as u64 - dylib_start) < lc_dylib_size {
         out.push(0);
     }
 
