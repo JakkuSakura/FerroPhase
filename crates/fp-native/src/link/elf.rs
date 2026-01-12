@@ -3,8 +3,8 @@ use fp_core::error::{Error, Result};
 use std::fs;
 use std::path::Path;
 
-pub fn link_executable_elf64_minimal(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
-    emit_executable_elf64_minimal(path, arch, text)
+pub fn link_executable_elf64(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
+    emit_executable_elf64(path, arch, text)
 }
 
 fn align_up(value: usize, align: usize) -> usize {
@@ -34,7 +34,7 @@ fn elf_machine(arch: TargetArch) -> u16 {
     }
 }
 
-pub fn emit_executable_elf64_minimal(
+pub fn emit_executable_elf64(
     path: &Path,
     arch: TargetArch,
     text: &[u8],
@@ -98,7 +98,7 @@ pub fn emit_executable_elf64_minimal(
     Ok(())
 }
 
-pub fn emit_object_elf64_minimal(
+pub fn emit_object_elf64(
     path: &Path,
     arch: TargetArch,
     text: &[u8],

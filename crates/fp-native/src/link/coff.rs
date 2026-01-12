@@ -34,7 +34,7 @@ fn coff_machine(arch: TargetArch) -> u16 {
     }
 }
 
-pub fn emit_object_coff_minimal(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
+pub fn emit_object_coff(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
     const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
     const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
     const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;

@@ -56,14 +56,14 @@ pub fn detect_target(triple: Option<&str>) -> Result<(TargetFormat, TargetArch)>
     Ok((format, arch))
 }
 
-pub fn emit_object_minimal(path: &Path, format: TargetFormat, arch: TargetArch) -> Result<()> {
-    let plan = emit_plan_minimal(&default_lir_program(), format, arch)?;
-    write_object_minimal(path, &plan)
+pub fn emit_object(path: &Path, format: TargetFormat, arch: TargetArch) -> Result<()> {
+    let plan = emit_plan(&default_lir_program(), format, arch)?;
+    write_object(path, &plan)
 }
 
-pub fn emit_executable_minimal(path: &Path, format: TargetFormat, arch: TargetArch) -> Result<()> {
-    let plan = emit_plan_minimal(&default_lir_program(), format, arch)?;
-    write_executable_minimal(path, &plan)
+pub fn emit_executable(path: &Path, format: TargetFormat, arch: TargetArch) -> Result<()> {
+    let plan = emit_plan(&default_lir_program(), format, arch)?;
+    write_executable(path, &plan)
 }
 
 pub struct EmitPlan {
@@ -72,7 +72,7 @@ pub struct EmitPlan {
     pub text: Vec<u8>,
 }
 
-pub fn emit_plan_minimal(
+pub fn emit_plan(
     lir_program: &LirProgram,
     format: TargetFormat,
     arch: TargetArch,
@@ -81,16 +81,16 @@ pub fn emit_plan_minimal(
     Ok(EmitPlan { format, arch, text })
 }
 
-pub fn write_object_minimal(path: &Path, plan: &EmitPlan) -> Result<()> {
+pub fn write_object(path: &Path, plan: &EmitPlan) -> Result<()> {
     match plan.format {
-        TargetFormat::MachO => link::macho::emit_object_macho_minimal(path, plan.arch, &plan.text),
-        TargetFormat::Elf => link::elf::emit_object_elf64_minimal(path, plan.arch, &plan.text),
-        TargetFormat::Coff => link::coff::emit_object_coff_minimal(path, plan.arch, &plan.text),
+        TargetFormat::MachO => link::macho::emit_object_macho(path, plan.arch, &plan.text),
+        TargetFormat::Elf => link::elf::emit_object_elf64(path, plan.arch, &plan.text),
+        TargetFormat::Coff => link::coff::emit_object_coff(path, plan.arch, &plan.text),
     }
 }
 
-pub fn write_executable_minimal(path: &Path, plan: &EmitPlan) -> Result<()> {
-    link::link_executable_minimal(path, plan.format, plan.arch, &plan.text)
+pub fn write_executable(path: &Path, plan: &EmitPlan) -> Result<()> {
+    link::link_executable(path, plan.format, plan.arch, &plan.text)
 }
 
 fn default_lir_program() -> LirProgram {

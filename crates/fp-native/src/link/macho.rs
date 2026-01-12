@@ -4,8 +4,8 @@ use std::path::Path;
 
 use super::TargetArch;
 
-pub fn link_executable_macho_minimal(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
-    emit_executable_macho_minimal(path, arch, text)
+pub fn link_executable_macho(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
+    emit_executable_macho(path, arch, text)
 }
 
 fn align_up(value: u64, align: u64) -> u64 {
@@ -46,7 +46,7 @@ fn ensure(condition: bool, msg: &'static str) -> Result<()> {
 ///
 /// This intentionally avoids the system linker. It does not support dynamic
 /// libraries, relocations, or any calls into libc yet.
-pub fn emit_executable_macho_minimal(
+pub fn emit_executable_macho(
     path: &Path,
     arch: TargetArch,
     text_bytes: &[u8],
@@ -183,7 +183,7 @@ pub fn emit_executable_macho_minimal(
 /// Limitations:
 /// - no debug info, relocations, or external calls
 /// - ignores input LIR
-pub fn emit_object_macho_minimal(
+pub fn emit_object_macho(
     path: &Path,
     arch: TargetArch,
     text_bytes: &[u8],

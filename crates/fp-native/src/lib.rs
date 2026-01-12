@@ -47,13 +47,13 @@ impl NativeEmitter {
 
         match self.config.emit {
             EmitKind::Object => {
-                let plan = emit::emit_plan_minimal(lir_program, format, arch)?;
-                emit::write_object_minimal(&out, &plan)?;
+                let plan = emit::emit_plan(lir_program, format, arch)?;
+                emit::write_object(&out, &plan)?;
                 Ok(out)
             }
             EmitKind::Executable => {
-                let plan = emit::emit_plan_minimal(lir_program, format, arch)?;
-                emit::write_executable_minimal(&out, &plan)?;
+                let plan = emit::emit_plan(lir_program, format, arch)?;
+                emit::write_executable(&out, &plan)?;
                 Ok(out)
             }
         }
