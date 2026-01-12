@@ -82,6 +82,28 @@ pub struct EmitPlan {
     pub format: TargetFormat,
     pub arch: TargetArch,
     pub text: Vec<u8>,
+    pub rodata: Vec<u8>,
+    pub relocs: Vec<Relocation>,
+}
+
+pub struct CodegenOutput {
+    pub text: Vec<u8>,
+    pub rodata: Vec<u8>,
+    pub relocs: Vec<Relocation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocKind {
+    CallRel32,
+    Abs64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relocation {
+    pub offset: u64,
+    pub kind: RelocKind,
+    pub symbol: String,
+    pub addend: i64,
 }
 
 pub fn emit_plan(
@@ -89,20 +111,26 @@ pub fn emit_plan(
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<EmitPlan> {
-    let text = codegen::emit_text_from_lir(lir_program, format, arch)?;
-    Ok(EmitPlan { format, arch, text })
+    let output = codegen::emit_text_from_lir(lir_program, format, arch)?;
+    Ok(EmitPlan {
+        format,
+        arch,
+        text: output.text,
+        rodata: output.rodata,
+        relocs: output.relocs,
+    })
 }
 
 pub fn write_object(path: &Path, plan: &EmitPlan) -> Result<()> {
     match plan.format {
-        TargetFormat::MachO => link::macho::emit_object_macho(path, plan.arch, &plan.text),
-        TargetFormat::Elf => link::elf::emit_object_elf64(path, plan.arch, &plan.text),
-        TargetFormat::Coff => link::coff::emit_object_coff(path, plan.arch, &plan.text),
+        TargetFormat::MachO => link::macho::emit_object_macho(path, plan.arch, plan),
+        TargetFormat::Elf => link::elf::emit_object_elf64(path, plan.arch, plan),
+        TargetFormat::Coff => link::coff::emit_object_coff(path, plan.arch, plan),
     }
 }
 
 pub fn write_executable(path: &Path, plan: &EmitPlan) -> Result<()> {
-    link::link_executable(path, plan.format, plan.arch, &plan.text)?;
+    link::link_executable(path, plan.format, plan.arch, plan)?;
     set_executable_permissions(path)?;
     Ok(())
 }

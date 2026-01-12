@@ -1,4 +1,5 @@
 use super::TargetArch;
+use crate::emit::EmitPlan;
 use fp_core::error::{Error, Result};
 use std::fs;
 use std::path::Path;
@@ -34,7 +35,7 @@ fn coff_machine(arch: TargetArch) -> u16 {
     }
 }
 
-pub fn emit_object_coff(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
+pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
     const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
     const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
@@ -44,7 +45,7 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()
     let section_header_size = 40u32;
     let section_offset = header_size + section_header_size;
 
-    let pointer_to_symbols = section_offset + text.len() as u32;
+    let pointer_to_symbols = section_offset + plan.text.len() as u32;
     let symbol_count = 1u32;
     let string_table_size = 4u32;
 
@@ -60,7 +61,7 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()
     put_bytes_fixed::<8>(&mut out, ".text");
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
-    put_u32(&mut out, text.len() as u32);
+    put_u32(&mut out, plan.text.len() as u32);
     put_u32(&mut out, section_offset);
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
@@ -68,7 +69,7 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()
     put_u16(&mut out, 0);
     put_u32(&mut out, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 
-    out.extend_from_slice(&text);
+    out.extend_from_slice(&plan.text);
 
     // Symbol table
     put_bytes_fixed::<8>(&mut out, "_start");
@@ -84,7 +85,7 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()
     Ok(())
 }
 
-pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
+pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
     const IMAGE_FILE_LARGE_ADDRESS_AWARE: u16 = 0x0020;
 
@@ -94,7 +95,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Resul
 
     const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
 
-    if text.is_empty() {
+    if plan.text.is_empty() {
         return Err(Error::from("PE executable requires non-empty text"));
     }
 
@@ -109,19 +110,31 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Resul
     let section_header_size = 40u32;
 
     let text_rva = section_alignment;
-    let text = text.to_vec();
+    let text = plan.text.clone();
+    let has_rodata = !plan.rodata.is_empty();
 
+    let section_count = if has_rodata { 2u32 } else { 1u32 };
     let headers_size = align_up(
-        pe_offset + 4 + coff_header_size + optional_header_size + section_header_size,
+        pe_offset + 4 + coff_header_size + optional_header_size + section_header_size * section_count,
         file_alignment,
     );
 
     let text_raw_size = align_up(text.len() as u32, file_alignment);
+    let rdata_raw_size = if has_rodata {
+        align_up(plan.rodata.len() as u32, file_alignment)
+    } else {
+        0
+    };
 
     let text_raw_offset = headers_size;
+    let rdata_raw_offset = text_raw_offset + text_raw_size;
+    let rdata_rva = align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment);
 
-    let size_of_image =
-        align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment);
+    let size_of_image = if has_rodata {
+        align_up(rdata_rva + align_up(plan.rodata.len() as u32, section_alignment), section_alignment)
+    } else {
+        align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment)
+    };
 
     let mut out = Vec::new();
 
@@ -135,7 +148,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Resul
 
     // COFF header
     put_u16(&mut out, coff_machine(arch));
-    put_u16(&mut out, 2);
+    put_u16(&mut out, section_count as u16);
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
@@ -150,7 +163,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Resul
     out.push(0);
     out.push(0);
     put_u32(&mut out, text_raw_size);
-    put_u32(&mut out, 0);
+    put_u32(&mut out, rdata_raw_size);
     put_u32(&mut out, 0);
     put_u32(&mut out, text_rva);
     put_u32(&mut out, text_rva);
@@ -193,6 +206,19 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Resul
     put_u16(&mut out, 0);
     put_u32(&mut out, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 
+    if has_rodata {
+        put_bytes_fixed::<8>(&mut out, ".rdata");
+        put_u32(&mut out, plan.rodata.len() as u32);
+        put_u32(&mut out, rdata_rva);
+        put_u32(&mut out, rdata_raw_size);
+        put_u32(&mut out, rdata_raw_offset);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+        put_u16(&mut out, 0);
+        put_u16(&mut out, 0);
+        put_u32(&mut out, IMAGE_SCN_MEM_READ);
+    }
+
     if out.len() > headers_size as usize {
         return Err(Error::from("internal PE header size mismatch"));
     }
@@ -201,6 +227,32 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, text: &[u8]) -> Resul
     // .text section
     out.extend_from_slice(&text);
     out.resize((text_raw_offset + text_raw_size) as usize, 0);
+    if has_rodata {
+        out.extend_from_slice(&plan.rodata);
+        out.resize((rdata_raw_offset + rdata_raw_size) as usize, 0);
+    }
+
+    let rodata_addr = image_base + rdata_rva as u64;
+    for reloc in &plan.relocs {
+        match reloc.kind {
+            crate::emit::RelocKind::Abs64 => {
+                if reloc.symbol != ".rodata" {
+                    return Err(Error::from("unsupported relocation in PE executable"));
+                }
+                let value = rodata_addr.wrapping_add(reloc.addend as u64);
+                let offset = text_raw_offset as usize + reloc.offset as usize;
+                if offset + 8 > out.len() {
+                    return Err(Error::from("relocation offset out of range"));
+                }
+                out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            crate::emit::RelocKind::CallRel32 => {
+                return Err(Error::from(
+                    "external calls are not supported in PE executable yet",
+                ));
+            }
+        }
+    }
 
     fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
     Ok(())

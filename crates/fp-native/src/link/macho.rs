@@ -3,9 +3,10 @@ use std::fs;
 use std::path::Path;
 
 use super::TargetArch;
+use crate::emit::EmitPlan;
 
-pub fn link_executable_macho(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
-    emit_executable_macho(path, arch, text)
+pub fn link_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
+    emit_executable_macho(path, arch, plan)
 }
 
 fn align_up(value: u64, align: u64) -> u64 {
@@ -49,7 +50,7 @@ fn ensure(condition: bool, msg: &'static str) -> Result<()> {
 pub fn emit_executable_macho(
     path: &Path,
     arch: TargetArch,
-    text_bytes: &[u8],
+    plan: &EmitPlan,
 ) -> Result<()> {
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
@@ -83,15 +84,17 @@ pub fn emit_executable_macho(
 
     // File layout:
     // [mach_header_64]
-    // [LC_SEGMENT_64(__TEXT) + section_64(__text)]
+    // [LC_SEGMENT_64(__TEXT) + section_64(__text) + section_64(__const?)]
     // [LC_MAIN]
     // [padding]
     // [__text bytes]
+    // [__const bytes]
 
     let header_size = 32u64;
     let segment_cmd_size = 72u64;
     let section_size = 80u64;
-    let lc_segment_size = segment_cmd_size + section_size;
+    let section_count = if plan.rodata.is_empty() { 1u64 } else { 2u64 };
+    let lc_segment_size = segment_cmd_size + section_size * section_count;
     let lc_main_size = 24u64;
 
     let ncmds = 2u32;
@@ -103,8 +106,14 @@ pub fn emit_executable_macho(
     let file_start_of_text = align_up(header_size + sizeofcmds as u64, 16);
     let fileoff_text = align_up(file_start_of_text, page);
     let text_off_in_file = fileoff_text;
-    let text_size = text_bytes.len() as u64;
-    let filesize_text = align_up(text_size, page);
+    let text_size = plan.text.len() as u64;
+    let rodata_off_in_file = if plan.rodata.is_empty() {
+        text_off_in_file + text_size
+    } else {
+        align_up(text_off_in_file + text_size, 16)
+    };
+    let rodata_size = plan.rodata.len() as u64;
+    let filesize_text = align_up(rodata_off_in_file + rodata_size - fileoff_text, page);
     let vmsize_text = filesize_text;
 
     // Entry point is the start of __text.
@@ -132,7 +141,7 @@ pub fn emit_executable_macho(
     put_u64(&mut out, filesize_text);
     put_i32(&mut out, VM_PROT_READ | VM_PROT_EXECUTE);
     put_i32(&mut out, VM_PROT_READ | VM_PROT_EXECUTE);
-    put_u32(&mut out, 1); // nsects
+    put_u32(&mut out, section_count as u32); // nsects
     put_u32(&mut out, 0); // flags
 
     // section_64 (__text)
@@ -152,6 +161,22 @@ pub fn emit_executable_macho(
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
 
+    if section_count == 2 {
+        // section_64 (__const)
+        put_bytes_fixed::<16>(&mut out, "__const");
+        put_bytes_fixed::<16>(&mut out, "__TEXT");
+        put_u64(&mut out, vmaddr_text + (rodata_off_in_file - fileoff_text)); // addr
+        put_u64(&mut out, rodata_size);
+        put_u32(&mut out, rodata_off_in_file as u32);
+        put_u32(&mut out, 4); // 2^4 = 16 align
+        put_u32(&mut out, 0); // reloff
+        put_u32(&mut out, 0); // nreloc
+        put_u32(&mut out, S_REGULAR);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+    }
+
     // LC_MAIN
     put_u32(&mut out, LC_MAIN);
     put_u32(&mut out, lc_main_size as u32);
@@ -168,8 +193,34 @@ pub fn emit_executable_macho(
         return Err(Error::from("internal Mach-O layout error (text offset)"));
     }
     out.resize(text_off_in_file as usize, 0);
-    out.extend_from_slice(text_bytes);
+    out.extend_from_slice(&plan.text);
+    if section_count == 2 {
+        out.resize(rodata_off_in_file as usize, 0);
+        out.extend_from_slice(&plan.rodata);
+    }
     out.resize((fileoff_text + filesize_text) as usize, 0);
+
+    let rodata_addr = vmaddr_text + (rodata_off_in_file - fileoff_text);
+    for reloc in &plan.relocs {
+        match reloc.kind {
+            crate::emit::RelocKind::Abs64 => {
+                if reloc.symbol != ".rodata" {
+                    return Err(Error::from("unsupported relocation in Mach-O executable"));
+                }
+                let value = rodata_addr.wrapping_add(reloc.addend as u64);
+                let offset = text_off_in_file as usize + reloc.offset as usize;
+                if offset + 8 > out.len() {
+                    return Err(Error::from("relocation offset out of range"));
+                }
+                out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            crate::emit::RelocKind::CallRel32 => {
+                return Err(Error::from(
+                    "external calls are not supported in Mach-O executable yet",
+                ));
+            }
+        }
+    }
 
     fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
     Ok(())
@@ -186,7 +237,7 @@ pub fn emit_executable_macho(
 pub fn emit_object_macho(
     path: &Path,
     arch: TargetArch,
-    text_bytes: &[u8],
+    plan: &EmitPlan,
 ) -> Result<()> {
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
@@ -272,7 +323,7 @@ pub fn emit_object_macho(
     let align_text = 16usize;
     text_offset = (text_offset + (align_text - 1)) & !(align_text - 1);
 
-    let mut symoff = text_offset + text_bytes.len();
+    let mut symoff = text_offset + plan.text.len();
     symoff = (symoff + 7) & !7;
 
     // One nlist_64 (16 bytes)
@@ -320,7 +371,7 @@ pub fn emit_object_macho(
     put_bytes_fixed::<16>(&mut out, "__text");
     put_bytes_fixed::<16>(&mut out, "__TEXT");
     put_u64(&mut out, 0); // addr (for MH_OBJECT often 0)
-    put_u64(&mut out, text_bytes.len() as u64); // size
+    put_u64(&mut out, plan.text.len() as u64); // size
     put_u32(&mut out, text_offset as u32); // offset
     put_u32(&mut out, 4); // align as power-of-two (2^4=16)
     put_u32(&mut out, 0); // reloff
@@ -348,7 +399,7 @@ pub fn emit_object_macho(
         ));
     }
     out.resize(text_offset, 0);
-    out.extend_from_slice(text_bytes);
+    out.extend_from_slice(&plan.text);
 
     // Align to symoff
     pad_to(&mut out, 8);

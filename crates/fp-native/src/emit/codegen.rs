@@ -1,15 +1,13 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::{
-    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
-};
+use fp_core::lir::{LirInstructionKind, LirProgram, LirTerminator, LirValue};
 
-use crate::emit::{aarch64, x86_64, TargetArch, TargetFormat};
+use crate::emit::{aarch64, x86_64, CodegenOutput, TargetArch, TargetFormat};
 
 pub fn emit_text_from_lir(
     lir_program: &LirProgram,
     format: TargetFormat,
     arch: TargetArch,
-) -> Result<Vec<u8>> {
+) -> Result<CodegenOutput> {
     let func = lir_program
         .functions
         .first()
@@ -25,11 +23,6 @@ pub fn emit_text_from_lir(
         for inst in &block.instructions {
             if matches!(inst.kind, LirInstructionKind::Phi { .. }) {
                 return Err(Error::from("native emitter does not support Phi yet"));
-            }
-            if !is_integer_type(inst.type_hint.as_ref()) {
-                return Err(Error::from(
-                    "native emitter only supports integer/bool instruction types",
-                ));
             }
             if let LirInstructionKind::Call { function, args, .. } = &inst.kind {
                 if !matches!(function, LirValue::Function(_)) {
@@ -57,19 +50,6 @@ pub fn emit_text_from_lir(
     match arch {
         TargetArch::X86_64 => x86_64::emit_text(lir_program, format),
         TargetArch::Aarch64 => aarch64::emit_text(lir_program, format),
-    }
-}
-
-fn is_integer_type(ty: Option<&LirType>) -> bool {
-    match ty {
-        None => true,
-        Some(LirType::I1)
-        | Some(LirType::I8)
-        | Some(LirType::I16)
-        | Some(LirType::I32)
-        | Some(LirType::I64)
-        | Some(LirType::I128) => true,
-        _ => false,
     }
 }
 

@@ -1,10 +1,11 @@
 use super::TargetArch;
+use crate::emit::EmitPlan;
 use fp_core::error::{Error, Result};
 use std::fs;
 use std::path::Path;
 
-pub fn link_executable_elf64(path: &Path, arch: TargetArch, text: &[u8]) -> Result<()> {
-    emit_executable_elf64(path, arch, text)
+pub fn link_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
+    emit_executable_elf64(path, arch, plan)
 }
 
 fn align_up(value: usize, align: usize) -> usize {
@@ -37,7 +38,7 @@ fn elf_machine(arch: TargetArch) -> u16 {
 pub fn emit_executable_elf64(
     path: &Path,
     arch: TargetArch,
-    text: &[u8],
+    plan: &EmitPlan,
 ) -> Result<()> {
     const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
     const ELFCLASS64: u8 = 2;
@@ -51,7 +52,8 @@ pub fn emit_executable_elf64(
     let ehdr_size = 64usize;
     let phdr_size = 56usize;
     let code_offset = align_up(ehdr_size + phdr_size, 0x1000);
-    let file_size = code_offset + text.len();
+    let rodata_offset = align_up(code_offset + plan.text.len(), 0x1000);
+    let file_size = rodata_offset + plan.rodata.len();
 
     let base_addr: u64 = 0x400000;
     let entry_addr = base_addr + code_offset as u64;
@@ -92,7 +94,31 @@ pub fn emit_executable_elf64(
         return Err(Error::from("internal ELF layout error"));
     }
     out.resize(code_offset, 0);
-    out.extend_from_slice(text);
+    out.extend_from_slice(&plan.text);
+    out.resize(rodata_offset, 0);
+    out.extend_from_slice(&plan.rodata);
+
+    let rodata_addr = base_addr + rodata_offset as u64;
+    for reloc in &plan.relocs {
+        match reloc.kind {
+            crate::emit::RelocKind::Abs64 => {
+                if reloc.symbol != ".rodata" {
+                    return Err(Error::from("unsupported relocation in ELF executable"));
+                }
+                let value = rodata_addr.wrapping_add(reloc.addend as u64);
+                let offset = code_offset + reloc.offset as usize;
+                if offset + 8 > out.len() {
+                    return Err(Error::from("relocation offset out of range"));
+                }
+                out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+            }
+            crate::emit::RelocKind::CallRel32 => {
+                return Err(Error::from(
+                    "external calls are not supported in ELF executable yet",
+                ));
+            }
+        }
+    }
 
     fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
     Ok(())
@@ -101,7 +127,7 @@ pub fn emit_executable_elf64(
 pub fn emit_object_elf64(
     path: &Path,
     arch: TargetArch,
-    text: &[u8],
+    plan: &EmitPlan,
 ) -> Result<()> {
     const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
     const ELFCLASS64: u8 = 2;
@@ -117,12 +143,15 @@ pub fn emit_object_elf64(
     const STB_GLOBAL: u8 = 1;
     const STT_FUNC: u8 = 2;
 
-    let shstrtab = b"\0.text\0.symtab\0.strtab\0.shstrtab\0";
+    let shstrtab = b"\0.text\0.symtab\0.strtab\0.rodata\0.shstrtab\0";
     let strtab = b"\0_start\0";
 
     let mut offset = 64usize; // ELF header size
     let text_offset = align_up(offset, 16);
-    offset = text_offset + text.len();
+    offset = text_offset + plan.text.len();
+
+    let rodata_offset = align_up(offset, 16);
+    offset = rodata_offset + plan.rodata.len();
 
     let symtab_offset = align_up(offset, 8);
     let symtab_entry_size = 24usize;
@@ -136,7 +165,7 @@ pub fn emit_object_elf64(
     offset = shstrtab_offset + shstrtab.len();
 
     let shoff = align_up(offset, 8);
-    let shnum = 5u16;
+    let shnum = 6u16;
 
     let mut out = Vec::new();
     out.extend_from_slice(&ELF_MAGIC);
@@ -164,7 +193,10 @@ pub fn emit_object_elf64(
         return Err(Error::from("internal ELF layout error"));
     }
     out.resize(text_offset, 0);
-    out.extend_from_slice(&text);
+    out.extend_from_slice(&plan.text);
+
+    out.resize(rodata_offset, 0);
+    out.extend_from_slice(&plan.rodata);
 
     out.resize(symtab_offset, 0);
     // Null symbol
@@ -175,7 +207,7 @@ pub fn emit_object_elf64(
     put_u8(&mut out, 0);
     put_u16(&mut out, 1); // section index (.text)
     put_u64(&mut out, 0);
-    put_u64(&mut out, text.len() as u64);
+    put_u64(&mut out, plan.text.len() as u64);
 
     out.resize(strtab_offset, 0);
     out.extend_from_slice(strtab);
@@ -194,7 +226,7 @@ pub fn emit_object_elf64(
     put_u64(&mut out, SHF_ALLOC | SHF_EXECINSTR);
     put_u64(&mut out, 0);
     put_u64(&mut out, text_offset as u64);
-    put_u64(&mut out, text.len() as u64);
+    put_u64(&mut out, plan.text.len() as u64);
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
     put_u64(&mut out, 16);
@@ -224,8 +256,20 @@ pub fn emit_object_elf64(
     put_u64(&mut out, 1);
     put_u64(&mut out, 0);
 
-    // Section 4: .shstrtab
+    // Section 4: .rodata
     put_u32(&mut out, 23);
+    put_u32(&mut out, SHT_PROGBITS);
+    put_u64(&mut out, SHF_ALLOC);
+    put_u64(&mut out, 0);
+    put_u64(&mut out, rodata_offset as u64);
+    put_u64(&mut out, plan.rodata.len() as u64);
+    put_u32(&mut out, 0);
+    put_u32(&mut out, 0);
+    put_u64(&mut out, 16);
+    put_u64(&mut out, 0);
+
+    // Section 5: .shstrtab
+    put_u32(&mut out, 31);
     put_u32(&mut out, SHT_STRTAB);
     put_u64(&mut out, 0);
     put_u64(&mut out, 0);

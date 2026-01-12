@@ -1,7 +1,7 @@
 use fp_core::error::Result;
 use std::path::Path;
 
-use crate::emit::{TargetArch, TargetFormat};
+use crate::emit::{EmitPlan, TargetArch, TargetFormat};
 
 pub(crate) mod coff;
 pub(crate) mod elf;
@@ -17,11 +17,11 @@ pub fn link_executable(
     path: &Path,
     format: TargetFormat,
     arch: TargetArch,
-    text: &[u8],
+    plan: &EmitPlan,
 ) -> Result<()> {
     match format {
-        TargetFormat::MachO => macho::link_executable_macho(path, arch, text),
-        TargetFormat::Elf => elf::link_executable_elf64(path, arch, text),
-        TargetFormat::Coff => pe::link_executable_pe64(path, arch, text),
+        TargetFormat::MachO => macho::link_executable_macho(path, arch, plan),
+        TargetFormat::Elf => elf::link_executable_elf64(path, arch, plan),
+        TargetFormat::Coff => pe::link_executable_pe64(path, arch, plan),
     }
 }

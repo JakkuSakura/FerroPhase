@@ -5,7 +5,7 @@ use fp_core::lir::{
 };
 use std::collections::{BTreeSet, HashMap};
 
-use crate::emit::TargetFormat;
+use crate::emit::{CodegenOutput, TargetFormat};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reg {
@@ -121,7 +121,7 @@ struct FrameLayout {
     frame_size: i32,
 }
 
-pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<Vec<u8>> {
+pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOutput> {
     let func_map = build_function_map(program)?;
     let mut asm = Assembler::new();
 
@@ -138,7 +138,12 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<Vec<u8>> 
         }
     }
 
-    asm.finish()
+    let text = asm.finish()?;
+    Ok(CodegenOutput {
+        text,
+        rodata: Vec::new(),
+        relocs: Vec::new(),
+    })
 }
 
 enum BinOp {
