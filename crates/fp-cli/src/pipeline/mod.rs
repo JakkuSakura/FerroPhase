@@ -624,7 +624,7 @@ impl Pipeline {
                     let backend = options
                         .codegen_backend
                         .as_deref()
-                        .unwrap_or("llvm")
+                        .unwrap_or("native")
                         .to_lowercase();
 
                     if backend == "native" || backend == "fp-native" {

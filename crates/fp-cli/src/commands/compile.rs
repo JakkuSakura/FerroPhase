@@ -33,8 +33,8 @@ pub struct CompileArgs {
     /// Codegen backend engine (e.g. "llvm" or "native").
     ///
     /// This is only used for native codegen targets (like `--emitter binary`).
-    /// Default is `llvm`.
-    #[arg(long = "codegen-backend", default_value = "llvm")]
+    /// Default is `native`.
+    #[arg(long = "codegen-backend", default_value = "native")]
     pub codegen_backend: String,
 
     /// Target triple for codegen (defaults to host if omitted)
