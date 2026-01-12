@@ -1,5 +1,5 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::{LirInstructionKind, LirProgram, LirTerminator};
+use fp_core::lir::{LirInstructionKind, LirProgram, LirTerminator, LirType};
 
 use crate::emit::{TargetArch, TargetFormat};
 
@@ -22,10 +22,19 @@ pub fn emit_text_from_lir(
         ));
     }
 
+    let mut saw_alloca = false;
     for block in &func.basic_blocks {
         for inst in &block.instructions {
+            if matches!(inst.kind, LirInstructionKind::Alloca { .. }) {
+                saw_alloca = true;
+            }
             if matches!(inst.kind, LirInstructionKind::Phi { .. }) {
                 return Err(Error::from("native emitter does not support Phi yet"));
+            }
+            if !is_integer_type(inst.type_hint.as_ref()) {
+                return Err(Error::from(
+                    "native emitter only supports integer/bool instruction types",
+                ));
             }
         }
         match &block.terminator {
@@ -41,7 +50,20 @@ pub fn emit_text_from_lir(
     }
 
     match arch {
-        TargetArch::X86_64 => x86_64::emit_text(func, format),
-        TargetArch::Aarch64 => aarch64::emit_text(func, format),
+        TargetArch::X86_64 => x86_64::emit_text(func, format, saw_alloca),
+        TargetArch::Aarch64 => aarch64::emit_text(func, format, saw_alloca),
+    }
+}
+
+fn is_integer_type(ty: Option<&LirType>) -> bool {
+    match ty {
+        None => true,
+        Some(LirType::I1)
+        | Some(LirType::I8)
+        | Some(LirType::I16)
+        | Some(LirType::I32)
+        | Some(LirType::I64)
+        | Some(LirType::I128) => true,
+        _ => false,
     }
 }

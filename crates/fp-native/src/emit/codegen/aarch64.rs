@@ -19,6 +19,9 @@ enum Reg {
     X7,
     X8,
     X16,
+    X29,
+    X30,
+    X31,
 }
 
 impl Reg {
@@ -34,6 +37,9 @@ impl Reg {
             Reg::X7 => 7,
             Reg::X8 => 8,
             Reg::X16 => 16,
+            Reg::X29 => 29,
+            Reg::X30 => 30,
+            Reg::X31 => 31,
         }
     }
 }
@@ -41,6 +47,8 @@ impl Reg {
 struct RegFile {
     free: Vec<Reg>,
     map: HashMap<u32, Reg>,
+    slot_map: HashMap<u32, u32>,
+    next_slot: u32,
 }
 
 impl RegFile {
@@ -50,6 +58,8 @@ impl RegFile {
                 Reg::X7, Reg::X6, Reg::X5, Reg::X4, Reg::X3, Reg::X2, Reg::X1, Reg::X0,
             ],
             map: HashMap::new(),
+            slot_map: HashMap::new(),
+            next_slot: 0,
         }
     }
 
@@ -71,15 +81,30 @@ impl RegFile {
             .copied()
             .ok_or_else(|| Error::from("register not allocated"))
     }
+
+    fn slot_offset(&mut self, slot_id: u32) -> i32 {
+        if let Some(offset) = self.slot_map.get(&slot_id) {
+            return *offset as i32;
+        }
+        let next = self.next_slot + 1;
+        self.next_slot = next;
+        self.slot_map.insert(slot_id, next);
+        (next as i32) * 8
+    }
 }
 
 pub fn emit_text(
     func: &LirFunction,
     format: TargetFormat,
+    needs_stack: bool,
 ) -> Result<Vec<u8>> {
     let mut regs = RegFile::new();
     let mut asm = Assembler::new();
+    asm.needs_stack = needs_stack;
 
+    if needs_stack {
+        emit_prologue(&mut asm, &mut regs)?;
+    }
     for block in &func.basic_blocks {
         asm.bind(block.id);
         emit_block(&mut asm, &mut regs, block, format)?;
@@ -127,6 +152,51 @@ fn emit_value_to_reg(
             Ok(())
         }
         _ => Err(Error::from("unsupported LIR value for aarch64")),
+    }
+}
+
+fn emit_load(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    dst: Reg,
+    address: &LirValue,
+) -> Result<()> {
+    match address {
+        LirValue::StackSlot(id) => {
+            let offset = regs.slot_offset(*id);
+            emit_load_from_sp(asm, dst, offset);
+            Ok(())
+        }
+        _ => Err(Error::from("unsupported load address for aarch64")),
+    }
+}
+
+fn emit_store(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    value: &LirValue,
+    address: &LirValue,
+) -> Result<()> {
+    let src = match value {
+        LirValue::Register(id) => regs.get(*id)?,
+        LirValue::Constant(constant) => {
+            let imm = constant_to_i64(constant)?;
+            if imm < 0 || imm > u16::MAX as i64 {
+                return Err(Error::from("store immediate out of range"));
+            }
+            emit_mov_imm16(asm, Reg::X16, imm as u16);
+            Reg::X16
+        }
+        _ => return Err(Error::from("unsupported store value for aarch64")),
+    };
+
+    match address {
+        LirValue::StackSlot(id) => {
+            let offset = regs.slot_offset(*id);
+            emit_store_to_sp(asm, src, offset);
+            Ok(())
+        }
+        _ => Err(Error::from("unsupported store address for aarch64")),
     }
 }
 
@@ -180,7 +250,11 @@ fn emit_mov_reg(asm: &mut Assembler, dst: Reg, src: Reg) {
     if dst.id() == src.id() {
         return;
     }
-    let instr = 0xAA00_03E0u32 | (src.id() << 16) | dst.id();
+    let instr = if dst.is_sp() || src.is_sp() {
+        0x9100_0000u32 | (src.id() << 5) | dst.id()
+    } else {
+        0xAA00_03E0u32 | (src.id() << 16) | dst.id()
+    };
     asm.extend(&instr.to_le_bytes());
 }
 
@@ -236,6 +310,40 @@ fn emit_svc(asm: &mut Assembler) {
     asm.extend(&0xD400_0001u32.to_le_bytes());
 }
 
+fn emit_sub_sp(asm: &mut Assembler, imm: u32) {
+    let instr = 0xD100_03FFu32 | ((imm & 0xfff) << 10);
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_add_sp(asm: &mut Assembler, imm: u32) {
+    let instr = 0x9100_03FFu32 | ((imm & 0xfff) << 10);
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_load_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) {
+    let imm12 = ((offset / 8) as u32) & 0xfff;
+    let instr = 0xF940_03E0u32 | (imm12 << 10) | dst.id();
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_store_to_sp(asm: &mut Assembler, src: Reg, offset: i32) {
+    let imm12 = ((offset / 8) as u32) & 0xfff;
+    let instr = 0xF900_03E0u32 | (imm12 << 10) | src.id();
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_store_pair(asm: &mut Assembler, a: Reg, b: Reg, offset: i32) {
+    let imm7 = ((offset / 8) as u32) & 0x7f;
+    let instr = 0xA900_0000u32 | (imm7 << 15) | (b.id() << 10) | (a.id() << 5) | 31;
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_load_pair(asm: &mut Assembler, a: Reg, b: Reg, offset: i32) {
+    let imm7 = ((offset / 8) as u32) & 0x7f;
+    let instr = 0xA940_0000u32 | (imm7 << 15) | (b.id() << 10) | (a.id() << 5) | 31;
+    asm.extend(&instr.to_le_bytes());
+}
+
 fn emit_cmp_reg(asm: &mut Assembler, lhs: Reg, rhs: Reg) {
     let instr = 0xEB00_001F | (rhs.id() << 16) | (lhs.id() << 5);
     asm.extend(&instr.to_le_bytes());
@@ -269,6 +377,15 @@ fn emit_block(
             LirInstructionKind::Le(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Le)?,
             LirInstructionKind::Gt(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Gt)?,
             LirInstructionKind::Ge(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Ge)?,
+            LirInstructionKind::Alloca { .. } => {
+                regs.slot_offset(inst.id);
+            }
+            LirInstructionKind::Load { address, .. } => {
+                emit_load(asm, regs, dst, address)?;
+            }
+            LirInstructionKind::Store { value, address, .. } => {
+                emit_store(asm, regs, value, address)?;
+            }
             other => {
                 return Err(Error::from(format!(
                     "unsupported LIR instruction for aarch64: {other:?}"
@@ -279,6 +396,9 @@ fn emit_block(
 
     match &block.terminator {
         LirTerminator::Return(None) => {
+            if asm.needs_stack {
+                emit_epilogue(asm, regs);
+            }
             if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
                 emit_exit_syscall(asm, 0)?;
             } else {
@@ -289,6 +409,9 @@ fn emit_block(
         LirTerminator::Return(Some(value)) => {
             let ret_reg = Reg::X0;
             emit_value_to_reg(asm, regs, ret_reg, value)?;
+            if asm.needs_stack {
+                emit_epilogue(asm, regs);
+            }
             if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
                 emit_exit_syscall_reg(asm, ret_reg)?;
             } else {
@@ -400,6 +523,24 @@ struct Assembler {
     buf: Vec<u8>,
     labels: HashMap<BasicBlockId, usize>,
     fixups: Vec<Fixup>,
+    needs_stack: bool,
+}
+
+fn emit_prologue(asm: &mut Assembler, regs: &mut RegFile) -> Result<()> {
+    let slots = regs.next_slot.max(1) as u32;
+    let frame = ((slots * 8 + 15) / 16) * 16;
+    emit_sub_sp(asm, frame);
+    emit_store_pair(asm, Reg::X29, Reg::X30, frame as i32 - 16);
+    emit_mov_reg(asm, Reg::X29, Reg::X31);
+    Ok(())
+}
+
+fn emit_epilogue(asm: &mut Assembler, regs: &RegFile) {
+    emit_mov_reg(asm, Reg::X31, Reg::X29);
+    emit_load_pair(asm, Reg::X29, Reg::X30, 0);
+    let slots = regs.next_slot.max(1) as u32;
+    let frame = ((slots * 8 + 15) / 16) * 16;
+    emit_add_sp(asm, frame);
 }
 
 impl Assembler {
@@ -408,6 +549,7 @@ impl Assembler {
             buf: Vec::new(),
             labels: HashMap::new(),
             fixups: Vec::new(),
+            needs_stack: false,
         }
     }
 
@@ -479,5 +621,10 @@ impl Assembler {
 
     fn patch_u32(&mut self, pos: usize, word: u32) {
         self.buf[pos..pos + 4].copy_from_slice(&word.to_le_bytes());
+    }
+}
+impl Reg {
+    fn is_sp(self) -> bool {
+        matches!(self, Reg::X31)
     }
 }
