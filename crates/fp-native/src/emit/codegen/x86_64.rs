@@ -1,5 +1,8 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::{LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirTerminator, LirValue};
+use fp_core::lir::{
+    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirTerminator,
+    LirValue,
+};
 use std::collections::HashMap;
 
 use crate::emit::TargetFormat;
@@ -40,7 +43,6 @@ impl RegFile {
     fn new() -> Self {
         Self {
             free: vec![
-                Reg::R11,
                 Reg::R10,
                 Reg::R9,
                 Reg::R8,
@@ -74,49 +76,18 @@ impl RegFile {
 }
 
 pub fn emit_text(
-    _func: &LirFunction,
-    block: &LirBasicBlock,
+    func: &LirFunction,
     format: TargetFormat,
 ) -> Result<Vec<u8>> {
     let mut regs = RegFile::new();
-    let mut out = Vec::new();
+    let mut asm = Assembler::new();
 
-    for inst in &block.instructions {
-        let dst = regs.alloc(inst.id)?;
-        match &inst.kind {
-            LirInstructionKind::Add(lhs, rhs) => emit_binop(&mut out, &mut regs, dst, lhs, rhs, BinOp::Add)?,
-            LirInstructionKind::Sub(lhs, rhs) => emit_binop(&mut out, &mut regs, dst, lhs, rhs, BinOp::Sub)?,
-            LirInstructionKind::Mul(lhs, rhs) => emit_binop(&mut out, &mut regs, dst, lhs, rhs, BinOp::Mul)?,
-            other => {
-                return Err(Error::from(format!(
-                    "unsupported LIR instruction for x86_64: {other:?}"
-                )));
-            }
-        }
+    for block in &func.basic_blocks {
+        asm.bind(block.id);
+        emit_block(&mut asm, &mut regs, block, format)?;
     }
 
-    match &block.terminator {
-        LirTerminator::Return(None) => {
-            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
-                emit_exit_syscall(&mut out, 0)?;
-            } else {
-                emit_mov_imm64(&mut out, Reg::Rax, 0);
-                emit_ret(&mut out);
-            }
-        }
-        LirTerminator::Return(Some(value)) => {
-            let ret_reg = Reg::Rax;
-            emit_value_to_reg(&mut out, &mut regs, ret_reg, value)?;
-            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
-                emit_exit_syscall_reg(&mut out, ret_reg)?;
-            } else {
-                emit_ret(&mut out);
-            }
-        }
-        _ => {}
-    }
-
-    Ok(out)
+    asm.finish()
 }
 
 enum BinOp {
@@ -126,47 +97,46 @@ enum BinOp {
 }
 
 fn emit_binop(
-    out: &mut Vec<u8>,
+    asm: &mut Assembler,
     regs: &mut RegFile,
     dst: Reg,
     lhs: &LirValue,
     rhs: &LirValue,
     op: BinOp,
 ) -> Result<()> {
-    emit_value_to_reg(out, regs, dst, lhs)?;
-    emit_op_rhs(out, regs, dst, rhs, op)
+    emit_value_to_reg(asm, regs, dst, lhs)?;
+    emit_op_rhs(asm, regs, dst, rhs, op)
 }
 
-fn emit_value_to_reg(out: &mut Vec<u8>, regs: &mut RegFile, dst: Reg, value: &LirValue) -> Result<()> {
+fn emit_value_to_reg(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    dst: Reg,
+    value: &LirValue,
+) -> Result<()> {
     match value {
         LirValue::Register(id) => {
             let src = regs.get(*id)?;
-            emit_mov_rr(out, dst, src);
+            emit_mov_rr(asm, dst, src);
             Ok(())
         }
         LirValue::Constant(constant) => {
             let imm = constant_to_i64(constant)?;
-            emit_mov_imm64(out, dst, imm as u64);
+            emit_mov_imm64(asm, dst, imm as u64);
             Ok(())
         }
         _ => Err(Error::from("unsupported LIR value for x86_64")),
     }
 }
 
-fn emit_op_rhs(
-    out: &mut Vec<u8>,
-    regs: &mut RegFile,
-    dst: Reg,
-    rhs: &LirValue,
-    op: BinOp,
-) -> Result<()> {
+fn emit_op_rhs(asm: &mut Assembler, regs: &mut RegFile, dst: Reg, rhs: &LirValue, op: BinOp) -> Result<()> {
     match rhs {
         LirValue::Register(id) => {
             let src = regs.get(*id)?;
             match op {
-                BinOp::Add => emit_add_rr(out, dst, src),
-                BinOp::Sub => emit_sub_rr(out, dst, src),
-                BinOp::Mul => emit_imul_rr(out, dst, src),
+                BinOp::Add => emit_add_rr(asm, dst, src),
+                BinOp::Sub => emit_sub_rr(asm, dst, src),
+                BinOp::Mul => emit_imul_rr(asm, dst, src),
             }
             Ok(())
         }
@@ -174,34 +144,25 @@ fn emit_op_rhs(
             let imm = constant_to_i64(constant)?;
             if let Ok(imm32) = i32::try_from(imm) {
                 match op {
-                    BinOp::Add => emit_add_ri32(out, dst, imm32),
-                    BinOp::Sub => emit_sub_ri32(out, dst, imm32),
+                    BinOp::Add => emit_add_ri32(asm, dst, imm32),
+                    BinOp::Sub => emit_sub_ri32(asm, dst, imm32),
                     BinOp::Mul => {
-                        let temp = regs.alloc(alloc_temp_id(rhs))?;
-                        emit_mov_imm64(out, temp, imm as u64);
-                        emit_imul_rr(out, dst, temp);
+                        emit_mov_imm64(asm, Reg::R11, imm as u64);
+                        emit_imul_rr(asm, dst, Reg::R11);
                     }
                 }
                 Ok(())
             } else {
-                let temp = regs.alloc(alloc_temp_id(rhs))?;
-                emit_mov_imm64(out, temp, imm as u64);
+                emit_mov_imm64(asm, Reg::R11, imm as u64);
                 match op {
-                    BinOp::Add => emit_add_rr(out, dst, temp),
-                    BinOp::Sub => emit_sub_rr(out, dst, temp),
-                    BinOp::Mul => emit_imul_rr(out, dst, temp),
+                    BinOp::Add => emit_add_rr(asm, dst, Reg::R11),
+                    BinOp::Sub => emit_sub_rr(asm, dst, Reg::R11),
+                    BinOp::Mul => emit_imul_rr(asm, dst, Reg::R11),
                 }
                 Ok(())
             }
         }
         _ => Err(Error::from("unsupported RHS for x86_64")),
-    }
-}
-
-fn alloc_temp_id(value: &LirValue) -> u32 {
-    match value {
-        LirValue::Register(id) => id.wrapping_add(10_000),
-        _ => 10_000,
     }
 }
 
@@ -214,72 +175,72 @@ fn constant_to_i64(constant: &LirConstant) -> Result<i64> {
     }
 }
 
-fn emit_ret(out: &mut Vec<u8>) {
-    out.push(0xC3);
+fn emit_ret(asm: &mut Assembler) {
+    asm.push(0xC3);
 }
 
-fn emit_exit_syscall(out: &mut Vec<u8>, code: u32) -> Result<()> {
+fn emit_exit_syscall(asm: &mut Assembler, code: u32) -> Result<()> {
     if code > i32::MAX as u32 {
         return Err(Error::from("exit code exceeds i32 range"));
     }
-    emit_mov_imm64(out, Reg::Rdi, code as u64);
-    emit_mov_imm64(out, Reg::Rax, 60);
-    out.extend_from_slice(&[0x0F, 0x05]);
+    emit_mov_imm64(asm, Reg::Rdi, code as u64);
+    emit_mov_imm64(asm, Reg::Rax, 60);
+    asm.extend(&[0x0F, 0x05]);
     Ok(())
 }
 
-fn emit_exit_syscall_reg(out: &mut Vec<u8>, reg: Reg) -> Result<()> {
-    emit_mov_rr(out, Reg::Rdi, reg);
-    emit_mov_imm64(out, Reg::Rax, 60);
-    out.extend_from_slice(&[0x0F, 0x05]);
+fn emit_exit_syscall_reg(asm: &mut Assembler, reg: Reg) -> Result<()> {
+    emit_mov_rr(asm, Reg::Rdi, reg);
+    emit_mov_imm64(asm, Reg::Rax, 60);
+    asm.extend(&[0x0F, 0x05]);
     Ok(())
 }
 
-fn emit_mov_rr(out: &mut Vec<u8>, dst: Reg, src: Reg) {
-    emit_rex(out, true, src.id(), dst.id());
-    out.push(0x89);
-    emit_modrm(out, 0b11, src.id(), dst.id());
+fn emit_mov_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, src.id(), dst.id());
+    asm.push(0x89);
+    emit_modrm(asm, 0b11, src.id(), dst.id());
 }
 
-fn emit_mov_imm64(out: &mut Vec<u8>, dst: Reg, imm: u64) {
-    emit_rex(out, true, 0, dst.id());
-    out.push(0xB8 + (dst.id() & 0x7));
-    out.extend_from_slice(&imm.to_le_bytes());
+fn emit_mov_imm64(asm: &mut Assembler, dst: Reg, imm: u64) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0xB8 + (dst.id() & 0x7));
+    asm.extend(&imm.to_le_bytes());
 }
 
-fn emit_add_rr(out: &mut Vec<u8>, dst: Reg, src: Reg) {
-    emit_rex(out, true, src.id(), dst.id());
-    out.push(0x01);
-    emit_modrm(out, 0b11, src.id(), dst.id());
+fn emit_add_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, src.id(), dst.id());
+    asm.push(0x01);
+    emit_modrm(asm, 0b11, src.id(), dst.id());
 }
 
-fn emit_sub_rr(out: &mut Vec<u8>, dst: Reg, src: Reg) {
-    emit_rex(out, true, src.id(), dst.id());
-    out.push(0x29);
-    emit_modrm(out, 0b11, src.id(), dst.id());
+fn emit_sub_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, src.id(), dst.id());
+    asm.push(0x29);
+    emit_modrm(asm, 0b11, src.id(), dst.id());
 }
 
-fn emit_imul_rr(out: &mut Vec<u8>, dst: Reg, src: Reg) {
-    emit_rex(out, true, dst.id(), src.id());
-    out.extend_from_slice(&[0x0F, 0xAF]);
-    emit_modrm(out, 0b11, dst.id(), src.id());
+fn emit_imul_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, dst.id(), src.id());
+    asm.extend(&[0x0F, 0xAF]);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
 }
 
-fn emit_add_ri32(out: &mut Vec<u8>, dst: Reg, imm: i32) {
-    emit_rex(out, true, 0, dst.id());
-    out.push(0x81);
-    emit_modrm(out, 0b11, 0, dst.id());
-    out.extend_from_slice(&imm.to_le_bytes());
+fn emit_add_ri32(asm: &mut Assembler, dst: Reg, imm: i32) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0x81);
+    emit_modrm(asm, 0b11, 0, dst.id());
+    asm.extend(&imm.to_le_bytes());
 }
 
-fn emit_sub_ri32(out: &mut Vec<u8>, dst: Reg, imm: i32) {
-    emit_rex(out, true, 0, dst.id());
-    out.push(0x81);
-    emit_modrm(out, 0b11, 5, dst.id());
-    out.extend_from_slice(&imm.to_le_bytes());
+fn emit_sub_ri32(asm: &mut Assembler, dst: Reg, imm: i32) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0x81);
+    emit_modrm(asm, 0b11, 5, dst.id());
+    asm.extend(&imm.to_le_bytes());
 }
 
-fn emit_rex(out: &mut Vec<u8>, w: bool, reg: u8, rm: u8) {
+fn emit_rex(asm: &mut Assembler, w: bool, reg: u8, rm: u8) {
     let mut rex = 0x40;
     if w {
         rex |= 0x08;
@@ -290,10 +251,236 @@ fn emit_rex(out: &mut Vec<u8>, w: bool, reg: u8, rm: u8) {
     if (rm & 0x8) != 0 {
         rex |= 0x01;
     }
-    out.push(rex);
+    asm.push(rex);
 }
 
-fn emit_modrm(out: &mut Vec<u8>, mode: u8, reg: u8, rm: u8) {
+fn emit_modrm(asm: &mut Assembler, mode: u8, reg: u8, rm: u8) {
     let byte = ((mode & 0x3) << 6) | ((reg & 0x7) << 3) | (rm & 0x7);
-    out.push(byte);
+    asm.push(byte);
+}
+
+fn emit_cmp_rr(asm: &mut Assembler, lhs: Reg, rhs: Reg) {
+    emit_rex(asm, true, rhs.id(), lhs.id());
+    asm.push(0x39);
+    emit_modrm(asm, 0b11, rhs.id(), lhs.id());
+}
+
+fn emit_cmp_imm32(asm: &mut Assembler, lhs: Reg, imm: i32) {
+    emit_rex(asm, true, 0, lhs.id());
+    asm.push(0x81);
+    emit_modrm(asm, 0b11, 7, lhs.id());
+    asm.extend(&imm.to_le_bytes());
+}
+
+fn emit_setcc(asm: &mut Assembler, cc: u8, dst: Reg) {
+    emit_rex(asm, false, 0, dst.id());
+    asm.push(0x0F);
+    asm.push(0x90 + cc);
+    emit_modrm(asm, 0b11, 0, dst.id());
+}
+
+fn emit_movzx_r64_rm8(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, dst.id(), src.id());
+    asm.push(0x0F);
+    asm.push(0xB6);
+    emit_modrm(asm, 0b11, dst.id(), src.id());
+}
+
+fn emit_block(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    block: &LirBasicBlock,
+    format: TargetFormat,
+) -> Result<()> {
+    for inst in &block.instructions {
+        let dst = regs.alloc(inst.id)?;
+        match &inst.kind {
+            LirInstructionKind::Add(lhs, rhs) => emit_binop(asm, regs, dst, lhs, rhs, BinOp::Add)?,
+            LirInstructionKind::Sub(lhs, rhs) => emit_binop(asm, regs, dst, lhs, rhs, BinOp::Sub)?,
+            LirInstructionKind::Mul(lhs, rhs) => emit_binop(asm, regs, dst, lhs, rhs, BinOp::Mul)?,
+            LirInstructionKind::Eq(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Eq)?,
+            LirInstructionKind::Ne(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Ne)?,
+            LirInstructionKind::Lt(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Lt)?,
+            LirInstructionKind::Le(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Le)?,
+            LirInstructionKind::Gt(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Gt)?,
+            LirInstructionKind::Ge(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Ge)?,
+            other => {
+                return Err(Error::from(format!(
+                    "unsupported LIR instruction for x86_64: {other:?}"
+                )));
+            }
+        }
+    }
+
+    match &block.terminator {
+        LirTerminator::Return(None) => {
+            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
+                emit_exit_syscall(asm, 0)?;
+            } else {
+                emit_mov_imm64(asm, Reg::Rax, 0);
+                emit_ret(asm);
+            }
+        }
+        LirTerminator::Return(Some(value)) => {
+            let ret_reg = Reg::Rax;
+            emit_value_to_reg(asm, regs, ret_reg, value)?;
+            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
+                emit_exit_syscall_reg(asm, ret_reg)?;
+            } else {
+                emit_ret(asm);
+            }
+        }
+        LirTerminator::Br(target) => {
+            asm.emit_jmp(*target);
+        }
+        LirTerminator::CondBr {
+            condition,
+            if_true,
+            if_false,
+        } => {
+            emit_cond_branch(asm, regs, condition, *if_true, *if_false)?;
+        }
+        _ => {}
+    }
+
+    Ok(())
+}
+
+enum CmpKind {
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+}
+
+fn emit_cmp(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    dst: Reg,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: CmpKind,
+) -> Result<()> {
+    match (lhs, rhs) {
+        (LirValue::Register(lhs_id), LirValue::Register(rhs_id)) => {
+            let lhs_reg = regs.get(*lhs_id)?;
+            let rhs_reg = regs.get(*rhs_id)?;
+            emit_cmp_rr(asm, lhs_reg, rhs_reg);
+        }
+        (LirValue::Register(lhs_id), LirValue::Constant(constant)) => {
+            let lhs_reg = regs.get(*lhs_id)?;
+            let imm = constant_to_i64(constant)?;
+            let imm32 = i32::try_from(imm).map_err(|_| Error::from("cmp immediate out of range"))?;
+            emit_cmp_imm32(asm, lhs_reg, imm32);
+        }
+        _ => return Err(Error::from("unsupported compare operands")),
+    }
+
+    let cc = match kind {
+        CmpKind::Eq => 0x4,
+        CmpKind::Ne => 0x5,
+        CmpKind::Lt => 0xC,
+        CmpKind::Le => 0xE,
+        CmpKind::Gt => 0xF,
+        CmpKind::Ge => 0xD,
+    };
+    emit_setcc(asm, cc, Reg::R11);
+    emit_movzx_r64_rm8(asm, dst, Reg::R11);
+    Ok(())
+}
+
+fn emit_cond_branch(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    condition: &LirValue,
+    if_true: BasicBlockId,
+    if_false: BasicBlockId,
+) -> Result<()> {
+    match condition {
+        LirValue::Constant(LirConstant::Bool(value)) => {
+            if *value {
+                asm.emit_jmp(if_true);
+            } else {
+                asm.emit_jmp(if_false);
+            }
+        }
+        LirValue::Register(id) => {
+            let reg = regs.get(*id)?;
+            emit_cmp_imm32(asm, reg, 0);
+            asm.emit_jcc(0x85, if_true);
+            asm.emit_jmp(if_false);
+        }
+        _ => return Err(Error::from("unsupported condition value")),
+    }
+    Ok(())
+}
+
+struct Fixup {
+    pos: usize,
+    target: BasicBlockId,
+}
+
+struct Assembler {
+    buf: Vec<u8>,
+    labels: HashMap<BasicBlockId, usize>,
+    fixups: Vec<Fixup>,
+}
+
+impl Assembler {
+    fn new() -> Self {
+        Self {
+            buf: Vec::new(),
+            labels: HashMap::new(),
+            fixups: Vec::new(),
+        }
+    }
+
+    fn bind(&mut self, id: BasicBlockId) {
+        self.labels.insert(id, self.buf.len());
+    }
+
+    fn emit_jmp(&mut self, target: BasicBlockId) {
+        self.buf.push(0xE9);
+        let pos = self.buf.len();
+        self.buf.extend_from_slice(&0i32.to_le_bytes());
+        self.fixups.push(Fixup {
+            pos,
+            target,
+        });
+    }
+
+    fn emit_jcc(&mut self, opcode: u8, target: BasicBlockId) {
+        self.buf.push(0x0F);
+        self.buf.push(opcode);
+        let pos = self.buf.len();
+        self.buf.extend_from_slice(&0i32.to_le_bytes());
+        self.fixups.push(Fixup {
+            pos,
+            target,
+        });
+    }
+
+    fn push(&mut self, byte: u8) {
+        self.buf.push(byte);
+    }
+
+    fn extend(&mut self, bytes: &[u8]) {
+        self.buf.extend_from_slice(bytes);
+    }
+
+    fn finish(mut self) -> Result<Vec<u8>> {
+        for fixup in &self.fixups {
+            let target = self
+                .labels
+                .get(&fixup.target)
+                .ok_or_else(|| Error::from("unknown jump target"))?;
+            let origin = fixup.pos;
+            let rel = (*target as i64) - (origin as i64 + 4);
+            let rel32 = i32::try_from(rel).map_err(|_| Error::from("jump out of range"))?;
+            self.buf[origin..origin + 4].copy_from_slice(&rel32.to_le_bytes());
+        }
+        Ok(self.buf)
+    }
 }
