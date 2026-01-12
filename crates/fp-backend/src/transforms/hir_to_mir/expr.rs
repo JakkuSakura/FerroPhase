@@ -3820,6 +3820,49 @@ impl MirLowering {
             .unwrap_or(false)
     }
 
+    fn has_unresolved_ty(&self, ty: &Ty) -> bool {
+        if self.is_opaque_ty(ty) {
+            return true;
+        }
+        match &ty.kind {
+            TyKind::Infer(_)
+            | TyKind::Error(_)
+            | TyKind::Param(_)
+            | TyKind::Placeholder(_)
+            | TyKind::Bound(_, _)
+            | TyKind::Opaque(_, _)
+            | TyKind::Projection(_)
+            | TyKind::Dynamic(_, _)
+            | TyKind::Generator(_, _, _)
+            | TyKind::GeneratorWitness(_)
+            | TyKind::Closure(_, _) => true,
+            TyKind::Ref(_, inner, _) => self.has_unresolved_ty(inner.as_ref()),
+            TyKind::RawPtr(type_and_mut) => self.has_unresolved_ty(type_and_mut.ty.as_ref()),
+            TyKind::Slice(inner) => self.has_unresolved_ty(inner.as_ref()),
+            TyKind::Array(inner, _) => self.has_unresolved_ty(inner.as_ref()),
+            TyKind::Tuple(elements) => elements
+                .iter()
+                .any(|elem| self.has_unresolved_ty(elem.as_ref())),
+            TyKind::FnPtr(poly_sig) => {
+                let sig = &poly_sig.binder.value;
+                sig.inputs
+                    .iter()
+                    .any(|input| self.has_unresolved_ty(input.as_ref()))
+                    || self.has_unresolved_ty(sig.output.as_ref())
+            }
+            TyKind::Adt(_, substs) => substs.iter().any(|arg| {
+                matches!(arg, mir::ty::GenericArg::Type(inner) if self.has_unresolved_ty(inner))
+            }),
+            TyKind::Bool
+            | TyKind::Char
+            | TyKind::Int(_)
+            | TyKind::Uint(_)
+            | TyKind::Float(_)
+            | TyKind::FnDef(_, _)
+            | TyKind::Never => false,
+        }
+    }
+
     fn ensure_runtime_stub(&mut self, name: &str, sig: &mir::FunctionSig) {
         let sanitized = self.sanitize_function_sig(sig);
         self.runtime_functions.insert(name.to_string(), sanitized);
@@ -6346,16 +6389,7 @@ impl<'a> BodyBuilder<'a> {
                         }
                     }
                 }
-                let expected_has_opaque = self.lowering.is_opaque_ty(expected_ty)
-                    || match &expected_ty.kind {
-                        TyKind::FnPtr(poly_sig) => {
-                            let sig = &poly_sig.binder.value;
-                            sig.inputs.iter().any(|ty| self.lowering.is_opaque_ty(ty))
-                                || self.lowering.is_opaque_ty(&sig.output)
-                        }
-                        _ => false,
-                    };
-                if expected_has_opaque {
+                if self.lowering.has_unresolved_ty(expected_ty) {
                     operand.ty.clone()
                 } else {
                     expected_ty.clone()

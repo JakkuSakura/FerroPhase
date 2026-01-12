@@ -35,7 +35,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, info_span, warn};
+use tracing::{debug, info_span};
 
 // Begin internal submodules extracted for clarity
 mod artifacts;
@@ -628,19 +628,9 @@ impl Pipeline {
                         .to_lowercase();
 
                     if backend == "native" || backend == "fp-native" {
-                        #[cfg(feature = "native-backend")]
-                        {
-                            let binary_path =
-                                self.stage_link_binary_native(&lir.lir_program, base_path, options)?;
-                            PipelineOutput::Binary(binary_path)
-                        }
-                        #[cfg(not(feature = "native-backend"))]
-                        {
-                            return Err(CliError::Compilation(
-                                "native backend requested but fp-cli was not built with --features native-backend"
-                                    .to_string(),
-                            ));
-                        }
+                        let binary_path =
+                            self.stage_link_binary_native(&lir.lir_program, base_path, options)?;
+                        PipelineOutput::Binary(binary_path)
                     } else {
                         let llvm = self.generate_llvm_artifacts(
                             &lir.lir_program,
@@ -890,7 +880,10 @@ impl Pipeline {
         let pipeline = PipelineBuilder::<Src, Src>::new().add_stage(stage).build();
         match pipeline.run(context, &mut diagnostics, options) {
             Ok(output) => Ok(output),
-            Err(_) => Err(Self::stage_failure(stage_label)),
+            Err(_) => {
+                diagnostics.emit_stage(stage_label, options);
+                Err(Self::stage_failure(stage_label))
+            }
         }
     }
 

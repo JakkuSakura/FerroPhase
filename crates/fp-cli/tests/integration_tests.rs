@@ -134,13 +134,8 @@ async fn compile_example(example_name: &str) {
     let args = CompileArgs {
         input: vec![source_path.clone()],
         emitter: "binary".to_string(),
-        // Prefer fp-native in tests when the crate is built with the native backend,
-        // because the LLVM pipeline is still under active development.
-        codegen_backend: if cfg!(feature = "native-backend") {
-            "native".to_string()
-        } else {
-            "llvm".to_string()
-        },
+        // Use the LLVM backend until the native emitter covers all example types.
+        codegen_backend: "llvm".to_string(),
         target_triple: None,
         target_cpu: None,
         target_features: None,
