@@ -66,8 +66,8 @@ pub struct TranspileArgs {
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     let compile_args = CompileArgs {
         input: args.input,
-        emitter: args.backend.unwrap_or_else(|| "rust".to_string()),
-        codegen_backend: "llvm".to_string(),
+        backend: args.backend.unwrap_or_else(|| "rust".to_string()),
+        emitter: "llvm".to_string(),
         target_triple: None,
         target_cpu: None,
         target_features: None,

@@ -24,18 +24,16 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Emitter target (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
-    ///
-    /// This was previously named `--backend`. The old flag remains supported as an alias.
-    #[arg(short = 'b', long = "emitter", alias = "backend", default_value = "binary")]
-    pub emitter: String,
+    /// Output backend (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
+    #[arg(short = 'b', long = "backend", default_value = "binary")]
+    pub backend: String,
 
-    /// Codegen backend engine (e.g. "llvm" or "native").
+    /// Codegen emitter engine (e.g. "llvm" or "native").
     ///
-    /// This is only used for native codegen targets (like `--emitter binary`).
+    /// This is only used for native codegen targets (like `--backend binary`).
     /// Default is `native`.
-    #[arg(long = "codegen-backend", default_value = "native")]
-    pub codegen_backend: String,
+    #[arg(long = "emitter", default_value = "native")]
+    pub emitter: String,
 
     /// Target triple for codegen (defaults to host if omitted)
     #[arg(long = "target")]
@@ -114,7 +112,7 @@ pub struct CompileArgs {
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    info!("Starting compilation with emitter: {}", args.emitter);
+    info!("Starting compilation with backend: {}", args.backend);
 
     // Validate inputs
     validate_inputs(&args)?;
@@ -127,11 +125,11 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
 
-    let is_text_emitter = args.emitter == "text-bytecode";
-    let target_emitter = if is_text_emitter {
+    let is_text_emitter = args.backend == "text-bytecode";
+    let target_backend = if is_text_emitter {
         "bytecode"
     } else {
-        args.emitter.as_str()
+        args.backend.as_str()
     };
     let emit_text_bytecode = is_text_emitter;
 
@@ -146,7 +144,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            target_emitter,
+            target_backend,
             args.target_triple.as_deref(),
             emit_text_bytecode,
             output_is_dir,
@@ -154,7 +152,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
         // Compile single file
         if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target_emitter, config).await?
+            compile_file(input_file, &output_file, &args, target_backend, config).await?
         {
             compiled_files.push(artifact_path);
         }
@@ -169,7 +167,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
-        match target_emitter {
+        match target_backend {
             "binary" => match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled binaries available to execute");
@@ -243,7 +241,7 @@ async fn compile_file(
 
     let pipeline_options = PipelineOptions {
         target,
-        codegen_backend: Some(args.codegen_backend.clone()),
+        codegen_backend: Some(args.emitter.clone()),
         target_triple: args.target_triple.clone(),
         target_cpu: args.target_cpu.clone(),
         target_features: args.target_features.clone(),
@@ -299,7 +297,7 @@ async fn compile_file(
     let artifact = match pipeline_output {
         PipelineOutput::Code(code) => {
             let bootstrap = std::env::var_os("FERROPHASE_BOOTSTRAP").is_some();
-            if bootstrap && args.output.is_none() && args.emitter == "llvm" {
+            if bootstrap && args.output.is_none() && args.backend == "llvm" {
                 print!("{}", code);
                 let _ = io::stdout().flush();
                 info!("Emitted LLVM IR to stdout (bootstrap)");

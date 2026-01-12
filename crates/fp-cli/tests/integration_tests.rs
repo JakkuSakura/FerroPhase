@@ -133,9 +133,9 @@ async fn compile_example(example_name: &str) {
 
     let args = CompileArgs {
         input: vec![source_path.clone()],
-        emitter: "binary".to_string(),
-        // Use the LLVM backend until the native emitter covers all example types.
-        codegen_backend: "llvm".to_string(),
+        backend: "binary".to_string(),
+        // Use the LLVM emitter until the native emitter covers all example types.
+        emitter: "llvm".to_string(),
         target_triple: None,
         target_cpu: None,
         target_features: None,
