@@ -1,6 +1,7 @@
 // use std::collections::HashMap; // Temporarily disabled - unused
 
 pub mod ident;
+pub mod layout;
 pub mod pretty;
 pub mod ty;
 

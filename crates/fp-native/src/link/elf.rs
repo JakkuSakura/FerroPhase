@@ -114,8 +114,42 @@ fn build_plt_stubs(
             }
             out
         }
-        TargetArch::Aarch64 => Vec::new(),
+        TargetArch::Aarch64 => {
+            let mut out = Vec::with_capacity(externs.len() * 24);
+            for sym in externs {
+                let target = got_addr + sym.got_offset;
+                emit_movz(&mut out, 16, (target & 0xffff) as u16, 0);
+                emit_movk(&mut out, 16, ((target >> 16) & 0xffff) as u16, 16);
+                emit_movk(&mut out, 16, ((target >> 32) & 0xffff) as u16, 32);
+                emit_movk(&mut out, 16, ((target >> 48) & 0xffff) as u16, 48);
+                emit_ldr_reg(&mut out, 16, 16);
+                emit_br_reg(&mut out, 16);
+            }
+            out
+        }
     }
+}
+
+fn emit_movz(out: &mut Vec<u8>, rd: u32, imm: u16, shift: u32) {
+    let hw = shift / 16;
+    let instr = 0xD280_0000u32 | ((imm as u32) << 5) | (hw << 21) | rd;
+    out.extend_from_slice(&instr.to_le_bytes());
+}
+
+fn emit_movk(out: &mut Vec<u8>, rd: u32, imm: u16, shift: u32) {
+    let hw = shift / 16;
+    let instr = 0xF280_0000u32 | ((imm as u32) << 5) | (hw << 21) | rd;
+    out.extend_from_slice(&instr.to_le_bytes());
+}
+
+fn emit_ldr_reg(out: &mut Vec<u8>, rt: u32, rn: u32) {
+    let instr = 0xF940_0000u32 | (rn << 5) | rt;
+    out.extend_from_slice(&instr.to_le_bytes());
+}
+
+fn emit_br_reg(out: &mut Vec<u8>, rn: u32) {
+    let instr = 0xD61F_0000u32 | (rn << 5);
+    out.extend_from_slice(&instr.to_le_bytes());
 }
 
 pub fn emit_executable_elf64(
@@ -155,12 +189,14 @@ pub fn emit_executable_elf64(
     };
 
     let needs_plt = plan.relocs.iter().any(|reloc| reloc.kind == RelocKind::CallRel32);
-    if needs_plt && matches!(arch, TargetArch::Aarch64) {
-        return Err(Error::from(
-            "external calls are not supported for AArch64 ELF yet",
-        ));
-    }
-    let plt_stub_size = if needs_plt { 6 } else { 0 };
+    let plt_stub_size = if needs_plt {
+        match arch {
+            TargetArch::X86_64 => 6,
+            TargetArch::Aarch64 => 24,
+        }
+    } else {
+        0
+    };
     let externs = collect_external_symbols(plan, plt_stub_size);
 
     let ehdr_size = 64usize;
@@ -361,10 +397,24 @@ pub fn emit_executable_elf64(
                     .ok_or_else(|| Error::from("missing external symbol for relocation"))?;
                 let call_site = text_offset as i64 + reloc.offset as i64;
                 let stub_addr = (base_addr + plt_offset as u64 + target.plt_offset as u64) as i64;
-                let rel = stub_addr - (base_addr as i64 + call_site + 4);
-                let rel32 = i32::try_from(rel).map_err(|_| Error::from("call target out of range"))?;
                 let offset = text_offset + reloc.offset as usize;
-                out[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
+                match arch {
+                    TargetArch::X86_64 => {
+                        let rel = stub_addr - (base_addr as i64 + call_site + 4);
+                        let rel32 = i32::try_from(rel)
+                            .map_err(|_| Error::from("call target out of range"))?;
+                        out[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
+                    }
+                    TargetArch::Aarch64 => {
+                        let delta = stub_addr - (base_addr as i64 + call_site);
+                        let imm = delta / 4;
+                        if imm < -(1 << 25) || imm > (1 << 25) - 1 {
+                            return Err(Error::from("call target out of range"));
+                        }
+                        let encoded = 0x9400_0000u32 | ((imm as u32) & 0x03FF_FFFF);
+                        out[offset..offset + 4].copy_from_slice(&encoded.to_le_bytes());
+                    }
+                }
             }
         }
     }

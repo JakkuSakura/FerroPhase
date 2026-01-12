@@ -5,7 +5,7 @@ use fp_core::lir::{
 };
 use std::collections::{BTreeSet, HashMap};
 
-use crate::emit::{CodegenOutput, TargetFormat};
+use crate::emit::{CodegenOutput, RelocKind, Relocation, TargetFormat};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reg {
@@ -138,11 +138,11 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
         }
     }
 
-    let text = asm.finish()?;
+    let (text, relocs) = asm.finish()?;
     Ok(CodegenOutput {
         text,
         rodata: Vec::new(),
-        relocs: Vec::new(),
+        relocs,
     })
 }
 
@@ -292,10 +292,7 @@ fn emit_call(
     func_map: &HashMap<String, u32>,
 ) -> Result<()> {
     let target = match function {
-        LirValue::Function(name) => func_map
-            .get(name)
-            .copied()
-            .ok_or_else(|| Error::from("unknown callee"))?,
+        LirValue::Function(name) => func_map.get(name).copied().map(CallTarget::Internal).unwrap_or_else(|| CallTarget::External(name.clone())),
         _ => return Err(Error::from("unsupported callee for aarch64")),
     };
 
@@ -312,7 +309,10 @@ fn emit_call(
         }
     }
 
-    asm.emit_bl(Label::Function(target));
+    match target {
+        CallTarget::Internal(id) => asm.emit_bl(Label::Function(id)),
+        CallTarget::External(name) => asm.emit_bl_external(&name),
+    }
     store_vreg(asm, layout, dst_id, Reg::X0)?;
 
     Ok(())
@@ -674,6 +674,7 @@ struct Assembler {
     fixups: Vec<Fixup>,
     needs_frame: bool,
     current_function: u32,
+    relocs: Vec<Relocation>,
 }
 
 fn emit_prologue(asm: &mut Assembler, layout: &FrameLayout) -> Result<()> {
@@ -698,6 +699,7 @@ impl Assembler {
             fixups: Vec::new(),
             needs_frame: false,
             current_function: 0,
+            relocs: Vec::new(),
         }
     }
 
@@ -742,6 +744,17 @@ impl Assembler {
         });
     }
 
+    fn emit_bl_external(&mut self, symbol: &str) {
+        let pos = self.buf.len();
+        self.emit_u32(0x9400_0000);
+        self.relocs.push(Relocation {
+            offset: pos as u64,
+            kind: RelocKind::CallRel32,
+            symbol: symbol.to_string(),
+            addend: 0,
+        });
+    }
+
     fn emit_u32(&mut self, word: u32) {
         self.buf.extend_from_slice(&word.to_le_bytes());
     }
@@ -750,7 +763,7 @@ impl Assembler {
         self.buf.extend_from_slice(bytes);
     }
 
-    fn finish(mut self) -> Result<Vec<u8>> {
+    fn finish(mut self) -> Result<(Vec<u8>, Vec<Relocation>)> {
         let fixups = self.fixups.clone();
         for fixup in fixups {
             let target = self
@@ -789,7 +802,7 @@ impl Assembler {
                 }
             }
         }
-        Ok(self.buf)
+        Ok((self.buf, self.relocs))
     }
 
     fn patch_u32(&mut self, pos: usize, word: u32) {
@@ -801,6 +814,11 @@ impl Assembler {
 enum Label {
     Function(u32),
     Block(u32, BasicBlockId),
+}
+
+enum CallTarget {
+    Internal(u32),
+    External(String),
 }
 
 fn build_function_map(program: &LirProgram) -> Result<HashMap<String, u32>> {

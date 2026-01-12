@@ -1,4 +1,5 @@
 use fp_core::error::{Error, Result};
+use fp_core::lir::layout;
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirGlobal,
     LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirType,
@@ -2028,17 +2029,7 @@ fn emit_float_constant(func: &mut Function, value: f64, ty: &LirType) {
 }
 
 fn size_of_type(ty: &LirType) -> u64 {
-    match ty {
-        LirType::I1 | LirType::I8 => 1,
-        LirType::I16 => 2,
-        LirType::I32 | LirType::F32 => 4,
-        LirType::I64 | LirType::F64 => 8,
-        LirType::I128 => 16,
-        LirType::Ptr(_) => 8,
-        LirType::Array(elem, len) => size_of_type(elem) * *len as u64,
-        LirType::Struct { fields, .. } => fields.iter().map(size_of_type).sum(),
-        _ => 8,
-    }
+    layout::size_of(ty)
 }
 
 fn offset_for_indices(ty: &LirType, indices: &[u32]) -> u64 {
@@ -2046,22 +2037,22 @@ fn offset_for_indices(ty: &LirType, indices: &[u32]) -> u64 {
     let mut current = ty.clone();
     for (idx, raw_index) in indices.iter().enumerate() {
         let index = *raw_index as usize;
-        match current {
+        match &current {
             LirType::Struct { fields, .. } => {
-                let mut field_offset = 0;
-                for field in fields.iter().take(index) {
-                    field_offset += size_of_type(field);
+                if let Some(layout) = layout::struct_layout(&current) {
+                    if let Some(field_offset) = layout.field_offsets.get(index) {
+                        offset += *field_offset;
+                    }
                 }
-                offset += field_offset;
                 current = fields.get(index).cloned().unwrap_or(LirType::I8);
             }
             LirType::Array(elem, _) => {
-                offset += size_of_type(&elem) * index as u64;
-                current = *elem;
+                offset += size_of_type(elem.as_ref()) * index as u64;
+                current = elem.as_ref().clone();
             }
             LirType::Ptr(inner) if idx == 0 => {
-                offset += size_of_type(&inner) * index as u64;
-                current = *inner;
+                offset += size_of_type(inner.as_ref()) * index as u64;
+                current = inner.as_ref().clone();
             }
             _ => {
                 offset += size_of_type(&current) * index as u64;
@@ -2103,7 +2094,9 @@ fn constant_type(constant: &LirConstant) -> LirType {
         LirConstant::Float(_, ty) => ty.clone(),
         LirConstant::Bool(_) => LirType::I1,
         LirConstant::String(_) => LirType::Ptr(Box::new(LirType::I8)),
-        LirConstant::Array(_, ty) => LirType::Array(Box::new(ty.clone()), 0),
+        LirConstant::Array(elements, ty) => {
+            LirType::Array(Box::new(ty.clone()), elements.len() as u64)
+        }
         LirConstant::Struct(_, ty) => ty.clone(),
         LirConstant::GlobalRef(_, ty, _) => ty.clone(),
         LirConstant::FunctionRef(_, ty) => ty.clone(),

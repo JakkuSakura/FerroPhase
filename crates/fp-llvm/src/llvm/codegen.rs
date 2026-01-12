@@ -1863,8 +1863,10 @@ impl<'a> LirCodegen<'a> {
         global.set_initializer(&const_str);
         global.set_constant(true);
         let ptr = global.as_pointer_value();
-        self.string_globals.insert(value.to_string(), ptr);
-        Ok(ptr)
+        let zero = self.llvm_ctx.i32_type().const_int(0, false);
+        let gep = unsafe { ptr.const_gep(const_str.get_type(), &[zero, zero]) };
+        self.string_globals.insert(value.to_string(), gep);
+        Ok(gep)
     }
 
     fn infer_binary_result_type(

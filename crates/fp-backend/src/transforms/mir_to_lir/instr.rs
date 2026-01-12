@@ -8,6 +8,7 @@ use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
+use fp_core::lir::layout;
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -675,7 +676,7 @@ impl LirGenerator {
                 kind: lir::LirInstructionKind::LandingPad {
                     result_type: landingpad_ty.clone(),
                     personality: None,
-                    cleanup: false,
+                    cleanup: true,
                     clauses: vec![lir::LandingPadClause::Catch(lir::LirValue::Constant(
                         lir::LirConstant::Null(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
                     ))],
@@ -1486,25 +1487,26 @@ impl LirGenerator {
         }
 
         if let Some(value) = result_value.clone() {
-            let (_target_lir_ty, target_is_zst) = match &target_access {
+            let (target_lir_ty, target_is_zst) = match &target_access {
                 PlaceAccess::Address(addr) => (addr.lir_ty.clone(), Self::is_zero_sized(&addr.ty)),
                 PlaceAccess::Value { ty, lir_ty, .. } => (lir_ty.clone(), Self::is_zero_sized(ty)),
             };
+            let mut adjusted_value = value;
 
             if !target_is_zst {
-                // No additional handling needed for zero-sized constants; they will be
-                // materialised as undef where appropriate when consumed.
+                adjusted_value =
+                    self.coerce_assignment_value(adjusted_value, &target_lir_ty, &mut instructions);
             }
 
             if let PlaceAccess::Address(addr) = &target_access {
-                if matches!(value, lir::LirValue::Function(_)) {
+                if matches!(adjusted_value, lir::LirValue::Function(_)) {
                     self.local_storage.remove(&place.local);
                 } else if !target_is_zst {
                     let store_id = self.next_id();
                     instructions.push(lir::LirInstruction {
                         id: store_id,
                         kind: lir::LirInstructionKind::Store {
-                            value: value.clone(),
+                            value: adjusted_value.clone(),
                             address: addr.ptr.clone(),
                             alignment: Some(addr.alignment),
                             volatile: false,
@@ -1527,12 +1529,12 @@ impl LirGenerator {
                 }
             }
 
-            if matches!(value, lir::LirValue::Function(_)) {
+            if matches!(adjusted_value, lir::LirValue::Function(_)) {
                 should_update_register_map = true;
             }
 
             if should_update_register_map {
-                self.register_map.insert(place.local, value);
+                self.register_map.insert(place.local, adjusted_value);
             }
         }
 
@@ -1560,7 +1562,7 @@ impl LirGenerator {
             } => self.transform_call_terminator(func, args, destination, cleanup, block),
             mir::TerminatorKind::SwitchInt {
                 discr,
-                switch_ty: _,
+                switch_ty,
                 targets,
             } => {
                 let discr_value = self.transform_operand(discr)?;
@@ -1568,8 +1570,24 @@ impl LirGenerator {
                 if targets.values.len() == 1 {
                     let true_target = targets.targets[0];
                     let false_target = targets.otherwise;
+                    let switch_lir_ty = self.lir_type_from_ty(switch_ty);
+                    let case_value = self.switch_constant_for_value(
+                        switch_ty,
+                        targets.values[0],
+                        &switch_lir_ty,
+                    );
+                    let cmp_id = self.next_id();
+                    block.instructions.push(lir::LirInstruction {
+                        id: cmp_id,
+                        kind: lir::LirInstructionKind::Eq(
+                            discr_value,
+                            lir::LirValue::Constant(case_value),
+                        ),
+                        type_hint: Some(lir::LirType::I1),
+                        debug_info: None,
+                    });
                     Ok(lir::LirTerminator::CondBr {
-                        condition: discr_value,
+                        condition: lir::LirValue::Register(cmp_id),
                         if_true: true_target,
                         if_false: false_target,
                     })
@@ -1587,7 +1605,13 @@ impl LirGenerator {
                     })
                 }
             }
-            _ => Ok(lir::LirTerminator::Return(None)),
+            other => {
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    format!("unhandled MIR terminator lowered to unreachable: {:?}", other),
+                );
+                Ok(lir::LirTerminator::Unreachable)
+            }
         }
     }
 
@@ -2020,13 +2044,25 @@ impl LirGenerator {
 
         let field_lir_ty = self.lir_type_from_ty(field_ty);
 
-        let mut offset = 0u64;
-        if let TyKind::Tuple(elements) = &base_addr.ty.kind {
+        let offset = if let Some(layout) = layout::struct_layout(&base_addr.lir_ty) {
+            *layout.field_offsets.get(field_index).ok_or_else(|| {
+                crate::error::optimization_error(format!(
+                    "MIR→LIR: field index {} out of bounds for LIR struct",
+                    field_index
+                ))
+            })?
+        } else if let TyKind::Tuple(elements) = &base_addr.ty.kind {
+            let mut offset = 0u64;
             for elem_ty in elements.iter().take(field_index) {
                 let elem_lir_ty = self.lir_type_from_ty(elem_ty);
                 offset = offset.saturating_add(Self::size_of_lir_type(&elem_lir_ty));
             }
-        }
+            offset
+        } else {
+            return Err(crate::error::optimization_error(
+                "MIR→LIR: field projection requires a struct/tuple layout",
+            ));
+        };
 
         let desired_ptr_ty = lir::LirType::Ptr(Box::new(field_lir_ty.clone()));
         let target_ptr = if offset == 0 {
@@ -2459,43 +2495,12 @@ impl LirGenerator {
     }
 
     fn size_of_lir_type(ty: &lir::LirType) -> u64 {
-        match ty {
-            lir::LirType::I1 | lir::LirType::I8 => 1,
-            lir::LirType::I16 => 2,
-            lir::LirType::I32 | lir::LirType::F32 => 4,
-            lir::LirType::I64 | lir::LirType::F64 => 8,
-            lir::LirType::I128 => 16,
-            lir::LirType::Ptr(_) => 8,
-            lir::LirType::Array(element_ty, len) => {
-                Self::size_of_lir_type(element_ty) * (*len as u64)
-            }
-            lir::LirType::Struct { fields, .. } => fields
-                .iter()
-                .map(|field| Self::size_of_lir_type(field))
-                .sum(),
-            _ => 8,
-        }
+        layout::size_of(ty)
     }
 
     fn alignment_for_lir_type(ty: &lir::LirType) -> u32 {
-        match ty {
-            lir::LirType::I1 => 1,
-            lir::LirType::I8 => 1,
-            lir::LirType::I16 => 2,
-            lir::LirType::I32 => 4,
-            lir::LirType::I64 => 8,
-            lir::LirType::I128 => 16,
-            lir::LirType::F32 => 4,
-            lir::LirType::F64 => 8,
-            lir::LirType::Ptr(_) => 8,
-            lir::LirType::Array(element_type, _) => Self::alignment_for_lir_type(element_type),
-            lir::LirType::Struct { fields, .. } => fields
-                .iter()
-                .map(Self::alignment_for_lir_type)
-                .max()
-                .expect("struct must have at least one field to compute alignment"),
-            _ => 8,
-        }
+        let align = layout::align_of(ty);
+        align.max(1)
     }
 
     fn emit_load_from_address(
@@ -2908,12 +2913,15 @@ impl LirGenerator {
                 lir::LirConstant::Int(_, ty)
                 | lir::LirConstant::UInt(_, ty)
                 | lir::LirConstant::Float(_, ty)
-                | lir::LirConstant::Array(_, ty)
                 | lir::LirConstant::Struct(_, ty)
                 | lir::LirConstant::GlobalRef(_, ty, _)
                 | lir::LirConstant::FunctionRef(_, ty)
                 | lir::LirConstant::Null(ty)
                 | lir::LirConstant::Undef(ty) => Some(ty.clone()),
+                lir::LirConstant::Array(elements, elem_ty) => Some(lir::LirType::Array(
+                    Box::new(elem_ty.clone()),
+                    elements.len() as u64,
+                )),
                 lir::LirConstant::Bool(_) => Some(lir::LirType::I1),
                 lir::LirConstant::String(_) => Some(lir::LirType::Ptr(Box::new(lir::LirType::I8))),
             },
@@ -3403,6 +3411,27 @@ impl LirGenerator {
         }
     }
 
+    fn coerce_assignment_value(
+        &mut self,
+        value: lir::LirValue,
+        expected_ty: &lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> lir::LirValue {
+        if matches!(expected_ty, lir::LirType::Void) {
+            return lir::LirValue::Undef(expected_ty.clone());
+        }
+        if let Some(cast) = self.cast_constant_value(&value, expected_ty) {
+            return cast;
+        }
+        let source_ty = self.infer_lir_value_type(&value);
+        self.cast_runtime_value_to_lir_type_with_source(
+            value,
+            source_ty.as_ref(),
+            expected_ty.clone(),
+            instructions,
+        )
+    }
+
     fn lower_call_argument(
         &mut self,
         operand: &mir::Operand,
@@ -3647,7 +3676,11 @@ impl LirGenerator {
             return Ok(lir::LirTerminator::Br(*dest_bb));
         }
 
-        Ok(lir::LirTerminator::Return(None))
+        fp_core::diagnostics::report_warning_with_context(
+            "mir→lir",
+            "call terminator without destination lowered to unreachable".to_string(),
+        );
+        Ok(lir::LirTerminator::Unreachable)
     }
 
     fn normalize_callee_value(
@@ -4137,6 +4170,21 @@ impl LirGenerator {
                 }
             },
         }
+    }
+
+    fn switch_constant_for_value(
+        &self,
+        switch_ty: &Ty,
+        value: u128,
+        lir_ty: &lir::LirType,
+    ) -> lir::LirConstant {
+        let constant = match &switch_ty.kind {
+            TyKind::Bool => lir::LirConstant::Bool(value != 0),
+            TyKind::Uint(_) => lir::LirConstant::UInt(value as u64, lir_ty.clone()),
+            TyKind::Int(_) => lir::LirConstant::Int(value as i64, lir_ty.clone()),
+            _ => lir::LirConstant::UInt(value as u64, lir_ty.clone()),
+        };
+        self.cast_constant_to_lir_type(constant, lir_ty)
     }
 
     fn infer_lir_type_from_value(&self, value: &lir::LirValue) -> Option<lir::LirType> {
