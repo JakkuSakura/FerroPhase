@@ -9,6 +9,7 @@ use fp_core::lir::{
     LirType, Linkage, Name,
 };
 use std::path::Path;
+use std::fs;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetFormat {
@@ -38,7 +39,16 @@ pub fn detect_target(triple: Option<&str>) -> Result<(TargetFormat, TargetArch)>
         Some(triple) if triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw") => {
             TargetFormat::Coff
         }
-        _ => TargetFormat::Elf,
+        Some(_) => TargetFormat::Elf,
+        None => {
+            if cfg!(target_os = "windows") {
+                TargetFormat::Coff
+            } else if cfg!(any(target_os = "macos", target_os = "ios")) {
+                TargetFormat::MachO
+            } else {
+                TargetFormat::Elf
+            }
+        }
     };
 
     let arch = match triple.as_deref() {
@@ -92,7 +102,9 @@ pub fn write_object(path: &Path, plan: &EmitPlan) -> Result<()> {
 }
 
 pub fn write_executable(path: &Path, plan: &EmitPlan) -> Result<()> {
-    link::link_executable(path, plan.format, plan.arch, &plan.text)
+    link::link_executable(path, plan.format, plan.arch, &plan.text)?;
+    set_executable_permissions(path)?;
+    Ok(())
 }
 
 fn default_lir_program() -> LirProgram {
@@ -122,4 +134,22 @@ fn default_lir_program() -> LirProgram {
         globals: Vec::new(),
         type_definitions: Vec::new(),
     }
+}
+
+fn set_executable_permissions(path: &Path) -> Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = fs::metadata(path)
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?
+            .permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(path, perms)
+            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }

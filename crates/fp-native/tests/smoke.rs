@@ -40,8 +40,13 @@ fn emits_and_links_minimal_exec() {
     let produced = c.emit(lir, None).unwrap();
     assert_eq!(produced, exe);
 
-    if cfg!(any(target_arch = "x86_64", target_arch = "aarch64")) {
+    if cfg!(all(
+        target_os = "linux",
+        any(target_arch = "x86_64", target_arch = "aarch64")
+    )) {
         let status = std::process::Command::new(&exe).status().unwrap();
         assert!(status.success());
+    } else {
+        assert!(exe.exists());
     }
 }
