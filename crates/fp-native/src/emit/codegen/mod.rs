@@ -1,5 +1,7 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::{LirInstructionKind, LirProgram, LirTerminator, LirType};
+use fp_core::lir::{
+    LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
+};
 
 use crate::emit::{TargetArch, TargetFormat};
 
@@ -36,6 +38,31 @@ pub fn emit_text_from_lir(
                     "native emitter only supports integer/bool instruction types",
                 ));
             }
+            if let LirInstructionKind::Call { function, args, .. } = &inst.kind {
+                if !matches!(function, LirValue::Function(_)) {
+                    return Err(Error::from("native emitter only supports direct calls"));
+                }
+                if !args.iter().all(is_simple_value) {
+                    return Err(Error::from(
+                        "native emitter only supports register/constant call args",
+                    ));
+                }
+                if let Some(last) = block.instructions.last() {
+                    if last.id != inst.id {
+                        return Err(Error::from(
+                            "native emitter requires calls to be last in the block",
+                        ));
+                    }
+                }
+                match &block.terminator {
+                    LirTerminator::Return(Some(LirValue::Register(id))) if *id == inst.id => {}
+                    _ => {
+                        return Err(Error::from(
+                            "native emitter requires call result to be returned immediately",
+                        ));
+                    }
+                }
+            }
         }
         match &block.terminator {
             LirTerminator::Return(_)
@@ -50,8 +77,8 @@ pub fn emit_text_from_lir(
     }
 
     match arch {
-        TargetArch::X86_64 => x86_64::emit_text(func, format, saw_alloca),
-        TargetArch::Aarch64 => aarch64::emit_text(func, format, saw_alloca),
+        TargetArch::X86_64 => x86_64::emit_text(lir_program, format, saw_alloca),
+        TargetArch::Aarch64 => aarch64::emit_text(lir_program, format, saw_alloca),
     }
 }
 
@@ -66,4 +93,8 @@ fn is_integer_type(ty: Option<&LirType>) -> bool {
         | Some(LirType::I128) => true,
         _ => false,
     }
+}
+
+fn is_simple_value(value: &LirValue) -> bool {
+    matches!(value, LirValue::Register(_) | LirValue::Constant(_))
 }

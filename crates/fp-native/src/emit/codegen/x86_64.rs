@@ -1,18 +1,19 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirTerminator,
+    BasicBlockId, LirBasicBlock, LirConstant, LirInstructionKind, LirProgram, LirTerminator,
     LirValue,
 };
 use std::collections::HashMap;
 
 use crate::emit::TargetFormat;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Reg {
     Rax,
     Rcx,
     Rdx,
     Rdi,
+    Rsi,
     R8,
     R9,
     R10,
@@ -28,6 +29,7 @@ impl Reg {
             Reg::Rcx => 1,
             Reg::Rdx => 2,
             Reg::Rdi => 7,
+            Reg::Rsi => 6,
             Reg::R8 => 8,
             Reg::R9 => 9,
             Reg::R10 => 10,
@@ -53,9 +55,7 @@ impl RegFile {
                 Reg::R9,
                 Reg::R8,
                 Reg::Rdi,
-                Reg::Rdx,
                 Reg::Rcx,
-                Reg::Rax,
             ],
             map: HashMap::new(),
             slot_map: HashMap::new(),
@@ -93,22 +93,21 @@ impl RegFile {
     }
 }
 
-pub fn emit_text(
-    func: &LirFunction,
-    format: TargetFormat,
-    needs_stack: bool,
-) -> Result<Vec<u8>> {
-    let mut regs = RegFile::new();
+pub fn emit_text(program: &LirProgram, format: TargetFormat, needs_stack: bool) -> Result<Vec<u8>> {
+    let func_map = build_function_map(program)?;
     let mut asm = Assembler::new();
     asm.needs_stack = needs_stack;
 
-    if needs_stack {
-        emit_prologue(&mut asm, &mut regs)?;
-    }
-
-    for block in &func.basic_blocks {
-        asm.bind(block.id);
-        emit_block(&mut asm, &mut regs, block, format)?;
+    for (index, func) in program.functions.iter().enumerate() {
+        asm.bind(Label::Function(index as u32));
+        let mut regs = RegFile::new();
+        if needs_stack {
+            emit_prologue(&mut asm, &mut regs)?;
+        }
+        for block in &func.basic_blocks {
+            asm.bind(Label::Block(index as u32, block.id));
+            emit_block(&mut asm, &mut regs, block, format, &func_map)?;
+        }
     }
 
     asm.finish()
@@ -315,6 +314,7 @@ fn emit_block(
     regs: &mut RegFile,
     block: &LirBasicBlock,
     format: TargetFormat,
+    func_map: &HashMap<String, u32>,
 ) -> Result<()> {
     for inst in &block.instructions {
         let dst = regs.alloc(inst.id)?;
@@ -328,6 +328,8 @@ fn emit_block(
             LirInstructionKind::Le(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Le)?,
             LirInstructionKind::Gt(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Gt)?,
             LirInstructionKind::Ge(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Ge)?,
+            LirInstructionKind::Div(lhs, rhs) => emit_divrem(asm, regs, dst, lhs, rhs, false)?,
+            LirInstructionKind::Rem(lhs, rhs) => emit_divrem(asm, regs, dst, lhs, rhs, true)?,
             LirInstructionKind::Alloca { .. } => {
                 regs.slot_offset(inst.id);
             }
@@ -336,6 +338,9 @@ fn emit_block(
             }
             LirInstructionKind::Store { value, address, .. } => {
                 emit_store(asm, regs, value, address)?;
+            }
+            LirInstructionKind::Call { function, args, .. } => {
+                emit_call(asm, regs, dst, function, args, func_map)?;
             }
             other => {
                 return Err(Error::from(format!(
@@ -370,14 +375,20 @@ fn emit_block(
             }
         }
         LirTerminator::Br(target) => {
-            asm.emit_jmp(*target);
+            asm.emit_jmp(Label::Block(asm.current_function, *target));
         }
         LirTerminator::CondBr {
             condition,
             if_true,
             if_false,
         } => {
-            emit_cond_branch(asm, regs, condition, *if_true, *if_false)?;
+            emit_cond_branch(
+                asm,
+                regs,
+                condition,
+                Label::Block(asm.current_function, *if_true),
+                Label::Block(asm.current_function, *if_false),
+            )?;
         }
         _ => {}
     }
@@ -434,8 +445,8 @@ fn emit_cond_branch(
     asm: &mut Assembler,
     regs: &mut RegFile,
     condition: &LirValue,
-    if_true: BasicBlockId,
-    if_false: BasicBlockId,
+    if_true: Label,
+    if_false: Label,
 ) -> Result<()> {
     match condition {
         LirValue::Constant(LirConstant::Bool(value)) => {
@@ -458,14 +469,15 @@ fn emit_cond_branch(
 
 struct Fixup {
     pos: usize,
-    target: BasicBlockId,
+    target: Label,
 }
 
 struct Assembler {
     buf: Vec<u8>,
-    labels: HashMap<BasicBlockId, usize>,
+    labels: HashMap<Label, usize>,
     fixups: Vec<Fixup>,
     needs_stack: bool,
+    current_function: u32,
 }
 
 fn emit_prologue(asm: &mut Assembler, regs: &mut RegFile) -> Result<()> {
@@ -492,14 +504,18 @@ impl Assembler {
             labels: HashMap::new(),
             fixups: Vec::new(),
             needs_stack: false,
+            current_function: 0,
         }
     }
 
-    fn bind(&mut self, id: BasicBlockId) {
-        self.labels.insert(id, self.buf.len());
+    fn bind(&mut self, label: Label) {
+        if let Label::Function(id) = label {
+            self.current_function = id;
+        }
+        self.labels.insert(label, self.buf.len());
     }
 
-    fn emit_jmp(&mut self, target: BasicBlockId) {
+    fn emit_jmp(&mut self, target: Label) {
         self.buf.push(0xE9);
         let pos = self.buf.len();
         self.buf.extend_from_slice(&0i32.to_le_bytes());
@@ -509,7 +525,7 @@ impl Assembler {
         });
     }
 
-    fn emit_jcc(&mut self, opcode: u8, target: BasicBlockId) {
+    fn emit_jcc(&mut self, opcode: u8, target: Label) {
         self.buf.push(0x0F);
         self.buf.push(opcode);
         let pos = self.buf.len();
@@ -518,6 +534,13 @@ impl Assembler {
             pos,
             target,
         });
+    }
+
+    fn emit_call(&mut self, target: Label) {
+        self.buf.push(0xE8);
+        let pos = self.buf.len();
+        self.buf.extend_from_slice(&0i32.to_le_bytes());
+        self.fixups.push(Fixup { pos, target });
     }
 
     fn push(&mut self, byte: u8) {
@@ -543,6 +566,21 @@ impl Assembler {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum Label {
+    Function(u32),
+    Block(u32, BasicBlockId),
+}
+
+fn build_function_map(program: &LirProgram) -> Result<HashMap<String, u32>> {
+    let mut map = HashMap::new();
+    for (idx, func) in program.functions.iter().enumerate() {
+        let name = String::from(func.name.clone());
+        map.insert(name, idx as u32);
+    }
+    Ok(map)
+}
+
 fn emit_load(
     asm: &mut Assembler,
     regs: &mut RegFile,
@@ -557,6 +595,87 @@ fn emit_load(
         }
         _ => Err(Error::from("unsupported load address for x86_64")),
     }
+}
+
+fn emit_divrem(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    dst: Reg,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    want_rem: bool,
+) -> Result<()> {
+    emit_value_to_reg(asm, regs, Reg::Rax, lhs)?;
+
+    match rhs {
+        LirValue::Register(id) => {
+            let src = regs.get(*id)?;
+            emit_mov_rr(asm, Reg::R11, src);
+        }
+        LirValue::Constant(constant) => {
+            let imm = constant_to_i64(constant)?;
+            emit_mov_imm64(asm, Reg::R11, imm as u64);
+        }
+        _ => return Err(Error::from("unsupported divisor for x86_64")),
+    }
+
+    emit_cqo(asm);
+    emit_idiv_reg(asm, Reg::R11);
+
+    if want_rem {
+        if dst != Reg::Rdx {
+            emit_mov_rr(asm, dst, Reg::Rdx);
+        }
+    } else if dst != Reg::Rax {
+        emit_mov_rr(asm, dst, Reg::Rax);
+    }
+
+    Ok(())
+}
+
+fn emit_call(
+    asm: &mut Assembler,
+    regs: &mut RegFile,
+    dst: Reg,
+    function: &LirValue,
+    args: &[LirValue],
+    func_map: &HashMap<String, u32>,
+) -> Result<()> {
+    let target = match function {
+        LirValue::Function(name) => func_map
+            .get(name)
+            .copied()
+            .ok_or_else(|| Error::from("unknown callee"))?,
+        _ => return Err(Error::from("unsupported callee for x86_64")),
+    };
+
+    let arg_regs = [Reg::Rdi, Reg::Rsi, Reg::Rdx, Reg::Rcx, Reg::R8, Reg::R9];
+    if args.len() > arg_regs.len() {
+        return Err(Error::from("too many call args for x86_64"));
+    }
+
+    for (idx, arg) in args.iter().enumerate() {
+        let reg = arg_regs[idx];
+        match arg {
+            LirValue::Register(id) => {
+                let src = regs.get(*id)?;
+                emit_mov_rr(asm, reg, src);
+            }
+            LirValue::Constant(constant) => {
+                let imm = constant_to_i64(constant)?;
+                emit_mov_imm64(asm, reg, imm as u64);
+            }
+            _ => return Err(Error::from("unsupported call arg for x86_64")),
+        }
+    }
+
+    asm.emit_call(Label::Function(target));
+
+    if dst != Reg::Rax {
+        emit_mov_rr(asm, dst, Reg::Rax);
+    }
+
+    Ok(())
 }
 
 fn emit_store(
@@ -600,4 +719,15 @@ fn emit_mov_mr64(asm: &mut Assembler, base: Reg, disp: i32, src: Reg) {
 fn emit_modrm_disp32(asm: &mut Assembler, reg: u8, rm: u8, disp: i32) {
     emit_modrm(asm, 0b10, reg, rm);
     asm.extend(&disp.to_le_bytes());
+}
+
+fn emit_cqo(asm: &mut Assembler) {
+    emit_rex(asm, true, 0, 0);
+    asm.push(0x99);
+}
+
+fn emit_idiv_reg(asm: &mut Assembler, divisor: Reg) {
+    emit_rex(asm, true, 7, divisor.id());
+    asm.push(0xF7);
+    emit_modrm(asm, 0b11, 7, divisor.id());
 }
