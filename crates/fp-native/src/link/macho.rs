@@ -114,6 +114,28 @@ fn build_bind_info(externs: &[ExternSymbol], data_seg_index: u8) -> Vec<u8> {
     out
 }
 
+fn build_rebase_info(offsets: &[u64], text_seg_index: u8) -> Vec<u8> {
+    const REBASE_OPCODE_DONE: u8 = 0x00;
+    const REBASE_OPCODE_SET_TYPE_IMM: u8 = 0x10;
+    const REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB: u8 = 0x20;
+    const REBASE_OPCODE_DO_REBASE_IMM_TIMES: u8 = 0x50;
+    const REBASE_TYPE_POINTER: u8 = 1;
+
+    if offsets.is_empty() {
+        return Vec::new();
+    }
+
+    let mut out = Vec::new();
+    out.push(REBASE_OPCODE_SET_TYPE_IMM | REBASE_TYPE_POINTER);
+    for offset in offsets {
+        out.push(REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB | text_seg_index);
+        push_uleb128(&mut out, *offset);
+        out.push(REBASE_OPCODE_DO_REBASE_IMM_TIMES | 1);
+    }
+    out.push(REBASE_OPCODE_DONE);
+    out
+}
+
 fn build_strtab(externs: &[ExternSymbol]) -> (Vec<u8>, HashMap<String, u32>) {
     let mut out = vec![0u8];
     let mut offsets = HashMap::new();
@@ -168,20 +190,26 @@ pub fn emit_executable_macho(
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
     const MH_EXECUTE: u32 = 0x2;
+    const MH_PIE: u32 = 0x200000;
+    const MH_DYLDLINK: u32 = 0x4;
+    const MH_TWOLEVEL: u32 = 0x80;
 
     const LC_SEGMENT_64: u32 = 0x19;
     const LC_MAIN: u32 = 0x80000028;
-    const LC_DYLD_INFO_ONLY: u32 = 0x22;
+    const LC_DYLD_INFO_ONLY: u32 = 0x8000_0022;
     const LC_SYMTAB: u32 = 0x2;
     const LC_DYSYMTAB: u32 = 0xb;
     const LC_LOAD_DYLINKER: u32 = 0xe;
     const LC_LOAD_DYLIB: u32 = 0xc;
+    const LC_BUILD_VERSION: u32 = 0x32;
 
     const VM_PROT_READ: i32 = 0x1;
     const VM_PROT_EXECUTE: i32 = 0x4;
     const VM_PROT_WRITE: i32 = 0x2;
 
     const S_REGULAR: u32 = 0x0;
+    const S_SYMBOL_STUBS: u32 = 0x8;
+    const S_NON_LAZY_SYMBOL_POINTERS: u32 = 0x6;
     const S_ATTR_PURE_INSTRUCTIONS: u32 = 0x8000_0000;
     const S_ATTR_SOME_INSTRUCTIONS: u32 = 0x0000_0400;
 
@@ -210,6 +238,10 @@ pub fn emit_executable_macho(
         TargetArch::X86_64 => 6u64,
         TargetArch::Aarch64 => 12u64,
     };
+    let stub_align = match arch {
+        TargetArch::X86_64 => 1u32,
+        TargetArch::Aarch64 => 2u32,
+    };
     let externs = collect_external_symbols(plan, stub_size);
     let has_stubs = !externs.is_empty();
     let has_rodata = !plan.rodata.is_empty();
@@ -227,14 +259,17 @@ pub fn emit_executable_macho(
     let lc_dyld_info_size = 48u64;
     let lc_symtab_size = 24u64;
     let lc_dysymtab_size = 80u64;
+    let lc_segment_pagezero_size = segment_cmd_size;
+    let lc_build_version_size = 24u64;
 
     let dyld_path = b"/usr/lib/dyld\0";
     let dylib_path = b"/usr/lib/libSystem.B.dylib\0";
     let lc_dylinker_size = align_up((12 + dyld_path.len()) as u64, 8);
     let lc_dylib_size = align_up((24 + dylib_path.len()) as u64, 8);
 
-    let ncmds = 9u32;
+    let ncmds = 11u32;
     let sizeofcmds = (lc_segment_text_size
+        + lc_segment_pagezero_size
         + lc_segment_data_size
         + lc_segment_linkedit_size
         + lc_main_size
@@ -242,17 +277,18 @@ pub fn emit_executable_macho(
         + lc_symtab_size
         + lc_dysymtab_size
         + lc_dylinker_size
-        + lc_dylib_size) as u32;
+        + lc_dylib_size
+        + lc_build_version_size) as u32;
 
     let file_start_of_text = align_up(header_size + sizeofcmds as u64, 16);
-    let text_fileoff = align_up(file_start_of_text, page);
-    let text_offset = text_fileoff;
+    let text_fileoff = 0u64;
+    let text_offset = file_start_of_text;
     let text_size = plan.text.len() as u64;
     let stubs_offset = align_up(text_offset + text_size, 16);
     let stubs_size = if has_stubs { stub_size * externs.len() as u64 } else { 0 };
     let rodata_offset = align_up(stubs_offset + stubs_size, 16);
     let rodata_size = plan.rodata.len() as u64;
-    let text_filesize = align_up(rodata_offset + rodata_size - text_fileoff, page);
+    let text_filesize = align_up(rodata_offset + rodata_size, page);
     let text_vmsize = text_filesize;
 
     let data_fileoff = align_up(text_fileoff + text_filesize, page);
@@ -262,18 +298,41 @@ pub fn emit_executable_macho(
     let data_vmsize = data_filesize;
     vmaddr_data = vmaddr_text + (data_fileoff - text_fileoff);
 
-    let bind_info = build_bind_info(&externs, 1);
+    let data_seg_index = 2u8;
+    let text_seg_index = 1u8;
+    let mut rebase_offsets = Vec::new();
+    for reloc in &plan.relocs {
+        if reloc.kind == RelocKind::Abs64 {
+            rebase_offsets.push(text_offset + reloc.offset);
+        }
+    }
+    rebase_offsets.sort_unstable();
+    let rebase_info = build_rebase_info(&rebase_offsets, text_seg_index);
+    let bind_info = build_bind_info(&externs, data_seg_index);
+    let lazy_bind_info = Vec::new();
     let (strtab, str_offsets) = build_strtab(&externs);
-    let nsyms = 1 + 1 + externs.len() as u32;
+    let nsyms = 1 + externs.len() as u32;
     let symtab_size = nsyms as u64 * 16;
 
     let linkedit_fileoff = align_up(data_fileoff + data_filesize, page);
-    let bind_off = 0u64;
+    let rebase_off = 0u64;
+    let rebase_size = rebase_info.len() as u64;
+    let bind_off = align_up(rebase_off + rebase_size, 8);
     let bind_size = bind_info.len() as u64;
-    let symoff = align_up(bind_off + bind_size, 8);
+    let lazy_bind_off = align_up(bind_off + bind_size, 8);
+    let lazy_bind_size = lazy_bind_info.len() as u64;
+    let symoff = align_up(lazy_bind_off + lazy_bind_size, 8);
     let stroff = symoff + symtab_size;
     let strsize = strtab.len() as u64;
-    let linkedit_filesize = align_up(stroff + strsize, 8);
+    let indirectsymoff = align_up(stroff + strsize, 8);
+    let nindirectsyms = if has_stubs {
+        (externs.len() as u32) * 2
+    } else {
+        0
+    };
+    let indirectsym_size = (nindirectsyms as u64) * 4;
+    let linkedit_filesize = align_up(indirectsymoff + indirectsym_size, 8);
+    let linkedit_vmsize = align_up(linkedit_filesize, page);
     vmaddr_linkedit = vmaddr_text + (linkedit_fileoff - text_fileoff);
 
     let entryoff = text_offset;
@@ -287,6 +346,19 @@ pub fn emit_executable_macho(
     put_u32(&mut out, MH_EXECUTE);
     put_u32(&mut out, ncmds);
     put_u32(&mut out, sizeofcmds);
+    put_u32(&mut out, MH_PIE | MH_DYLDLINK | MH_TWOLEVEL);
+    put_u32(&mut out, 0);
+
+    // LC_SEGMENT_64 (__PAGEZERO)
+    put_u32(&mut out, LC_SEGMENT_64);
+    put_u32(&mut out, lc_segment_pagezero_size as u32);
+    put_bytes_fixed::<16>(&mut out, "__PAGEZERO");
+    put_u64(&mut out, 0);
+    put_u64(&mut out, vmaddr_text);
+    put_u64(&mut out, 0);
+    put_u64(&mut out, 0);
+    put_i32(&mut out, 0);
+    put_i32(&mut out, 0);
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
 
@@ -306,7 +378,7 @@ pub fn emit_executable_macho(
     // __text
     put_bytes_fixed::<16>(&mut out, "__text");
     put_bytes_fixed::<16>(&mut out, "__TEXT");
-    put_u64(&mut out, vmaddr_text);
+    put_u64(&mut out, vmaddr_text + text_offset);
     put_u64(&mut out, text_size);
     put_u32(&mut out, text_offset as u32);
     put_u32(&mut out, 4);
@@ -323,22 +395,25 @@ pub fn emit_executable_macho(
     if has_stubs {
         put_bytes_fixed::<16>(&mut out, "__stubs");
         put_bytes_fixed::<16>(&mut out, "__TEXT");
-        put_u64(&mut out, vmaddr_text + (stubs_offset - text_fileoff));
+        put_u64(&mut out, vmaddr_text + stubs_offset);
         put_u64(&mut out, stubs_size);
         put_u32(&mut out, stubs_offset as u32);
-        put_u32(&mut out, 1);
+        put_u32(&mut out, stub_align);
         put_u32(&mut out, 0);
         put_u32(&mut out, 0);
-        put_u32(&mut out, S_REGULAR | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS);
+        put_u32(
+            &mut out,
+            S_SYMBOL_STUBS | S_ATTR_PURE_INSTRUCTIONS | S_ATTR_SOME_INSTRUCTIONS,
+        );
+        put_u32(&mut out, 0);
         put_u32(&mut out, stub_size as u32);
-        put_u32(&mut out, 0);
         put_u32(&mut out, 0);
     }
 
     if has_rodata {
         put_bytes_fixed::<16>(&mut out, "__const");
         put_bytes_fixed::<16>(&mut out, "__TEXT");
-        put_u64(&mut out, vmaddr_text + (rodata_offset - text_fileoff));
+        put_u64(&mut out, vmaddr_text + rodata_offset);
         put_u64(&mut out, rodata_size);
         put_u32(&mut out, rodata_offset as u32);
         put_u32(&mut out, 4);
@@ -364,7 +439,7 @@ pub fn emit_executable_macho(
         put_u32(&mut out, data_section_count as u32);
         put_u32(&mut out, 0);
 
-        put_bytes_fixed::<16>(&mut out, "__la_symbol_ptr");
+        put_bytes_fixed::<16>(&mut out, "__nl_symbol_ptr");
         put_bytes_fixed::<16>(&mut out, "__DATA");
         put_u64(&mut out, vmaddr_data);
         put_u64(&mut out, la_ptr_size);
@@ -372,8 +447,8 @@ pub fn emit_executable_macho(
         put_u32(&mut out, 3);
         put_u32(&mut out, 0);
         put_u32(&mut out, 0);
-        put_u32(&mut out, S_REGULAR);
-        put_u32(&mut out, 0);
+        put_u32(&mut out, S_NON_LAZY_SYMBOL_POINTERS);
+        put_u32(&mut out, externs.len() as u32);
         put_u32(&mut out, 0);
         put_u32(&mut out, 0);
     } else {
@@ -396,7 +471,7 @@ pub fn emit_executable_macho(
     put_u32(&mut out, lc_segment_linkedit_size as u32);
     put_bytes_fixed::<16>(&mut out, "__LINKEDIT");
     put_u64(&mut out, vmaddr_linkedit);
-    put_u64(&mut out, linkedit_filesize);
+    put_u64(&mut out, linkedit_vmsize);
     put_u64(&mut out, linkedit_fileoff);
     put_u64(&mut out, linkedit_filesize);
     put_i32(&mut out, VM_PROT_READ);
@@ -407,14 +482,29 @@ pub fn emit_executable_macho(
     // LC_DYLD_INFO_ONLY
     put_u32(&mut out, LC_DYLD_INFO_ONLY);
     put_u32(&mut out, lc_dyld_info_size as u32);
-    put_u32(&mut out, 0); // rebase_off
-    put_u32(&mut out, 0); // rebase_size
-    put_u32(&mut out, (linkedit_fileoff + bind_off) as u32);
+    let rebase_off_cmd = if rebase_size == 0 {
+        0
+    } else {
+        linkedit_fileoff + rebase_off
+    };
+    put_u32(&mut out, rebase_off_cmd as u32);
+    put_u32(&mut out, rebase_size as u32);
+    let bind_off_cmd = if bind_size == 0 {
+        0
+    } else {
+        linkedit_fileoff + bind_off
+    };
+    let lazy_bind_off_cmd = if lazy_bind_size == 0 {
+        0
+    } else {
+        linkedit_fileoff + lazy_bind_off
+    };
+    put_u32(&mut out, bind_off_cmd as u32);
     put_u32(&mut out, bind_size as u32);
     put_u32(&mut out, 0); // weak_bind_off
     put_u32(&mut out, 0);
-    put_u32(&mut out, 0); // lazy_bind_off
-    put_u32(&mut out, 0);
+    put_u32(&mut out, lazy_bind_off_cmd as u32);
+    put_u32(&mut out, lazy_bind_size as u32);
     put_u32(&mut out, 0); // export_off
     put_u32(&mut out, 0);
 
@@ -430,14 +520,28 @@ pub fn emit_executable_macho(
     put_u32(&mut out, LC_DYSYMTAB);
     put_u32(&mut out, lc_dysymtab_size as u32);
     put_u32(&mut out, 0); // ilocalsym
-    put_u32(&mut out, 1); // nlocalsym (null)
-    put_u32(&mut out, 1); // iextdefsym
+    put_u32(&mut out, 0); // nlocalsym
+    put_u32(&mut out, 0); // iextdefsym
     put_u32(&mut out, 1); // nextdefsym
-    put_u32(&mut out, 2); // iundefsym
+    put_u32(&mut out, 1); // iundefsym
     put_u32(&mut out, externs.len() as u32);
-    for _ in 0..12 {
+    put_u32(&mut out, 0); // tocoff
+    put_u32(&mut out, 0); // ntoc
+    put_u32(&mut out, 0); // modtaboff
+    put_u32(&mut out, 0); // nmodtab
+    put_u32(&mut out, 0); // extrefsymoff
+    put_u32(&mut out, 0); // nextrefsyms
+    if has_stubs {
+        put_u32(&mut out, (linkedit_fileoff + indirectsymoff) as u32);
+        put_u32(&mut out, nindirectsyms);
+    } else {
+        put_u32(&mut out, 0);
         put_u32(&mut out, 0);
     }
+    put_u32(&mut out, 0); // extreloff
+    put_u32(&mut out, 0); // nextrel
+    put_u32(&mut out, 0); // locreloff
+    put_u32(&mut out, 0); // nlocrel
 
     // LC_LOAD_DYLINKER
     let dylinker_start = out.len() as u64;
@@ -462,6 +566,14 @@ pub fn emit_executable_macho(
         out.push(0);
     }
 
+    // LC_BUILD_VERSION
+    put_u32(&mut out, LC_BUILD_VERSION);
+    put_u32(&mut out, lc_build_version_size as u32);
+    put_u32(&mut out, 1); // PLATFORM_MACOS
+    put_u32(&mut out, 0x000B_0000); // minos 11.0
+    put_u32(&mut out, 0x000B_0000); // sdk 11.0
+    put_u32(&mut out, 0); // ntools
+
     // LC_MAIN
     put_u32(&mut out, LC_MAIN);
     put_u32(&mut out, lc_main_size as u32);
@@ -473,10 +585,10 @@ pub fn emit_executable_macho(
         "internal Mach-O layout error (sizeofcmds mismatch)",
     )?;
 
-    if out.len() as u64 > text_fileoff {
+    if out.len() as u64 > text_offset {
         return Err(Error::from("internal Mach-O layout error (text offset)"));
     }
-    out.resize(text_fileoff as usize, 0);
+    out.resize(text_offset as usize, 0);
     out.extend_from_slice(&plan.text);
     if has_stubs {
         out.resize(stubs_offset as usize, 0);
@@ -494,11 +606,14 @@ pub fn emit_executable_macho(
     }
 
     out.resize(linkedit_fileoff as usize, 0);
+    out.extend_from_slice(&rebase_info);
+    out.resize((linkedit_fileoff + bind_off) as usize, 0);
     out.extend_from_slice(&bind_info);
+    out.resize((linkedit_fileoff + lazy_bind_off) as usize, 0);
+    out.extend_from_slice(&lazy_bind_info);
     out.resize((linkedit_fileoff + symoff) as usize, 0);
 
     // symtab
-    out.extend_from_slice(&[0u8; 16]); // null
     let main_str = *str_offsets
         .get("_main")
         .ok_or_else(|| Error::from("missing _main in strtab"))?;
@@ -520,10 +635,20 @@ pub fn emit_executable_macho(
 
     out.resize((linkedit_fileoff + stroff) as usize, 0);
     out.extend_from_slice(&strtab);
+    if has_stubs {
+        out.resize((linkedit_fileoff + indirectsymoff) as usize, 0);
+        for idx in 0..externs.len() {
+            put_u32(&mut out, 1 + idx as u32);
+        }
+        for idx in 0..externs.len() {
+            put_u32(&mut out, 1 + idx as u32);
+        }
+    }
+    out.resize((linkedit_fileoff + linkedit_filesize) as usize, 0);
 
     // Patch rodata and call relocations.
-    let rodata_addr = vmaddr_text + (rodata_offset - text_fileoff);
-    let stubs_addr = vmaddr_text + (stubs_offset - text_fileoff);
+    let rodata_addr = vmaddr_text + rodata_offset;
+    let stubs_addr = vmaddr_text + stubs_offset;
     let ptr_addr = vmaddr_data;
 
     if has_stubs {
