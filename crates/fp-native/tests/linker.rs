@@ -248,3 +248,18 @@ fn pe_executable_supports_printf() {
     assert_eq!(&bytes[..2], b"MZ");
     assert_eq!(&bytes[0x80..0x84], b"PE\0\0");
 }
+
+#[test]
+#[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+fn elf_executable_runs_printf() {
+    use std::process::Command;
+
+    let arch = host_arch();
+    let plan = emit::emit_plan(&program_with_print(), TargetFormat::Elf, arch).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let exe = out_dir.path().join("printf-run.elf");
+    emit::write_executable(&exe, &plan).unwrap();
+    let output = Command::new(&exe).output().unwrap();
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"hello from native\n");
+}

@@ -32,8 +32,6 @@ enum FReg {
     Xmm5,
     Xmm6,
     Xmm7,
-    Xmm8,
-    Xmm9,
 }
 
 impl FReg {
@@ -47,8 +45,6 @@ impl FReg {
             FReg::Xmm5 => 5,
             FReg::Xmm6 => 6,
             FReg::Xmm7 => 7,
-            FReg::Xmm8 => 8,
-            FReg::Xmm9 => 9,
         }
     }
 }
@@ -1354,14 +1350,6 @@ fn emit_movq_xmm_r64(asm: &mut Assembler, dst: FReg, src: Reg) {
     emit_rex(asm, true, dst.id(), src.id());
     asm.push(0x0F);
     asm.push(0x6E);
-    emit_modrm(asm, 0b11, dst.id(), src.id());
-}
-
-fn emit_movq_r64_xmm(asm: &mut Assembler, dst: Reg, src: FReg) {
-    asm.push(0x66);
-    emit_rex(asm, true, dst.id(), src.id());
-    asm.push(0x0F);
-    asm.push(0x7E);
     emit_modrm(asm, 0b11, dst.id(), src.id());
 }
 
