@@ -2,6 +2,7 @@ use fp_core::error::{Error, Result};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::process::Command;
 
 use super::TargetArch;
 use crate::emit::{EmitPlan, RelocKind};
@@ -48,9 +49,18 @@ fn ensure(condition: bool, msg: &'static str) -> Result<()> {
 }
 
 struct ExternSymbol {
+    original: String,
     name: String,
     stub_offset: u64,
     ptr_offset: u64,
+}
+
+fn macho_symbol_name(name: &str) -> String {
+    if name.starts_with('_') {
+        name.to_string()
+    } else {
+        format!("_{}", name)
+    }
 }
 
 fn collect_external_symbols(plan: &EmitPlan, stub_size: u64) -> Vec<ExternSymbol> {
@@ -65,7 +75,8 @@ fn collect_external_symbols(plan: &EmitPlan, stub_size: u64) -> Vec<ExternSymbol
         }
         seen.insert(reloc.symbol.clone(), externs.len());
         externs.push(ExternSymbol {
-            name: reloc.symbol.clone(),
+            original: reloc.symbol.clone(),
+            name: macho_symbol_name(&reloc.symbol),
             stub_offset: 0,
             ptr_offset: 0,
         });
@@ -306,6 +317,26 @@ pub fn emit_executable_macho(
             rebase_offsets.push(text_offset + reloc.offset);
         }
     }
+    if matches!(
+        std::env::var("FP_NATIVE_MACHO_RELOC_DEBUG"),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    ) {
+        let max_reloc = rebase_offsets.iter().copied().max().unwrap_or(0);
+        eprintln!(
+            "[fp-native][macho] text_size={} max_reloc={} reloc_count={}",
+            text_size,
+            max_reloc,
+            rebase_offsets.len()
+        );
+        for reloc in &plan.relocs {
+            if reloc.kind == RelocKind::Abs64 && reloc.offset >= text_size {
+                eprintln!(
+                    "[fp-native][macho] reloc offset out of text: offset={} text_size={} symbol={}",
+                    reloc.offset, text_size, reloc.symbol
+                );
+            }
+        }
+    }
     rebase_offsets.sort_unstable();
     let rebase_info = build_rebase_info(&rebase_offsets, text_seg_index);
     let bind_info = build_bind_info(&externs, data_seg_index);
@@ -335,7 +366,7 @@ pub fn emit_executable_macho(
     let linkedit_vmsize = align_up(linkedit_filesize, page);
     vmaddr_linkedit = vmaddr_text + (linkedit_fileoff - text_fileoff);
 
-    let entryoff = text_offset;
+    let entryoff = text_offset + plan.entry_offset;
 
     let mut out = Vec::new();
 
@@ -621,7 +652,7 @@ pub fn emit_executable_macho(
     out.push(0x0f); // N_SECT | N_EXT
     out.push(1);
     put_u16(&mut out, 0);
-    put_u64(&mut out, vmaddr_text);
+    put_u64(&mut out, vmaddr_text + text_offset + plan.entry_offset);
     for sym in &externs {
         let str = *str_offsets
             .get(&sym.name)
@@ -674,10 +705,49 @@ pub fn emit_executable_macho(
                 let offset = text_offset as usize + reloc.offset as usize;
                 out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
             }
+            RelocKind::Aarch64AdrpAdd => {
+                if reloc.symbol != ".rodata" {
+                    return Err(Error::from("unsupported relocation in Mach-O executable"));
+                }
+                if !matches!(arch, TargetArch::Aarch64) {
+                    return Err(Error::from("AArch64 relocation on non-AArch64 target"));
+                }
+                let target = rodata_addr.wrapping_add(reloc.addend as u64);
+                let adrp_addr = vmaddr_text + (text_offset - text_fileoff) + reloc.offset;
+                let pc_page = adrp_addr & !0xfff;
+                let target_page = target & !0xfff;
+                let delta_pages = (target_page as i64 - pc_page as i64) >> 12;
+                if delta_pages < -(1 << 20) || delta_pages > (1 << 20) - 1 {
+                    return Err(Error::from("adrp target out of range"));
+                }
+                let imm = delta_pages as u32;
+                let immlo = imm & 0x3;
+                let immhi = (imm >> 2) & 0x7ffff;
+                let adrp_offset = text_offset as usize + reloc.offset as usize;
+                let mut adrp = u32::from_le_bytes(
+                    out[adrp_offset..adrp_offset + 4]
+                        .try_into()
+                        .map_err(|_| Error::from("adrp relocation out of range"))?,
+                );
+                adrp &= !((0x3 << 29) | (0x7ffff << 5));
+                adrp |= (immlo << 29) | (immhi << 5);
+                out[adrp_offset..adrp_offset + 4].copy_from_slice(&adrp.to_le_bytes());
+
+                let add_offset = adrp_offset + 4;
+                let imm12 = (target & 0xfff) as u32;
+                let mut add = u32::from_le_bytes(
+                    out[add_offset..add_offset + 4]
+                        .try_into()
+                        .map_err(|_| Error::from("add relocation out of range"))?,
+                );
+                add &= !(0xfff << 10);
+                add |= imm12 << 10;
+                out[add_offset..add_offset + 4].copy_from_slice(&add.to_le_bytes());
+            }
             RelocKind::CallRel32 => {
                 let target = externs
                     .iter()
-                    .find(|sym| sym.name == reloc.symbol)
+                    .find(|sym| sym.original == reloc.symbol)
                     .ok_or_else(|| Error::from("missing external symbol"))?;
                 let call_addr = vmaddr_text + (text_offset - text_fileoff) + reloc.offset;
                 let stub_addr = stubs_addr + target.stub_offset;
@@ -704,6 +774,30 @@ pub fn emit_executable_macho(
     }
 
     fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
+    codesign_if_needed(path)?;
+    Ok(())
+}
+
+fn codesign_if_needed(path: &Path) -> Result<()> {
+    if !cfg!(target_os = "macos") {
+        return Ok(());
+    }
+    if matches!(
+        std::env::var("FP_NATIVE_CODESIGN"),
+        Ok(value) if value == "0" || value.eq_ignore_ascii_case("false")
+    ) {
+        return Ok(());
+    }
+    let status = Command::new("/usr/bin/codesign")
+        .arg("-s")
+        .arg("-")
+        .arg("-f")
+        .arg(path)
+        .status()
+        .map_err(|e| Error::from(e.to_string()))?;
+    if !status.success() {
+        return Err(Error::from("codesign failed"));
+    }
     Ok(())
 }
 
@@ -898,7 +992,7 @@ pub fn emit_object_macho(
     put_u8(&mut out, N_SECT | N_EXT);
     put_u8(&mut out, 1); // section index
     put_u16(&mut out, 0);
-    put_u64(&mut out, 0);
+    put_u64(&mut out, plan.entry_offset);
 
     // String table
     out.extend_from_slice(&strtab);

@@ -274,6 +274,8 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     } else {
         align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment)
     };
+    let entry_rva = text_rva
+        + u32::try_from(plan.entry_offset).map_err(|_| Error::from("entry offset out of range"))?;
 
     let (import_table_rva, import_table_size, iat_rva) =
         if let Some(layout) = import_layout.as_mut() {
@@ -344,7 +346,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     put_u32(&mut out, text_raw_size);
     put_u32(&mut out, rdata_raw_size);
     put_u32(&mut out, 0);
-    put_u32(&mut out, text_rva);
+    put_u32(&mut out, entry_rva);
     put_u32(&mut out, text_rva);
     put_u64(&mut out, image_base);
     put_u32(&mut out, section_alignment);
@@ -441,6 +443,9 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 if externs.is_empty() {
                     return Err(Error::from("missing external import for call relocation"));
                 }
+            }
+            crate::emit::RelocKind::Aarch64AdrpAdd => {
+                return Err(Error::from("unexpected AArch64 relocation in PE executable"));
             }
         }
     }

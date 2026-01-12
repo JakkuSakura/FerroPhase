@@ -84,18 +84,21 @@ pub struct EmitPlan {
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
+    pub entry_offset: u64,
 }
 
 pub struct CodegenOutput {
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
+    pub entry_offset: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelocKind {
     CallRel32,
     Abs64,
+    Aarch64AdrpAdd,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -118,6 +121,7 @@ pub fn emit_plan(
         text: output.text,
         rodata: output.rodata,
         relocs: output.relocs,
+        entry_offset: output.entry_offset,
     })
 }
 

@@ -225,7 +225,7 @@ pub fn emit_executable_elf64(
     let _file_size = data_end;
 
     let base_addr: u64 = 0x400000;
-    let entry_addr = base_addr + text_offset as u64;
+    let entry_addr = base_addr + text_offset as u64 + plan.entry_offset;
 
     let mut out = Vec::new();
     out.extend_from_slice(&ELF_MAGIC);
@@ -415,6 +415,9 @@ pub fn emit_executable_elf64(
                         out[offset..offset + 4].copy_from_slice(&encoded.to_le_bytes());
                     }
                 }
+            }
+            crate::emit::RelocKind::Aarch64AdrpAdd => {
+                return Err(Error::from("unexpected AArch64 relocation in ELF executable"));
             }
         }
     }
