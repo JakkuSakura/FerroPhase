@@ -1,4 +1,4 @@
-mod arch;
+mod codegen;
 pub(crate) mod coff;
 pub(crate) mod elf;
 pub(crate) mod macho;
@@ -6,8 +6,8 @@ pub(crate) mod macho;
 use crate::link;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirProgram,
-    LirTerminator, LirType, LirValue, Linkage, Name,
+    CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator,
+    LirType, Linkage, Name,
 };
 use std::path::Path;
 
@@ -80,8 +80,7 @@ pub fn emit_plan_minimal(
     format: TargetFormat,
     arch: TargetArch,
 ) -> Result<EmitPlan> {
-    let exit_code = derive_exit_code(lir_program)?;
-    let text = arch::emit_entry_text(arch, format, exit_code)?;
+    let text = codegen::emit_text_from_lir(lir_program, format, arch)?;
     Ok(EmitPlan { format, arch, text })
 }
 
@@ -95,41 +94,6 @@ pub fn write_object_minimal(path: &Path, plan: &EmitPlan) -> Result<()> {
 
 pub fn write_executable_minimal(path: &Path, plan: &EmitPlan) -> Result<()> {
     link::link_executable_minimal(path, plan.format, plan.arch, &plan.text)
-}
-
-fn derive_exit_code(lir_program: &LirProgram) -> Result<u32> {
-    let func = lir_program
-        .functions
-        .first()
-        .ok_or_else(|| Error::from("no functions in LIR program"))?;
-
-    let block = func
-        .basic_blocks
-        .first()
-        .ok_or_else(|| Error::from("function has no basic blocks"))?;
-
-    if !block.instructions.is_empty() {
-        return Err(Error::from(
-            "native emitter only supports empty basic blocks in this stage",
-        ));
-    }
-
-    match &block.terminator {
-        LirTerminator::Return(None) => Ok(0),
-        LirTerminator::Return(Some(value)) => match value {
-            LirValue::Constant(LirConstant::Int(value, _)) => {
-                Ok(u32::try_from(*value).unwrap_or(0))
-            }
-            LirValue::Constant(LirConstant::UInt(value, _)) => Ok(u32::try_from(*value).unwrap_or(0)),
-            LirValue::Constant(LirConstant::Bool(value)) => Ok(if *value { 1 } else { 0 }),
-            _ => Err(Error::from(
-                "native emitter only supports integer/bool return constants",
-            )),
-        },
-        other => Err(Error::from(format!(
-            "native emitter only supports Return terminators, got {other:?}"
-        ))),
-    }
 }
 
 fn default_lir_program() -> LirProgram {

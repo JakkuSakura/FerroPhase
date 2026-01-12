@@ -166,7 +166,7 @@ fn build_import_table(idata_rva: u32) -> ImportTable {
 pub fn emit_executable_pe64_minimal(
     path: &Path,
     arch: TargetArch,
-    _text: &[u8],
+    text: &[u8],
 ) -> Result<()> {
     const IMAGE_FILE_EXECUTABLE_IMAGE: u16 = 0x0002;
     const IMAGE_FILE_LARGE_ADDRESS_AWARE: u16 = 0x0020;
@@ -199,9 +199,13 @@ pub fn emit_executable_pe64_minimal(
     let iat_rva = import_table.iat_rva;
 
     let text_rva = section_alignment;
-    let text = match arch {
-        TargetArch::X86_64 => pe_text_bytes_x86_64(iat_rva, text_rva),
-        TargetArch::Aarch64 => pe_text_bytes_aarch64(image_base + iat_rva as u64),
+    let text = if text.is_empty() {
+        match arch {
+            TargetArch::X86_64 => pe_text_bytes_x86_64(iat_rva, text_rva),
+            TargetArch::Aarch64 => pe_text_bytes_aarch64(image_base + iat_rva as u64),
+        }
+    } else {
+        text.to_vec()
     };
 
     let text_raw_size = align_up(text.len() as u32, file_alignment);

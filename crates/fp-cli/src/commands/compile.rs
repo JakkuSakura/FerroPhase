@@ -24,13 +24,15 @@ pub struct CompileArgs {
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Backend target (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
-    #[arg(short = 'b', long, default_value = "binary")]
-    pub backend: String,
+    /// Emitter target (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
+    ///
+    /// This was previously named `--backend`. The old flag remains supported as an alias.
+    #[arg(short = 'b', long = "emitter", alias = "backend", default_value = "binary")]
+    pub emitter: String,
 
     /// Codegen backend engine (e.g. "llvm" or "native").
     ///
-    /// This is only used for native codegen targets (like `--backend binary`).
+    /// This is only used for native codegen targets (like `--emitter binary`).
     /// Default is `llvm`.
     #[arg(long = "codegen-backend", default_value = "llvm")]
     pub codegen_backend: String,
@@ -112,7 +114,7 @@ pub struct CompileArgs {
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    info!("Starting compilation with backend: {}", args.backend);
+    info!("Starting compilation with emitter: {}", args.emitter);
 
     // Validate inputs
     validate_inputs(&args)?;
@@ -125,13 +127,13 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
 
-    let is_text_backend = args.backend == "text-bytecode";
-    let target_backend = if is_text_backend {
+    let is_text_emitter = args.emitter == "text-bytecode";
+    let target_emitter = if is_text_emitter {
         "bytecode"
     } else {
-        args.backend.as_str()
+        args.emitter.as_str()
     };
-    let emit_text_bytecode = is_text_backend;
+    let emit_text_bytecode = is_text_emitter;
 
     let output_is_dir = args
         .output
@@ -144,7 +146,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            target_backend,
+            target_emitter,
             args.target_triple.as_deref(),
             emit_text_bytecode,
             output_is_dir,
@@ -152,7 +154,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
         // Compile single file
         if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target_backend, config).await?
+            compile_file(input_file, &output_file, &args, target_emitter, config).await?
         {
             compiled_files.push(artifact_path);
         }
@@ -167,7 +169,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
-        match target_backend {
+        match target_emitter {
             "binary" => match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled binaries available to execute");
@@ -186,7 +188,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                     warn!("No compiled bytecode available to execute");
                 }
                 [path] => {
-                    if is_text_backend {
+                    if is_text_emitter {
                         warn!("--exec is not supported for text-bytecode output");
                     } else {
                         exec_compiled_bytecode(path)?;
@@ -297,7 +299,7 @@ async fn compile_file(
     let artifact = match pipeline_output {
         PipelineOutput::Code(code) => {
             let bootstrap = std::env::var_os("FERROPHASE_BOOTSTRAP").is_some();
-            if bootstrap && args.output.is_none() && args.backend == "llvm" {
+            if bootstrap && args.output.is_none() && args.emitter == "llvm" {
                 print!("{}", code);
                 let _ = io::stdout().flush();
                 info!("Emitted LLVM IR to stdout (bootstrap)");

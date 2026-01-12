@@ -19,7 +19,7 @@ fi
 
 cargo run -p fp-cli --bin fp -- \
   compile \
-  --backend llvm \
+  --emitter llvm \
   --target "${target_triple}" \
   --output "${output}" \
   "${input}"

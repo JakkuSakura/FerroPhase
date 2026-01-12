@@ -7,10 +7,10 @@
 //!
 //! ```bash
 //! # Compile a FerroPhase file to Rust
-//! fp compile hello.fp --backend rust --output hello.rs
+//! fp compile hello.fp --emitter rust --output hello.rs
 //!
 //! # Cross-compile a binary for a target triple
-//! fp compile hello.fp --backend binary --target x86_64-unknown-linux-gnu
+//! fp compile hello.fp --emitter binary --target x86_64-unknown-linux-gnu
 //!
 //! # Run const evaluation with interpretation
 //! fp eval --expr "1 + 2 * 3"
@@ -51,7 +51,7 @@ while supporting multi-language interoperability and advanced compile-time compu
 EXAMPLES:
     fp run hello.fp                       # Run a FerroPhase file
     fp eval --expr "1 + 2 * 3"           # Evaluate expression
-    fp compile hello.fp --backend rust    # Compile to Rust
+    fp compile hello.fp --emitter rust    # Compile to Rust
     magnet init my-project                # Create new project
     "#
 )]
@@ -81,7 +81,7 @@ enum Commands {
     /// Compile FerroPhase code to various targets
     Compile(CompileArgs),
 
-    /// Compile to a backend code target (shorthand for `compile --backend ...`)
+    /// Compile to a backend code target (shorthand for `compile --emitter ...`)
     Transpile(TranspileArgs),
 
     /// AST-level transpilation (no backend lowering)
@@ -96,7 +96,7 @@ enum Commands {
     /// Run a FerroPhase file (delegates to magnet)
     Run(RunArgs),
 
-    /// Interpret bytecode produced by `compile --backend bytecode`
+    /// Interpret bytecode produced by `compile --emitter bytecode`
     Interpret(InterpretArgs),
 
     /// Check and validate FerroPhase code

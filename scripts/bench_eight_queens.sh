@@ -9,7 +9,11 @@ mkdir -p "${OUT_DIR}"
 
 FP_BIN="${FP_BIN:-${ROOT_DIR}/target/release/fp}"
 if [[ ! -x "${FP_BIN}" ]]; then
-  cargo build -p fp-cli --release
+  if [[ -n "${FP_CARGO_FEATURES:-}" ]]; then
+    cargo build -p fp-cli --release --features "${FP_CARGO_FEATURES}"
+  else
+    cargo build -p fp-cli --release
+  fi
 fi
 
 bench_cmd() {
@@ -77,18 +81,27 @@ cargo bench -p fp --bench eight_queens
 
 BIN_OUT="${OUT_DIR}/eight_queens_bin.out"
 bench_cmd "fp compile (binary)" \
-  "${FP_BIN} compile --backend binary --release --output ${BIN_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --emitter binary --release --output ${BIN_OUT} ${EXAMPLE}"
 bench_cmd "fp binary run" "${BIN_OUT}"
+
+# Optional: fp-native codegen (requires building fp-cli with feature `native-backend`).
+# Enable by setting: FP_CARGO_FEATURES=native-backend
+if [[ "${FP_CARGO_FEATURES:-}" == *"native-backend"* ]]; then
+  NATIVE_BIN_OUT="${OUT_DIR}/eight_queens_native.out"
+  bench_cmd "fp compile (binary, fp-native)" \
+    "${FP_BIN} compile --emitter binary --codegen-backend native --release --output ${NATIVE_BIN_OUT} ${EXAMPLE}"
+  bench_cmd "fp native binary run" "${NATIVE_BIN_OUT}"
+fi
 
 BYTECODE_OUT="${OUT_DIR}/eight_queens.fbc"
 bench_cmd "fp compile (bytecode)" \
-  "${FP_BIN} compile --backend bytecode --save-intermediates --output ${BYTECODE_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --emitter bytecode --save-intermediates --output ${BYTECODE_OUT} ${EXAMPLE}"
 bench_cmd "fp interpret (bytecode)" \
   "${FP_BIN} interpret ${BYTECODE_OUT}"
 
 WASM_OUT="${OUT_DIR}/eight_queens_wasm"
 bench_cmd "fp compile (wasm)" \
-  "${FP_BIN} compile --backend wasm --release --output ${WASM_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --emitter wasm --release --output ${WASM_OUT} ${EXAMPLE}"
 WASM_FILE="${WASM_OUT}.wasm"
 if [[ ! -f "${WASM_FILE}" ]]; then
   WASM_FILE="${WASM_OUT}"

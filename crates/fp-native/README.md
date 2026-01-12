@@ -11,8 +11,9 @@ Emitter vs linker:
 - The linker is format-focused (Mach-O/ELF/PE) and should not branch on CPU unless required by the format itself.
 
 Current limitations:
-- LIR lowering only supports empty basic blocks with a Return terminator.
-- Exit codes are derived from constant return values; other instructions are not implemented yet.
+- LIR lowering supports a single basic block with straight-line integer ops (Add/Sub/Mul) and Return.
+- Only integer/bool constants and registers are supported (no loads/stores, calls, or control flow).
+- Division, floats, and aggregates are not implemented yet.
 
 This exists to validate the end-to-end integration (pipeline → object emission → linking) without depending on LLVM or large third-party codegen crates.
 

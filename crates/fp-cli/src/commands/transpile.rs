@@ -15,14 +15,14 @@ use std::path::PathBuf;
 /// Arguments for the transpile command.
 ///
 /// This command is intentionally a thin wrapper around `compile` with a
-/// different default backend.
+/// different default emitter.
 #[derive(Debug, Clone, Args)]
 pub struct TranspileArgs {
     /// Input file(s) to transpile
     #[arg(required = true)]
     pub input: Vec<PathBuf>,
 
-    /// Backend target (rust, llvm, bytecode, binary, interpret)
+    /// Emitter target (rust, llvm, bytecode, binary, interpret)
     #[arg(short = 'b', long)]
     pub backend: Option<String>,
 
@@ -66,7 +66,7 @@ pub struct TranspileArgs {
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     let compile_args = CompileArgs {
         input: args.input,
-        backend: args.backend.unwrap_or_else(|| "rust".to_string()),
+        emitter: args.backend.unwrap_or_else(|| "rust".to_string()),
         codegen_backend: "llvm".to_string(),
         target_triple: None,
         target_cpu: None,

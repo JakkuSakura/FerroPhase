@@ -272,22 +272,43 @@ impl<'a> WasmEmitter<'a> {
                 let ptr = self.write_string_data(value);
                 Ok(int_to_bytes(ptr as u128, ty))
             }
-            LirConstant::Array(elements, elem_ty) => {
+            LirConstant::Array(elements, const_elem_ty) => {
+                // Encode arrays to the *expected* type width so global initializers don't get
+                // truncated (which would shift subsequent globals and corrupt memory).
+                let (elem_ty, expected_len) = match ty {
+                    LirType::Array(elem, len) => (elem.as_ref(), *len as usize),
+                    _ => (const_elem_ty, elements.len()),
+                };
+
                 let mut out = Vec::new();
-                for elem in elements {
-                    let bytes = self.encode_constant_bytes(elem, elem_ty)?;
-                    out.extend(bytes);
+                for i in 0..expected_len {
+                    if let Some(elem) = elements.get(i) {
+                        let bytes = self.encode_constant_bytes(elem, elem_ty)?;
+                        out.extend(bytes);
+                    } else {
+                        out.extend(std::iter::repeat(0).take(size_of_type(elem_ty) as usize));
+                    }
                 }
                 Ok(out)
             }
-            LirConstant::Struct(values, struct_ty) => {
-                let LirType::Struct { fields, .. } = struct_ty else {
-                    return Err(Error::from("struct constant expects struct type"));
+            LirConstant::Struct(values, const_struct_ty) => {
+                // Same rationale as arrays: encode to the expected struct layout.
+                let fields = match ty {
+                    LirType::Struct { fields, .. } => fields,
+                    _ => match const_struct_ty {
+                        LirType::Struct { fields, .. } => fields,
+                        _ => return Err(Error::from("struct constant expects struct type")),
+                    },
                 };
+
                 let mut out = Vec::new();
-                for (value, field_ty) in values.iter().zip(fields.iter()) {
-                    let bytes = self.encode_constant_bytes(value, field_ty)?;
-                    out.extend(bytes);
+                for (idx, field_ty) in fields.iter().enumerate() {
+                    if let Some(value) = values.get(idx) {
+                        let bytes = self.encode_constant_bytes(value, field_ty)?;
+                        out.extend(bytes);
+                    } else {
+                        out.extend(std::iter::repeat(0).take(size_of_type(field_ty) as usize));
+                    }
                 }
                 Ok(out)
             }
@@ -1077,6 +1098,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         }
         func.instruction(&Instruction::I64Const(offset as i64));
         func.instruction(&Instruction::I64Add);
+
         func.instruction(&Instruction::I32WrapI64);
         let field_ty = match agg_ty {
             LirType::Struct { fields, .. } => fields
@@ -1105,8 +1127,10 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         self.emit_value(func, aggregate)?;
         func.instruction(&Instruction::LocalTee(self.tmp_i64_local));
         let offset = offset_for_indices(&agg_ty, indices);
+        func.instruction(&Instruction::LocalGet(self.tmp_i64_local));
         func.instruction(&Instruction::I64Const(offset as i64));
         func.instruction(&Instruction::I64Add);
+
         func.instruction(&Instruction::I32WrapI64);
         self.emit_value(func, element)?;
         emit_store_for_type(func, &self.value_type(element));
