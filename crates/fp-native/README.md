@@ -15,7 +15,7 @@ Current limitations:
 - Integer ops include Add/Sub/Mul/Div/Rem plus Load/Store from StackSlot.
 - Calls are direct-only; arguments follow the platform ABI (register + stack args) and results are materialized into stack slots (no register allocator yet).
 - Floating point, aggregates, and Phi nodes are not implemented yet.
-- Windows PE still uses a stub entry when no LIR text is provided.
+- Windows PE requires non-empty emitted text (no stub executable).
 
 This exists to validate the end-to-end integration (pipeline → object emission → linking) without depending on LLVM or large third-party codegen crates.
 

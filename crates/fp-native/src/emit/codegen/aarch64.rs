@@ -527,7 +527,7 @@ fn emit_block(
             if asm.needs_frame {
                 emit_epilogue(asm, layout);
             }
-            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) && asm.is_entry() {
+            if matches!(format, TargetFormat::Elf) && asm.is_entry() {
                 emit_exit_syscall(asm, 0)?;
             } else {
                 emit_mov_imm16(asm, Reg::X0, 0);
@@ -540,7 +540,7 @@ fn emit_block(
             if asm.needs_frame {
                 emit_epilogue(asm, layout);
             }
-            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) && asm.is_entry() {
+            if matches!(format, TargetFormat::Elf) && asm.is_entry() {
                 emit_exit_syscall_reg(asm, ret_reg)?;
             } else {
                 emit_ret(asm);

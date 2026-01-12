@@ -21,6 +21,6 @@ pub fn link_executable_minimal(
     match format {
         TargetFormat::MachO => macho::link_executable_macho_minimal(path, arch, text),
         TargetFormat::Elf => elf::link_executable_elf64_minimal(path, arch, text),
-        TargetFormat::Coff => pe::link_executable_pe64_minimal(path, arch, text),
+        TargetFormat::Coff => pe::link_executable_pe64(path, arch, text),
     }
 }
