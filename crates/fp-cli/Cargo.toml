@@ -29,7 +29,7 @@ fp-pipeline = { path = "../fp-pipeline" }
 fp-bytecode = { path = "../fp-bytecode" }
 fp-stackvm = { path = "../fp-stackvm" }
 fp-wasm = { path = "../fp-wasm" }
-fp-native = { path = "../fp-native", optional = true }
+fp-native = { path = "../fp-native" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }
@@ -83,4 +83,3 @@ bootstrap = [
     "fp-typing/bootstrap",
     "fp-optimize/bootstrap",
 ]
-native-backend = ["dep:fp-native"]

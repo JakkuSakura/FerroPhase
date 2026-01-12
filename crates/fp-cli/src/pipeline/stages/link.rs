@@ -6,7 +6,6 @@ pub(crate) struct LinkContext {
     pub llvm_ir_path: PathBuf,
     pub base_path: PathBuf,
     pub options: PipelineOptions,
-    #[cfg(feature = "native-backend")]
     pub native_lir: Option<fp_core::lir::LirProgram>,
 }
 
@@ -34,22 +33,23 @@ impl PipelineStage for LinkStage {
         );
 
         // If enabled and we have a LIR payload, prefer fp-native.
-        #[cfg(feature = "native-backend")]
-        {
-            if let Some(lir_program) = context.native_lir {
-                let cfg = fp_native::config::NativeConfig::executable(&binary_path)
-                    .with_target_triple(context.options.target_triple.clone())
-                    .with_target_cpu(context.options.target_cpu.clone())
-                    .with_target_features(context.options.target_features.clone())
-                    .with_sysroot(context.options.target_sysroot.clone())
-                    .with_fuse_ld(context.options.target_linker.clone())
-                    .with_linker_driver(context.options.linker.clone())
-                    .with_release(context.options.release);
-                let emitter = fp_native::NativeEmitter::new(cfg);
-                return emitter
-                    .emit(lir_program, None)
-                    .map_err(|e| PipelineError::new(STAGE_LINK_BINARY, e.to_string()));
-            }
+        if let Some(lir_program) = context.native_lir {
+            let cfg = fp_native::config::NativeConfig::executable(&binary_path)
+                .with_target_triple(context.options.target_triple.clone())
+                .with_target_cpu(context.options.target_cpu.clone())
+                .with_target_features(context.options.target_features.clone())
+                .with_sysroot(context.options.target_sysroot.clone())
+                .with_fuse_ld(context.options.target_linker.clone())
+                .with_linker_driver(context.options.linker.clone())
+                .with_release(context.options.release);
+            let emitter = fp_native::NativeEmitter::new(cfg);
+            return emitter.emit(lir_program, None).map_err(|e| {
+                diagnostics.push(
+                    Diagnostic::error(format!("fp-native failed: {}", e))
+                        .with_source_context(STAGE_LINK_BINARY),
+                );
+                PipelineError::new(STAGE_LINK_BINARY, "fp-native failed")
+            });
         }
 
         if let Some(parent) = binary_path.parent() {
@@ -209,13 +209,11 @@ impl Pipeline {
             llvm_ir_path: llvm_ir_path.to_path_buf(),
             base_path: base_path.to_path_buf(),
             options: options.clone(),
-            #[cfg(feature = "native-backend")]
             native_lir: None,
         };
         self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
     }
 
-    #[cfg(feature = "native-backend")]
     pub(crate) fn stage_link_binary_native(
         &self,
         lir_program: &fp_core::lir::LirProgram,

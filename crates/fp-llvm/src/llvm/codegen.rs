@@ -596,11 +596,41 @@ impl<'a> LirCodegen<'a> {
             lir::LirInstructionKind::Bitcast(value, target_ty) => {
                 let operand = self.convert_lir_value_to_basic_value(value)?;
                 let target = self.llvm_basic_type(&target_ty)?;
-                let result = self
-                    .llvm_ctx
-                    .builder
-                    .build_bit_cast(operand, target, &format!("bitcast_{}", instr_id))
-                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                let name = format!("bitcast_{}", instr_id);
+                let result = match (operand, target) {
+                    (BasicValueEnum::StructValue(src), BasicTypeEnum::PointerType(dst_ptr)) => {
+                        let struct_ty = src.get_type();
+                        if struct_ty.count_fields() == 1 {
+                            let field_ty = struct_ty.get_field_types()[0];
+                            if field_ty.is_pointer_type() {
+                                let field = self
+                                    .llvm_ctx
+                                    .builder
+                                    .build_extract_value(src, 0, &format!("{}_field0", name))
+                                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                                let ptr_value = field.into_pointer_value();
+                                let casted = self
+                                    .llvm_ctx
+                                    .builder
+                                    .build_bit_cast(ptr_value, dst_ptr, &name)
+                                    .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                                casted
+                            } else {
+                                self.bitcast_struct_via_alloca(src, dst_ptr.as_basic_type_enum(), &name)?
+                            }
+                        } else {
+                            self.bitcast_struct_via_alloca(src, dst_ptr.as_basic_type_enum(), &name)?
+                        }
+                    }
+                    (BasicValueEnum::StructValue(src), BasicTypeEnum::StructType(_)) => {
+                        self.bitcast_struct_via_alloca(src, target, &name)?
+                    }
+                    (other, _) => self
+                        .llvm_ctx
+                        .builder
+                        .build_bit_cast(other, target, &name)
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?,
+                };
                 self.record_result(instr_id, Some(target_ty), result);
             }
             lir::LirInstructionKind::IntToPtr(value) => {
@@ -760,11 +790,26 @@ impl<'a> LirCodegen<'a> {
                 indices,
             } => {
                 let aggregate_value = self.convert_lir_value_to_basic_value(aggregate)?;
-                let element_value = self.convert_lir_value_to_basic_value(element)?;
+                let raw_element_value = self.convert_lir_value_to_basic_value(element)?;
 
                 let index = indices.get(0).copied().ok_or_else(|| {
                     report_error_with_context(LOG_AREA, "InsertValue missing index")
                 })?;
+
+                let element_value = match aggregate_value {
+                    BasicValueEnum::ArrayValue(array) => {
+                        let element_ty = array.get_type().get_element_type();
+                        self.coerce_insert_element(raw_element_value, element_ty, instr_id)?
+                    }
+                    BasicValueEnum::StructValue(strct) => {
+                        let struct_ty = strct.get_type();
+                        let field_ty = struct_ty
+                            .get_field_type_at_index(index)
+                            .ok_or_else(|| report_error_with_context(LOG_AREA, "InsertValue missing field"))?;
+                        self.coerce_insert_element(raw_element_value, field_ty, instr_id)?
+                    }
+                    _ => raw_element_value,
+                };
 
                 let result = match aggregate_value {
                     BasicValueEnum::ArrayValue(array) => self
@@ -1682,6 +1727,21 @@ impl<'a> LirCodegen<'a> {
                         ))
                     }
                 };
+                if struct_ty.count_fields() == 1 && values.len() != 1 {
+                    let field_ty = struct_ty.get_field_types()[0];
+                    if let BasicTypeEnum::StructType(inner_ty) = field_ty {
+                        if inner_ty.count_fields() as usize == values.len() {
+                            let mut inner_values = Vec::with_capacity(values.len());
+                            for value in values {
+                                inner_values.push(self.convert_lir_constant_to_value(value)?);
+                            }
+                            let inner = inner_ty.const_named_struct(&inner_values);
+                            let outer = struct_ty.const_named_struct(&[inner.into()]);
+                            return Ok(outer.into());
+                        }
+                    }
+                }
+
                 let mut llvm_values = Vec::with_capacity(values.len());
                 for value in values {
                     llvm_values.push(self.convert_lir_constant_to_value(value)?);
@@ -1947,6 +2007,87 @@ impl<'a> LirCodegen<'a> {
 
     fn default_int_type(&self) -> IntType<'static> {
         self.llvm_ctx.i64_type()
+    }
+
+    fn bitcast_struct_via_alloca(
+        &mut self,
+        src: inkwell::values::StructValue<'static>,
+        target: BasicTypeEnum<'static>,
+        name: &str,
+    ) -> Result<BasicValueEnum<'static>> {
+        let saved_block = self.llvm_ctx.builder.get_insert_block();
+        let entry_block = self
+            .current_function
+            .and_then(|func| func.get_first_basic_block())
+            .ok_or_else(|| report_error_with_context(LOG_AREA, "missing entry block"))?;
+        if let Some(first_inst) = entry_block.get_first_instruction() {
+            self.llvm_ctx.builder.position_at(entry_block, &first_inst);
+        } else {
+            self.llvm_ctx.builder.position_at_end(entry_block);
+        }
+        let alloca = self
+            .llvm_ctx
+            .builder
+            .build_alloca(src.get_type(), &format!("{name}_alloca"))
+            .map_err(|e| Error::from(e.to_string()))?;
+        if let Some(block) = saved_block {
+            self.llvm_ctx.builder.position_at_end(block);
+        }
+
+        self.llvm_ctx
+            .builder
+            .build_store(alloca, src)
+            .map_err(|e| Error::from(e.to_string()))?;
+        let target_ptr_ty = target.ptr_type(AddressSpace::default());
+        let cast_ptr = self
+            .llvm_ctx
+            .builder
+            .build_bit_cast(alloca, target_ptr_ty, &format!("{name}_ptr"))
+            .map_err(|e| Error::from(e.to_string()))?
+            .into_pointer_value();
+        let loaded = self
+            .llvm_ctx
+            .builder
+            .build_load(target, cast_ptr, name)
+            .map_err(|e| Error::from(e.to_string()))?;
+        Ok(loaded)
+    }
+
+    fn coerce_insert_element(
+        &self,
+        value: BasicValueEnum<'static>,
+        target_ty: BasicTypeEnum<'static>,
+        instr_id: u32,
+    ) -> Result<BasicValueEnum<'static>> {
+        if value.get_type().as_type_ref() == target_ty.as_type_ref() {
+            return Ok(value);
+        }
+
+        if let BasicTypeEnum::StructType(struct_ty) = target_ty {
+            if struct_ty.count_fields() == 1 {
+                let field_ty = struct_ty.get_field_types()[0];
+                if value.get_type().as_type_ref() == field_ty.as_type_ref() {
+                    let undef = struct_ty.get_undef();
+                    let wrapped = self
+                        .llvm_ctx
+                        .builder
+                        .build_insert_value(
+                            undef,
+                            value,
+                            0,
+                            &format!("insertvalue_wrap_{}", instr_id),
+                        )
+                        .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+                    let wrapped_value = match wrapped {
+                        AggregateValueEnum::StructValue(val) => val.into(),
+                        AggregateValueEnum::ArrayValue(val) => val.into(),
+                    };
+                    return Ok(wrapped_value);
+                }
+            }
+        }
+
+        Ok(value)
     }
 
     fn coerce_to_int(

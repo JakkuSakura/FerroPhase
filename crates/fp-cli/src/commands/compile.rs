@@ -374,10 +374,14 @@ async fn exec_compiled_binary(path: &Path) -> Result<()> {
 
     if !output.status.success() {
         let code = output.status.code().unwrap_or(-1);
-        return Err(CliError::Compilation(format!(
-            "Process exited with status {}",
-            code
-        )));
+        if std::env::var("FP_ALLOW_EXEC_FAILURE").as_deref() == Ok("1") {
+            warn!("Process exited with status {}", code);
+        } else {
+            return Err(CliError::Compilation(format!(
+                "Process exited with status {}",
+                code
+            )));
+        }
     }
 
     Ok(())
