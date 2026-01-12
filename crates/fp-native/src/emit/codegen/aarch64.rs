@@ -1,9 +1,9 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    BasicBlockId, LirBasicBlock, LirConstant, LirInstructionKind, LirProgram, LirTerminator,
-    LirValue,
+    BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirProgram,
+    LirTerminator, LirValue,
 };
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::emit::TargetFormat;
 
@@ -48,69 +48,93 @@ impl Reg {
     }
 }
 
-struct RegFile {
-    free: Vec<Reg>,
-    map: HashMap<u32, Reg>,
-    slot_map: HashMap<u32, u32>,
-    next_slot: u32,
+fn build_frame_layout(func: &LirFunction) -> Result<FrameLayout> {
+    let mut vreg_ids = BTreeSet::new();
+    let mut max_call_args = 0usize;
+    let mut has_calls = false;
+
+    for block in &func.basic_blocks {
+        for inst in &block.instructions {
+            vreg_ids.insert(inst.id);
+            if let LirInstructionKind::Call { args, .. } = &inst.kind {
+                has_calls = true;
+                max_call_args = max_call_args.max(args.len());
+            }
+        }
+    }
+
+    let outgoing_size = (max_call_args.saturating_sub(8) as i32) * 8;
+    let mut vreg_offsets = HashMap::new();
+    let mut slot_offsets = HashMap::new();
+    let mut offset = outgoing_size;
+
+    for id in vreg_ids {
+        vreg_offsets.insert(id, offset);
+        offset += 8;
+    }
+
+    for slot in &func.stack_slots {
+        slot_offsets.insert(slot.id, offset);
+        offset += 8;
+    }
+
+    let local_size = offset - outgoing_size;
+    let base = outgoing_size + local_size;
+    let frame_size = if base == 0 && !has_calls {
+        0
+    } else {
+        align16(base + 16)
+    };
+
+    Ok(FrameLayout {
+        vreg_offsets,
+        slot_offsets,
+        outgoing_size,
+        frame_size,
+    })
 }
 
-impl RegFile {
-    fn new() -> Self {
-        Self {
-            free: vec![
-                Reg::X7, Reg::X6, Reg::X5, Reg::X4, Reg::X3, Reg::X2, Reg::X1, Reg::X0,
-            ],
-            map: HashMap::new(),
-            slot_map: HashMap::new(),
-            next_slot: 0,
-        }
-    }
-
-    fn alloc(&mut self, id: u32) -> Result<Reg> {
-        if let Some(reg) = self.map.get(&id) {
-            return Ok(*reg);
-        }
-        let reg = self
-            .free
-            .pop()
-            .ok_or_else(|| Error::from("out of registers"))?;
-        self.map.insert(id, reg);
-        Ok(reg)
-    }
-
-    fn get(&self, id: u32) -> Result<Reg> {
-        self.map
-            .get(&id)
-            .copied()
-            .ok_or_else(|| Error::from("register not allocated"))
-    }
-
-    fn slot_offset(&mut self, slot_id: u32) -> i32 {
-        if let Some(offset) = self.slot_map.get(&slot_id) {
-            return *offset as i32;
-        }
-        let next = self.next_slot + 1;
-        self.next_slot = next;
-        self.slot_map.insert(slot_id, next);
-        (next as i32) * 8
-    }
+fn align16(value: i32) -> i32 {
+    ((value + 15) / 16) * 16
 }
 
-pub fn emit_text(program: &LirProgram, format: TargetFormat, needs_stack: bool) -> Result<Vec<u8>> {
+fn vreg_offset(layout: &FrameLayout, id: u32) -> Result<i32> {
+    layout
+        .vreg_offsets
+        .get(&id)
+        .copied()
+        .ok_or_else(|| Error::from("missing vreg slot"))
+}
+
+fn stack_slot_offset(layout: &FrameLayout, id: u32) -> Result<i32> {
+    layout
+        .slot_offsets
+        .get(&id)
+        .copied()
+        .ok_or_else(|| Error::from("missing stack slot"))
+}
+
+struct FrameLayout {
+    vreg_offsets: HashMap<u32, i32>,
+    slot_offsets: HashMap<u32, i32>,
+    outgoing_size: i32,
+    frame_size: i32,
+}
+
+pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<Vec<u8>> {
     let func_map = build_function_map(program)?;
     let mut asm = Assembler::new();
-    asm.needs_stack = needs_stack;
 
     for (index, func) in program.functions.iter().enumerate() {
         asm.bind(Label::Function(index as u32));
-        let mut regs = RegFile::new();
-        if needs_stack {
-            emit_prologue(&mut asm, &mut regs)?;
+        let layout = build_frame_layout(func)?;
+        asm.needs_frame = layout.frame_size > 0;
+        if layout.frame_size > 0 {
+            emit_prologue(&mut asm, &layout)?;
         }
         for block in &func.basic_blocks {
             asm.bind(Label::Block(index as u32, block.id));
-            emit_block(&mut asm, &mut regs, block, format, &func_map)?;
+            emit_block(&mut asm, block, format, &func_map, &layout)?;
         }
     }
 
@@ -125,26 +149,58 @@ enum BinOp {
 
 fn emit_binop(
     asm: &mut Assembler,
-    regs: &mut RegFile,
-    dst: Reg,
+    layout: &FrameLayout,
+    dst_id: u32,
     lhs: &LirValue,
     rhs: &LirValue,
     op: BinOp,
 ) -> Result<()> {
-    emit_value_to_reg(asm, regs, dst, lhs)?;
-    emit_op_rhs(asm, regs, dst, rhs, op)
+    load_value(asm, layout, lhs, Reg::X16)?;
+    match rhs {
+        LirValue::Register(_) => {
+            load_value(asm, layout, rhs, Reg::X17)?;
+            match op {
+                BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                BinOp::Mul => emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+            }
+        }
+        LirValue::Constant(constant) => {
+            let imm = constant_to_i64(constant)?;
+            if imm < 0 || imm > u16::MAX as i64 {
+                emit_mov_imm16(asm, Reg::X17, (imm as u64 & 0xffff) as u16);
+                match op {
+                    BinOp::Add => emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                    BinOp::Sub => emit_sub_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                    BinOp::Mul => emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17),
+                }
+            } else {
+                match op {
+                    BinOp::Add => emit_add_imm12(asm, Reg::X16, Reg::X16, imm as u32),
+                    BinOp::Sub => emit_sub_imm12(asm, Reg::X16, Reg::X16, imm as u32),
+                    BinOp::Mul => {
+                        emit_mov_imm16(asm, Reg::X17, imm as u16);
+                        emit_mul_reg(asm, Reg::X16, Reg::X16, Reg::X17);
+                    }
+                }
+            }
+        }
+        _ => return Err(Error::from("unsupported RHS for aarch64")),
+    }
+    store_vreg(asm, layout, dst_id, Reg::X16)?;
+    Ok(())
 }
 
-fn emit_value_to_reg(
+fn load_value(
     asm: &mut Assembler,
-    regs: &mut RegFile,
-    dst: Reg,
+    layout: &FrameLayout,
     value: &LirValue,
+    dst: Reg,
 ) -> Result<()> {
     match value {
         LirValue::Register(id) => {
-            let src = regs.get(*id)?;
-            emit_mov_reg(asm, dst, src);
+            let offset = vreg_offset(layout, *id)?;
+            emit_load_from_sp(asm, dst, offset);
             Ok(())
         }
         LirValue::Constant(constant) => {
@@ -159,16 +215,23 @@ fn emit_value_to_reg(
     }
 }
 
+fn store_vreg(asm: &mut Assembler, layout: &FrameLayout, id: u32, src: Reg) -> Result<()> {
+    let offset = vreg_offset(layout, id)?;
+    emit_store_to_sp(asm, src, offset);
+    Ok(())
+}
+
 fn emit_load(
     asm: &mut Assembler,
-    regs: &mut RegFile,
-    dst: Reg,
+    layout: &FrameLayout,
+    dst_id: u32,
     address: &LirValue,
 ) -> Result<()> {
     match address {
         LirValue::StackSlot(id) => {
-            let offset = regs.slot_offset(*id);
-            emit_load_from_sp(asm, dst, offset);
+            let offset = stack_slot_offset(layout, *id)?;
+            emit_load_from_sp(asm, Reg::X16, offset);
+            store_vreg(asm, layout, dst_id, Reg::X16)?;
             Ok(())
         }
         _ => Err(Error::from("unsupported load address for aarch64")),
@@ -177,27 +240,15 @@ fn emit_load(
 
 fn emit_store(
     asm: &mut Assembler,
-    regs: &mut RegFile,
+    layout: &FrameLayout,
     value: &LirValue,
     address: &LirValue,
 ) -> Result<()> {
-    let src = match value {
-        LirValue::Register(id) => regs.get(*id)?,
-        LirValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
-            if imm < 0 || imm > u16::MAX as i64 {
-                return Err(Error::from("store immediate out of range"));
-            }
-            emit_mov_imm16(asm, Reg::X16, imm as u16);
-            Reg::X16
-        }
-        _ => return Err(Error::from("unsupported store value for aarch64")),
-    };
-
+    load_value(asm, layout, value, Reg::X16)?;
     match address {
         LirValue::StackSlot(id) => {
-            let offset = regs.slot_offset(*id);
-            emit_store_to_sp(asm, src, offset);
+            let offset = stack_slot_offset(layout, *id)?;
+            emit_store_to_sp(asm, Reg::X16, offset);
             Ok(())
         }
         _ => Err(Error::from("unsupported store address for aarch64")),
@@ -206,44 +257,31 @@ fn emit_store(
 
 fn emit_divrem(
     asm: &mut Assembler,
-    regs: &mut RegFile,
-    dst: Reg,
+    layout: &FrameLayout,
+    dst_id: u32,
     lhs: &LirValue,
     rhs: &LirValue,
     want_rem: bool,
 ) -> Result<()> {
-    emit_value_to_reg(asm, regs, Reg::X16, lhs)?;
-
-    match rhs {
-        LirValue::Register(id) => {
-            let src = regs.get(*id)?;
-            emit_mov_reg(asm, Reg::X17, src);
-        }
-        LirValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
-            if imm < 0 || imm > u16::MAX as i64 {
-                return Err(Error::from("divisor immediate out of range"));
-            }
-            emit_mov_imm16(asm, Reg::X17, imm as u16);
-        }
-        _ => return Err(Error::from("unsupported divisor for aarch64")),
-    }
+    load_value(asm, layout, lhs, Reg::X16)?;
+    load_value(asm, layout, rhs, Reg::X17)?;
 
     emit_sdiv(asm, Reg::X18, Reg::X16, Reg::X17);
 
     if want_rem {
-        emit_msub(asm, dst, Reg::X18, Reg::X17, Reg::X16);
+        emit_msub(asm, Reg::X16, Reg::X18, Reg::X17, Reg::X16);
     } else {
-        emit_mov_reg(asm, dst, Reg::X18);
+        emit_mov_reg(asm, Reg::X16, Reg::X18);
     }
+    store_vreg(asm, layout, dst_id, Reg::X16)?;
 
     Ok(())
 }
 
 fn emit_call(
     asm: &mut Assembler,
-    regs: &mut RegFile,
-    dst: Reg,
+    layout: &FrameLayout,
+    dst_id: u32,
     function: &LirValue,
     args: &[LirValue],
     func_map: &HashMap<String, u32>,
@@ -259,71 +297,34 @@ fn emit_call(
     let arg_regs = [
         Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
     ];
-    if args.len() > arg_regs.len() {
-        return Err(Error::from("too many call args for aarch64"));
-    }
-
     for (idx, arg) in args.iter().enumerate() {
-        let reg = arg_regs[idx];
-        match arg {
-            LirValue::Register(id) => {
-                let src = regs.get(*id)?;
-                emit_mov_reg(asm, reg, src);
-            }
-            LirValue::Constant(constant) => {
-                let imm = constant_to_i64(constant)?;
-                if imm < 0 || imm > u16::MAX as i64 {
-                    return Err(Error::from("call arg immediate out of range"));
-                }
-                emit_mov_imm16(asm, reg, imm as u16);
-            }
-            _ => return Err(Error::from("unsupported call arg for aarch64")),
+        if idx < arg_regs.len() {
+            let reg = arg_regs[idx];
+            load_value(asm, layout, arg, reg)?;
+        } else {
+            let offset = (idx - arg_regs.len()) as i32 * 8;
+            store_outgoing_arg(asm, layout, offset, arg)?;
         }
     }
 
     asm.emit_bl(Label::Function(target));
-
-    if dst != Reg::X0 {
-        emit_mov_reg(asm, dst, Reg::X0);
-    }
+    store_vreg(asm, layout, dst_id, Reg::X0)?;
 
     Ok(())
 }
-fn emit_op_rhs(asm: &mut Assembler, regs: &mut RegFile, dst: Reg, rhs: &LirValue, op: BinOp) -> Result<()> {
-    match rhs {
-        LirValue::Register(id) => {
-            let src = regs.get(*id)?;
-            match op {
-                BinOp::Add => emit_add_reg(asm, dst, dst, src),
-                BinOp::Sub => emit_sub_reg(asm, dst, dst, src),
-                BinOp::Mul => emit_mul_reg(asm, dst, dst, src),
-            }
-            Ok(())
-        }
-        LirValue::Constant(constant) => {
-            let imm = constant_to_i64(constant)?;
-            if imm >= 0 && imm <= 4095 {
-                match op {
-                    BinOp::Add => emit_add_imm12(asm, dst, dst, imm as u32),
-                    BinOp::Sub => emit_sub_imm12(asm, dst, dst, imm as u32),
-                    BinOp::Mul => {
-                        emit_mov_imm16(asm, Reg::X16, imm as u16);
-                        emit_mul_reg(asm, dst, dst, Reg::X16);
-                    }
-                }
-                Ok(())
-            } else {
-                emit_mov_imm16(asm, Reg::X16, imm as u16);
-                match op {
-                    BinOp::Add => emit_add_reg(asm, dst, dst, Reg::X16),
-                    BinOp::Sub => emit_sub_reg(asm, dst, dst, Reg::X16),
-                    BinOp::Mul => emit_mul_reg(asm, dst, dst, Reg::X16),
-                }
-                Ok(())
-            }
-        }
-        _ => Err(Error::from("unsupported RHS for aarch64")),
+
+fn store_outgoing_arg(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    offset: i32,
+    value: &LirValue,
+) -> Result<()> {
+    if offset < 0 || offset + 8 > layout.outgoing_size {
+        return Err(Error::from("outgoing arg offset out of range"));
     }
+    load_value(asm, layout, value, Reg::X16)?;
+    emit_store_to_sp(asm, Reg::X16, offset);
+    Ok(())
 }
 
 fn constant_to_i64(constant: &LirConstant) -> Result<i64> {
@@ -463,36 +464,55 @@ fn emit_cset(asm: &mut Assembler, dst: Reg, cond: u32) {
 
 fn emit_block(
     asm: &mut Assembler,
-    regs: &mut RegFile,
     block: &LirBasicBlock,
     format: TargetFormat,
     func_map: &HashMap<String, u32>,
+    layout: &FrameLayout,
 ) -> Result<()> {
     for inst in &block.instructions {
-        let dst = regs.alloc(inst.id)?;
         match &inst.kind {
-            LirInstructionKind::Add(lhs, rhs) => emit_binop(asm, regs, dst, lhs, rhs, BinOp::Add)?,
-            LirInstructionKind::Sub(lhs, rhs) => emit_binop(asm, regs, dst, lhs, rhs, BinOp::Sub)?,
-            LirInstructionKind::Mul(lhs, rhs) => emit_binop(asm, regs, dst, lhs, rhs, BinOp::Mul)?,
-            LirInstructionKind::Eq(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Eq)?,
-            LirInstructionKind::Ne(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Ne)?,
-            LirInstructionKind::Lt(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Lt)?,
-            LirInstructionKind::Le(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Le)?,
-            LirInstructionKind::Gt(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Gt)?,
-            LirInstructionKind::Ge(lhs, rhs) => emit_cmp(asm, regs, dst, lhs, rhs, CmpKind::Ge)?,
-            LirInstructionKind::Div(lhs, rhs) => emit_divrem(asm, regs, dst, lhs, rhs, false)?,
-            LirInstructionKind::Rem(lhs, rhs) => emit_divrem(asm, regs, dst, lhs, rhs, true)?,
-            LirInstructionKind::Alloca { .. } => {
-                regs.slot_offset(inst.id);
+            LirInstructionKind::Add(lhs, rhs) => {
+                emit_binop(asm, layout, inst.id, lhs, rhs, BinOp::Add)?
             }
+            LirInstructionKind::Sub(lhs, rhs) => {
+                emit_binop(asm, layout, inst.id, lhs, rhs, BinOp::Sub)?
+            }
+            LirInstructionKind::Mul(lhs, rhs) => {
+                emit_binop(asm, layout, inst.id, lhs, rhs, BinOp::Mul)?
+            }
+            LirInstructionKind::Eq(lhs, rhs) => {
+                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Eq)?
+            }
+            LirInstructionKind::Ne(lhs, rhs) => {
+                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Ne)?
+            }
+            LirInstructionKind::Lt(lhs, rhs) => {
+                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Lt)?
+            }
+            LirInstructionKind::Le(lhs, rhs) => {
+                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Le)?
+            }
+            LirInstructionKind::Gt(lhs, rhs) => {
+                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Gt)?
+            }
+            LirInstructionKind::Ge(lhs, rhs) => {
+                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Ge)?
+            }
+            LirInstructionKind::Div(lhs, rhs) => {
+                emit_divrem(asm, layout, inst.id, lhs, rhs, false)?
+            }
+            LirInstructionKind::Rem(lhs, rhs) => {
+                emit_divrem(asm, layout, inst.id, lhs, rhs, true)?
+            }
+            LirInstructionKind::Alloca { .. } => {}
             LirInstructionKind::Load { address, .. } => {
-                emit_load(asm, regs, dst, address)?;
+                emit_load(asm, layout, inst.id, address)?;
             }
             LirInstructionKind::Store { value, address, .. } => {
-                emit_store(asm, regs, value, address)?;
+                emit_store(asm, layout, value, address)?;
             }
             LirInstructionKind::Call { function, args, .. } => {
-                emit_call(asm, regs, dst, function, args, func_map)?;
+                emit_call(asm, layout, inst.id, function, args, func_map)?;
             }
             other => {
                 return Err(Error::from(format!(
@@ -504,10 +524,10 @@ fn emit_block(
 
     match &block.terminator {
         LirTerminator::Return(None) => {
-            if asm.needs_stack {
-                emit_epilogue(asm, regs);
+            if asm.needs_frame {
+                emit_epilogue(asm, layout);
             }
-            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
+            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) && asm.is_entry() {
                 emit_exit_syscall(asm, 0)?;
             } else {
                 emit_mov_imm16(asm, Reg::X0, 0);
@@ -516,11 +536,11 @@ fn emit_block(
         }
         LirTerminator::Return(Some(value)) => {
             let ret_reg = Reg::X0;
-            emit_value_to_reg(asm, regs, ret_reg, value)?;
-            if asm.needs_stack {
-                emit_epilogue(asm, regs);
+            load_value(asm, layout, value, ret_reg)?;
+            if asm.needs_frame {
+                emit_epilogue(asm, layout);
             }
-            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) {
+            if matches!(format, TargetFormat::Elf | TargetFormat::Coff) && asm.is_entry() {
                 emit_exit_syscall_reg(asm, ret_reg)?;
             } else {
                 emit_ret(asm);
@@ -536,7 +556,7 @@ fn emit_block(
         } => {
             emit_cond_branch(
                 asm,
-                regs,
+                layout,
                 condition,
                 Label::Block(asm.current_function, *if_true),
                 Label::Block(asm.current_function, *if_false),
@@ -559,27 +579,34 @@ enum CmpKind {
 
 fn emit_cmp(
     asm: &mut Assembler,
-    regs: &mut RegFile,
-    dst: Reg,
+    layout: &FrameLayout,
+    dst_id: u32,
     lhs: &LirValue,
     rhs: &LirValue,
     kind: CmpKind,
 ) -> Result<()> {
     match (lhs, rhs) {
-        (LirValue::Register(lhs_id), LirValue::Register(rhs_id)) => {
-            let lhs_reg = regs.get(*lhs_id)?;
-            let rhs_reg = regs.get(*rhs_id)?;
-            emit_cmp_reg(asm, lhs_reg, rhs_reg);
+        (LirValue::Register(_), LirValue::Register(_))
+        | (LirValue::Register(_), LirValue::Constant(_))
+        | (LirValue::Constant(_), LirValue::Register(_))
+        | (LirValue::Constant(_), LirValue::Constant(_)) => {}
+        _ => return Err(Error::from("unsupported compare operands")),
+    }
+
+    load_value(asm, layout, lhs, Reg::X16)?;
+    match rhs {
+        LirValue::Register(_) => {
+            load_value(asm, layout, rhs, Reg::X17)?;
+            emit_cmp_reg(asm, Reg::X16, Reg::X17);
         }
-        (LirValue::Register(lhs_id), LirValue::Constant(constant)) => {
-            let lhs_reg = regs.get(*lhs_id)?;
+        LirValue::Constant(constant) => {
             let imm = constant_to_i64(constant)?;
             if imm < 0 || imm > 4095 {
                 return Err(Error::from("cmp immediate out of range"));
             }
-            emit_cmp_imm12(asm, lhs_reg, imm as u32);
+            emit_cmp_imm12(asm, Reg::X16, imm as u32);
         }
-        _ => return Err(Error::from("unsupported compare operands")),
+        _ => {}
     }
 
     let cond = match kind {
@@ -590,13 +617,14 @@ fn emit_cmp(
         CmpKind::Gt => 12,
         CmpKind::Ge => 10,
     };
-    emit_cset(asm, dst, cond);
+    emit_cset(asm, Reg::X16, cond);
+    store_vreg(asm, layout, dst_id, Reg::X16)?;
     Ok(())
 }
 
 fn emit_cond_branch(
     asm: &mut Assembler,
-    regs: &mut RegFile,
+    layout: &FrameLayout,
     condition: &LirValue,
     if_true: Label,
     if_false: Label,
@@ -610,8 +638,9 @@ fn emit_cond_branch(
             }
         }
         LirValue::Register(id) => {
-            let reg = regs.get(*id)?;
-            emit_cmp_imm12(asm, reg, 0);
+            let offset = vreg_offset(layout, *id)?;
+            emit_load_from_sp(asm, Reg::X16, offset);
+            emit_cmp_imm12(asm, Reg::X16, 0);
             asm.emit_b_cond(1, if_true);
             asm.emit_b(if_false);
         }
@@ -638,25 +667,22 @@ struct Assembler {
     buf: Vec<u8>,
     labels: HashMap<Label, usize>,
     fixups: Vec<Fixup>,
-    needs_stack: bool,
+    needs_frame: bool,
     current_function: u32,
 }
 
-fn emit_prologue(asm: &mut Assembler, regs: &mut RegFile) -> Result<()> {
-    let slots = regs.next_slot.max(1) as u32;
-    let frame = ((slots * 8 + 15) / 16) * 16;
+fn emit_prologue(asm: &mut Assembler, layout: &FrameLayout) -> Result<()> {
+    let frame = layout.frame_size as u32;
     emit_sub_sp(asm, frame);
-    emit_store_pair(asm, Reg::X29, Reg::X30, frame as i32 - 16);
+    emit_store_pair(asm, Reg::X29, Reg::X30, layout.frame_size - 16);
     emit_mov_reg(asm, Reg::X29, Reg::X31);
     Ok(())
 }
 
-fn emit_epilogue(asm: &mut Assembler, regs: &RegFile) {
+fn emit_epilogue(asm: &mut Assembler, layout: &FrameLayout) {
     emit_mov_reg(asm, Reg::X31, Reg::X29);
-    emit_load_pair(asm, Reg::X29, Reg::X30, 0);
-    let slots = regs.next_slot.max(1) as u32;
-    let frame = ((slots * 8 + 15) / 16) * 16;
-    emit_add_sp(asm, frame);
+    emit_load_pair(asm, Reg::X29, Reg::X30, layout.frame_size - 16);
+    emit_add_sp(asm, layout.frame_size as u32);
 }
 
 impl Assembler {
@@ -665,7 +691,7 @@ impl Assembler {
             buf: Vec::new(),
             labels: HashMap::new(),
             fixups: Vec::new(),
-            needs_stack: false,
+            needs_frame: false,
             current_function: 0,
         }
     }
@@ -675,6 +701,10 @@ impl Assembler {
             self.current_function = id;
         }
         self.labels.insert(label, self.buf.len());
+    }
+
+    fn is_entry(&self) -> bool {
+        self.current_function == 0
     }
 
     fn emit_b(&mut self, target: Label) {

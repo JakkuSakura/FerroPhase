@@ -24,12 +24,8 @@ pub fn emit_text_from_lir(
         ));
     }
 
-    let mut saw_alloca = false;
     for block in &func.basic_blocks {
         for inst in &block.instructions {
-            if matches!(inst.kind, LirInstructionKind::Alloca { .. }) {
-                saw_alloca = true;
-            }
             if matches!(inst.kind, LirInstructionKind::Phi { .. }) {
                 return Err(Error::from("native emitter does not support Phi yet"));
             }
@@ -47,21 +43,6 @@ pub fn emit_text_from_lir(
                         "native emitter only supports register/constant call args",
                     ));
                 }
-                if let Some(last) = block.instructions.last() {
-                    if last.id != inst.id {
-                        return Err(Error::from(
-                            "native emitter requires calls to be last in the block",
-                        ));
-                    }
-                }
-                match &block.terminator {
-                    LirTerminator::Return(Some(LirValue::Register(id))) if *id == inst.id => {}
-                    _ => {
-                        return Err(Error::from(
-                            "native emitter requires call result to be returned immediately",
-                        ));
-                    }
-                }
             }
         }
         match &block.terminator {
@@ -77,8 +58,8 @@ pub fn emit_text_from_lir(
     }
 
     match arch {
-        TargetArch::X86_64 => x86_64::emit_text(lir_program, format, saw_alloca),
-        TargetArch::Aarch64 => aarch64::emit_text(lir_program, format, saw_alloca),
+        TargetArch::X86_64 => x86_64::emit_text(lir_program, format),
+        TargetArch::Aarch64 => aarch64::emit_text(lir_program, format),
     }
 }
 
