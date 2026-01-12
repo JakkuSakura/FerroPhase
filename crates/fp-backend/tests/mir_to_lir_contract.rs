@@ -1,5 +1,5 @@
-use fp_core::lir::{LirConstant, LirTerminator, LirType};
-use fp_core::mir::ty::{IntTy, Ty};
+use fp_core::lir::{LirConstant, LirInstructionKind, LirTerminator, LirType, LirValue};
+use fp_core::mir::ty::{IntTy, Ty, TyKind};
 use fp_core::mir::{self, FunctionSig, Item, ItemKind, Mutability, Operand};
 use fp_core::span::Span;
 use fp_optimize::transformations::LirGenerator;
@@ -108,5 +108,76 @@ fn lowers_static_integer_initializer_into_global_constant() {
             assert_eq!(*lir_ty, LirType::I32);
         }
         other => panic!("expected integer initializer, got {:?}", other),
+    }
+}
+
+#[test]
+fn lowers_single_case_switchint_as_equality_compare() {
+    let switch_ty = Ty::int(IntTy::I32);
+    let discr = Operand::Constant(mir::Constant {
+        span: Span::new(0, 0, 0),
+        user_ty: None,
+        literal: mir::ConstantKind::Int(5),
+    });
+    let terminator = mir::Terminator {
+        source_info: Span::new(0, 0, 0),
+        kind: mir::TerminatorKind::SwitchInt {
+            discr,
+            switch_ty: switch_ty.clone(),
+            targets: mir::SwitchTargets {
+                values: vec![5],
+                targets: vec![1],
+                otherwise: 2,
+            },
+        },
+    };
+
+    let bb0 = mir::BasicBlockData::new(Some(terminator));
+    let bb1 = support::mir::return_block();
+    let bb2 = support::mir::return_block();
+    let body = mir::Body::new(
+        vec![bb0, bb1, bb2],
+        Vec::new(),
+        0,
+        Span::new(0, 0, 0),
+    );
+
+    let body_id = mir::BodyId(0);
+    let function = mir::Function {
+        name: mir::Symbol::new("switch_test"),
+        path: vec![mir::Symbol::new("switch_test")],
+        def_id: None,
+        sig: FunctionSig {
+            inputs: Vec::new(),
+            output: Ty {
+                kind: TyKind::Tuple(Vec::new()),
+            },
+        },
+        body_id,
+    };
+    let program = mir::Program {
+        items: vec![Item {
+            mir_id: 0,
+            kind: ItemKind::Function(function),
+        }],
+        bodies: HashMap::from([(body_id, body)]),
+    };
+
+    let mut generator = LirGenerator::new();
+    let lir_program = generator
+        .transform(program)
+        .expect("lowering should succeed");
+
+    let func = &lir_program.functions[0];
+    let block = &func.basic_blocks[0];
+    assert_eq!(block.instructions.len(), 1);
+    let instr = &block.instructions[0];
+    assert!(matches!(instr.kind, LirInstructionKind::Eq(_, _)));
+
+    match &block.terminator {
+        LirTerminator::CondBr { condition, .. } => {
+            assert_eq!(*condition, LirValue::Register(instr.id));
+        }
+        other => panic!("expected CondBr terminator, got {:?}", other),
     }
 }

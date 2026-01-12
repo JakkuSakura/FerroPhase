@@ -72,11 +72,14 @@ pub fn struct_layout(ty: &LirType) -> Option<StructLayout> {
         align_to(offset, align as u64)
     };
 
-    Some(StructLayout {
+    let layout = StructLayout {
         size,
         align,
         field_offsets: offsets,
-    })
+    };
+    #[cfg(debug_assertions)]
+    debug_validate_struct_layout(ty, &layout);
+    Some(layout)
 }
 
 fn align_to(value: u64, alignment: u64) -> u64 {
@@ -88,5 +91,86 @@ fn align_to(value: u64, alignment: u64) -> u64 {
         value
     } else {
         value + (alignment - rem)
+    }
+}
+
+#[cfg(debug_assertions)]
+fn debug_validate_struct_layout(ty: &LirType, layout: &StructLayout) {
+    let LirType::Struct { fields, packed, .. } = ty else {
+        return;
+    };
+    debug_assert_eq!(
+        fields.len(),
+        layout.field_offsets.len(),
+        "layout field count mismatch"
+    );
+    if fields.is_empty() {
+        debug_assert_eq!(layout.size, 0, "empty struct size should be 0");
+        debug_assert_eq!(layout.align, 1, "empty struct align should be 1");
+        return;
+    }
+
+    for (idx, field) in fields.iter().enumerate() {
+        let offset = *layout
+            .field_offsets
+            .get(idx)
+            .expect("field offset missing");
+        let field_align = if *packed { 1 } else { align_of(field).max(1) };
+        if !*packed {
+            debug_assert_eq!(
+                offset % (field_align as u64),
+                0,
+                "field offset not aligned"
+            );
+        }
+        let field_size = size_of(field);
+        debug_assert!(
+            offset.saturating_add(field_size) <= layout.size,
+            "field range exceeds struct size"
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{struct_layout, LirType};
+
+    #[test]
+    fn struct_layout_respects_padding() {
+        let ty = LirType::Struct {
+            fields: vec![LirType::I8, LirType::I32],
+            packed: false,
+            name: None,
+        };
+        let layout = struct_layout(&ty).expect("layout expected");
+        assert_eq!(layout.field_offsets, vec![0, 4]);
+        assert_eq!(layout.align, 4);
+        assert_eq!(layout.size, 8);
+    }
+
+    #[test]
+    fn packed_struct_layout_is_tight() {
+        let ty = LirType::Struct {
+            fields: vec![LirType::I8, LirType::I32],
+            packed: true,
+            name: None,
+        };
+        let layout = struct_layout(&ty).expect("layout expected");
+        assert_eq!(layout.field_offsets, vec![0, 1]);
+        assert_eq!(layout.align, 1);
+        assert_eq!(layout.size, 5);
+    }
+
+    #[test]
+    fn empty_struct_layout_is_zero() {
+        let ty = LirType::Struct {
+            fields: Vec::new(),
+            packed: false,
+            name: None,
+        };
+        let layout = struct_layout(&ty).expect("layout expected");
+        assert_eq!(layout.field_offsets, Vec::<u64>::new());
+        assert_eq!(layout.align, 1);
+        assert_eq!(layout.size, 0);
     }
 }
