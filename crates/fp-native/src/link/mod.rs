@@ -3,8 +3,9 @@ use std::path::Path;
 
 use crate::emit::{TargetArch, TargetFormat};
 
-mod elf;
-mod macho;
+pub(crate) mod coff;
+pub(crate) mod elf;
+pub(crate) mod macho;
 mod pe;
 
 /// Link an executable for a target format.

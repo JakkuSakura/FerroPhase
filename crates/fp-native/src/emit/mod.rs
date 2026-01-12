@@ -1,7 +1,4 @@
 mod codegen;
-pub(crate) mod coff;
-pub(crate) mod elf;
-pub(crate) mod macho;
 
 use crate::link;
 use fp_core::error::{Error, Result};
@@ -86,9 +83,9 @@ pub fn emit_plan_minimal(
 
 pub fn write_object_minimal(path: &Path, plan: &EmitPlan) -> Result<()> {
     match plan.format {
-        TargetFormat::MachO => macho::emit_object_macho_minimal(path, plan.arch, &plan.text),
-        TargetFormat::Elf => elf::emit_object_elf64_minimal(path, plan.arch, &plan.text),
-        TargetFormat::Coff => coff::emit_object_coff_minimal(path, plan.arch, &plan.text),
+        TargetFormat::MachO => link::macho::emit_object_macho_minimal(path, plan.arch, &plan.text),
+        TargetFormat::Elf => link::elf::emit_object_elf64_minimal(path, plan.arch, &plan.text),
+        TargetFormat::Coff => link::coff::emit_object_coff_minimal(path, plan.arch, &plan.text),
     }
 }
 
