@@ -4,6 +4,7 @@ use std::path::Path;
 use crate::emit::{EmitPlan, TargetArch, TargetFormat};
 
 pub(crate) mod coff;
+pub mod dump;
 pub(crate) mod elf;
 pub(crate) mod macho;
 mod pe;

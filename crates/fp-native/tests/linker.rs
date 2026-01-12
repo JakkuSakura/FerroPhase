@@ -4,6 +4,7 @@ use fp_core::lir::{
     Name,
 };
 use fp_native::emit::{self, RelocKind, TargetArch, TargetFormat};
+use fp_native::link::dump::dump_macho;
 
 fn host_arch() -> TargetArch {
     if cfg!(target_arch = "x86_64") {
@@ -153,6 +154,21 @@ fn program_with_print() -> LirProgram {
     }
 }
 
+fn assert_range_in_file(label: &str, offset: u32, size: u32, len: usize) {
+    if size == 0 {
+        return;
+    }
+    let end = offset as usize + size as usize;
+    assert!(
+        end <= len,
+        "{} out of range: {}..{} (len={})",
+        label,
+        offset,
+        end,
+        len
+    );
+}
+
 #[test]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn emitter_handles_stack_call_args() {
@@ -231,6 +247,52 @@ fn macho_executable_supports_printf() {
     let bytes = std::fs::read(&exe).unwrap();
     let magic = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     assert_eq!(magic, 0xFEED_FACF);
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn macho_dump_has_expected_segments() {
+    let arch = host_arch();
+    let plan = emit::emit_plan(&minimal_program(), TargetFormat::MachO, arch).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let exe = out_dir.path().join("dump.macho");
+    emit::write_executable(&exe, &plan).unwrap();
+    let bytes = std::fs::read(&exe).unwrap();
+    let dump = dump_macho(&bytes).unwrap();
+    assert!(dump.segments.iter().any(|seg| seg.name == "__TEXT"));
+    assert!(dump.segments.iter().any(|seg| seg.name == "__LINKEDIT"));
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn macho_dump_offsets_stay_in_file() {
+    let arch = host_arch();
+    let plan = emit::emit_plan(&program_with_print(), TargetFormat::MachO, arch).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let exe = out_dir.path().join("dump-printf.macho");
+    emit::write_executable(&exe, &plan).unwrap();
+    let bytes = std::fs::read(&exe).unwrap();
+    let dump = dump_macho(&bytes).unwrap();
+    if let Some(info) = dump.dyld_info {
+        assert_range_in_file("rebase", info.rebase_off, info.rebase_size, bytes.len());
+        assert_range_in_file("bind", info.bind_off, info.bind_size, bytes.len());
+        assert_range_in_file("lazy_bind", info.lazy_bind_off, info.lazy_bind_size, bytes.len());
+        assert_range_in_file("export", info.export_off, info.export_size, bytes.len());
+    }
+    if let Some(symtab) = dump.symtab {
+        let sym_bytes = symtab.nsyms.saturating_mul(16);
+        assert_range_in_file("symtab", symtab.symoff, sym_bytes, bytes.len());
+        assert_range_in_file("strtab", symtab.stroff, symtab.strsize, bytes.len());
+    }
+    if let Some(dysymtab) = dump.dysymtab {
+        let indirect_bytes = dysymtab.nindirectsyms.saturating_mul(4);
+        assert_range_in_file(
+            "indirectsym",
+            dysymtab.indirectsymoff,
+            indirect_bytes,
+            bytes.len(),
+        );
+    }
 }
 
 #[test]
