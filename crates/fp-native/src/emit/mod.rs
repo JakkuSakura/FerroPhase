@@ -1,4 +1,6 @@
+mod aarch64;
 mod codegen;
+mod x86_64;
 
 use crate::link;
 use fp_core::error::{Error, Result};

@@ -3,10 +3,7 @@ use fp_core::lir::{
     LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
 };
 
-use crate::emit::{TargetArch, TargetFormat};
-
-mod aarch64;
-mod x86_64;
+use crate::emit::{aarch64, x86_64, TargetArch, TargetFormat};
 
 pub fn emit_text_from_lir(
     lir_program: &LirProgram,
