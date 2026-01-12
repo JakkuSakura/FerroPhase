@@ -272,13 +272,13 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
             hir::ExprKind::Call(func, args) => {
                 collect_paths(func, out);
                 for arg in args {
-                    collect_paths(arg, out);
+                    collect_paths(&arg.value, out);
                 }
             }
             hir::ExprKind::MethodCall(receiver, _, args) => {
                 collect_paths(receiver, out);
                 for arg in args {
-                    collect_paths(arg, out);
+                    collect_paths(&arg.value, out);
                 }
             }
             hir::ExprKind::FieldAccess(inner, _) => collect_paths(inner, out),
@@ -292,6 +292,15 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 collect_paths(then_branch, out);
                 if let Some(else_expr) = else_branch {
                     collect_paths(else_expr, out);
+                }
+            }
+            hir::ExprKind::Match(scrutinee, arms) => {
+                collect_paths(scrutinee, out);
+                for arm in arms {
+                    if let Some(guard) = &arm.guard {
+                        collect_paths(guard, out);
+                    }
+                    collect_paths(&arm.body, out);
                 }
             }
             hir::ExprKind::Block(block) => collect_paths_from_block(block, out),
@@ -330,6 +339,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                 collect_paths(base, out);
                 collect_paths(index, out);
             }
+            hir::ExprKind::FormatString(_) => {}
             hir::ExprKind::Literal(_) | hir::ExprKind::Continue => {}
         }
     }

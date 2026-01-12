@@ -90,6 +90,9 @@ fn build_frame_layout(func: &LirFunction, format: TargetFormat) -> Result<FrameL
             if let LirInstructionKind::Call { args, .. } = &inst.kind {
                 has_calls = true;
                 max_call_args = max_call_args.max(args.len());
+            } else if let LirInstructionKind::IntrinsicCall { args, .. } = &inst.kind {
+                has_calls = true;
+                max_call_args = max_call_args.max(args.len() + 1);
             }
         }
     }

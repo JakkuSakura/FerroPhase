@@ -41,6 +41,37 @@ impl HirGenerator {
         let mut resolved = None;
 
         if let Some(first) = segments.first() {
+            let first_name = first.name.as_str();
+            if matches!(first_name, "super" | "self" | "crate") {
+                let mut canonical = match first_name {
+                    "crate" => Vec::new(),
+                    "self" => self.module_path.clone(),
+                    "super" => self.module_path.clone(),
+                    _ => Vec::new(),
+                };
+
+                let mut idx = 0usize;
+                if first_name == "super" {
+                    while idx < segments.len() && segments[idx].name.as_str() == "super" {
+                        canonical.pop();
+                        idx += 1;
+                    }
+                } else {
+                    idx = 1;
+                }
+
+                canonical.extend(
+                    segments
+                        .iter()
+                        .skip(idx)
+                        .map(|seg| seg.name.as_str().to_string()),
+                );
+                resolved = self.lookup_global_res(&canonical, scope);
+            }
+        }
+
+        if resolved.is_none() {
+            if let Some(first) = segments.first() {
             let alias = match scope {
                 PathResolutionScope::Value => self.resolve_value_symbol(&first.name),
                 PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
@@ -57,6 +88,7 @@ impl HirGenerator {
                 if resolved.is_none() && segments.len() == 1 {
                     resolved = Some(hir::Res::Module(canonical));
                 }
+            }
             }
         }
 
