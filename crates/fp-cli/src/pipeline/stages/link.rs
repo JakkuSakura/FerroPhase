@@ -2,17 +2,23 @@ use super::super::*;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::process::Command;
 
-pub(crate) struct LinkContext {
+pub(crate) struct LinkNativeContext {
+    pub base_path: PathBuf,
+    pub options: PipelineOptions,
+    pub lir_program: fp_core::lir::LirProgram,
+}
+
+pub(crate) struct LinkLlvmContext {
     pub llvm_ir_path: PathBuf,
     pub base_path: PathBuf,
     pub options: PipelineOptions,
-    pub native_lir: Option<fp_core::lir::LirProgram>,
 }
 
-pub(crate) struct LinkStage;
+pub(crate) struct LinkNativeStage;
+pub(crate) struct LinkLlvmStage;
 
-impl PipelineStage for LinkStage {
-    type SrcCtx = LinkContext;
+impl PipelineStage for LinkNativeStage {
+    type SrcCtx = LinkNativeContext;
     type DstCtx = PathBuf;
 
     fn name(&self) -> &'static str {
@@ -21,49 +27,52 @@ impl PipelineStage for LinkStage {
 
     fn run(
         &self,
-        context: LinkContext,
+        context: LinkNativeContext,
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<PathBuf, PipelineError> {
-        let binary_path = context.base_path.with_extension(
-            if is_windows_target(context.options.target_triple.as_deref()) {
-                "exe"
-            } else {
-                "out"
-            },
-        );
+        let binary_path = binary_output_path(&context.base_path, &context.options);
+        ensure_output_dir(&binary_path, diagnostics)?;
 
-        // If enabled and we have a LIR payload, prefer fp-native.
-        if let Some(lir_program) = context.native_lir {
-            let cfg = fp_native::config::NativeConfig::executable(&binary_path)
-                .with_target_triple(context.options.target_triple.clone())
-                .with_target_cpu(context.options.target_cpu.clone())
-                .with_target_features(context.options.target_features.clone())
-                .with_sysroot(context.options.target_sysroot.clone())
-                .with_fuse_ld(context.options.target_linker.clone())
-                .with_linker_driver(context.options.linker.clone())
-                .with_release(context.options.release);
-            let emitter = fp_native::NativeEmitter::new(cfg);
-            return emitter.emit(lir_program, None).map_err(|e| {
-                diagnostics.push(
-                    Diagnostic::error(format!("fp-native failed: {}", e))
-                        .with_source_context(STAGE_LINK_BINARY),
-                );
-                PipelineError::new(STAGE_LINK_BINARY, "fp-native failed")
-            });
+        let mut cfg = fp_native::config::NativeConfig::executable(&binary_path)
+            .with_target_triple(context.options.target_triple.clone())
+            .with_target_cpu(context.options.target_cpu.clone())
+            .with_target_features(context.options.target_features.clone())
+            .with_sysroot(context.options.target_sysroot.clone())
+            .with_fuse_ld(context.options.target_linker.clone())
+            .with_linker_driver(context.options.linker.clone())
+            .with_release(context.options.release);
+        if context.options.save_intermediates {
+            let dump_path = context.base_path.with_extension("asm");
+            cfg = cfg.with_asm_dump(Some(dump_path));
         }
+        let emitter = fp_native::NativeEmitter::new(cfg);
+        emitter.emit(context.lir_program, None).map_err(|e| {
+            diagnostics.push(
+                Diagnostic::error(format!("fp-native failed: {}", e))
+                    .with_source_context(STAGE_LINK_BINARY),
+            );
+            PipelineError::new(STAGE_LINK_BINARY, "fp-native failed")
+        })?;
 
-        if let Some(parent) = binary_path.parent() {
-            if let Err(err) = fs::create_dir_all(parent) {
-                diagnostics.push(
-                    Diagnostic::error(format!("Failed to create output directory: {}", err))
-                        .with_source_context(STAGE_LINK_BINARY),
-                );
-                return Err(PipelineError::new(
-                    STAGE_LINK_BINARY,
-                    "Failed to create output directory",
-                ));
-            }
-        }
+        Ok(binary_path)
+    }
+}
+
+impl PipelineStage for LinkLlvmStage {
+    type SrcCtx = LinkLlvmContext;
+    type DstCtx = PathBuf;
+
+    fn name(&self) -> &'static str {
+        STAGE_LINK_BINARY
+    }
+
+    fn run(
+        &self,
+        context: LinkLlvmContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<PathBuf, PipelineError> {
+        let binary_path = binary_output_path(&context.base_path, &context.options);
+        ensure_output_dir(&binary_path, diagnostics)?;
 
         let clang_available = Command::new("clang").arg("--version").output();
         if matches!(clang_available, Err(_)) {
@@ -181,6 +190,33 @@ impl PipelineStage for LinkStage {
     }
 }
 
+fn binary_output_path(base_path: &Path, options: &PipelineOptions) -> PathBuf {
+    base_path.with_extension(if is_windows_target(options.target_triple.as_deref()) {
+        "exe"
+    } else {
+        "out"
+    })
+}
+
+fn ensure_output_dir(
+    binary_path: &Path,
+    diagnostics: &mut PipelineDiagnostics,
+) -> Result<(), PipelineError> {
+    if let Some(parent) = binary_path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            diagnostics.push(
+                Diagnostic::error(format!("Failed to create output directory: {}", err))
+                    .with_source_context(STAGE_LINK_BINARY),
+            );
+            return Err(PipelineError::new(
+                STAGE_LINK_BINARY,
+                "Failed to create output directory",
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn is_windows_target(target_triple: Option<&str>) -> bool {
     let triple = match target_triple {
         Some(triple) => triple,
@@ -204,12 +240,11 @@ impl Pipeline {
         base_path: &Path,
         options: &PipelineOptions,
     ) -> Result<PathBuf, CliError> {
-        let stage = LinkStage;
-        let context = LinkContext {
+        let stage = LinkLlvmStage;
+        let context = LinkLlvmContext {
             llvm_ir_path: llvm_ir_path.to_path_buf(),
             base_path: base_path.to_path_buf(),
             options: options.clone(),
-            native_lir: None,
         };
         self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
     }
@@ -220,12 +255,11 @@ impl Pipeline {
         base_path: &Path,
         options: &PipelineOptions,
     ) -> Result<PathBuf, CliError> {
-        let stage = LinkStage;
-        let context = LinkContext {
-            llvm_ir_path: base_path.with_extension("ll"),
+        let stage = LinkNativeStage;
+        let context = LinkNativeContext {
             base_path: base_path.to_path_buf(),
             options: options.clone(),
-            native_lir: Some(lir_program.clone()),
+            lir_program: lir_program.clone(),
         };
         self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
     }
