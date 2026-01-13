@@ -4816,7 +4816,14 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn pattern_always_matches(&self, pat: &hir::Pat) -> bool {
-        matches!(pat.kind, hir::PatKind::Wild | hir::PatKind::Binding { .. })
+        match &pat.kind {
+            hir::PatKind::Wild | hir::PatKind::Binding { .. } => true,
+            hir::PatKind::Tuple(items) => items.iter().all(|item| self.pattern_always_matches(item)),
+            hir::PatKind::Struct(_, fields, _) => fields
+                .iter()
+                .all(|field| self.pattern_always_matches(&field.pat)),
+            _ => false,
+        }
     }
 
     fn lower_match_condition(
@@ -9077,9 +9084,8 @@ impl<'a> BodyBuilder<'a> {
                 if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
                     Ok((operand, ty.clone(), "%s".to_string()))
                 } else {
-                    self.lowering
-                        .emit_error(span, "printf only supports raw pointers to byte strings");
-                    Ok((operand, ty.clone(), "%s".to_string()))
+                    let spec = self.printf_spec_for_ty(&ty, span)?;
+                    Ok((operand, ty.clone(), spec))
                 }
             }
             TyKind::Slice(elem) => {
@@ -9146,19 +9152,8 @@ impl<'a> BodyBuilder<'a> {
                 if self.is_c_string_ptr(inner.as_ref()) {
                     return Ok((operand, ty.clone(), "%s".to_string()));
                 }
-                let place = match operand {
-                    mir::Operand::Copy(place) | mir::Operand::Move(place) => place,
-                    _ => {
-                        self.lowering
-                            .emit_error(span, "printf cannot dereference non-place arguments");
-                        return Ok((operand, ty.clone(), "%s".to_string()));
-                    }
-                };
-                let mut deref_place = place.clone();
-                deref_place.projection.push(mir::PlaceElem::Deref);
-                let deref_ty = (*inner.as_ref()).clone();
-                let spec = self.printf_spec_for_ty(&deref_ty, span)?;
-                Ok((mir::Operand::Copy(deref_place), deref_ty, spec))
+                let spec = self.printf_spec_for_ty(&ty, span)?;
+                Ok((operand, ty.clone(), spec))
             }
             _ => {
                 if let Some((string_operand, string_ty)) =
@@ -9340,10 +9335,17 @@ impl<'a> BodyBuilder<'a> {
                 if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
                     "%s"
                 } else {
-                    self.lowering
-                        .emit_error(span, "printf only supports raw pointers to byte strings");
-                    "%s"
+                    self.lowering.emit_warning(
+                        span,
+                        "printf using %p for non-string raw pointer argument",
+                    );
+                    "%p"
                 }
+            }
+            TyKind::Ref(_, _, _) => {
+                self.lowering
+                    .emit_warning(span, "printf using %p for non-string reference argument");
+                "%p"
             }
             _ => {
                 if self.lowering.is_opaque_ty(ty) {
@@ -9513,11 +9515,11 @@ impl<'a> BodyBuilder<'a> {
         match konst {
             ConstKind::Value(ConstValue::Scalar(Scalar::Int(int))) => Some(int.data as u64),
             ConstKind::Value(ConstValue::Scalar(Scalar::Ptr(_))) => {
-                self.lowering.emit_error(
+                self.lowering.emit_warning(
                     span,
-                    "array length uses a pointer value, which is unsupported",
+                    "array length uses a pointer value; treating length as zero",
                 );
-                None
+                Some(0)
             }
             ConstKind::Value(ConstValue::ZeroSized) => Some(0),
             _ => {

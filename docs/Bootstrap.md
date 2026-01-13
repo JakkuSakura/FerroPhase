@@ -158,11 +158,13 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Monomorphization: specialization happens on‑demand, but there is no full pass to discover all instantiations.
 - Named arguments: calls now resolve by parameter name when available; format/printf named args resolve but remain constrained by printf‑style type support.
 - Panic format payloads: format strings now lower through the format intrinsic, but inherit printf‑style type limits.
+- Match patterns: tuple/struct patterns made of only bindings/wildcards now short‑circuit as always‑match.
+- Array lengths from pointer values default to zero with a warning.
+- printf pointer args now use `%p` for non‑string references/pointers.
 
 ### Still Missing (true blockers)
 - Arbitrary precision decimals unsupported.
 - `printf` argument types limited.
-- Array length via pointer unsupported.
 - Field/index access still rejects some base expressions.
 - Some MIR intrinsics and place projections (e.g., downcasts) are not lowered.
 
