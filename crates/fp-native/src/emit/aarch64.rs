@@ -208,6 +208,17 @@ fn build_frame_layout(
             "{} frame_size={} outgoing_size={} save_offset={}",
             func.name, frame_size, outgoing_size, save_offset
         ));
+        if func.name.as_str() == "main" {
+            for (id, offset, size) in &alloca_debug {
+                layout_log(&format!("main alloca id={} offset={} size={}", id, offset, size));
+            }
+            for (id, offset, size) in &local_debug {
+                layout_log(&format!("main local id={} offset={} size={}", id, offset, size));
+            }
+            for (id, offset, size) in &agg_debug {
+                layout_log(&format!("main agg id={} offset={} size={}", id, offset, size));
+            }
+        }
         for (id, offset, size) in &alloca_debug {
             if *offset + *size > save_offset {
                 layout_log(&format!(
@@ -1108,7 +1119,26 @@ fn emit_store(
         }
     }
     if is_large_aggregate(&value_ty) {
-        let size = size_of(&value_ty) as i32;
+        let mut size = size_of(&value_ty) as i32;
+        if matches!(address, LirValue::Register(_) | LirValue::Local(_)) {
+            let addr_ty = value_type(address, reg_types, local_types)?;
+            if let LirType::Ptr(inner) = addr_ty {
+                if is_aggregate_type(inner.as_ref())
+                    || matches!(inner.as_ref(), LirType::Array(..) | LirType::Vector(..))
+                {
+                    let dst_size = size_of(inner.as_ref()) as i32;
+                    if dst_size > 0 && dst_size < size {
+                        if stack_debug_enabled() {
+                            eprintln!(
+                                "[fp-native][stack] store-agg size cap {} -> {} (addr pointee)",
+                                size, dst_size
+                            );
+                        }
+                        size = dst_size;
+                    }
+                }
+            }
+        }
         if let LirValue::Constant(LirConstant::Struct(values, ty)) = value {
             let fields = match ty {
                 LirType::Struct { fields, .. } => fields,
@@ -1276,6 +1306,13 @@ fn emit_store(
             }
             LirValue::Register(id) => {
                 if let Some(offset) = asm.vreg_sp_offset(*id) {
+                    if stack_debug_enabled() {
+                        let addr_ty = value_type(address, reg_types, local_types)?;
+                        eprintln!(
+                            "[fp-native][stack] store-agg-via-reg vreg={} offset={} size={} value_ty={:?} addr_ty={:?}",
+                            id, offset, size, value_ty, addr_ty
+                        );
+                    }
                     asm.log_stack_write(offset, size, "store-agg-via-reg");
                 }
                 let addr_offset = vreg_offset(layout, *id)?;
