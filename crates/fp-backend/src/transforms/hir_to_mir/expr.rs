@@ -582,6 +582,58 @@ impl MirLowering {
         Ok(info)
     }
 
+    fn ensure_function_specialization_from_explicit_args(
+        &mut self,
+        program: &hir::Program,
+        def_id: hir::DefId,
+        function: &hir::Function,
+        explicit_args: &[Ty],
+        span: Span,
+    ) -> Result<FunctionSpecializationInfo> {
+        let generics = function
+            .sig
+            .generics
+            .params
+            .iter()
+            .map(|param| param.name.as_str().to_string())
+            .collect::<Vec<_>>();
+        let substs = self.build_substs_from_explicit_args(&generics, explicit_args, span)?;
+        let args_in_order = generics
+            .iter()
+            .filter_map(|name| substs.get(name).cloned())
+            .collect::<Vec<_>>();
+        let key = FunctionSpecializationKey {
+            def_id,
+            args: args_in_order.clone(),
+        };
+
+        if let Some(info) = self.function_specializations.get(&key) {
+            return Ok(info.clone());
+        }
+
+        let sig = self.lower_function_sig_with_substs(&function.sig, None, &substs);
+        let suffix = self.specialization_suffix(&args_in_order);
+        let name = format!("{}__{}_{}", function.sig.name.as_str(), suffix, def_id);
+        let fn_ty = self.function_pointer_ty(&sig);
+
+        let item = program
+            .def_map
+            .get(&def_id)
+            .ok_or_else(|| crate::error::optimization_error("missing function item"))?;
+        let (mir_item, body_id, body) =
+            self.lower_function_with_substs(program, item, function, &sig, substs, &name)?;
+        self.extra_items.push(mir_item);
+        self.extra_bodies.push((body_id, body));
+
+        let info = FunctionSpecializationInfo {
+            name: name.clone(),
+            sig: sig.clone(),
+            fn_ty: fn_ty.clone(),
+        };
+        self.function_specializations.insert(key, info.clone());
+        Ok(info)
+    }
+
     fn ensure_method_specialization(
         &mut self,
         program: &hir::Program,
@@ -611,6 +663,107 @@ impl MirLowering {
             arg_types,
             span,
         )?;
+        let args_in_order = generics
+            .iter()
+            .filter_map(|name| substs.get(name).cloned())
+            .collect::<Vec<_>>();
+        let key = MethodSpecializationKey {
+            method_name: def.method_name.clone(),
+            args: args_in_order.clone(),
+        };
+
+        if let Some(info) = self.method_specializations.get(&key) {
+            return Ok(info.clone());
+        }
+
+        let mut method_context = if let hir::TypeExprKind::Path(path) = &def.self_ty.kind {
+            let mir_self_ty = self.lower_type_expr_with_substs(&def.self_ty, &substs);
+            Some(MethodContext {
+                def_id: def.self_def,
+                path: path.segments.clone(),
+                mir_self_ty,
+            })
+        } else {
+            None
+        };
+
+        let sig = self.lower_function_sig_with_substs(
+            &def.function.sig,
+            method_context.as_ref(),
+            &substs,
+        );
+        let suffix = self.specialization_suffix(&args_in_order);
+        let name = format!("{}__{}", def.method_name, suffix);
+        let fn_ty = self.function_pointer_ty(&sig);
+
+        let body_id = mir::BodyId::new(self.next_body_id);
+        self.next_body_id += 1;
+
+        let span = def
+            .function
+            .body
+            .as_ref()
+            .map(|body| body.value.span)
+            .unwrap_or(span);
+        let mir_body = BodyBuilder::new(
+            self,
+            program,
+            &def.function,
+            &sig,
+            span,
+            method_context.take(),
+            substs,
+        )
+        .lower()?;
+
+        let mir_function = mir::Function {
+            name: mir::Symbol::new(name.clone()),
+            path: Vec::new(),
+            def_id: None,
+            sig: sig.clone(),
+            body_id,
+        };
+        let mir_item = mir::Item {
+            mir_id: self.next_mir_id,
+            kind: mir::ItemKind::Function(mir_function),
+        };
+        self.next_mir_id += 1;
+
+        self.extra_items.push(mir_item);
+        self.extra_bodies.push((body_id, mir_body));
+
+        let info = MethodLoweringInfo {
+            sig,
+            fn_name: name.clone(),
+            fn_ty,
+            struct_def: def.self_def,
+        };
+        self.method_specializations.insert(key, info.clone());
+        Ok(info)
+    }
+
+    fn ensure_method_specialization_from_explicit_args(
+        &mut self,
+        program: &hir::Program,
+        def: &MethodDefinition,
+        explicit_args: &[Ty],
+        span: Span,
+    ) -> Result<MethodLoweringInfo> {
+        let impl_generics = def
+            .impl_generics
+            .params
+            .iter()
+            .map(|param| param.name.as_str().to_string());
+        let method_generics = def
+            .function
+            .sig
+            .generics
+            .params
+            .iter()
+            .map(|param| param.name.as_str().to_string());
+        let generics = impl_generics.chain(method_generics).collect::<Vec<_>>();
+
+        let substs = self.build_substs_from_explicit_args(&generics, explicit_args, span)?;
         let args_in_order = generics
             .iter()
             .filter_map(|name| substs.get(name).cloned())
@@ -794,6 +947,33 @@ impl MirLowering {
             }
         }
 
+        Ok(substs)
+    }
+
+    fn build_substs_from_explicit_args(
+        &mut self,
+        generics: &[String],
+        explicit_args: &[Ty],
+        span: Span,
+    ) -> Result<HashMap<String, Ty>> {
+        if explicit_args.len() != generics.len() {
+            self.emit_error(
+                span,
+                format!(
+                    "expected {} generic arguments, got {}",
+                    generics.len(),
+                    explicit_args.len()
+                ),
+            );
+            return Err(crate::error::optimization_error(
+                "generic argument count mismatch",
+            ));
+        }
+
+        let mut substs = HashMap::new();
+        for (name, ty) in generics.iter().zip(explicit_args.iter().cloned()) {
+            substs.insert(name.clone(), ty);
+        }
         Ok(substs)
     }
 
@@ -7001,6 +7181,13 @@ impl<'a> BodyBuilder<'a> {
                     .first()
                     .filter(|_| resolved_path.segments.len() == 1)
                     .and_then(|seg| self.fallback_locals.get(seg.name.as_str()).copied());
+                let explicit_args = resolved_path
+                    .segments
+                    .iter()
+                    .find_map(|segment| segment.args.as_ref())
+                    .map(|args| self.lowering.lower_generic_args(Some(args), expr.span))
+                    .unwrap_or_default();
+                let has_explicit_args = !explicit_args.is_empty();
                 let expected_sig = expected.and_then(|ty| {
                     if let TyKind::FnPtr(poly_fn_sig) = &ty.kind {
                         let sig = &poly_fn_sig.binder.value;
@@ -7013,6 +7200,30 @@ impl<'a> BodyBuilder<'a> {
                     }
                 });
                 if let Some(hir::Res::Def(def_id)) = &resolved_path.res {
+                    if has_explicit_args {
+                        if let Some(function) =
+                            self.lowering.generic_function_defs.get(def_id).cloned()
+                        {
+                            let info = self.lowering.ensure_function_specialization_from_explicit_args(
+                                self.program,
+                                *def_id,
+                                &function,
+                                &explicit_args,
+                                expr.span,
+                            )?;
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::Constant(mir::Constant {
+                                    span: expr.span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Fn(
+                                        mir::Symbol::new(info.name.clone()),
+                                        info.fn_ty.clone(),
+                                    ),
+                                }),
+                                ty: info.fn_ty,
+                            });
+                        }
+                    }
                     if let Some(expected_sig) = expected_sig.as_ref() {
                         if let Some(function) =
                             self.lowering.generic_function_defs.get(def_id).cloned()
@@ -7161,6 +7372,47 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(OperandInfo {
                             operand: mir::Operand::copy(place),
                             ty,
+                        });
+                    }
+                }
+
+                if has_explicit_args {
+                    let qualified_name = resolved_path
+                        .segments
+                        .iter()
+                        .map(|seg| seg.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join("::");
+                    let mut method_def = self.lowering.method_defs.get(&qualified_name).cloned();
+                    if method_def.is_none() && resolved_path.segments.len() >= 2 {
+                        let tail = format!(
+                            "{}::{}",
+                            resolved_path.segments[resolved_path.segments.len() - 2]
+                                .name
+                                .as_str(),
+                            resolved_path.segments[resolved_path.segments.len() - 1]
+                                .name
+                                .as_str()
+                        );
+                        method_def = self.lowering.method_defs.get(&tail).cloned();
+                    }
+                    if let Some(def) = method_def {
+                        let info = self.lowering.ensure_method_specialization_from_explicit_args(
+                            self.program,
+                            &def,
+                            &explicit_args,
+                            expr.span,
+                        )?;
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::Fn(
+                                    mir::Symbol::new(info.fn_name.clone()),
+                                    info.fn_ty.clone(),
+                                ),
+                            }),
+                            ty: info.fn_ty,
                         });
                     }
                 }
