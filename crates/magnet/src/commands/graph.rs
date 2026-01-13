@@ -5,6 +5,8 @@ use eyre::Result;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::process::Command;
+use tracing::{info, warn};
 
 pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
     let root = resolve_root(config_path);
@@ -27,6 +29,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
     }
     let mut file = std::fs::File::create(&output_path)?;
     write_dot(&graph, &mut file)?;
+    render_graphviz(&output_path);
 
     Ok(())
 }
@@ -124,4 +127,29 @@ fn resolve_root(config_path: &Path) -> PathBuf {
         .parent()
         .map(|path| path.to_path_buf())
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn render_graphviz(dot_path: &Path) {
+    let output_path = dot_path.with_extension("png");
+    let status = Command::new("dot")
+        .arg("-Tpng")
+        .arg(dot_path)
+        .arg("-o")
+        .arg(&output_path)
+        .status();
+    match status {
+        Ok(status) if status.success() => {
+            info!("wrote graphviz output to {}", output_path.display());
+        }
+        Ok(status) => {
+            warn!(
+                "graphviz dot failed (exit code {:?}); output: {}",
+                status.code(),
+                output_path.display()
+            );
+        }
+        Err(err) => {
+            warn!("graphviz dot not available: {}", err);
+        }
+    }
 }
