@@ -45,6 +45,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         cache_dir: options.cache_dir.clone(),
         include_dependencies: true,
         cargo_fetch: options.fetch,
+        resolve_registry: true,
     };
     let graph_path = write_package_graph(
         &root,

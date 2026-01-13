@@ -16,9 +16,20 @@ glob = "0.3"
 pathdiff = "0.2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+crates-index = "0.19"
+semver = "1.0"
+ureq = "2.9"
+flate2 = "1.0"
+tar = "0.4"
+sha2 = "0.10"
+hex = "0.4"
 fp-core = { path = "../fp-core" }
 fp-rust = { path = "../fp-rust" }
 fp-typescript = { path = "../fp-typescript" }
 
 [dev-dependencies]
 tempfile = "3.4"
+
+[features]
+default = []
+cargo-fallback = []

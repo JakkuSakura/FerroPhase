@@ -34,6 +34,7 @@ pub mod configs;
 pub mod generator;
 pub mod manager;
 pub mod models;
+pub mod registry;
 pub mod utils;
 
 // Export version information

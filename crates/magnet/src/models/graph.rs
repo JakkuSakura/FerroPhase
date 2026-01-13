@@ -1,4 +1,5 @@
 use crate::models::{DependencyModel, ManifestModel, PackageModel};
+use crate::registry::{RegistryClient, RegistryOptions};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleProvider, ModuleSource, PackageProvider};
@@ -9,6 +10,7 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
+#[cfg(feature = "cargo-fallback")]
 use std::process::Command;
 use std::sync::Arc;
 
@@ -45,6 +47,12 @@ pub struct DependencyEdge {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_version: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub git: Option<String>,
@@ -68,6 +76,7 @@ pub struct PackageGraphOptions {
     pub cache_dir: Option<PathBuf>,
     pub include_dependencies: bool,
     pub cargo_fetch: bool,
+    pub resolve_registry: bool,
 }
 
 impl Default for PackageGraphOptions {
@@ -77,18 +86,34 @@ impl Default for PackageGraphOptions {
             cache_dir: None,
             include_dependencies: true,
             cargo_fetch: true,
+            resolve_registry: true,
         }
     }
 }
 
 impl PackageGraph {
     pub fn from_manifest(manifest: &ManifestModel) -> Result<Self> {
+        Self::from_manifest_with_options(manifest, &PackageGraphOptions::default())
+    }
+
+    pub fn from_manifest_with_options(
+        manifest: &ManifestModel,
+        options: &PackageGraphOptions,
+    ) -> Result<Self> {
         let root = manifest_root_path(manifest);
         let packages = manifest.list_packages()?;
+        let registry = if options.resolve_registry {
+            Some(RegistryClient::new(RegistryOptions {
+                offline: options.offline,
+                cache_dir: resolve_cache_dir(options),
+            })?)
+        } else {
+            None
+        };
         let packages = packages
             .into_iter()
-            .map(package_to_node)
-            .collect::<Vec<_>>();
+            .map(|package| package_to_node(package, registry.as_ref()))
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
             schema_version: 1,
@@ -112,7 +137,7 @@ impl PackageGraph {
             let ts_path = path.join("package.json");
             if magnet_path.exists() {
                 let manifest = ManifestModel::from_dir(&path)?;
-                return Self::from_manifest(&manifest);
+                return Self::from_manifest_with_options(&manifest, options);
             }
             if cargo_path.exists() {
                 return Self::from_cargo_manifest_with_options(&cargo_path, options);
@@ -162,8 +187,11 @@ impl PackageGraph {
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
             .to_path_buf();
         let _guard = apply_cargo_home(resolve_cache_dir(options))?;
-        if options.cargo_fetch && !options.offline {
-            prefetch_cargo_dependencies(manifest_path)?;
+        #[cfg(feature = "cargo-fallback")]
+        {
+            if options.cargo_fetch && !options.offline {
+                prefetch_cargo_dependencies(manifest_path)?;
+            }
         }
         let provider = Arc::new(CargoPackageProvider::new_with_options(
             root.clone(),
@@ -323,6 +351,9 @@ impl PackageGraph {
                 name: dep.name,
                 package: None,
                 version: dep.version,
+                resolved_version: None,
+                checksum: None,
+                source: None,
                 path: None,
                 git: None,
                 rev: None,
@@ -355,6 +386,7 @@ impl PackageGraph {
     }
 }
 
+#[cfg(feature = "cargo-fallback")]
 fn prefetch_cargo_dependencies(manifest_path: &Path) -> Result<()> {
     let status = Command::new("cargo")
         .arg("fetch")
@@ -424,23 +456,23 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
     if let Some(cache_dir) = std::env::var_os("MAGNET_CACHE_DIR") {
         return Some(PathBuf::from(cache_dir));
     }
-    if std::env::var_os("CARGO_HOME").is_some() {
-        return None;
-    }
     let home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from)?;
-    Some(home.join(".cache").join("magnet").join("cargo"))
+    Some(home.join(".cache").join("magnet"))
 }
 
-fn package_to_node(package: PackageModel) -> PackageNode {
+fn package_to_node(
+    package: PackageModel,
+    registry: Option<&RegistryClient>,
+) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
         let path = module_root.join("main.fp");
         if path.exists() { Some(path) } else { None }
     };
 
-    PackageNode {
+    Ok(PackageNode {
         name: package.name,
         version: package.version,
         root: package.root_path.clone(),
@@ -451,17 +483,44 @@ fn package_to_node(package: PackageModel) -> PackageNode {
         dependencies: package
             .dependencies
             .into_iter()
-            .map(|(name, dep)| dependency_to_edge(name, dep))
-            .collect(),
-    }
+            .map(|(name, dep)| dependency_to_edge(name, dep, registry))
+            .collect::<Result<Vec<_>>>()?,
+    })
 }
 
-fn dependency_to_edge(name: String, dep: DependencyModel) -> DependencyEdge {
-    DependencyEdge {
+fn dependency_to_edge(
+    name: String,
+    dep: DependencyModel,
+    registry: Option<&RegistryClient>,
+) -> Result<DependencyEdge> {
+    let mut resolved_version = None;
+    let mut checksum = None;
+    let mut source = None;
+    let mut path = dep.path.clone();
+
+    if path.is_none() && dep.git.is_none() && dep.version.is_some() {
+        if let Some(registry_name) = dep.registry.as_deref() {
+            if registry_name != "crates-io" && registry_name != "crates.io" {
+                return Err(eyre::eyre!("unsupported registry '{}'", registry_name));
+            }
+        }
+        if let Some(registry) = registry {
+            let resolved = registry.resolve(&name, dep.version.as_deref())?;
+            resolved_version = Some(resolved.version.clone());
+            checksum = resolved.checksum.clone();
+            source = Some("registry".to_string());
+            path = Some(resolved.root);
+        }
+    }
+
+    Ok(DependencyEdge {
         name,
         package: dep.package,
         version: dep.version,
-        path: dep.path,
+        resolved_version,
+        checksum,
+        source,
+        path,
         git: dep.git,
         rev: dep.rev,
         branch: dep.branch,
@@ -469,7 +528,7 @@ fn dependency_to_edge(name: String, dep: DependencyModel) -> DependencyEdge {
         workspace: dep.workspace,
         optional: dep.optional,
         features: dep.features,
-    }
+    })
 }
 
 fn dependency_descriptor_to_edge(dep: &DependencyDescriptor) -> DependencyEdge {
@@ -477,6 +536,9 @@ fn dependency_descriptor_to_edge(dep: &DependencyDescriptor) -> DependencyEdge {
         name: dep.package.clone(),
         package: None,
         version: dep.constraint.as_ref().map(|v| v.to_string()),
+        resolved_version: None,
+        checksum: None,
+        source: None,
         path: None,
         git: None,
         rev: None,
@@ -531,6 +593,9 @@ fn dependencies_from_map(map: &Option<HashMap<String, serde_json::Value>>) -> Ve
                 name: name.clone(),
                 package: None,
                 version,
+                resolved_version: None,
+                checksum: None,
+                source: None,
                 path: None,
                 git: None,
                 rev: None,
