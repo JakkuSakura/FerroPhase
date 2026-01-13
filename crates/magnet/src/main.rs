@@ -47,6 +47,7 @@ fn main() -> Result<()> {
         }
         Some(Commands::Check { config }) => commands::check(&config),
         Some(Commands::Tree { config }) => commands::tree(&config),
+        Some(Commands::Graph { config }) => commands::graph(&config),
         Some(Commands::Export {
             package,
             clean,
@@ -189,6 +190,12 @@ enum Commands {
     },
     /// Display workspace hierarchy as a tree
     Tree {
+        /// Path to the Magnet.toml file
+        #[arg(default_value = ".")]
+        config: PathBuf,
+    },
+    /// Render dependency graph as Graphviz DOT
+    Graph {
         /// Path to the Magnet.toml file
         #[arg(default_value = ".")]
         config: PathBuf,

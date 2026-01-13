@@ -151,6 +151,25 @@ serde = "1.0"
         "Tree output should include crate2"
     );
 
+    // Test the graph command
+    let output = Command::new(&magnet_bin)
+        .args(["graph", temp_dir.path().to_str().unwrap()])
+        .env("MAGNET_OFFLINE", "1")
+        .current_dir(temp_dir.path())
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "magnet graph failed with: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let output_str = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output_str.contains("digraph magnet"),
+        "Graph output should include the digraph header"
+    );
+
     // Test the generate command
     let output = Command::new(&magnet_bin)
         .args(["generate", temp_dir.path().to_str().unwrap()])

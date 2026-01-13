@@ -4,6 +4,7 @@
 mod check;
 pub mod export; // Changed from mod to pub mod to expose ExportOptions
 pub mod generate; // Changed from mod to pub mod to expose GenerateOptions
+mod graph;
 mod init;
 mod run;
 mod submodule;
@@ -15,6 +16,7 @@ mod utils;
 pub use check::check;
 pub use export::export;
 pub use generate::generate;
+pub use graph::graph;
 pub use init::init;
 pub use run::{RunMode, RunOptions, run};
 pub use submodule::{
