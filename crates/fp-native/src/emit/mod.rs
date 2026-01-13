@@ -8,6 +8,7 @@ use fp_core::lir::{
     CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator,
     LirType, Linkage, Name,
 };
+use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 use std::collections::HashMap;
@@ -104,10 +105,17 @@ pub enum RelocKind {
     Aarch64AdrpAdd,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelocSection {
+    Text,
+    Rdata,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relocation {
     pub offset: u64,
     pub kind: RelocKind,
+    pub section: RelocSection,
     pub symbol: String,
     pub addend: i64,
 }
@@ -141,6 +149,62 @@ pub fn write_executable(path: &Path, plan: &EmitPlan) -> Result<()> {
     link::link_executable(path, plan.format, plan.arch, plan)?;
     set_executable_permissions(path)?;
     Ok(())
+}
+
+pub fn dump_asm(path: &Path, plan: &EmitPlan) -> Result<()> {
+    let mut out = String::new();
+    writeln!(
+        &mut out,
+        "fp-native dump: format={:?} arch={:?} entry=0x{:x}",
+        plan.format, plan.arch, plan.entry_offset
+    )
+    .ok();
+
+    if !plan.symbols.is_empty() {
+        let mut symbols: Vec<(&String, &u64)> = plan.symbols.iter().collect();
+        symbols.sort_by_key(|(_, offset)| *offset);
+        writeln!(&mut out, "\nSymbols:").ok();
+        for (name, offset) in symbols {
+            writeln!(&mut out, "  {:<32} 0x{:08x}", name, offset).ok();
+        }
+    }
+
+    if !plan.relocs.is_empty() {
+        writeln!(&mut out, "\nRelocations:").ok();
+        for reloc in &plan.relocs {
+            writeln!(
+                &mut out,
+                "  offset=0x{:08x} kind={:?} symbol={} addend={}",
+                reloc.offset, reloc.kind, reloc.symbol, reloc.addend
+            )
+            .ok();
+        }
+    }
+
+    writeln!(&mut out, "\n.text ({} bytes):", plan.text.len()).ok();
+    dump_bytes(&mut out, &plan.text);
+    writeln!(&mut out, "\n.rodata ({} bytes):", plan.rodata.len()).ok();
+    dump_bytes(&mut out, &plan.rodata);
+
+    fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
+    Ok(())
+}
+
+fn dump_bytes(out: &mut String, bytes: &[u8]) {
+    let mut offset = 0usize;
+    while offset < bytes.len() {
+        let end = (offset + 16).min(bytes.len());
+        let chunk = &bytes[offset..end];
+        write!(out, "  {:08x}  ", offset).ok();
+        for (idx, byte) in chunk.iter().enumerate() {
+            if idx == 8 {
+                out.push(' ');
+            }
+            write!(out, "{:02x} ", byte).ok();
+        }
+        out.push('\n');
+        offset = end;
+    }
 }
 
 fn default_lir_program() -> LirProgram {

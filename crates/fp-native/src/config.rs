@@ -12,6 +12,7 @@ pub struct NativeConfig {
     pub output_path: PathBuf,
     pub linker_args: Vec<String>,
     pub keep_object: bool,
+    pub asm_dump: Option<PathBuf>,
 
     /// Target triple for codegen/linking (e.g. x86_64-apple-darwin).
     pub target_triple: Option<String>,
@@ -36,6 +37,7 @@ impl NativeConfig {
             output_path: output_path.into(),
             linker_args: Vec::new(),
             keep_object: false,
+            asm_dump: None,
 
             target_triple: None,
             target_cpu: None,
@@ -53,6 +55,7 @@ impl NativeConfig {
             output_path: output_path.into(),
             linker_args: Vec::new(),
             keep_object: true,
+            asm_dump: None,
 
             target_triple: None,
             target_cpu: None,
@@ -106,6 +109,11 @@ impl NativeConfig {
 
     pub fn with_keep_object(mut self, keep: bool) -> Self {
         self.keep_object = keep;
+        self
+    }
+
+    pub fn with_asm_dump(mut self, dump: Option<PathBuf>) -> Self {
+        self.asm_dump = dump;
         self
     }
 }

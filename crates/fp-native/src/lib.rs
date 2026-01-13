@@ -45,18 +45,16 @@ impl NativeEmitter {
 
         let (format, arch) = detect_target(self.config.target_triple.as_deref())?;
 
-        match self.config.emit {
-            EmitKind::Object => {
-                let plan = emit::emit_plan(lir_program, format, arch)?;
-                emit::write_object(&out, &plan)?;
-                Ok(out)
-            }
-            EmitKind::Executable => {
-                let plan = emit::emit_plan(lir_program, format, arch)?;
-                emit::write_executable(&out, &plan)?;
-                Ok(out)
-            }
+        let plan = emit::emit_plan(lir_program, format, arch)?;
+        if let Some(path) = self.config.asm_dump.as_ref() {
+            emit::dump_asm(path, &plan)?;
         }
+
+        match self.config.emit {
+            EmitKind::Object => emit::write_object(&out, &plan)?,
+            EmitKind::Executable => emit::write_executable(&out, &plan)?,
+        }
+        Ok(out)
     }
 }
 

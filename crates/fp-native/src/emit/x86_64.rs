@@ -453,43 +453,6 @@ fn emit_bitwise_binop(
     Ok(())
 }
 
-fn emit_shift(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    lhs: &LirValue,
-    rhs: &LirValue,
-    kind: ShiftKind,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
-) -> Result<()> {
-    load_value(asm, layout, lhs, Reg::R10, reg_types, local_types)?;
-    match rhs {
-        LirValue::Constant(constant) => {
-            let mut shift = constant_to_i64(constant)?;
-            if shift < 0 {
-                return Err(Error::from("shift count must be non-negative"));
-            }
-            shift &= 0x3f;
-            let imm = u8::try_from(shift).unwrap_or(0);
-            match kind {
-                ShiftKind::Left => emit_shl_imm8(asm, Reg::R10, imm),
-                ShiftKind::Right => emit_shr_imm8(asm, Reg::R10, imm),
-            }
-        }
-        _ => {
-            load_value(asm, layout, rhs, Reg::R11, reg_types, local_types)?;
-            emit_mov_rr(asm, Reg::Rcx, Reg::R11);
-            match kind {
-                ShiftKind::Left => emit_shl_cl(asm, Reg::R10),
-                ShiftKind::Right => emit_shr_cl(asm, Reg::R10),
-            }
-        }
-    }
-    store_vreg(asm, layout, dst_id, Reg::R10)?;
-    Ok(())
-}
-
 fn emit_not(
     asm: &mut Assembler,
     layout: &FrameLayout,
@@ -500,130 +463,6 @@ fn emit_not(
 ) -> Result<()> {
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     emit_not_r64(asm, Reg::R10);
-    store_vreg(asm, layout, dst_id, Reg::R10)?;
-    Ok(())
-}
-
-fn emit_sext(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    value: &LirValue,
-    dst_ty: &LirType,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
-) -> Result<()> {
-    let src_ty = value_type(value, reg_types, local_types)?;
-    let src_bits = int_bits(&src_ty)?;
-    let dst_bits = int_bits(dst_ty)?;
-    if src_bits > dst_bits {
-        return Err(Error::from("sext expects wider destination"));
-    }
-    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
-    if src_bits < 64 {
-        let shift = 64 - src_bits;
-        emit_shl_imm8(asm, Reg::R10, shift as u8);
-        emit_sar_imm8(asm, Reg::R10, shift as u8);
-    }
-    store_vreg(asm, layout, dst_id, Reg::R10)?;
-    Ok(())
-}
-
-fn emit_sext_or_trunc(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    value: &LirValue,
-    dst_ty: &LirType,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
-) -> Result<()> {
-    let src_ty = value_type(value, reg_types, local_types)?;
-    let src_bits = int_bits(&src_ty)?;
-    let dst_bits = int_bits(dst_ty)?;
-    if src_bits >= dst_bits {
-        return emit_trunc(asm, layout, dst_id, value, dst_ty, reg_types, local_types);
-    }
-    emit_sext(asm, layout, dst_id, value, dst_ty, reg_types, local_types)
-}
-
-fn emit_ptr_to_int(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    value: &LirValue,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
-) -> Result<()> {
-    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
-    let dst_ty = reg_types
-        .get(&dst_id)
-        .ok_or_else(|| Error::from("missing type for ptrtoint"))?;
-    let dst_bits = int_bits(dst_ty)?;
-    if dst_bits < 64 {
-        let mask = (1u64 << dst_bits) - 1;
-        emit_mov_imm64(asm, Reg::R11, mask);
-        emit_and_rr(asm, Reg::R10, Reg::R11);
-    }
-    store_vreg(asm, layout, dst_id, Reg::R10)?;
-    Ok(())
-}
-
-fn emit_int_to_ptr(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    value: &LirValue,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
-) -> Result<()> {
-    let src_ty = value_type(value, reg_types, local_types)?;
-    let src_bits = int_bits(&src_ty)?;
-    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
-    if src_bits < 64 {
-        let mask = (1u64 << src_bits) - 1;
-        emit_mov_imm64(asm, Reg::R11, mask);
-        emit_and_rr(asm, Reg::R10, Reg::R11);
-    }
-    store_vreg(asm, layout, dst_id, Reg::R10)?;
-    Ok(())
-}
-
-fn emit_freeze(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    value: &LirValue,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
-) -> Result<()> {
-    let ty = value_type(value, reg_types, local_types)?;
-    if is_float_type(&ty) {
-        load_value_float(asm, layout, value, FReg::Xmm0, &ty, reg_types, local_types)?;
-        store_vreg_float(asm, layout, dst_id, FReg::Xmm0, &ty)?;
-        return Ok(());
-    }
-    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
-    store_vreg(asm, layout, dst_id, Reg::R10)?;
-    Ok(())
-}
-
-fn emit_inline_asm(
-    asm: &mut Assembler,
-    layout: &FrameLayout,
-    dst_id: u32,
-    output_ty: &LirType,
-) -> Result<()> {
-    if matches!(output_ty, LirType::Void) {
-        return Ok(());
-    }
-    let size = size_of(output_ty) as i32;
-    let dst_offset = vreg_offset(layout, dst_id)?;
-    if is_aggregate_type(output_ty) && size > 8 {
-        zero_sp_range(asm, dst_offset, size)?;
-        return Ok(());
-    }
-    emit_mov_imm64(asm, Reg::R10, 0);
     store_vreg(asm, layout, dst_id, Reg::R10)?;
     Ok(())
 }
@@ -675,6 +514,211 @@ fn emit_trunc(
     }
     store_vreg(asm, layout, dst_id, Reg::R10)?;
     Ok(())
+}
+
+fn emit_shift(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: ShiftKind,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if !is_integer_type(&lhs_ty) {
+        return Err(Error::from("shift expects integer operands"));
+    }
+    let bits = int_bits(&lhs_ty)?;
+    load_value(asm, layout, lhs, Reg::R10, reg_types, local_types)?;
+    if bits < 64 {
+        let mask = (1u64 << bits) - 1;
+        emit_mov_imm64(asm, Reg::R11, mask);
+        emit_and_rr(asm, Reg::R10, Reg::R11);
+    }
+
+    match rhs {
+        LirValue::Constant(constant) => {
+            let imm = constant_to_i64(constant)?;
+            if imm < 0 {
+                return Err(Error::from("shift amount must be non-negative"));
+            }
+            let shift = if bits < 64 {
+                (imm as u64 % bits as u64) as u8
+            } else {
+                let masked = (imm as u64) & 0x3F;
+                masked as u8
+            };
+            match kind {
+                ShiftKind::Left => emit_shl_imm8(asm, Reg::R10, shift),
+                ShiftKind::Right => emit_shr_imm8(asm, Reg::R10, shift),
+            }
+        }
+        _ => {
+            load_value(asm, layout, rhs, Reg::Rcx, reg_types, local_types)?;
+            if bits < 64 {
+                emit_and_ri32(asm, Reg::Rcx, (bits - 1) as i32);
+            }
+            match kind {
+                ShiftKind::Left => emit_shl_cl(asm, Reg::R10),
+                ShiftKind::Right => emit_shr_cl(asm, Reg::R10),
+            }
+        }
+    }
+
+    if bits < 64 {
+        let mask = (1u64 << bits) - 1;
+        emit_mov_imm64(asm, Reg::R11, mask);
+        emit_and_rr(asm, Reg::R10, Reg::R11);
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_sext(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    dst_ty: &LirType,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let src_ty = value_type(value, reg_types, local_types)?;
+    if !is_integer_type(&src_ty) {
+        return Err(Error::from("sext expects integer source"));
+    }
+    let src_bits = int_bits(&src_ty)?;
+    let dst_bits = int_bits(dst_ty)?;
+    if dst_bits < src_bits {
+        return Err(Error::from("sext expects wider destination"));
+    }
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    if src_bits < 64 {
+        let shift = (64 - src_bits) as u8;
+        emit_shl_imm8(asm, Reg::R10, shift);
+        emit_sar_imm8(asm, Reg::R10, shift);
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_sext_or_trunc(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    dst_ty: &LirType,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let src_ty = value_type(value, reg_types, local_types)?;
+    let src_bits = int_bits(&src_ty)?;
+    let dst_bits = int_bits(dst_ty)?;
+    if src_bits == dst_bits {
+        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+        store_vreg(asm, layout, dst_id, Reg::R10)?;
+        return Ok(());
+    }
+    if src_bits < dst_bits {
+        return emit_sext(asm, layout, dst_id, value, dst_ty, reg_types, local_types);
+    }
+    emit_trunc(asm, layout, dst_id, value, dst_ty, reg_types, local_types)
+}
+
+fn emit_ptr_to_int(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let dst_ty = reg_types
+        .get(&dst_id)
+        .cloned()
+        .ok_or_else(|| Error::from("missing result type for ptrtoint"))?;
+    if !is_integer_type(&dst_ty) {
+        return Err(Error::from("ptrtoint expects integer destination"));
+    }
+    let dst_bits = int_bits(&dst_ty)?;
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    if dst_bits < 64 {
+        let mask = (1u64 << dst_bits) - 1;
+        emit_mov_imm64(asm, Reg::R11, mask);
+        emit_and_rr(asm, Reg::R10, Reg::R11);
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_int_to_ptr(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let dst_ty = reg_types
+        .get(&dst_id)
+        .cloned()
+        .ok_or_else(|| Error::from("missing result type for inttoptr"))?;
+    if !matches!(dst_ty, LirType::Ptr(_)) {
+        return Err(Error::from("inttoptr expects pointer destination"));
+    }
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_freeze(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let value_ty = reg_types
+        .get(&dst_id)
+        .cloned()
+        .unwrap_or(value_type(value, reg_types, local_types)?);
+    if is_float_type(&value_ty) {
+        load_value_float(asm, layout, value, FReg::Xmm0, &value_ty, reg_types, local_types)?;
+        store_vreg_float(asm, layout, dst_id, FReg::Xmm0, &value_ty)?;
+        return Ok(());
+    }
+    if is_large_aggregate(&value_ty) {
+        return Err(Error::from("freeze does not support large aggregates"));
+    }
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_inline_asm(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    output_type: &LirType,
+) -> Result<()> {
+    match output_type {
+        LirType::Void => Ok(()),
+        ty if is_float_type(ty) => {
+            emit_mov_imm64(asm, Reg::R10, 0);
+            emit_movq_xmm_r64(asm, FReg::Xmm0, Reg::R10);
+            store_vreg_float(asm, layout, dst_id, FReg::Xmm0, ty)?;
+            Ok(())
+        }
+        ty if is_large_aggregate(ty) => Err(Error::from("inline asm output too large")),
+        _ => {
+            emit_mov_imm64(asm, Reg::R10, 0);
+            store_vreg(asm, layout, dst_id, Reg::R10)?;
+            Ok(())
+        }
+    }
 }
 
 fn emit_binop(
@@ -2078,6 +2122,7 @@ impl Assembler {
         self.relocs.push(Relocation {
             offset: offset as u64,
             kind: RelocKind::CallRel32,
+            section: crate::emit::RelocSection::Text,
             symbol: symbol.to_string(),
             addend: 0,
         });
@@ -2091,6 +2136,7 @@ impl Assembler {
         self.relocs.push(Relocation {
             offset: offset as u64,
             kind: RelocKind::Abs64,
+            section: crate::emit::RelocSection::Text,
             symbol: symbol.to_string(),
             addend,
         });
