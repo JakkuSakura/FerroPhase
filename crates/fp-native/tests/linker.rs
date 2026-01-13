@@ -77,6 +77,11 @@ fn read_u16_le(bytes: &[u8], offset: usize) -> u16 {
     u16::from_le_bytes(chunk)
 }
 
+fn read_u32_le_any(bytes: &[u8], offset: usize) -> u32 {
+    let chunk: [u8; 4] = bytes[offset..offset + 4].try_into().unwrap();
+    u32::from_le_bytes(chunk)
+}
+
 fn minimal_program() -> LirProgram {
     let func = LirFunction {
         name: Name::new("main"),
@@ -540,6 +545,7 @@ fn pe_executable_has_magic() {
     emit::write_executable(&exe, &plan).unwrap();
     let bytes = std::fs::read(&exe).unwrap();
     assert_eq!(&bytes[..2], b"MZ");
+    assert_eq!(read_u32_le_any(&bytes, 0x3c), 0x80);
     assert_eq!(&bytes[0x80..0x84], b"PE\0\0");
 }
 

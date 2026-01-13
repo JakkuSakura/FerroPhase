@@ -253,7 +253,10 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation], extra_rvas: &[u32]) -
 
     let mut entries: Vec<u32> = relocs
         .iter()
-        .filter(|reloc| reloc.kind == RelocKind::Abs64)
+        .filter(|reloc| {
+            reloc.kind == RelocKind::Abs64
+                && reloc.section == crate::emit::RelocSection::Text
+        })
         .filter_map(|reloc| u32::try_from(reloc.offset).ok())
         .map(|offset| text_rva + offset)
         .collect();
@@ -287,6 +290,18 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation], extra_rvas: &[u32]) -
     out
 }
 
+fn collect_rdata_base_relocs(rdata_rva: u32, relocs: &[Relocation]) -> Vec<u32> {
+    relocs
+        .iter()
+        .filter(|reloc| {
+            reloc.kind == RelocKind::Abs64
+                && reloc.section == crate::emit::RelocSection::Rdata
+        })
+        .filter_map(|reloc| u32::try_from(reloc.offset).ok())
+        .map(|offset| rdata_rva + offset)
+        .collect()
+}
+
 pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
     const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
@@ -303,6 +318,16 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
     const IMAGE_REL_ARM64_BRANCH26: u16 = 0x0003;
     const IMAGE_REL_ARM64_ADR_PREL_PG_HI21: u16 = 0x0005;
     const IMAGE_REL_ARM64_ADD_LO12: u16 = 0x0006;
+
+    if plan
+        .relocs
+        .iter()
+        .any(|reloc| reloc.section != crate::emit::RelocSection::Text)
+    {
+        return Err(Error::from(
+            "COFF object relocations are only supported for .text",
+        ));
+    }
 
     let has_rdata = !plan.rodata.is_empty();
     let section_count = if has_rdata { 2u16 } else { 1u16 };
@@ -541,10 +566,6 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     let rdata_len = import_start + import_len;
     let has_rdata = rdata_len > 0;
 
-    let reloc_data = build_base_relocs(text_rva, &plan.relocs, &[]);
-    let reloc_len = reloc_data.len() as u32;
-    let has_reloc = reloc_len > 0;
-
     let rdata_rva = if has_rdata {
         align_up(
             text_rva + align_up(text.len() as u32, section_alignment),
@@ -553,6 +574,15 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     } else {
         0
     };
+
+    let rdata_base_relocs = if has_rdata {
+        collect_rdata_base_relocs(rdata_rva, &plan.relocs)
+    } else {
+        Vec::new()
+    };
+    let reloc_data = build_base_relocs(text_rva, &plan.relocs, &rdata_base_relocs);
+    let reloc_len = reloc_data.len() as u32;
+    let has_reloc = reloc_len > 0;
 
     let reloc_rva = if has_reloc {
         let base = if has_rdata {
@@ -686,6 +716,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     // DOS header
     put_u16(&mut out, 0x5A4D);
     out.resize(dos_header_size as usize, 0);
+    write_u32(&mut out, 0x3c, pe_offset);
     out.resize(pe_offset as usize, 0);
 
     // PE signature
@@ -836,7 +867,17 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         match reloc.kind {
             crate::emit::RelocKind::Abs64 => {
                 let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
-                let offset = text_raw_offset as usize + reloc.offset as usize;
+                let offset = match reloc.section {
+                    crate::emit::RelocSection::Text => {
+                        text_raw_offset as usize + reloc.offset as usize
+                    }
+                    crate::emit::RelocSection::Rdata => {
+                        if !has_rdata {
+                            return Err(Error::from("rdata relocation without rdata section"));
+                        }
+                        rdata_raw_offset as usize + reloc.offset as usize
+                    }
+                };
                 if offset + 8 > out.len() {
                     return Err(Error::from("relocation offset out of range"));
                 }
@@ -850,6 +891,9 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
             crate::emit::RelocKind::Aarch64AdrpAdd => {
                 if !matches!(arch, TargetArch::Aarch64) {
                     return Err(Error::from("AArch64 relocation on non-AArch64 target"));
+                }
+                if reloc.section != crate::emit::RelocSection::Text {
+                    return Err(Error::from("AArch64 relocation in non-text section"));
                 }
                 let target = resolve_symbol(&reloc.symbol, reloc.addend)?;
                 let adrp_addr = text_addr + reloc.offset;
