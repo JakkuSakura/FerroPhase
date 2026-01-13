@@ -1,4 +1,4 @@
-// fp-optimize: Optimization and transformation passes for FerroPhase
+// fp-backend: Optimization and transformation passes for FerroPhase
 //
 // Architecture:
 // - transforms: Focused AST/IR rewrites and lowering helpers

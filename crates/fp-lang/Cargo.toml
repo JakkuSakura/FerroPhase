@@ -5,7 +5,7 @@ edition = "2021"
 
 [dependencies]
 fp-core = { path = "../fp-core" }
-fp-optimize = { path = "../fp-backend" }
+fp-backend = { path = "../fp-backend" }
 fp-rust = { path = "../fp-rust" }
 eyre = "0.6"
 thiserror = "2.0.17"

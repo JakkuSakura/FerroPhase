@@ -47,15 +47,15 @@ This directory contains comprehensive tests for FerroPhase's optimization and co
 
 ```bash
 # Run all optimization tests
-cargo test -p fp-optimize
+cargo test -p fp-backend
 
 # Run specific test categories
-cargo test -p fp-optimize test_basic_evaluation
-cargo test -p fp-optimize test_const_eval_phases
-cargo test -p fp-optimize test_struct_creation_const_eval
+cargo test -p fp-backend test_basic_evaluation
+cargo test -p fp-backend test_const_eval_phases
+cargo test -p fp-backend test_struct_creation_const_eval
 
 # Run with output
-cargo test -p fp-optimize -- --nocapture
+cargo test -p fp-backend -- --nocapture
 ```
 
 ## Development Notes

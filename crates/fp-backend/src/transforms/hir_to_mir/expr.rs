@@ -8643,10 +8643,11 @@ impl<'a> BodyBuilder<'a> {
 
         let mut format = String::new();
         let mut implicit_index = 0usize;
+        let mut ordered_operands = Vec::new();
 
         for part in &template.parts {
             match part {
-                hir::FormatTemplatePart::Literal(text) => format.push_str(text),
+                hir::FormatTemplatePart::Literal(text) => format.push_str(text.as_str()),
                 hir::FormatTemplatePart::Placeholder(placeholder) => {
                     let arg_index = match &placeholder.arg_ref {
                         hir::FormatArgRef::Implicit => {
@@ -8677,7 +8678,9 @@ impl<'a> BodyBuilder<'a> {
                         }
                     };
 
-                    if arg_index >= positional_len && matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_)) {
+                    if matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_))
+                        && arg_index >= positional_len
+                    {
                         self.lowering.emit_error(
                             span,
                             format!(
@@ -8688,7 +8691,7 @@ impl<'a> BodyBuilder<'a> {
                         return Ok(());
                     }
 
-                    let Some((_, _, spec)) = prepared_args.get(arg_index) else {
+                    let Some((operand, _ty, spec)) = prepared_args.get(arg_index).cloned() else {
                         self.lowering.emit_error(
                             span,
                             format!(
@@ -8698,6 +8701,7 @@ impl<'a> BodyBuilder<'a> {
                         );
                         return Ok(());
                     };
+                    ordered_operands.push(operand);
 
                     if let Some(explicit) = &placeholder.format_spec {
                         let trimmed = explicit.raw.trim();
@@ -8711,7 +8715,7 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else {
-                        format.push_str(spec);
+                        format.push_str(&spec);
                     }
                 }
             }
@@ -8721,17 +8725,12 @@ impl<'a> BodyBuilder<'a> {
             format.push('\n');
         }
 
-        let mut operands = Vec::with_capacity(prepared_args.len());
-        for (operand, _ty, _spec) in prepared_args {
-            operands.push(operand);
-        }
-
         self.push_statement(mir::Statement {
             source_info: span,
             kind: mir::StatementKind::IntrinsicCall {
                 kind: call.kind,
                 format,
-                args: operands,
+                args: ordered_operands,
             },
         });
         Ok(())
@@ -8764,10 +8763,11 @@ impl<'a> BodyBuilder<'a> {
 
         let mut format = String::new();
         let mut implicit_index = 0usize;
+        let mut ordered_operands = Vec::new();
 
         for part in &template.parts {
             match part {
-                hir::FormatTemplatePart::Literal(text) => format.push_str(text),
+                hir::FormatTemplatePart::Literal(text) => format.push_str(text.as_str()),
                 hir::FormatTemplatePart::Placeholder(placeholder) => {
                     let arg_index = match &placeholder.arg_ref {
                         hir::FormatArgRef::Implicit => {
@@ -8798,7 +8798,9 @@ impl<'a> BodyBuilder<'a> {
                         }
                     };
 
-                    if arg_index >= positional_len && matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_)) {
+                    if matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_))
+                        && arg_index >= positional_len
+                    {
                         self.lowering.emit_error(
                             span,
                             format!(
@@ -8809,7 +8811,7 @@ impl<'a> BodyBuilder<'a> {
                         return Ok((String::new(), Vec::new()));
                     }
 
-                    let Some((_, _, spec)) = prepared_args.get(arg_index) else {
+                    let Some((operand, _ty, spec)) = prepared_args.get(arg_index).cloned() else {
                         self.lowering.emit_error(
                             span,
                             format!(
@@ -8819,6 +8821,7 @@ impl<'a> BodyBuilder<'a> {
                         );
                         return Ok((String::new(), Vec::new()));
                     };
+                    ordered_operands.push(operand);
 
                     if let Some(explicit) = &placeholder.format_spec {
                         let trimmed = explicit.raw.trim();
@@ -8832,18 +8835,13 @@ impl<'a> BodyBuilder<'a> {
                             }
                         }
                     } else {
-                        format.push_str(spec);
+                        format.push_str(&spec);
                     }
                 }
             }
         }
 
-        let mut operands = Vec::with_capacity(prepared_args.len());
-        for (operand, _ty, _spec) in prepared_args {
-            operands.push(operand);
-        }
-
-        Ok((format, operands))
+        Ok((format, ordered_operands))
     }
 
     fn format_call_parts(
@@ -8917,10 +8915,10 @@ impl<'a> BodyBuilder<'a> {
                 return None;
             }
         }
+        let mut call_args = positional;
+        call_args.extend(named_args);
 
-        positional.extend(named_args);
-
-        Some((template.clone(), positional, name_map, positional_len))
+        Some((template.clone(), call_args, name_map, positional_len))
     }
 
     fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
@@ -9295,6 +9293,18 @@ impl<'a> BodyBuilder<'a> {
                 self.lowering.raw_string_ptr_ty(),
                 "%s".to_string(),
             )),
+            TyKind::Tuple(_) | TyKind::Array(_, _) | TyKind::Adt(_, _) => {
+                if let Some((string_operand, string_ty)) =
+                    self.format_const_operand_for_printf(&operand, span)
+                {
+                    return Ok((string_operand, string_ty, "%s".to_string()));
+                }
+                self.lowering.emit_warning(
+                    span,
+                    "printf lowering tuple/array/struct argument as opaque pointer",
+                );
+                Ok((operand, ty.clone(), "%p".to_string()))
+            }
             TyKind::Ref(_, inner, _) => {
                 if let TyKind::RawPtr(type_and_mut) = &inner.kind {
                     if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
@@ -9351,17 +9361,20 @@ impl<'a> BodyBuilder<'a> {
                     return Ok((string_operand, string_ty, "%s".to_string()));
                 }
                 if self.lowering.is_opaque_ty(&ty) {
-                    return Ok((operand, ty.clone(), "%s".to_string()));
+                    return Ok((operand, ty.clone(), "%p".to_string()));
                 }
                 let ty_name = self
                     .lowering
                     .display_type_name(&ty)
                     .unwrap_or_else(|| format!("{:?}", ty.kind));
-                self.lowering.emit_error(
+                self.lowering.emit_warning(
                     span,
-                    format!("printf argument type is not supported: {}", ty_name),
+                    format!(
+                        "printf argument type is not supported: {}; using %p",
+                        ty_name
+                    ),
                 );
-                Ok((operand, ty.clone(), "%s".to_string()))
+                Ok((operand, ty.clone(), "%p".to_string()))
             }
         }
     }
@@ -9538,11 +9551,11 @@ impl<'a> BodyBuilder<'a> {
             }
             _ => {
                 if self.lowering.is_opaque_ty(ty) {
-                    "%s"
+                    "%p"
                 } else {
                     self.lowering
-                        .emit_error(span, "printf argument type is not supported");
-                    "%s"
+                        .emit_warning(span, "printf argument type is not supported; using %p");
+                    "%p"
                 }
             }
         };

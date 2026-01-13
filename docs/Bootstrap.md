@@ -16,7 +16,7 @@
 | -------------- | -------------- | ------------------------- | ---------------- |
 | Source parsing / LAST | `fp-lang` (superset of `fp-rust`) | `syn`, `tree-sitter`, `swc`, `cargo-metadata`, language runtimes | Bootstrap should rely on `fp-lang` only; remove or feature-gate external parsers. |
 | AST storage & diagnostics | `fp-core`, `fp-cli` (diagnostics) | `serde`, `dashmap`, `derive_more`, `miette`, `tracing` | Replace `dashmap` with `HashMap` on a `bootstrap` feature; keep `serde` (already vendored via crates.io snapshot) or bake a minimal serializer. |
-| Typing & const-eval | `fp-typing`, `fp-interpret`, `fp-optimize` | `syn`, `proc-macro2`, `dashmap`, `tokio` (through CLI), `serde_json` | Gate parsing helpers; keep bootstrap path pure and remove `syn`-only runtime hooks. |
+| Typing & const-eval | `fp-typing`, `fp-interpret`, `fp-backend` | `syn`, `proc-macro2`, `dashmap`, `tokio` (through CLI), `serde_json` | Gate parsing helpers; keep bootstrap path pure and remove `syn`-only runtime hooks. |
 | Backends (native) | `fp-native` | system linker (ld/lld), platform ABI details | Bootstrap uses `fp-native`; must cover runtime calls, calling conventions, and struct layout. |
 | Backends (other) | `fp-llvm`, `fp-typescript`, `fp-python`, `fp-csharp`, `fp-zig`, `fp-wit` | `inkwell`, system LLVM/clang, `swc`, language printers | Not required for bootstrap. |
 | CLI orchestration | `fp-cli` | `clap`, `tokio`, `indicatif`, `miette` | For bootstrap, ship a tiny driver (no async, minimal CLI) or expose library entrypoints callable from an external script. |
@@ -31,7 +31,7 @@
 - Deliver a `JsonAstLoader` helper (either in `fp-core` or a new `fp-bootstrap` crate) that loads `Node`, `Ty`, and `HIR` representations from JSON files.
 
 ### Diagnostics and intrinsic normalization
-- `fp-optimize::passes::normalize_intrinsics` is internal; it depends on `dashmap` only through shared contexts. With the single-threaded context flag it can keep working.
+- `fp-backend::passes::normalize_intrinsics` is internal; it depends on `dashmap` only through shared contexts. With the single-threaded context flag it can keep working.
 - CLI diagnostics rely on `miette`; for bootstrap we can emit plain strings or reuse the simplified `DiagnosticManager` already provided by `fp-core`.
 
 ### Typing and const evaluation
@@ -39,7 +39,7 @@
 - Const evaluation continues to execute so that downstream stages see the same mutations; if `syn`-backed paths exist, they must be removed or guarded.
 
 ### Lowering and backend stages
-- `fp_optimize::transformations` converts typed AST into HIR/MIR/LIR. These modules can run in bootstrap as long as typing is parser-free.
+- `fp_backend::transformations` converts typed AST into HIR/MIR/LIR. These modules can run in bootstrap as long as typing is parser-free.
 - For bootstrap, `fp-native` should be the default backend; `fp-llvm` is optional/off.
 
 ## JSON Snapshot Workflow (Optional)
@@ -96,7 +96,7 @@ When using the bootstrap binary, default features (and therefore optional depend
 ## Proposed Implementation Plan
 
 1. **Feature-gate external crates**
-   - Add a shared `bootstrap` cargo feature to `fp-core`, `fp-typing`, `fp-optimize`, and `fp-cli`.
+   - Add a shared `bootstrap` cargo feature to `fp-core`, `fp-typing`, `fp-backend`, and `fp-cli`.
    - Provide alternative type aliases or modules that compile without `dashmap`, `tokio`, or `tree-sitter`.
    - Ensure unit tests and CI build both default and `bootstrap` configurations.
 2. **Runtime toggle**
@@ -165,9 +165,9 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - printf pointer args now use `%p` for non‑string references/pointers.
 - Arbitrary precision decimals now lower to `f64` with a warning.
 - Downcast place projections are ignored with a warning during MIR → LIR lowering.
+- printf now falls back to `%p` for unsupported argument types (warns instead of hard error).
 
 ### Still Missing (true blockers)
-- `printf` argument types limited.
 
 ### Notes by Stage (for tracking)
 #### fp-lang frontend
@@ -185,7 +185,7 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - HIR→MIR rejects inference markers (uses error type).
 
 #### HIR → MIR / MIR semantics
-- `printf` argument types limited.
+ - `printf` argument typing remains approximate; unsupported types are lowered as pointers.
 
 
 #### MIR → LIR

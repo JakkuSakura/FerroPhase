@@ -195,7 +195,7 @@ inference runs.
 
 ### Normalisation
 
-- `fp-optimize::passes::normalize_intrinsics` rewrites the intrinsic container
+- `fp-backend::passes::normalize_intrinsics` rewrites the intrinsic container
   nodes into const blocks that invoke `Vec::from` / `HashMap::from` with array
   or tuple literals. Once this pass finishes the AST contains only canonical
   helper calls, so type inference and later passes operate on familiar shapes.

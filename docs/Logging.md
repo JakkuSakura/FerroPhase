@@ -24,7 +24,7 @@ work captured in `specs/003-compile/tasks.md` (T027).
 | Parsing          | `fp-cli/src/pipeline.rs:parse_source`                | Emits source path and module count        |
 | Type Enrichment  | `fp-cli/src/pipeline.rs:run_type_enrichment_stage`   | Logs typed AST cloning and HIR output     |
 | Const Evaluation | `fp-cli/src/pipeline.rs:run_const_eval_stage`        | Logs stubbed const-eval (AST focus)       |
-| HIR Emission     | `fp-optimize/src/transformations/ast_to_hir.rs`      | Span-preserving logs, TODO for modules    |
+| HIR Emission     | `fp-backend/src/transformations/ast_to_hir.rs`      | Span-preserving logs, TODO for modules    |
 | Future Backends  | _pending rewrite_                                    | MIR/LIR/LLVM hooks will return once ready |
 
 ## Tracing Roadmap (T027)
@@ -33,7 +33,7 @@ work captured in `specs/003-compile/tasks.md` (T027).
 2. **File/Module Attribution** – Include module names and `NodeId` references in logs for easier correlation with typed AST/HIR outputs.
 3. **Error Correlation** – Ensure errors recorded through `tracing::error!` map back to TAST spans, matching the cross-stage guarantees.
 4. **CLI Flags** – Add `--log {level}` and `--log-format {pretty,json}` flags with sensible defaults.
-5. **Test Hooks** – Provide utilities in `fp-optimize/tests` to assert log spans when running pipeline tests.
+5. **Test Hooks** – Provide utilities in `fp-backend/tests` to assert log spans when running pipeline tests.
 
 ## Current Status
 
@@ -44,5 +44,5 @@ work captured in `specs/003-compile/tasks.md` (T027).
 ## Next Steps
 
 - Implement span-based tracing in `fp-cli/src/pipeline.rs` and propagate span handles to transformation passes.
-- Harden logging hooks in `fp-optimize` so tests can consume structured events.
+- Harden logging hooks in `fp-backend` so tests can consume structured events.
 - Document environment variables and CLI options once implemented.

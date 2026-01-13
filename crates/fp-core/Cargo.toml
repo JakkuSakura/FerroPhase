@@ -22,7 +22,7 @@ semver = "1"
 toml = "0.8"
 
 [dev-dependencies]
-fp-optimize = { path = "../fp-backend" }
+fp-backend = { path = "../fp-backend" }
 fp-rust = { path = "../fp-rust" }
 pretty_assertions = "1.4.0"
 syn = { version = "2", features = ["full", "extra-traits"] }

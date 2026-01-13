@@ -859,6 +859,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-backend"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "dashmap 5.5.3",
+ "derive_more",
+ "eyre",
+ "fp-core",
+ "fp-interpret",
+ "fp-rust",
+ "fp-typing",
+ "itertools 0.12.1",
+ "pretty_assertions",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.106",
+ "tracing",
+]
+
+[[package]]
 name = "fp-bytecode"
 version = "0.1.0"
 dependencies = [
@@ -898,6 +920,7 @@ dependencies = [
  "criterion 0.7.0",
  "dirs",
  "eyre",
+ "fp-backend",
  "fp-bytecode",
  "fp-core",
  "fp-csharp",
@@ -907,7 +930,6 @@ dependencies = [
  "fp-lang",
  "fp-llvm",
  "fp-native",
- "fp-optimize",
  "fp-pipeline",
  "fp-prql",
  "fp-python",
@@ -947,7 +969,7 @@ dependencies = [
  "dashmap 6.1.0",
  "derive_more",
  "eyre",
- "fp-optimize",
+ "fp-backend",
  "fp-rust",
  "itertools 0.13.0",
  "miette",
@@ -1014,8 +1036,8 @@ name = "fp-lang"
 version = "0.1.0"
 dependencies = [
  "eyre",
+ "fp-backend",
  "fp-core",
- "fp-optimize",
  "fp-rust",
  "thiserror 2.0.17",
  "tracing",
@@ -1050,28 +1072,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fp-optimize"
-version = "0.1.0"
-dependencies = [
- "bytes",
- "dashmap 5.5.3",
- "derive_more",
- "eyre",
- "fp-core",
- "fp-interpret",
- "fp-rust",
- "fp-typing",
- "itertools 0.12.1",
- "pretty_assertions",
- "proc-macro2",
- "quote",
- "serde",
- "serde_json",
- "syn 2.0.106",
- "tracing",
-]
-
-[[package]]
 name = "fp-pipeline"
 version = "0.1.0"
 dependencies = [
@@ -1102,8 +1102,8 @@ dependencies = [
  "cargo_metadata",
  "clap",
  "eyre",
+ "fp-backend",
  "fp-core",
- "fp-optimize",
  "itertools 0.12.1",
  "pretty_assertions",
  "proc-macro2",

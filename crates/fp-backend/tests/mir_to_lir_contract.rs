@@ -2,7 +2,7 @@ use fp_core::lir::{LirConstant, LirInstructionKind, LirTerminator, LirType, LirV
 use fp_core::mir::ty::{IntTy, Ty, TyKind};
 use fp_core::mir::{self, FunctionSig, Item, ItemKind, Mutability, Operand};
 use fp_core::span::Span;
-use fp_optimize::transformations::LirGenerator;
+use fp_backend::transformations::LirGenerator;
 use std::collections::HashMap;
 
 mod support;

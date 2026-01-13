@@ -1,4 +1,4 @@
-//! Shared test fixtures for fp-optimize contract tests.
+//! Shared test fixtures for fp-backend contract tests.
 
 pub mod assertions;
 pub mod ast;

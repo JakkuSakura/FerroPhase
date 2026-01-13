@@ -10,7 +10,7 @@ This document reviews the current code layout and proposes a focused refactor pl
 
 Approximate line counts (for scale):
 - `crates/fp-cli/src/pipeline.rs` ≈ 3,936
-- `crates/fp-optimize/src/transformations/hir_to_mir/mod.rs` ≈ 3,796
+- `crates/fp-backend/src/transformations/hir_to_mir/mod.rs` ≈ 3,796
 - `crates/fp-llvm/src/codegen.rs` ≈ 2,417
 - `crates/fp-rust/src/parser/expr.rs` ≈ 1,877
 - `crates/fp-cli/src/bin/fp.rs` ≈ 517
@@ -23,7 +23,7 @@ Approximate line counts (for scale):
     - Split into: `mod.rs` (API), `input.rs`, `frontend.rs`, `stages.rs`, `workspace.rs`, `diagnostics.rs`, `blocking.rs`, `artifacts.rs`.
     - Fix visibility: artifacts are `pub(crate)` or hidden behind the API.
 
-- `crates/fp-optimize/src/transformations/hir_to_mir/mod.rs`
+- `crates/fp-backend/src/transformations/hir_to_mir/mod.rs`
   - Problem: One file contains context, type lowering, body/call lowering, impl/methods, consts, diagnostics.
   - Refactor:
     - Submodule into: `context.rs`, `types.rs`, `body.rs`, `calls.rs`, `consts.rs`, `impls.rs`, `diag.rs`; keep `mod.rs` as facade.

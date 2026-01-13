@@ -11,7 +11,7 @@ path = "src/bin/fp.rs"
 # Core FerroPhase crates
 fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
-fp-optimize = { path = "../fp-backend" }
+fp-backend = { path = "../fp-backend" }
 fp-typing = { path = "../fp-typing" }
 fp-rust = { path = "../fp-rust" }
 fp-typescript = { path = "../fp-typescript" }
@@ -81,5 +81,5 @@ default = ["miette"]
 bootstrap = [
     "fp-core/bootstrap",
     "fp-typing/bootstrap",
-    "fp-optimize/bootstrap",
+    "fp-backend/bootstrap",
 ]
