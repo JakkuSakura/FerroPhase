@@ -5140,6 +5140,67 @@ impl<'a> BodyBuilder<'a> {
         scrutinee_ty: &Ty,
         span: Span,
     ) {
+        if let hir::PatKind::Tuple(parts) = &pat.kind {
+            let mut base_place = scrutinee_place.clone();
+            let mut base_ty = scrutinee_ty.clone();
+            if matches!(base_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                base_place.projection.push(mir::PlaceElem::Deref);
+                base_ty = match &base_ty.kind {
+                    TyKind::Ref(_, inner, _) => (*inner.as_ref()).clone(),
+                    TyKind::RawPtr(type_and_mut) => (*type_and_mut.ty).clone(),
+                    _ => base_ty,
+                };
+            }
+            if let TyKind::Tuple(elem_tys) = &base_ty.kind {
+                if parts.len() == elem_tys.len() {
+                    for (idx, part) in parts.iter().enumerate() {
+                        let field_ty = (*elem_tys[idx]).clone();
+                        let mut field_place = base_place.clone();
+                        field_place
+                            .projection
+                            .push(mir::PlaceElem::Field(idx, field_ty.clone()));
+                        self.bind_match_pattern(part, &field_place, &field_ty, span);
+                    }
+                    return;
+                }
+            }
+        }
+        if let hir::PatKind::Struct(path, fields, _) = &pat.kind {
+            if self.enum_variant_info_from_path(path).is_none() {
+                let mut base_place = scrutinee_place.clone();
+                let mut base_ty = scrutinee_ty.clone();
+                if matches!(base_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                    base_place.projection.push(mir::PlaceElem::Deref);
+                    base_ty = match &base_ty.kind {
+                        TyKind::Ref(_, inner, _) => (*inner.as_ref()).clone(),
+                        TyKind::RawPtr(type_and_mut) => (*type_and_mut.ty).clone(),
+                        _ => base_ty,
+                    };
+                }
+                if let Some(def_id) = self.struct_def_from_ty(&base_ty) {
+                    for field in fields {
+                        let Some((field_index, field_info)) = self
+                            .lowering
+                            .struct_field(def_id, &base_ty, field.name.as_str(), span)
+                        else {
+                            continue;
+                        };
+                        let mut field_place = base_place.clone();
+                        field_place.projection.push(mir::PlaceElem::Field(
+                            field_index,
+                            field_info.ty.clone(),
+                        ));
+                        self.bind_match_pattern(
+                            &field.pat,
+                            &field_place,
+                            &field_info.ty,
+                            span,
+                        );
+                    }
+                    return;
+                }
+            }
+        }
         let layout = match &pat.kind {
             hir::PatKind::Variant(path)
             | hir::PatKind::Struct(path, _, _)
