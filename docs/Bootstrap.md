@@ -159,13 +159,13 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Named arguments: calls now resolve by parameter name when available; format/printf named args resolve but remain constrained by printf‑style type support.
 - Panic format payloads: format strings now lower through the format intrinsic, but inherit printf‑style type limits.
 - Match patterns: tuple/struct patterns made of only bindings/wildcards now short‑circuit as always‑match.
+- Tuple match conditions now support literal element checks (bindings/wildcards still skip).
 - Array lengths from pointer values default to zero with a warning.
 - printf pointer args now use `%p` for non‑string references/pointers.
 
 ### Still Missing (true blockers)
 - Arbitrary precision decimals unsupported.
 - `printf` argument types limited.
-- Field/index access still rejects some base expressions.
 - Some MIR intrinsics and place projections (e.g., downcasts) are not lowered.
 
 ### Notes by Stage (for tracking)
@@ -186,7 +186,7 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 #### HIR → MIR / MIR semantics
 - Arbitrary precision decimals unsupported.
 - `printf` argument types limited.
-- Array length via pointer unsupported.
+
 
 #### MIR → LIR
 - Some place projections and MIR intrinsics are still unsupported (e.g., downcasts).
