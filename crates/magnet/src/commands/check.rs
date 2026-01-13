@@ -1,7 +1,7 @@
 //! Command implementation for checking Magnet.toml for issues
 
 use crate::manager::ManifestManager;
-use crate::models::WorkspaceModel;
+use crate::models::{PackageGraph, PackageGraphOptions, WorkspaceModel};
 use eyre::Result;
 use std::path::Path;
 use tracing::info;
@@ -16,6 +16,26 @@ pub fn check(config_path: &Path) -> Result<()> {
         nexus_manager.resolve_package_dependencies(&mut package)?;
     }
 
+    let cache_dir = workspace
+        .root_path
+        .join("target")
+        .join("magnet");
+    let offline = env_flag_enabled("MAGNET_OFFLINE");
+    let graph_options = PackageGraphOptions {
+        offline,
+        cache_dir: Some(cache_dir),
+        include_dependencies: true,
+        cargo_fetch: false,
+        resolve_registry: !offline,
+    };
+    let _graph = PackageGraph::from_path_with_options(&workspace.root_path, &graph_options)?;
+
     info!("All package dependencies are properly resolved.");
     Ok(())
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    std::env::var(name)
+        .map(|value| matches!(value.as_str(), "1" | "true" | "TRUE" | "yes" | "YES"))
+        .unwrap_or(false)
 }

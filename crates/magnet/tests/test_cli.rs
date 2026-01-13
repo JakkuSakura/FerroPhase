@@ -181,6 +181,7 @@ serde = "1.0"
     // Test the check command
     let output = Command::new(&magnet_bin)
         .args(["check", temp_dir.path().to_str().unwrap()])
+        .env("MAGNET_OFFLINE", "1")
         .current_dir(temp_dir.path())
         .output()?;
 

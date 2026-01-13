@@ -1,4 +1,4 @@
-use crates_index::Index;
+use crates_index::{Index, INDEX_GIT_URL};
 use eyre::Result;
 use flate2::read::GzDecoder;
 use semver::{Version, VersionReq};
@@ -41,7 +41,7 @@ impl RegistryClient {
             .map_err(|err| eyre::eyre!("invalid version requirement '{req_str}': {err}"))?;
 
         let _guard = CargoHomeGuard::apply(&self.cache_dir)?;
-        let mut index = Index::new_cargo_default()?;
+        let mut index = Index::from_url(INDEX_GIT_URL)?;
         if self.options.offline {
             if !index.path().exists() {
                 return Err(eyre::eyre!(
