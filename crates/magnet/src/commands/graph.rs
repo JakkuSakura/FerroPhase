@@ -3,10 +3,10 @@
 use crate::models::{PackageGraph, PackageGraphOptions};
 use eyre::Result;
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub fn graph(config_path: &Path) -> Result<()> {
+pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
     let root = resolve_root(config_path);
     let offline = env_flag_enabled("MAGNET_OFFLINE");
     let options = PackageGraphOptions {
@@ -18,8 +18,14 @@ pub fn graph(config_path: &Path) -> Result<()> {
     };
     let graph = PackageGraph::from_path_with_options(config_path, &options)?;
 
-    let mut stdout = io::stdout().lock();
-    write_dot(&graph, &mut stdout)?;
+    let output_path = output_path
+        .map(|path| path.to_path_buf())
+        .unwrap_or_else(|| root.join("target").join("dependencies.dot"));
+    if let Some(parent) = output_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let mut file = std::fs::File::create(&output_path)?;
+    write_dot(&graph, &mut file)?;
 
     Ok(())
 }

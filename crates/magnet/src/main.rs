@@ -47,7 +47,7 @@ fn main() -> Result<()> {
         }
         Some(Commands::Check { config }) => commands::check(&config),
         Some(Commands::Tree { config }) => commands::tree(&config),
-        Some(Commands::Graph { config }) => commands::graph(&config),
+        Some(Commands::Graph { config, output }) => commands::graph(&config, output.as_deref()),
         Some(Commands::Export {
             package,
             clean,
@@ -199,6 +199,9 @@ enum Commands {
         /// Path to the Magnet.toml file
         #[arg(default_value = ".")]
         config: PathBuf,
+        /// Output path for the DOT file (default: target/dependencies.dot)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
     },
     /// Export local dependencies for a package/workspace
     Export {

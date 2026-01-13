@@ -164,7 +164,9 @@ serde = "1.0"
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let output_str = String::from_utf8_lossy(&output.stdout);
+    let dot_path = temp_dir.path().join("target").join("dependencies.dot");
+    assert!(dot_path.exists(), "Graph output file was not created");
+    let output_str = fs::read_to_string(&dot_path)?;
     assert!(
         output_str.contains("digraph magnet"),
         "Graph output should include the digraph header"
