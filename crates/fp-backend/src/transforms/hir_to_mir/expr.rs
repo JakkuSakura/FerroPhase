@@ -9080,6 +9080,15 @@ impl<'a> BodyBuilder<'a> {
                 place_info.struct_def = self.struct_def_from_ty(&place_info.ty);
                 Ok(Some(place_info))
             }
+            hir::ExprKind::Cast(inner, ty) => {
+                let Some(mut place_info) = self.lower_place(inner)? else {
+                    return Ok(None);
+                };
+                let cast_ty = self.lower_type_expr(ty);
+                place_info.ty = cast_ty.clone();
+                place_info.struct_def = self.struct_def_from_ty(&cast_ty);
+                Ok(Some(place_info))
+            }
             hir::ExprKind::FieldAccess(base, field) => {
                 let base_place = match self.lower_place(base)? {
                     Some(info) => info,

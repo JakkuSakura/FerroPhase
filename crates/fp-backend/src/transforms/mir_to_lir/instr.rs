@@ -1945,7 +1945,139 @@ impl LirGenerator {
                 ));
                 self.apply_index_projection_value(&base_place, base_access, index_value)
             }
-            mir::PlaceElem::Subslice { .. }
+            mir::PlaceElem::Subslice {
+                from,
+                to,
+                from_end,
+            } => {
+                let base_ty = self.lookup_place_type(&base_place).ok_or_else(|| {
+                    crate::error::optimization_error("MIR→LIR: missing type for subslice")
+                })?;
+                let element_ty = match &base_ty.kind {
+                    TyKind::Array(elem, _) => *elem.clone(),
+                    TyKind::Slice(elem) => *elem.clone(),
+                    _ => {
+                        return Err(crate::error::optimization_error(
+                            "MIR→LIR: subslice requires array or slice type",
+                        ))
+                    }
+                };
+
+                let start_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                    from as i64,
+                    lir::LirType::I64,
+                ));
+                let base_access_for_len = base_access.clone();
+                let slice_ptr_access =
+                    self.apply_index_projection_value(&base_place, base_access, start_value)?;
+                let slice_ptr = match slice_ptr_access {
+                    PlaceAccess::Address(addr) => addr.ptr,
+                    PlaceAccess::Value { .. } => {
+                        return Err(crate::error::optimization_error(
+                            "MIR→LIR: subslice base did not resolve to address",
+                        ))
+                    }
+                };
+
+                let elem_lir_ty = self.lir_type_from_ty(&element_ty);
+
+                match &base_ty.kind {
+                    TyKind::Array(_, len) => {
+                        let base_len = self.array_length_from_const(len);
+                        let end = if from_end {
+                            base_len.saturating_sub(to)
+                        } else {
+                            to
+                        };
+                        let slice_len = end.saturating_sub(from);
+                        let mut instructions = Vec::new();
+                        let slice_value =
+                            self.build_slice_value(slice_ptr, slice_len, &elem_lir_ty, &mut instructions);
+                        self.queued_instructions.extend(instructions);
+                        Ok(PlaceAccess::Value {
+                            value: slice_value,
+                            ty: base_ty,
+                            lir_ty: self.slice_lir_type(&elem_lir_ty),
+                        })
+                    }
+                    TyKind::Slice(_) => {
+                        let mut instructions = Vec::new();
+                        let slice_value = match base_access_for_len {
+                            PlaceAccess::Address(addr) => {
+                                let load_id = self.next_id();
+                                instructions.push(lir::LirInstruction {
+                                    id: load_id,
+                                    kind: lir::LirInstructionKind::Load {
+                                        address: addr.ptr,
+                                        alignment: Some(addr.alignment),
+                                        volatile: false,
+                                    },
+                                    type_hint: Some(addr.lir_ty),
+                                    debug_info: None,
+                                });
+                                lir::LirValue::Register(load_id)
+                            }
+                            PlaceAccess::Value { value, .. } => value,
+                        };
+                        let mut len_value =
+                            self.extract_slice_field(slice_value, 1, lir::LirType::I64, &mut instructions);
+                        len_value = self.ensure_i64_value(len_value, &mut instructions);
+
+                        let end_value = if from_end {
+                            let to_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                                to as i64,
+                                lir::LirType::I64,
+                            ));
+                            let sub_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
+                                id: sub_id,
+                                kind: lir::LirInstructionKind::Sub(len_value, to_value),
+                                type_hint: Some(lir::LirType::I64),
+                                debug_info: None,
+                            });
+                            lir::LirValue::Register(sub_id)
+                        } else {
+                            lir::LirValue::Constant(lir::LirConstant::Int(
+                                to as i64,
+                                lir::LirType::I64,
+                            ))
+                        };
+
+                        let slice_len = if from == 0 {
+                            end_value
+                        } else {
+                            let start_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                                from as i64,
+                                lir::LirType::I64,
+                            ));
+                            let sub_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
+                                id: sub_id,
+                                kind: lir::LirInstructionKind::Sub(end_value, start_value),
+                                type_hint: Some(lir::LirType::I64),
+                                debug_info: None,
+                            });
+                            lir::LirValue::Register(sub_id)
+                        };
+
+                        let slice_value = self.build_slice_value_with_len_value(
+                            slice_ptr,
+                            slice_len,
+                            &elem_lir_ty,
+                            &mut instructions,
+                        );
+                        self.queued_instructions.extend(instructions);
+                        Ok(PlaceAccess::Value {
+                            value: slice_value,
+                            ty: base_ty,
+                            lir_ty: self.slice_lir_type(&elem_lir_ty),
+                        })
+                    }
+                    _ => Err(crate::error::optimization_error(
+                        "MIR→LIR: subslice requires array or slice type",
+                    )),
+                }
+            }
             | mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
                 "MIR→LIR: unsupported place projection for lowering",
             )),
@@ -2474,6 +2606,39 @@ impl LirGenerator {
             kind: lir::LirInstructionKind::InsertValue {
                 aggregate: current,
                 element: len_value,
+                indices: vec![1],
+            },
+            type_hint: Some(slice_ty),
+            debug_info: None,
+        });
+        lir::LirValue::Register(len_insert)
+    }
+
+    fn build_slice_value_with_len_value(
+        &mut self,
+        ptr: lir::LirValue,
+        len: lir::LirValue,
+        elem_lir: &lir::LirType,
+        instructions: &mut Vec<lir::LirInstruction>,
+    ) -> lir::LirValue {
+        let slice_ty = self.slice_lir_type(elem_lir);
+        let ptr_insert = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: ptr_insert,
+            kind: lir::LirInstructionKind::InsertValue {
+                aggregate: lir::LirValue::Constant(lir::LirConstant::Undef(slice_ty.clone())),
+                element: ptr,
+                indices: vec![0],
+            },
+            type_hint: Some(slice_ty.clone()),
+            debug_info: None,
+        });
+        let len_insert = self.next_id();
+        instructions.push(lir::LirInstruction {
+            id: len_insert,
+            kind: lir::LirInstructionKind::InsertValue {
+                aggregate: lir::LirValue::Register(ptr_insert),
+                element: len,
                 indices: vec![1],
             },
             type_hint: Some(slice_ty),

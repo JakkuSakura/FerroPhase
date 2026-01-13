@@ -220,16 +220,7 @@ impl HirGenerator {
             }
         }
 
-        let path = match name.kind() {
-            AstExprKind::Locator(locator) => {
-                self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?
-            }
-            _ => {
-                return Err(crate::error::optimization_error(
-                    "unsupported variant pattern expression",
-                ));
-            }
-        };
+        let path = self.ast_expr_to_hir_path(name, PathResolutionScope::Value)?;
 
         if let Some(pattern) = nested {
             match pattern.kind() {

@@ -1,5 +1,4 @@
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVarKind};
-use crate::typing_error;
 use crate::{AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
@@ -626,11 +625,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(value_var)
             }
             UnOpKind::Deref => self.expect_reference(value_var, "dereference expression"),
-            UnOpKind::Any(_) => {
-                let message = "unsupported unary operator in type inference".to_string();
-                self.emit_error(message.clone());
-                Err(typing_error(message))
-            }
+            UnOpKind::Any(_) => Ok(value_var),
         }
     }
 
@@ -1034,10 +1029,65 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.emit_error(message.clone());
                 return Ok(self.error_type_var());
             }
-            ExprInvokeTarget::BinOp(_) => {
-                let message = "invoking binary operators as functions is not supported".to_string();
-                self.emit_error(message.clone());
-                return Ok(self.error_type_var());
+            ExprInvokeTarget::BinOp(kind) => {
+                if invoke.args.len() != 2 {
+                    let message = "binary operator invocation expects two arguments".to_string();
+                    self.emit_error(message.clone());
+                    return Ok(self.error_type_var());
+                }
+                let lhs = self.infer_expr(&mut invoke.args[0])?;
+                let rhs = self.infer_expr(&mut invoke.args[1])?;
+                let result = match kind {
+                    BinOpKind::Add
+                    | BinOpKind::Sub
+                    | BinOpKind::Mul
+                    | BinOpKind::Div
+                    | BinOpKind::Mod
+                    | BinOpKind::Shl
+                    | BinOpKind::Shr => {
+                        if matches!(kind, BinOpKind::Add) {
+                            let lhs_ty = self.resolve_to_ty(lhs)?;
+                            let rhs_ty = self.resolve_to_ty(rhs)?;
+                            let is_string_ref = |ty: &Ty| {
+                                matches!(
+                                    ty,
+                                    Ty::Reference(reference)
+                                        if matches!(
+                                            reference.ty.as_ref(),
+                                            Ty::Primitive(TypePrimitive::String)
+                                        )
+                                )
+                            };
+                            if is_string_ref(&lhs_ty) && is_string_ref(&rhs_ty) {
+                                self.unify(lhs, rhs)?;
+                                return Ok(lhs);
+                            }
+                        }
+                        self.ensure_numeric(lhs, "binary operand")?;
+                        self.unify(lhs, rhs)?;
+                        lhs
+                    }
+                    BinOpKind::Eq
+                    | BinOpKind::Ne
+                    | BinOpKind::Lt
+                    | BinOpKind::Le
+                    | BinOpKind::Gt
+                    | BinOpKind::Ge => {
+                        self.unify(lhs, rhs)?;
+                        let bool_var = self.fresh_type_var();
+                        self.bind(bool_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                        bool_var
+                    }
+                    BinOpKind::And | BinOpKind::Or => {
+                        self.ensure_bool(lhs, "logical operand")?;
+                        self.ensure_bool(rhs, "logical operand")?;
+                        let bool_var = self.fresh_type_var();
+                        self.bind(bool_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                        bool_var
+                    }
+                    _ => lhs,
+                };
+                return Ok(result);
             }
             ExprInvokeTarget::Type(ty) => self.type_from_ast_ty(ty)?,
             ExprInvokeTarget::Method(select) => {
