@@ -951,6 +951,47 @@ impl LirGenerator {
                 result_value = Some(lir::LirValue::Register(instr_id));
             }
             mir::Rvalue::Aggregate(kind, fields) => {
+                if let mir::AggregateKind::Array(elem_ty) = kind {
+                    if let PlaceAccess::Address(addr) = &target_access {
+                        if let lir::LirType::Ptr(inner) = &addr.lir_ty {
+                            if !matches!(inner.as_ref(), lir::LirType::Array(..)) {
+                                let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                                let align = Self::alignment_for_lir_type(&elem_lir_ty);
+                                for (idx, operand) in fields.iter().enumerate() {
+                                    let value = self.transform_operand(operand)?;
+                                    instructions.extend(self.take_queued_instructions());
+                                    let coerced = self.coerce_aggregate_value_with_source(
+                                        value,
+                                        self.type_of_operand(operand).as_ref(),
+                                        &elem_lir_ty,
+                                        &mut instructions,
+                                    );
+                                    let index_value = lir::LirValue::Constant(
+                                        lir::LirConstant::UInt(idx as u64, lir::LirType::I64),
+                                    );
+                                    let elem_ptr = self.element_ptr_at(
+                                        addr.ptr.clone(),
+                                        &elem_lir_ty,
+                                        index_value,
+                                        &mut instructions,
+                                    );
+                                    instructions.push(lir::LirInstruction {
+                                        id: self.next_id(),
+                                        kind: lir::LirInstructionKind::Store {
+                                            value: coerced,
+                                            address: elem_ptr,
+                                            alignment: Some(align),
+                                            volatile: false,
+                                        },
+                                        type_hint: None,
+                                        debug_info: None,
+                                    });
+                                }
+                                return Ok(instructions);
+                            }
+                        }
+                    }
+                }
                 let (mut aggregate_insts, aggregate_value) =
                     self.handle_aggregate(place, kind, fields)?;
                 instructions.append(&mut aggregate_insts);
@@ -1815,11 +1856,25 @@ impl LirGenerator {
             }
 
             let lir_ty = self.lir_type_from_ty(&place_ty);
-            let alignment = Self::alignment_for_lir_type(&lir_ty);
+            let mut alloca_elem_ty = lir_ty.clone();
+            let mut alloca_count = 1i64;
+            if !matches!(place_ty.kind, TyKind::Array(_, _)) {
+                if let Some(existing) = existing_reg.as_ref() {
+                    if let Some(lir::LirType::Array(elem, len)) =
+                        self.infer_lir_value_type(existing)
+                    {
+                        alloca_elem_ty = (*elem).clone();
+                        alloca_count = len as i64;
+                    }
+                }
+            }
+            let alignment = Self::alignment_for_lir_type(&alloca_elem_ty);
             if alignment > 0 {
-                let pointer_type = lir::LirType::Ptr(Box::new(lir_ty.clone()));
-                let size_value =
-                    lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                let pointer_type = lir::LirType::Ptr(Box::new(alloca_elem_ty.clone()));
+                let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                    alloca_count,
+                    lir::LirType::I32,
+                ));
                 let alloca_id = self.next_id();
                 self.queued_instructions.push(lir::LirInstruction {
                     id: alloca_id,
@@ -1836,7 +1891,7 @@ impl LirGenerator {
                     place.local,
                     LocalStorage {
                         ptr_value: ptr_value.clone(),
-                        element_type: lir_ty,
+                        element_type: alloca_elem_ty,
                         alignment,
                     },
                 );
