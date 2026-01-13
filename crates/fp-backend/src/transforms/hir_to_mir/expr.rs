@@ -9274,8 +9274,8 @@ impl<'a> BodyBuilder<'a> {
                     Ok((operand, ty.clone(), "%s".to_string()))
                 } else {
                     self.lowering
-                        .emit_error(span, "printf only supports byte slices");
-                    Ok((operand, ty.clone(), "%s".to_string()))
+                        .emit_warning(span, "printf using %p for non-string slice argument");
+                    Ok((operand, ty.clone(), "%p".to_string()))
                 }
             }
             TyKind::Tuple(elements) if elements.is_empty() => Ok((
