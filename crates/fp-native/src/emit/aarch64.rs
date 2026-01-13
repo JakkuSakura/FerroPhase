@@ -196,11 +196,10 @@ fn build_frame_layout(
 
     let local_size = offset - outgoing_size;
     let base = outgoing_size + local_size;
-    let guard = 32;
     let frame_size = if base == 0 && !has_calls {
         0
     } else {
-        align16(base + 16 + guard)
+        align16(base + 16)
     };
 
     if layout_debug_enabled() {
@@ -330,6 +329,13 @@ fn abi_log(msg: &str) {
     }
 }
 
+fn stack_debug_enabled() -> bool {
+    matches!(
+        std::env::var("FP_NATIVE_STACK_DEBUG"),
+        Ok(value) if value == "1" || value.eq_ignore_ascii_case("true")
+    )
+}
+
 fn layout_debug_enabled() -> bool {
     matches!(
         std::env::var("FP_NATIVE_LAYOUT_DEBUG"),
@@ -450,6 +456,7 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
         let reg_types = build_reg_types(func);
         let layout = build_frame_layout(func, &reg_types)?;
         let local_types = build_local_types(func);
+        asm.set_layout_context(func.name.as_str(), layout.frame_size);
         asm.needs_frame = layout.frame_size > 0;
         if layout.frame_size > 0 {
             emit_prologue(&mut asm, &layout)?;
@@ -470,6 +477,7 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
                 &mut rodata_pool,
             )?;
         }
+        asm.clear_layout_context();
     }
 
     if let Some(id) = panic_id {
@@ -855,6 +863,7 @@ fn emit_load(
         emit_mov_reg(asm, Reg::X16, Reg::X31);
         add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
         store_vreg(asm, layout, dst_id, Reg::X16)?;
+        asm.record_vreg_sp_offset(dst_id, dst_offset);
         return Ok(());
     }
     match address {
@@ -1266,11 +1275,16 @@ fn emit_store(
                 copy_sp_to_sp(asm, src_offset, dst_offset, size)?;
             }
             LirValue::Register(id) => {
+                if let Some(offset) = asm.vreg_sp_offset(*id) {
+                    asm.log_stack_write(offset, size, "store-agg-via-reg");
+                }
                 let addr_offset = vreg_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 copy_sp_to_reg(asm, src_offset, Reg::X17, size)?;
             }
             LirValue::Local(id) => {
+                let addr_offset = local_offset(layout, *id)?;
+                asm.log_stack_write(addr_offset, size, "store-agg-via-local");
                 let addr_offset = local_offset(layout, *id)?;
                 emit_load_from_sp(asm, Reg::X17, addr_offset);
                 copy_sp_to_reg(asm, src_offset, Reg::X17, size)?;
@@ -1308,6 +1322,18 @@ fn emit_store(
             Ok(())
         }
         LirValue::Register(id) => {
+            let store_size = if is_float_type(&value_ty) {
+                if matches!(value_ty, LirType::F32) {
+                    4
+                } else {
+                    8
+                }
+            } else {
+                size_of(&value_ty) as i32
+            };
+            if let Some(offset) = asm.vreg_sp_offset(*id) {
+                asm.log_stack_write(offset, store_size, "store-via-reg");
+            }
             let addr_offset = vreg_offset(layout, *id)?;
             emit_load_from_sp(asm, Reg::X17, addr_offset);
             if is_float_type(&value_ty) {
@@ -1336,7 +1362,17 @@ fn emit_store(
             Ok(())
         }
         LirValue::Local(id) => {
+            let store_size = if is_float_type(&value_ty) {
+                if matches!(value_ty, LirType::F32) {
+                    4
+                } else {
+                    8
+                }
+            } else {
+                size_of(&value_ty) as i32
+            };
             let addr_offset = local_offset(layout, *id)?;
+            asm.log_stack_write(addr_offset, store_size, "store-via-local");
             emit_load_from_sp(asm, Reg::X17, addr_offset);
             if is_float_type(&value_ty) {
                 load_value_float(asm, layout, value, FReg::V0, &value_ty, reg_types, local_types)?;
@@ -1908,6 +1944,11 @@ fn emit_gep(
         LirType::Ptr(inner) => *inner,
         _ => return Err(Error::from("GEP expects pointer base type")),
     };
+    let mut const_offset = if let LirValue::Register(id) = ptr {
+        asm.vreg_sp_offset(*id).map(|offset| offset as i64)
+    } else {
+        None
+    };
 
     load_value(asm, layout, ptr, Reg::X16, reg_types, local_types)?;
     for index in indices {
@@ -1927,12 +1968,24 @@ fn emit_gep(
                     .get(idx)
                     .ok_or_else(|| Error::from("GEP struct field out of range"))?;
                 add_immediate_offset(asm, Reg::X16, field_offset as i64)?;
+                if let Some(base) = const_offset.as_mut() {
+                    *base += field_offset as i64;
+                }
                 current_ty = fields
                     .get(idx)
                     .cloned()
                     .ok_or_else(|| Error::from("GEP struct field out of range"))?;
             }
             LirType::Array(elem, _) | LirType::Vector(elem, _) => {
+                match index {
+                    LirValue::Constant(constant) => {
+                        if let Some(base) = const_offset.as_mut() {
+                            let idx = constant_to_i64(constant)?;
+                            *base += idx * size_of(elem) as i64;
+                        }
+                    }
+                    _ => const_offset = None,
+                }
                 emit_scaled_index(
                     asm,
                     layout,
@@ -1944,6 +1997,15 @@ fn emit_gep(
                 current_ty = *elem.clone();
             }
             _ => {
+                match index {
+                    LirValue::Constant(constant) => {
+                        if let Some(base) = const_offset.as_mut() {
+                            let idx = constant_to_i64(constant)?;
+                            *base += idx * size_of(&current_ty) as i64;
+                        }
+                    }
+                    _ => const_offset = None,
+                }
                 emit_scaled_index(
                     asm,
                     layout,
@@ -1957,6 +2019,11 @@ fn emit_gep(
     }
 
     store_vreg(asm, layout, dst_id, Reg::X16)?;
+    if let Some(offset) = const_offset {
+        if let Ok(offset) = i32::try_from(offset) {
+            asm.record_vreg_sp_offset(dst_id, offset);
+        }
+    }
     Ok(())
 }
 
@@ -2326,6 +2393,7 @@ fn emit_insert_value(
     emit_mov_reg(asm, Reg::X16, Reg::X31);
     add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
     store_vreg(asm, layout, dst_id, Reg::X16)?;
+    asm.record_vreg_sp_offset(dst_id, dst_offset);
     Ok(())
 }
 
@@ -2363,10 +2431,12 @@ fn emit_extract_value(
             emit_mov_reg(asm, Reg::X16, Reg::X31);
             add_immediate_offset(asm, Reg::X16, dst_offset as i64)?;
             store_vreg(asm, layout, dst_id, Reg::X16)?;
+            asm.record_vreg_sp_offset(dst_id, dst_offset);
         } else {
             emit_mov_reg(asm, Reg::X16, Reg::X31);
             add_immediate_offset(asm, Reg::X16, load_offset as i64)?;
             store_vreg(asm, layout, dst_id, Reg::X16)?;
+            asm.record_vreg_sp_offset(dst_id, load_offset);
         }
         return Ok(());
     }
@@ -3090,6 +3160,7 @@ fn emit_load32s_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()
 }
 
 fn emit_store_to_sp(asm: &mut Assembler, src: Reg, offset: i32) {
+    asm.log_stack_write(offset, 8, "str");
     let imm12 = (offset / 8) as u32;
     if imm12 <= 0xfff {
         let instr = 0xF900_03E0u32 | (imm12 << 10) | src.id();
@@ -3105,6 +3176,7 @@ fn emit_store8_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> {
     if offset < 0 {
         return Err(Error::from("negative store offsets not supported on aarch64"));
     }
+    asm.log_stack_write(offset, 1, "strb");
     let imm12 = offset as u32;
     if imm12 <= 0xfff {
         let instr = 0x3900_03E0u32 | (imm12 << 10) | src.id();
@@ -3121,6 +3193,7 @@ fn emit_store16_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> 
     if offset < 0 || (offset % 2) != 0 {
         return Err(Error::from("unaligned 16-bit store on aarch64"));
     }
+    asm.log_stack_write(offset, 2, "strh");
     let imm12 = (offset / 2) as u32;
     if imm12 <= 0xfff {
         let instr = 0x7900_03E0u32 | (imm12 << 10) | src.id();
@@ -3137,6 +3210,7 @@ fn emit_store32_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> 
     if offset < 0 || (offset % 4) != 0 {
         return Err(Error::from("unaligned 32-bit store on aarch64"));
     }
+    asm.log_stack_write(offset, 4, "strw");
     let imm12 = (offset / 4) as u32;
     if imm12 <= 0xfff {
         let instr = 0xB900_03E0u32 | (imm12 << 10) | src.id();
@@ -3224,6 +3298,7 @@ fn emit_load_float_from_sp(asm: &mut Assembler, dst: FReg, offset: i32, ty: &Lir
 
 fn emit_store_float_to_sp(asm: &mut Assembler, src: FReg, offset: i32, ty: &LirType) {
     let scale = if matches!(ty, LirType::F32) { 4 } else { 8 };
+    asm.log_stack_write(offset, scale, "strf");
     let imm12 = (offset / scale) as u32;
     if imm12 <= 0xfff {
         let base = if matches!(ty, LirType::F32) {
@@ -3491,6 +3566,7 @@ fn emit_block(
                 emit_mov_reg(asm, Reg::X16, Reg::X31);
                 add_immediate_offset(asm, Reg::X16, offset as i64)?;
                 store_vreg(asm, layout, inst.id, Reg::X16)?;
+                asm.record_vreg_sp_offset(inst.id, offset);
             }
             LirInstructionKind::Load { address, .. } => {
                 let ty = inst
@@ -3868,6 +3944,14 @@ struct Assembler {
     current_function: u32,
     relocs: Vec<Relocation>,
     target_format: TargetFormat,
+    current_layout: Option<LayoutContext>,
+    vreg_sp_offsets: HashMap<u32, i32>,
+}
+
+struct LayoutContext {
+    func: String,
+    frame_size: i32,
+    save_offset: i32,
 }
 
 fn emit_prologue(asm: &mut Assembler, layout: &FrameLayout) -> Result<()> {
@@ -3919,6 +4003,8 @@ impl Assembler {
             current_function: 0,
             relocs: Vec::new(),
             target_format,
+            current_layout: None,
+            vreg_sp_offsets: HashMap::new(),
         }
     }
 
@@ -3927,6 +4013,51 @@ impl Assembler {
             self.current_function = id;
         }
         self.labels.insert(label, self.buf.len());
+    }
+
+    fn set_layout_context(&mut self, func: &str, frame_size: i32) {
+        let save_offset = if frame_size > 0 { frame_size - 16 } else { -1 };
+        self.current_layout = Some(LayoutContext {
+            func: func.to_string(),
+            frame_size,
+            save_offset,
+        });
+        self.vreg_sp_offsets.clear();
+    }
+
+    fn clear_layout_context(&mut self) {
+        self.current_layout = None;
+        self.vreg_sp_offsets.clear();
+    }
+
+    fn record_vreg_sp_offset(&mut self, id: u32, offset: i32) {
+        self.vreg_sp_offsets.insert(id, offset);
+    }
+
+    fn vreg_sp_offset(&self, id: u32) -> Option<i32> {
+        self.vreg_sp_offsets.get(&id).copied()
+    }
+
+    fn log_stack_write(&self, offset: i32, size: i32, kind: &str) {
+        if !stack_debug_enabled() || size <= 0 {
+            return;
+        }
+        let Some(ctx) = self.current_layout.as_ref() else {
+            return;
+        };
+        if ctx.save_offset < 0 {
+            return;
+        }
+        let start = offset;
+        let end = offset + size;
+        let save_start = ctx.save_offset;
+        let save_end = ctx.save_offset + 16;
+        if start < save_end && end > save_start {
+            eprintln!(
+                "[fp-native][stack] {} write {} bytes at sp+{} overlaps save area [{}, {}) ({})",
+                ctx.func, size, offset, save_start, save_end, kind
+            );
+        }
     }
 
     fn function_offsets(&self) -> HashMap<u32, u64> {
