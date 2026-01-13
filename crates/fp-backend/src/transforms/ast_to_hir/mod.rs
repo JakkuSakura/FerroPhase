@@ -1230,6 +1230,9 @@ impl HirGenerator {
                     ast::Value::Char(_) => self.primitive_type_to_hir(ast::TypePrimitive::Char),
                     ast::Value::Unit(_) => self.create_unit_type(),
                     ast::Value::Null(_) | ast::Value::None(_) => self.create_null_type(),
+                    ast::Value::Type(ty) => {
+                        return self.transform_type_to_hir(ty);
+                    }
                     other => {
                         return Err(crate::error::optimization_error(format!(
                             "unsupported literal type in AST→HIR lowering: {:?}",

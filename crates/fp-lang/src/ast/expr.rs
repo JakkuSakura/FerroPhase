@@ -856,12 +856,13 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         SyntaxKind::ExprMacroCall => {
             // Shape: <name> ! <group>
             let name = first_child_expr(node)?;
-            if name.kind != SyntaxKind::ExprName {
+            if !matches!(
+                name.kind,
+                SyntaxKind::ExprName | SyntaxKind::ExprPath | SyntaxKind::ExprSelect
+            ) {
                 return Err(LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall));
             }
-            let macro_name = direct_first_non_trivia_token_text(name)
-                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall))?;
-            let path = Path::from_ident(Ident::new(macro_name));
+            let path = macro_callee_path(name)?;
 
             let (delimiter, tokens) = macro_group_delimiter_and_tokens(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall))?;
@@ -2309,6 +2310,33 @@ fn direct_first_non_trivia_token_text(node: &SyntaxNode) -> Option<String> {
         crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() => Some(t.text.clone()),
         _ => None,
     })
+}
+
+fn macro_callee_path(node: &SyntaxNode) -> Result<Path, LowerError> {
+    let mut segments = Vec::new();
+    for child in &node.children {
+        let crate::syntax::SyntaxElement::Token(tok) = child else {
+            continue;
+        };
+        if tok.is_trivia() {
+            continue;
+        }
+        if tok.text == "::" || tok.text == "." {
+            continue;
+        }
+        if tok
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            segments.push(Ident::new(tok.text.clone()));
+        }
+    }
+    if segments.is_empty() {
+        return Err(LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall));
+    }
+    Ok(Path::new(segments))
 }
 
 fn direct_last_ident_token_text(node: &SyntaxNode) -> Option<String> {

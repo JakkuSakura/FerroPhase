@@ -6658,8 +6658,22 @@ impl<'a> BodyBuilder<'a> {
                 ))
             }
             _ => {
-                self.lowering
-                    .emit_error(callee.span, "unsupported call target expression");
+                let operand = self.lower_operand(callee, None)?;
+                if let TyKind::FnPtr(poly_fn_sig) = &operand.ty.kind {
+                    let fn_sig = &poly_fn_sig.binder.value;
+                    let sig = mir::FunctionSig {
+                        inputs: fn_sig.inputs.iter().map(|t| (**t).clone()).collect(),
+                        output: (*fn_sig.output).clone(),
+                    };
+                    return Ok((operand.operand, sig, None));
+                }
+                self.lowering.emit_error(
+                    callee.span,
+                    format!(
+                        "call target must be a function pointer, found {:?}",
+                        operand.ty.kind
+                    ),
+                );
                 Ok((
                     mir::Operand::Constant(self.lowering.error_constant(callee.span)),
                     mir::FunctionSig {

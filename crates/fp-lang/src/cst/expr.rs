@@ -1129,7 +1129,10 @@ impl Parser {
 
     fn parse_macro_call(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {
         // Only support simple `ident!(...)` / `ident!{...}` / `ident![...]` forms for now.
-        if !matches!(base.kind, SyntaxKind::ExprName | SyntaxKind::ExprPath) {
+        if !matches!(
+            base.kind,
+            SyntaxKind::ExprName | SyntaxKind::ExprPath | SyntaxKind::ExprSelect
+        ) {
             return Err(self.error("unsupported macro callee in CST-first expr"));
         }
 

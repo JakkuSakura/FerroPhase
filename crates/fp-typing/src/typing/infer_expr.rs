@@ -1025,9 +1025,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
             ExprInvokeTarget::Closure(_) => {
-                let message = "invoking closure values is not yet supported".to_string();
-                self.emit_error(message.clone());
-                return Ok(self.error_type_var());
+                let fn_ty = match &invoke.target {
+                    ExprInvokeTarget::Closure(func) => self.ty_from_function_signature(&func.sig)?,
+                    _ => Ty::Unknown(TypeUnknown),
+                };
+                self.type_from_ast_ty(&fn_ty)?
             }
             ExprInvokeTarget::BinOp(kind) => {
                 if invoke.args.len() != 2 {
