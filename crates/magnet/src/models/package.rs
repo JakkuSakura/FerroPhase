@@ -28,6 +28,8 @@ pub struct PackageModel {
     /// Custom package metadata
     pub custom: HashMap<String, toml::Value>,
     pub dependencies: DependencyModelMap,
+    pub dev_dependencies: DependencyModelMap,
+    pub build_dependencies: DependencyModelMap,
     /// Patch section for overriding dependencies
     pub patch: PatchMap,
     pub root_path: PathBuf,
@@ -72,6 +74,18 @@ impl PackageModel {
             custom: package.custom,
             dependencies: config
                 .dependencies
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            dev_dependencies: config
+                .dev_dependencies
+                .clone()
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            build_dependencies: config
+                .build_dependencies
                 .clone()
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))

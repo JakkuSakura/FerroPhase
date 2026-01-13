@@ -127,13 +127,22 @@ impl ManifestManager {
         Ok(dep)
     }
     pub fn resolve_package_dependencies(&mut self, package: &mut PackageModel) -> Result<()> {
-        for (name, dep) in package.dependencies.clone() {
-            // Resolve the dependency
-            let resolved = self.resolve_dependency(&package.root_path, &name, &dep);
+        self.resolve_dependency_map(&package.root_path, &mut package.dependencies)?;
+        self.resolve_dependency_map(&package.root_path, &mut package.dev_dependencies)?;
+        self.resolve_dependency_map(&package.root_path, &mut package.build_dependencies)?;
+        Ok(())
+    }
+
+    fn resolve_dependency_map(
+        &mut self,
+        root_path: &Path,
+        deps: &mut DependencyModelMap,
+    ) -> Result<()> {
+        for (name, dep) in deps.clone() {
+            let resolved = self.resolve_dependency(root_path, &name, &dep);
             match resolved {
                 Ok(detailed) => {
-                    // Update the package dependencies
-                    package.dependencies.insert(name.clone(), detailed);
+                    deps.insert(name.clone(), detailed);
                 }
                 Err(err) => {
                     if dep.optional() {
@@ -141,7 +150,7 @@ impl ManifestManager {
                         warn!(
                             "This could be you don't have sufficient permissions to access the workspace"
                         );
-                        package.dependencies.remove(&name);
+                        deps.remove(&name);
                     }
                     Err(err)?
                 }

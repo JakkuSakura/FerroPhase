@@ -127,6 +127,7 @@ serde = "1.0"
     // Test the tree command
     let output = Command::new(&magnet_bin)
         .args(["tree", temp_dir.path().to_str().unwrap()])
+        .env("MAGNET_OFFLINE", "1")
         .current_dir(temp_dir.path())
         .output()?;
 
