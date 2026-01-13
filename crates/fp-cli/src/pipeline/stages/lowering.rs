@@ -1,6 +1,7 @@
 use super::super::artifacts::{LirArtifacts, MirArtifacts};
 use super::super::*;
 use fp_core::mir;
+use fp_backend::optimizer::{MirOptimizer, OptimizationPlan};
 use fp_llvm::target::{OptimizationLevel, TargetConfig};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::sync::Arc;
@@ -30,7 +31,7 @@ impl PipelineStage for HirToMirStage {
         let mir_result = mir_lowering.transform(context.hir_program.as_ref().clone());
         let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
         diagnostics.extend(mir_diags);
-        let mir_program = match (mir_result, mir_had_errors) {
+        let mut mir_program = match (mir_result, mir_had_errors) {
             (Ok(program), false) => program,
             (Ok(_), true) => {
                 diagnostics.push(
@@ -53,6 +54,21 @@ impl PipelineStage for HirToMirStage {
                 ));
             }
         };
+
+        let opt_plan = OptimizationPlan::for_level(context.options.optimization_level);
+        if !opt_plan.is_empty() {
+            let optimizer = MirOptimizer::new();
+            if let Err(err) = optimizer.apply_plan(&mut mir_program, &opt_plan) {
+                diagnostics.push(
+                    Diagnostic::error(format!("MIR optimization failed: {}", err))
+                        .with_source_context(STAGE_HIR_TO_MIR),
+                );
+                return Err(PipelineError::new(
+                    STAGE_HIR_TO_MIR,
+                    "MIR optimization failed",
+                ));
+            }
+        }
 
         let mut pretty_opts = PrettyOptions::default();
         pretty_opts.show_spans = context.options.debug.verbose;

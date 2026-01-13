@@ -6,6 +6,7 @@
 // - utils: Shared utilities and helper components
 
 pub mod error;
+pub mod optimizer;
 pub mod transforms;
 
 pub use transforms as transformations;
