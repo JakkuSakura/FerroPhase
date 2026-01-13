@@ -964,51 +964,150 @@ impl LirGenerator {
                 result_value = Some(lir::LirValue::Register(instr_id));
             }
             mir::Rvalue::Aggregate(kind, fields) => {
+                let mut handled = false;
                 if let mir::AggregateKind::Array(elem_ty) = kind {
-                    if let PlaceAccess::Address(addr) = &target_access {
-                        if let lir::LirType::Ptr(inner) = &addr.lir_ty {
-                            if !matches!(inner.as_ref(), lir::LirType::Array(..)) {
-                                let elem_lir_ty = self.lir_type_from_ty(elem_ty);
-                                let align = Self::alignment_for_lir_type(&elem_lir_ty);
-                                for (idx, operand) in fields.iter().enumerate() {
-                                    let value = self.transform_operand(operand)?;
-                                    instructions.extend(self.take_queued_instructions());
-                                    let coerced = self.coerce_aggregate_value_with_source(
-                                        value,
-                                        self.type_of_operand(operand).as_ref(),
-                                        &elem_lir_ty,
-                                        &mut instructions,
-                                    );
-                                    let index_value = lir::LirValue::Constant(
-                                        lir::LirConstant::UInt(idx as u64, lir::LirType::I64),
-                                    );
-                                    let elem_ptr = self.element_ptr_at(
-                                        addr.ptr.clone(),
-                                        &elem_lir_ty,
-                                        index_value,
-                                        &mut instructions,
-                                    );
-                                    instructions.push(lir::LirInstruction {
-                                        id: self.next_id(),
-                                        kind: lir::LirInstructionKind::Store {
-                                            value: coerced,
-                                            address: elem_ptr,
-                                            alignment: Some(align),
-                                            volatile: false,
-                                        },
-                                        type_hint: None,
-                                        debug_info: None,
-                                    });
+                    let place_is_slice =
+                        matches!(place_ty.as_ref().map(|ty| &ty.kind), Some(TyKind::Slice(_)));
+                    let slice_wrapper = destination_lir_ty.as_ref().and_then(|ty| {
+                        let lir::LirType::Struct { fields, .. } = ty else {
+                            return None;
+                        };
+                        if fields.len() != 1 {
+                            return None;
+                        }
+                        let elem = Self::slice_element_type(&fields[0])?;
+                        Some((fields[0].clone(), elem))
+                    });
+                    if place_is_slice || slice_wrapper.is_some() {
+                        let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                        let align = Self::alignment_for_lir_type(&elem_lir_ty);
+                        let len = fields.len() as u64;
+                        let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
+                        let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                            len as i64,
+                            lir::LirType::I32,
+                        ));
+
+                        let alloca_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: alloca_id,
+                            kind: lir::LirInstructionKind::Alloca {
+                                size: size_value,
+                                alignment: align,
+                            },
+                            type_hint: Some(ptr_ty),
+                            debug_info: None,
+                        });
+                        let array_ptr = lir::LirValue::Register(alloca_id);
+
+                        for (idx, operand) in fields.iter().enumerate() {
+                            let value = self.transform_operand(operand)?;
+                            instructions.extend(self.take_queued_instructions());
+                            let coerced = self.coerce_aggregate_value_with_source(
+                                value,
+                                self.type_of_operand(operand).as_ref(),
+                                &elem_lir_ty,
+                                &mut instructions,
+                            );
+                            let index_value = lir::LirValue::Constant(lir::LirConstant::UInt(
+                                idx as u64,
+                                lir::LirType::I64,
+                            ));
+                            let elem_ptr = self.element_ptr_at(
+                                array_ptr.clone(),
+                                &elem_lir_ty,
+                                index_value,
+                                &mut instructions,
+                            );
+                            instructions.push(lir::LirInstruction {
+                                id: self.next_id(),
+                                kind: lir::LirInstructionKind::Store {
+                                    value: coerced,
+                                    address: elem_ptr,
+                                    alignment: Some(align),
+                                    volatile: false,
+                                },
+                                type_hint: None,
+                                debug_info: None,
+                            });
+                        }
+
+                        result_value = Some(self.build_slice_value(
+                            array_ptr,
+                            len,
+                            &elem_lir_ty,
+                            &mut instructions,
+                        ));
+                        if slice_wrapper.is_some() {
+                            let wrapper_ty = destination_lir_ty
+                                .clone()
+                                .expect("wrapper LIR type must be available");
+                            let wrapper_value = lir::LirValue::Constant(
+                                lir::LirConstant::Undef(wrapper_ty.clone()),
+                            );
+                            let insert_id = self.next_id();
+                            instructions.push(lir::LirInstruction {
+                                id: insert_id,
+                                kind: lir::LirInstructionKind::InsertValue {
+                                    aggregate: wrapper_value,
+                                    element: result_value.clone().expect("slice value created"),
+                                    indices: vec![0],
+                                },
+                                type_hint: Some(wrapper_ty),
+                                debug_info: None,
+                            });
+                            result_value = Some(lir::LirValue::Register(insert_id));
+                        }
+                        handled = true;
+                    }
+                    if !handled {
+                        if let PlaceAccess::Address(addr) = &target_access {
+                            if let lir::LirType::Ptr(inner) = &addr.lir_ty {
+                                if !matches!(inner.as_ref(), lir::LirType::Array(..)) {
+                                    let elem_lir_ty = self.lir_type_from_ty(elem_ty);
+                                    let align = Self::alignment_for_lir_type(&elem_lir_ty);
+                                    for (idx, operand) in fields.iter().enumerate() {
+                                        let value = self.transform_operand(operand)?;
+                                        instructions.extend(self.take_queued_instructions());
+                                        let coerced = self.coerce_aggregate_value_with_source(
+                                            value,
+                                            self.type_of_operand(operand).as_ref(),
+                                            &elem_lir_ty,
+                                            &mut instructions,
+                                        );
+                                        let index_value = lir::LirValue::Constant(
+                                            lir::LirConstant::UInt(idx as u64, lir::LirType::I64),
+                                        );
+                                        let elem_ptr = self.element_ptr_at(
+                                            addr.ptr.clone(),
+                                            &elem_lir_ty,
+                                            index_value,
+                                            &mut instructions,
+                                        );
+                                        instructions.push(lir::LirInstruction {
+                                            id: self.next_id(),
+                                            kind: lir::LirInstructionKind::Store {
+                                                value: coerced,
+                                                address: elem_ptr,
+                                                alignment: Some(align),
+                                                volatile: false,
+                                            },
+                                            type_hint: None,
+                                            debug_info: None,
+                                        });
+                                    }
+                                    return Ok(instructions);
                                 }
-                                return Ok(instructions);
                             }
                         }
                     }
                 }
-                let (mut aggregate_insts, aggregate_value) =
-                    self.handle_aggregate(place, kind, fields)?;
-                instructions.append(&mut aggregate_insts);
-                result_value = aggregate_value;
+                if !handled {
+                    let (mut aggregate_insts, aggregate_value) =
+                        self.handle_aggregate(place, kind, fields)?;
+                    instructions.append(&mut aggregate_insts);
+                    result_value = aggregate_value;
+                }
             }
             mir::Rvalue::ContainerLiteral { kind, elements } => {
                 let elem_lir_ty = self.container_element_lir_type(kind);
@@ -2974,6 +3073,25 @@ impl LirGenerator {
         if from_ty == target_ty {
             return value;
         }
+        if let (
+            lir::LirType::Struct {
+                fields: from_fields,
+                ..
+            },
+            lir::LirType::Struct {
+                fields: target_fields,
+                ..
+            },
+        ) = (&from_ty, &target_ty)
+        {
+            return self.cast_struct_value_to_struct_type(
+                value,
+                from_fields,
+                target_fields,
+                target_ty,
+                block,
+            );
+        }
         if let Some(const_value) = self.cast_constant_value(&value, &target_ty) {
             return const_value;
         }
@@ -3055,6 +3173,71 @@ impl LirGenerator {
             debug_info: None,
         });
         lir::LirValue::Register(id)
+    }
+
+    fn cast_struct_value_to_struct_type(
+        &mut self,
+        value: lir::LirValue,
+        from_fields: &[lir::LirType],
+        target_fields: &[lir::LirType],
+        target_ty: lir::LirType,
+        block: &mut lir::LirBasicBlock,
+    ) -> lir::LirValue {
+        if let lir::LirValue::Constant(lir::LirConstant::Struct(fields, _)) = &value {
+            let mut adjusted = Vec::with_capacity(target_fields.len());
+            for (index, target_field) in target_fields.iter().enumerate() {
+                if let Some(field) = fields.get(index) {
+                    adjusted.push(self.cast_constant_to_lir_type(field.clone(), target_field));
+                } else if let Some(zero) = self.zero_value_for_lir_type(target_field) {
+                    adjusted.push(zero);
+                } else {
+                    adjusted.push(lir::LirConstant::Undef(target_field.clone()));
+                }
+            }
+            return lir::LirValue::Constant(lir::LirConstant::Struct(adjusted, target_ty));
+        }
+
+        let mut current =
+            lir::LirValue::Constant(lir::LirConstant::Undef(target_ty.clone()));
+        for (index, target_field) in target_fields.iter().enumerate() {
+            let element = if let Some(source_field) = from_fields.get(index) {
+                let extract_id = self.next_id();
+                block.instructions.push(lir::LirInstruction {
+                    id: extract_id,
+                    kind: lir::LirInstructionKind::ExtractValue {
+                        aggregate: value.clone(),
+                        indices: vec![index as u32],
+                    },
+                    type_hint: Some(source_field.clone()),
+                    debug_info: None,
+                });
+                let extracted = lir::LirValue::Register(extract_id);
+                self.cast_value_to_type(
+                    extracted,
+                    source_field.clone(),
+                    target_field.clone(),
+                    block,
+                )
+            } else if let Some(zero) = self.zero_value_for_lir_type(target_field) {
+                lir::LirValue::Constant(zero)
+            } else {
+                lir::LirValue::Constant(lir::LirConstant::Undef(target_field.clone()))
+            };
+
+            let insert_id = self.next_id();
+            block.instructions.push(lir::LirInstruction {
+                id: insert_id,
+                kind: lir::LirInstructionKind::InsertValue {
+                    aggregate: current,
+                    element,
+                    indices: vec![index as u32],
+                },
+                type_hint: Some(target_ty.clone()),
+                debug_info: None,
+            });
+            current = lir::LirValue::Register(insert_id);
+        }
+        current
     }
 
     fn cast_constant_value(
