@@ -327,6 +327,19 @@ fn spill_arguments(
             .get(&local.id)
             .ok_or_else(|| Error::from("missing local type"))?;
         let offset = local_offset(layout, local.id)?;
+        if is_large_aggregate(ty) {
+            let size = size_of(ty) as i32;
+            if int_idx < arg_regs.len() {
+                copy_reg_to_sp(asm, arg_regs[int_idx], offset, size)?;
+                int_idx += 1;
+            } else {
+                let incoming = stack_base + (stack_idx as i32) * 8;
+                emit_mov_rm64(asm, Reg::R10, Reg::Rbp, incoming);
+                copy_reg_to_sp(asm, Reg::R10, offset, size)?;
+                stack_idx += 1;
+            }
+            continue;
+        }
         if is_float_type(ty) {
             if float_idx < float_regs.len() {
                 emit_movsd_m64x(asm, Reg::Rbp, offset, float_regs[float_idx], ty);
@@ -338,12 +351,22 @@ fn spill_arguments(
                 stack_idx += 1;
             }
         } else if int_idx < arg_regs.len() {
-            emit_mov_mr64(asm, Reg::Rbp, offset, arg_regs[int_idx]);
+            match size_of(ty) {
+                1 => emit_mov_mr8(asm, Reg::Rbp, offset, arg_regs[int_idx]),
+                2 => emit_mov_mr16(asm, Reg::Rbp, offset, arg_regs[int_idx]),
+                4 => emit_mov_mr32(asm, Reg::Rbp, offset, arg_regs[int_idx]),
+                _ => emit_mov_mr64(asm, Reg::Rbp, offset, arg_regs[int_idx]),
+            }
             int_idx += 1;
         } else {
             let incoming = stack_base + (stack_idx as i32) * 8;
             emit_mov_rm64(asm, Reg::R10, Reg::Rbp, incoming);
-            emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+            match size_of(ty) {
+                1 => emit_mov_mr8(asm, Reg::Rbp, offset, Reg::R10),
+                2 => emit_mov_mr16(asm, Reg::Rbp, offset, Reg::R10),
+                4 => emit_mov_mr32(asm, Reg::Rbp, offset, Reg::R10),
+                _ => emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10),
+            }
             stack_idx += 1;
         }
     }
@@ -509,12 +532,57 @@ fn load_value(
     match value {
         LirValue::Register(id) => {
             let offset = vreg_offset(layout, *id)?;
-            emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+            let ty = value_type(value, reg_types, local_types)?;
+            if is_aggregate_type(&ty) && size_of(&ty) > 8 {
+                emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+                return Ok(());
+            }
+            match ty {
+                LirType::I1 => emit_movzx_rm8(asm, dst, Reg::Rbp, offset),
+                LirType::I8 => emit_movsx_rm8(asm, dst, Reg::Rbp, offset),
+                LirType::I16 => emit_movsx_rm16(asm, dst, Reg::Rbp, offset),
+                LirType::I32 => emit_movsxd_rm32(asm, dst, Reg::Rbp, offset),
+                LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                    emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+                }
+                _ if is_aggregate_type(&ty) && size_of(&ty) <= 8 => {
+                    emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+                }
+                _ => {
+                    return Err(Error::from(format!(
+                        "unsupported value type for x86_64 load: {:?}",
+                        ty
+                    )))
+                }
+            }
             Ok(())
         }
         LirValue::Local(id) => {
             let offset = local_offset(layout, *id)?;
-            emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+            let ty = value_type(value, reg_types, local_types)?;
+            if is_aggregate_type(&ty) && size_of(&ty) > 8 {
+                emit_mov_rr(asm, dst, Reg::Rbp);
+                emit_add_ri32(asm, dst, offset);
+                return Ok(());
+            }
+            match ty {
+                LirType::I1 => emit_movzx_rm8(asm, dst, Reg::Rbp, offset),
+                LirType::I8 => emit_movsx_rm8(asm, dst, Reg::Rbp, offset),
+                LirType::I16 => emit_movsx_rm16(asm, dst, Reg::Rbp, offset),
+                LirType::I32 => emit_movsxd_rm32(asm, dst, Reg::Rbp, offset),
+                LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                    emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+                }
+                _ if is_aggregate_type(&ty) && size_of(&ty) <= 8 => {
+                    emit_mov_rm64(asm, dst, Reg::Rbp, offset);
+                }
+                _ => {
+                    return Err(Error::from(format!(
+                        "unsupported value type for x86_64 load: {:?}",
+                        ty
+                    )))
+                }
+            }
             Ok(())
         }
         LirValue::Constant(constant) => {
@@ -1725,7 +1793,24 @@ fn emit_load(
                 emit_movsd_xm64(asm, FReg::Xmm0, Reg::Rbp, offset, ty);
                 store_vreg_float(asm, layout, dst_id, FReg::Xmm0, ty)?;
             } else {
-                emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
+                match ty {
+                    LirType::I1 => emit_movzx_rm8(asm, Reg::R10, Reg::Rbp, offset),
+                    LirType::I8 => emit_movsx_rm8(asm, Reg::R10, Reg::Rbp, offset),
+                    LirType::I16 => emit_movsx_rm16(asm, Reg::R10, Reg::Rbp, offset),
+                    LirType::I32 => emit_movsxd_rm32(asm, Reg::R10, Reg::Rbp, offset),
+                    LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                        emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
+                    }
+                    _ if is_aggregate_type(ty) && size_of(ty) <= 8 => {
+                        emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported load type for x86_64: {:?}",
+                            ty
+                        )))
+                    }
+                }
                 store_vreg(asm, layout, dst_id, Reg::R10)?;
             }
             Ok(())
@@ -2169,11 +2254,6 @@ fn emit_store(
                             .get(idx)
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
-                        if field_size != 8 {
-                            return Err(Error::from(
-                                "unsupported aggregate field size in constant store",
-                            ));
-                        }
                         match field {
                             LirConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
@@ -2187,7 +2267,18 @@ fn emit_store(
                                 emit_mov_imm64(asm, Reg::R10, bits);
                             }
                         }
-                        emit_mov_mr64(asm, Reg::Rbp, dst_offset + field_offset as i32, Reg::R10);
+                        let store_offset = dst_offset + field_offset as i32;
+                        match field_size {
+                            1 => emit_mov_mr8(asm, Reg::Rbp, store_offset, Reg::R10),
+                            2 => emit_mov_mr16(asm, Reg::Rbp, store_offset, Reg::R10),
+                            4 => emit_mov_mr32(asm, Reg::Rbp, store_offset, Reg::R10),
+                            8 => emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10),
+                            _ => {
+                                return Err(Error::from(
+                                    "unsupported aggregate field size in constant store",
+                                ))
+                            }
+                        }
                     }
                 }
                 LirValue::Register(id) => {
@@ -2202,11 +2293,6 @@ fn emit_store(
                             .get(idx)
                             .ok_or_else(|| Error::from("aggregate field out of range"))?;
                         let field_size = size_of(field_ty);
-                        if field_size != 8 {
-                            return Err(Error::from(
-                                "unsupported aggregate field size in constant store",
-                            ));
-                        }
                         match field {
                             LirConstant::String(text) => {
                                 let offset = intern_cstring(rodata, rodata_pool, text);
@@ -2222,7 +2308,17 @@ fn emit_store(
                         }
                         emit_mov_rr(asm, Reg::Rax, Reg::R11);
                         emit_add_ri32(asm, Reg::Rax, field_offset as i32);
-                        emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
+                        match field_size {
+                            1 => emit_mov_mr8(asm, Reg::Rax, 0, Reg::R10),
+                            2 => emit_mov_mr16(asm, Reg::Rax, 0, Reg::R10),
+                            4 => emit_mov_mr32(asm, Reg::Rax, 0, Reg::R10),
+                            8 => emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10),
+                            _ => {
+                                return Err(Error::from(
+                                    "unsupported aggregate field size in constant store",
+                                ))
+                            }
+                        }
                     }
                 }
                 _ => return Err(Error::from("unsupported store address for x86_64")),
@@ -2246,6 +2342,7 @@ fn emit_store(
         }
         let src_offset = match value {
             LirValue::Register(id) => agg_offset(layout, *id)?,
+            LirValue::Local(id) => local_offset(layout, *id)?,
             _ => {
                 return Err(Error::from(format!(
                     "unsupported aggregate store value: {:?}",
@@ -2279,7 +2376,23 @@ fn emit_store(
             if is_float_type(&value_ty) {
                 emit_movsd_m64x(asm, Reg::Rbp, offset, FReg::Xmm0, &value_ty);
             } else {
-                emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+                match value_ty {
+                    LirType::I1 | LirType::I8 => emit_mov_mr8(asm, Reg::Rbp, offset, Reg::R10),
+                    LirType::I16 => emit_mov_mr16(asm, Reg::Rbp, offset, Reg::R10),
+                    LirType::I32 => emit_mov_mr32(asm, Reg::Rbp, offset, Reg::R10),
+                    LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                        emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+                    }
+                    _ if is_aggregate_type(&value_ty) && size_of(&value_ty) <= 8 => {
+                        emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+                    }
+                    _ => {
+                        return Err(Error::from(format!(
+                            "unsupported store type for x86_64: {:?}",
+                            value_ty
+                        )))
+                    }
+                }
             }
             Ok(())
         }
@@ -2293,9 +2406,55 @@ fn emit_mov_rm64(asm: &mut Assembler, dst: Reg, base: Reg, disp: i32) {
     emit_modrm_disp32(asm, dst.id(), base.id(), disp);
 }
 
+fn emit_movzx_rm8(asm: &mut Assembler, dst: Reg, base: Reg, disp: i32) {
+    emit_rex(asm, true, dst.id(), base.id());
+    asm.push(0x0F);
+    asm.push(0xB6);
+    emit_modrm_disp32(asm, dst.id(), base.id(), disp);
+}
+
+fn emit_movsx_rm8(asm: &mut Assembler, dst: Reg, base: Reg, disp: i32) {
+    emit_rex(asm, true, dst.id(), base.id());
+    asm.push(0x0F);
+    asm.push(0xBE);
+    emit_modrm_disp32(asm, dst.id(), base.id(), disp);
+}
+
+fn emit_movsx_rm16(asm: &mut Assembler, dst: Reg, base: Reg, disp: i32) {
+    emit_rex(asm, true, dst.id(), base.id());
+    asm.push(0x0F);
+    asm.push(0xBF);
+    emit_modrm_disp32(asm, dst.id(), base.id(), disp);
+}
+
+fn emit_movsxd_rm32(asm: &mut Assembler, dst: Reg, base: Reg, disp: i32) {
+    emit_rex(asm, true, dst.id(), base.id());
+    asm.push(0x63);
+    emit_modrm_disp32(asm, dst.id(), base.id(), disp);
+}
+
 fn emit_mov_mr64(asm: &mut Assembler, base: Reg, disp: i32, src: Reg) {
     emit_rex(asm, true, src.id(), base.id());
     asm.push(0x89);
+    emit_modrm_disp32(asm, src.id(), base.id(), disp);
+}
+
+fn emit_mov_mr32(asm: &mut Assembler, base: Reg, disp: i32, src: Reg) {
+    emit_rex(asm, false, src.id(), base.id());
+    asm.push(0x89);
+    emit_modrm_disp32(asm, src.id(), base.id(), disp);
+}
+
+fn emit_mov_mr16(asm: &mut Assembler, base: Reg, disp: i32, src: Reg) {
+    asm.push(0x66);
+    emit_rex(asm, false, src.id(), base.id());
+    asm.push(0x89);
+    emit_modrm_disp32(asm, src.id(), base.id(), disp);
+}
+
+fn emit_mov_mr8(asm: &mut Assembler, base: Reg, disp: i32, src: Reg) {
+    emit_rex(asm, false, src.id(), base.id());
+    asm.push(0x88);
     emit_modrm_disp32(asm, src.id(), base.id(), disp);
 }
 
@@ -2795,7 +2954,7 @@ fn emit_insert_value(
 
     let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices)?;
     let store_offset = dst_offset + field_offset as i32;
-    if is_aggregate_type(&field_ty) {
+    if is_large_aggregate(&field_ty) {
         let field_size = size_of(&field_ty) as i32;
         if field_size == 0 {
             return Ok(());
@@ -2822,10 +2981,42 @@ fn emit_insert_value(
         if let LirValue::Constant(LirConstant::String(text)) = element {
             let offset = intern_cstring(rodata, rodata_pool, text);
             asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", offset as i64);
-            emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+            match field_ty {
+                LirType::I1 | LirType::I8 => emit_mov_mr8(asm, Reg::Rbp, store_offset, Reg::R10),
+                LirType::I16 => emit_mov_mr16(asm, Reg::Rbp, store_offset, Reg::R10),
+                LirType::I32 => emit_mov_mr32(asm, Reg::Rbp, store_offset, Reg::R10),
+                LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                    emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+                }
+                _ if is_aggregate_type(&field_ty) && size_of(&field_ty) <= 8 => {
+                    emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+                }
+                _ => {
+                    return Err(Error::from(format!(
+                        "unsupported InsertValue element type for x86_64: {:?}",
+                        field_ty
+                    )))
+                }
+            }
         } else {
             load_value(asm, layout, element, Reg::R10, reg_types, local_types)?;
-            emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+            match field_ty {
+                LirType::I1 | LirType::I8 => emit_mov_mr8(asm, Reg::Rbp, store_offset, Reg::R10),
+                LirType::I16 => emit_mov_mr16(asm, Reg::Rbp, store_offset, Reg::R10),
+                LirType::I32 => emit_mov_mr32(asm, Reg::Rbp, store_offset, Reg::R10),
+                LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                    emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+                }
+                _ if is_aggregate_type(&field_ty) && size_of(&field_ty) <= 8 => {
+                    emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+                }
+                _ => {
+                    return Err(Error::from(format!(
+                        "unsupported InsertValue element type for x86_64: {:?}",
+                        field_ty
+                    )))
+                }
+            }
         }
     }
 
@@ -2858,14 +3049,31 @@ fn emit_extract_value(
     };
     let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices)?;
     let load_offset = src_offset + field_offset as i32;
-    if is_aggregate_type(&field_ty) {
+    if is_large_aggregate(&field_ty) {
         return Err(Error::from("ExtractValue does not support aggregate element"));
     }
     if is_float_type(&field_ty) {
         emit_movsd_xm64(asm, FReg::Xmm0, Reg::Rbp, load_offset, &field_ty);
         store_vreg_float(asm, layout, dst_id, FReg::Xmm0, &field_ty)?;
     } else {
-        emit_mov_rm64(asm, Reg::R10, Reg::Rbp, load_offset);
+        match field_ty {
+            LirType::I1 => emit_movzx_rm8(asm, Reg::R10, Reg::Rbp, load_offset),
+            LirType::I8 => emit_movsx_rm8(asm, Reg::R10, Reg::Rbp, load_offset),
+            LirType::I16 => emit_movsx_rm16(asm, Reg::R10, Reg::Rbp, load_offset),
+            LirType::I32 => emit_movsxd_rm32(asm, Reg::R10, Reg::Rbp, load_offset),
+            LirType::I64 | LirType::Ptr(_) | LirType::Function { .. } => {
+                emit_mov_rm64(asm, Reg::R10, Reg::Rbp, load_offset);
+            }
+            _ if is_aggregate_type(&field_ty) && size_of(&field_ty) <= 8 => {
+                emit_mov_rm64(asm, Reg::R10, Reg::Rbp, load_offset);
+            }
+            _ => {
+                return Err(Error::from(format!(
+                    "unsupported ExtractValue element type for x86_64: {:?}",
+                    field_ty
+                )))
+            }
+        }
         store_vreg(asm, layout, dst_id, Reg::R10)?;
     }
     Ok(())
