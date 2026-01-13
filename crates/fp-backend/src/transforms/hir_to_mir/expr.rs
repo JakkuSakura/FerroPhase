@@ -4675,9 +4675,15 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
             _ => {
-                self.lowering
-                    .emit_error(span, "unsupported pattern in match condition");
-                mir::Operand::Constant(self.lowering.error_constant(span))
+                self.lowering.emit_warning(
+                    span,
+                    "unsupported pattern in match condition; treating as non-matching",
+                );
+                mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Bool(false),
+                })
             }
         };
 

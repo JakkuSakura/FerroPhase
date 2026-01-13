@@ -851,6 +851,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
             Ty::Expr(expr) => {
+                if let ExprKind::Value(value) = expr.kind() {
+                    if let Value::Type(ty) = value.as_ref() {
+                        return self.type_from_ast_ty(ty);
+                    }
+                }
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {
                     if let Some((key_var, value_var)) = self.hashmap_args_from_locator(loc)? {

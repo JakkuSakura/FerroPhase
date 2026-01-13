@@ -1435,8 +1435,29 @@ impl HirGenerator {
             ast::Value::Char(_) => Some(LiteralTypeKind::Primitive(ast::TypePrimitive::Char)),
             ast::Value::Unit(_) => Some(LiteralTypeKind::Unit),
             ast::Value::Null(_) | ast::Value::None(_) => Some(LiteralTypeKind::Null),
+            ast::Value::Type(ty) => self.literal_type_kind(ty),
             _ => None,
         }
+    }
+
+    fn structural_field_value_to_ty(&self, value: &ast::Value) -> Result<ast::Ty> {
+        if let ast::Value::Type(ty) = value {
+            return Ok(ty.clone());
+        }
+        let ty = self
+            .literal_type_kind_from_value(value)
+            .and_then(|kind| match kind {
+                LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
+                LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
+                LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
+            })
+            .ok_or_else(|| {
+                crate::error::optimization_error(format!(
+                    "unsupported structural field value type: {:?}",
+                    value
+                ))
+            })?;
+        Ok(ty)
     }
 
     fn structural_specs_compatible(
@@ -1610,6 +1631,7 @@ impl HirGenerator {
                 let path = self.path_for_structural_def(&def);
                 hir::TypeExpr::new(self.next_id(), hir::TypeExprKind::Path(path), span)
             }
+            ast::Value::Type(ty) => return self.transform_type_to_hir(ty),
             other => {
                 return Err(crate::error::optimization_error(format!(
                     "unsupported structural field value type: {:?}",
@@ -1644,19 +1666,7 @@ impl HirGenerator {
                     .fields
                     .iter()
                     .map(|field| {
-                        let ty = self
-                            .literal_type_kind_from_value(&field.value)
-                            .and_then(|kind| match kind {
-                                LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
-                                LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
-                                LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
-                            })
-                            .ok_or_else(|| {
-                                crate::error::optimization_error(format!(
-                                    "unsupported structural field value type: {:?}",
-                                    field.value
-                                ))
-                            })?;
+                        let ty = self.structural_field_value_to_ty(&field.value)?;
                         Ok(ast::StructuralField::new(field.name.clone(), ty))
                     })
                     .collect::<Result<Vec<_>>>()?;
