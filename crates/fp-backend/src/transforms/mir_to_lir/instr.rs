@@ -2133,9 +2133,13 @@ impl LirGenerator {
                     )),
                 }
             }
-            | mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
-                "MIR→LIR: unsupported place projection for lowering",
-            )),
+            | mir::PlaceElem::Downcast(_, _) => {
+                fp_core::diagnostics::report_warning_with_context(
+                    "mir→lir",
+                    "ignoring downcast place projection during lowering",
+                );
+                Ok(base_access)
+            }
         }
     }
 
@@ -4204,11 +4208,10 @@ impl LirGenerator {
                         return None;
                     }
                 },
-                mir::PlaceElem::ConstantIndex { .. }
-                | mir::PlaceElem::Subslice { .. }
-                | mir::PlaceElem::Downcast(_, _) => {
+                mir::PlaceElem::ConstantIndex { .. } | mir::PlaceElem::Subslice { .. } => {
                     return None;
                 }
+                mir::PlaceElem::Downcast(_, _) => {}
             }
         }
         Some(ty)

@@ -163,10 +163,10 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Array lengths from pointer values default to zero with a warning.
 - printf pointer args now use `%p` for non‑string references/pointers.
 - Arbitrary precision decimals now lower to `f64` with a warning.
+- Downcast place projections are ignored with a warning during MIR → LIR lowering.
 
 ### Still Missing (true blockers)
 - `printf` argument types limited.
-- Some MIR intrinsics and place projections (e.g., downcasts) are not lowered.
 
 ### Notes by Stage (for tracking)
 #### fp-lang frontend
@@ -188,7 +188,8 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 
 
 #### MIR → LIR
-- Some place projections and MIR intrinsics are still unsupported (e.g., downcasts).
+ - Some MIR intrinsics remain unsupported.
+
 
 ### Backend (fp-native)
 - Any missing lowering/ABI feature used by the compiler will block bootstrap; audit against compiler IR usage.
