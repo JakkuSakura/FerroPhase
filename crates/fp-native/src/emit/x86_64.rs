@@ -139,7 +139,11 @@ fn build_frame_layout(
     }
 
     for slot in &func.stack_slots {
-        offset += 8;
+        let align = slot.alignment.max(1) as i32;
+        let size = align8(slot.size as i32).max(8);
+        let slot_align = align.max(8);
+        offset = align_to(offset, slot_align);
+        offset += size;
         slot_offsets.insert(slot.id, -offset);
     }
 
@@ -147,7 +151,9 @@ fn build_frame_layout(
         if matches!(local.ty, LirType::Void) {
             continue;
         }
-        offset += 8;
+        let size = align8(size_of(&local.ty) as i32).max(8);
+        offset = align_to(offset, 8);
+        offset += size;
         local_offsets.insert(local.id, -offset);
     }
 
@@ -169,6 +175,8 @@ fn build_frame_layout(
     }
 
     for (id, size, align) in alloca_info {
+        let size = align8(size).max(8);
+        let align = align.max(8);
         offset = align_to(offset, align);
         alloca_offsets.insert(id, -offset);
         offset += size;
@@ -753,6 +761,93 @@ fn constant_to_u64_bits(constant: &LirConstant) -> Result<u64> {
     }
 }
 
+fn pack_small_aggregate(constant: &LirConstant, ty: &LirType) -> Result<u64> {
+    if size_of(ty) > 8 {
+        return Err(Error::from("aggregate too large to pack"));
+    }
+    match (constant, ty) {
+        (LirConstant::Struct(values, _), LirType::Struct { fields, .. }) => {
+            let layout = struct_layout(ty)
+                .ok_or_else(|| Error::from("missing struct layout for aggregate store"))?;
+            let mut packed = 0u64;
+            for (idx, field) in values.iter().enumerate() {
+                let field_ty = fields
+                    .get(idx)
+                    .ok_or_else(|| Error::from("aggregate field out of range"))?;
+                let field_size = size_of(field_ty) as u64;
+                if field_size == 0 {
+                    continue;
+                }
+                if field_size > 8 {
+                    return Err(Error::from("unsupported aggregate field size"));
+                }
+                let mut bits = constant_to_u64_bits(field)?;
+                let mask = if field_size == 8 {
+                    u64::MAX
+                } else {
+                    (1u64 << (field_size * 8)) - 1
+                };
+                bits &= mask;
+                let offset = *layout
+                    .field_offsets
+                    .get(idx)
+                    .ok_or_else(|| Error::from("aggregate field out of range"))?;
+                packed |= bits << (offset as u64 * 8);
+            }
+            Ok(packed)
+        }
+        (LirConstant::Array(values, _), LirType::Array(elem, len)) => {
+            let elem_ty = elem.as_ref();
+            let elem_size = size_of(elem_ty) as u64;
+            if elem_size == 0 {
+                return Ok(0);
+            }
+            if elem_size > 8 {
+                return Err(Error::from("unsupported array element size"));
+            }
+            let mut packed = 0u64;
+            for idx in 0..(*len as usize).min(values.len()) {
+                let mut bits = constant_to_u64_bits(&values[idx])?;
+                let mask = if elem_size == 8 {
+                    u64::MAX
+                } else {
+                    (1u64 << (elem_size * 8)) - 1
+                };
+                bits &= mask;
+                let offset = (idx as u64) * elem_size;
+                packed |= bits << (offset * 8);
+            }
+            Ok(packed)
+        }
+        (LirConstant::Array(values, _), other_ty) => {
+            let elem_size = size_of(other_ty) as u64;
+            if elem_size == 0 {
+                return Ok(0);
+            }
+            if elem_size > 8 {
+                return Err(Error::from("unsupported array element size"));
+            }
+            let mut packed = 0u64;
+            for (idx, value) in values.iter().enumerate() {
+                let mut bits = constant_to_u64_bits(value)?;
+                let mask = if elem_size == 8 {
+                    u64::MAX
+                } else {
+                    (1u64 << (elem_size * 8)) - 1
+                };
+                bits &= mask;
+                let offset = (idx as u64) * elem_size;
+                if offset >= 8 {
+                    break;
+                }
+                packed |= bits << (offset * 8);
+            }
+            Ok(packed)
+        }
+        _ => Err(Error::from("unsupported aggregate packing")),
+    }
+}
+
 fn vreg_offset(layout: &FrameLayout, id: u32) -> Result<i32> {
     layout
         .vreg_offsets
@@ -1204,6 +1299,8 @@ fn emit_block(
                     indices,
                     reg_types,
                     local_types,
+                    rodata,
+                    rodata_pool,
                 )?;
             }
             LirInstructionKind::ExtractValue { aggregate, indices } => {
@@ -1945,12 +2042,93 @@ fn emit_store(
         }
         return Ok(());
     }
+    if let LirValue::Constant(LirConstant::Array(values, elem_ty)) = value {
+        if values.is_empty() {
+            return Ok(());
+        }
+        let elem_ty = match elem_ty {
+            LirType::Array(elem, _) => elem.as_ref(),
+            other => other,
+        };
+        let elem_size = size_of(elem_ty) as i32;
+        if elem_size != 8 {
+            return Err(Error::from("unsupported array element size in constant store"));
+        }
+        match address {
+            LirValue::StackSlot(id) => {
+                let dst_offset = stack_slot_offset(layout, *id)?;
+                for (idx, elem) in values.iter().enumerate() {
+                    let offset = dst_offset + (idx as i32) * elem_size;
+                    match elem {
+                        LirConstant::String(text) => {
+                            let ro_offset = intern_cstring(rodata, rodata_pool, text);
+                            asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", ro_offset as i64);
+                        }
+                        LirConstant::Null(_) | LirConstant::Undef(_) => {
+                            emit_mov_imm64(asm, Reg::R10, 0);
+                        }
+                        other => {
+                            let bits = constant_to_u64_bits(other)?;
+                            emit_mov_imm64(asm, Reg::R10, bits);
+                        }
+                    }
+                    emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+                }
+            }
+            LirValue::Register(id) => {
+                let addr_offset = vreg_offset(layout, *id)?;
+                emit_mov_rm64(asm, Reg::R11, Reg::Rbp, addr_offset);
+                for (idx, elem) in values.iter().enumerate() {
+                    let offset = (idx as i32) * elem_size;
+                    match elem {
+                        LirConstant::String(text) => {
+                            let ro_offset = intern_cstring(rodata, rodata_pool, text);
+                            asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", ro_offset as i64);
+                        }
+                        LirConstant::Null(_) | LirConstant::Undef(_) => {
+                            emit_mov_imm64(asm, Reg::R10, 0);
+                        }
+                        other => {
+                            let bits = constant_to_u64_bits(other)?;
+                            emit_mov_imm64(asm, Reg::R10, bits);
+                        }
+                    }
+                    emit_mov_rr(asm, Reg::Rax, Reg::R11);
+                    emit_add_ri32(asm, Reg::Rax, offset);
+                    emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
+                }
+            }
+            _ => return Err(Error::from("unsupported store address for x86_64")),
+        }
+        return Ok(());
+    }
     if matches!(value, LirValue::Constant(LirConstant::Array(values, _)) if values.is_empty()) {
         return Ok(());
     }
     let value_ty = value_type(value, reg_types, local_types)?;
     if size_of(&value_ty) == 0 {
         return Ok(());
+    }
+    if let LirValue::Constant(constant) = value {
+        if matches!(constant, LirConstant::Struct(_, _) | LirConstant::Array(_, _))
+            && size_of(&value_ty) <= 8
+        {
+            let bits = pack_small_aggregate(constant, &value_ty)?;
+            emit_mov_imm64(asm, Reg::R10, bits);
+            match address {
+                LirValue::StackSlot(id) => {
+                    let dst_offset = stack_slot_offset(layout, *id)?;
+                    emit_mov_mr64(asm, Reg::Rbp, dst_offset, Reg::R10);
+                }
+                LirValue::Register(id) => {
+                    let addr_offset = vreg_offset(layout, *id)?;
+                    emit_mov_rm64(asm, Reg::R11, Reg::Rbp, addr_offset);
+                    emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
+                }
+                _ => return Err(Error::from("unsupported store address for x86_64")),
+            }
+            return Ok(());
+        }
     }
     if is_large_aggregate(&value_ty) {
         let size = size_of(&value_ty) as i32;
@@ -1978,8 +2156,19 @@ fn emit_store(
                                 "unsupported aggregate field size in constant store",
                             ));
                         }
-                        let bits = constant_to_u64_bits(field)?;
-                        emit_mov_imm64(asm, Reg::R10, bits);
+                        match field {
+                            LirConstant::String(text) => {
+                                let offset = intern_cstring(rodata, rodata_pool, text);
+                                asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", offset as i64);
+                            }
+                            LirConstant::Null(_) | LirConstant::Undef(_) => {
+                                emit_mov_imm64(asm, Reg::R10, 0);
+                            }
+                            other => {
+                                let bits = constant_to_u64_bits(other)?;
+                                emit_mov_imm64(asm, Reg::R10, bits);
+                            }
+                        }
                         emit_mov_mr64(asm, Reg::Rbp, dst_offset + field_offset as i32, Reg::R10);
                     }
                 }
@@ -2000,8 +2189,19 @@ fn emit_store(
                                 "unsupported aggregate field size in constant store",
                             ));
                         }
-                        let bits = constant_to_u64_bits(field)?;
-                        emit_mov_imm64(asm, Reg::R10, bits);
+                        match field {
+                            LirConstant::String(text) => {
+                                let offset = intern_cstring(rodata, rodata_pool, text);
+                                asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", offset as i64);
+                            }
+                            LirConstant::Null(_) | LirConstant::Undef(_) => {
+                                emit_mov_imm64(asm, Reg::R10, 0);
+                            }
+                            other => {
+                                let bits = constant_to_u64_bits(other)?;
+                                emit_mov_imm64(asm, Reg::R10, bits);
+                            }
+                        }
                         emit_mov_rr(asm, Reg::Rax, Reg::R11);
                         emit_add_ri32(asm, Reg::Rax, field_offset as i32);
                         emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
@@ -2551,6 +2751,8 @@ fn emit_insert_value(
     indices: &[u32],
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
+    rodata: &mut Vec<u8>,
+    rodata_pool: &mut HashMap<String, u64>,
 ) -> Result<()> {
     let agg_ty = value_type(aggregate, reg_types, local_types)?;
     if !is_large_aggregate(&agg_ty) {
@@ -2576,14 +2778,37 @@ fn emit_insert_value(
     let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices)?;
     let store_offset = dst_offset + field_offset as i32;
     if is_aggregate_type(&field_ty) {
-        return Err(Error::from("InsertValue does not support aggregate element"));
+        let field_size = size_of(&field_ty) as i32;
+        if field_size == 0 {
+            return Ok(());
+        }
+        match element {
+            LirValue::Register(id) => {
+                let src_offset = agg_offset(layout, *id)?;
+                copy_sp_to_sp(asm, src_offset, store_offset, field_size)?;
+            }
+            LirValue::Constant(LirConstant::Undef(_)) => {
+                zero_sp_range(asm, store_offset, field_size)?;
+            }
+            _ => return Err(Error::from("unsupported InsertValue aggregate element")),
+        }
+        emit_mov_rr(asm, Reg::R10, Reg::Rbp);
+        emit_add_ri32(asm, Reg::R10, dst_offset);
+        store_vreg(asm, layout, dst_id, Reg::R10)?;
+        return Ok(());
     }
     if is_float_type(&field_ty) {
         load_value_float(asm, layout, element, FReg::Xmm0, &field_ty, reg_types, local_types)?;
         emit_movsd_m64x(asm, Reg::Rbp, store_offset, FReg::Xmm0, &field_ty);
     } else {
-        load_value(asm, layout, element, Reg::R10, reg_types, local_types)?;
-        emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+        if let LirValue::Constant(LirConstant::String(text)) = element {
+            let offset = intern_cstring(rodata, rodata_pool, text);
+            asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", offset as i64);
+            emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+        } else {
+            load_value(asm, layout, element, Reg::R10, reg_types, local_types)?;
+            emit_mov_mr64(asm, Reg::Rbp, store_offset, Reg::R10);
+        }
     }
 
     emit_mov_rr(asm, Reg::R10, Reg::Rbp);
