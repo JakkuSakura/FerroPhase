@@ -500,6 +500,7 @@ dependencies = [
  "git2",
  "hex",
  "home",
+ "http",
  "memchr",
  "rayon",
  "rustc-hash 1.1.0",
@@ -834,6 +835,12 @@ checksum = "b09cf3155332e944990140d967ff5eceb70df778b34f77d8075db46e4704e6d8"
 dependencies = [
  "num-traits",
 ]
+
+[[package]]
+name = "fnv"
+version = "1.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "foldhash"
@@ -1376,6 +1383,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "http"
+version = "0.2.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "601cbb57e577e2f5ef5be8e7b83f0f63994f25aa94d673e54a92d5c516d101f1"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa",
+]
+
+[[package]]
 name = "icu_collections"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1749,6 +1767,7 @@ dependencies = [
  "fp-typescript",
  "glob",
  "hex",
+ "http",
  "pathdiff",
  "semver",
  "serde",

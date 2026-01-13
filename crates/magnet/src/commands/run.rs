@@ -46,6 +46,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         include_dependencies: true,
         cargo_fetch: options.fetch,
         resolve_registry: true,
+        allow_multiple_versions: false,
     };
     let graph_path = write_package_graph(
         &root,

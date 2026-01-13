@@ -77,6 +77,7 @@ pub struct PackageGraphOptions {
     pub include_dependencies: bool,
     pub cargo_fetch: bool,
     pub resolve_registry: bool,
+    pub allow_multiple_versions: bool,
 }
 
 impl Default for PackageGraphOptions {
@@ -87,6 +88,7 @@ impl Default for PackageGraphOptions {
             include_dependencies: true,
             cargo_fetch: true,
             resolve_registry: true,
+            allow_multiple_versions: false,
         }
     }
 }
@@ -187,6 +189,73 @@ impl PackageGraph {
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
             .to_path_buf();
         let _guard = apply_cargo_home(resolve_cache_dir(options))?;
+        let registry = if options.resolve_registry {
+            Some(RegistryClient::new(RegistryOptions {
+                offline: options.offline,
+                cache_dir: resolve_cache_dir(options),
+            })?)
+        } else {
+            None
+        };
+        if options.allow_multiple_versions {
+            let provider = Arc::new(CargoPackageProvider::new_with_options(
+                root.clone(),
+                CargoMetadataOptions {
+                    offline: options.offline,
+                    include_dependencies: false,
+                },
+            ));
+            provider
+                .refresh()
+                .map_err(|err| eyre::eyre!("Failed to load Cargo workspace: {err}"))?;
+            let module_provider = RustModuleProvider::new(provider.clone());
+
+            let mut packages = Vec::new();
+            for package_id in provider
+                .list_packages()
+                .map_err(|err| eyre::eyre!("Failed to list Cargo packages: {err}"))?
+            {
+                let descriptor = provider
+                    .load_package(&package_id)
+                    .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;
+                module_provider
+                    .modules_for_package(&package_id)
+                    .map_err(|err| eyre::eyre!("Failed to list modules for {package_id}: {err}"))?;
+                let module_roots = default_module_roots(&descriptor.root.to_path_buf());
+                let entry = detect_entry(&descriptor.root.to_path_buf(), &["rs"]);
+                let dependencies = if options.include_dependencies {
+                    let deps = parse_cargo_dependencies(&descriptor.manifest_path.to_path_buf())?;
+                    deps.into_iter()
+                        .map(|(name, dep)| dependency_to_edge(name, dep, registry.as_ref()))
+                        .collect::<Result<Vec<_>>>()?
+                } else {
+                    Vec::new()
+                };
+
+                packages.push(PackageNode {
+                    name: descriptor.name.clone(),
+                    version: descriptor
+                        .version
+                        .as_ref()
+                        .map(|v| v.to_string())
+                        .unwrap_or_else(|| "0.0.0".to_string()),
+                    root: descriptor.root.to_path_buf(),
+                    manifest_path: descriptor.manifest_path.to_path_buf(),
+                    language: Some("rust".to_string()),
+                    module_roots,
+                    entry,
+                    dependencies,
+                });
+            }
+
+            return Ok(Self {
+                schema_version: 1,
+                root,
+                packages,
+                selected_package: None,
+                build_options: HashMap::new(),
+            });
+        }
         #[cfg(feature = "cargo-fallback")]
         {
             if options.cargo_fetch && !options.offline {
@@ -498,6 +567,7 @@ fn dependency_to_edge(
     let mut source = None;
     let mut path = dep.path.clone();
 
+    let resolved_name = dep.package.as_deref().unwrap_or(name.as_str());
     if path.is_none() && dep.git.is_none() && dep.version.is_some() {
         if let Some(registry_name) = dep.registry.as_deref() {
             if registry_name != "crates-io" && registry_name != "crates.io" {
@@ -505,7 +575,7 @@ fn dependency_to_edge(
             }
         }
         if let Some(registry) = registry {
-            let resolved = registry.resolve(&name, dep.version.as_deref())?;
+            let resolved = registry.resolve(resolved_name, dep.version.as_deref())?;
             resolved_version = Some(resolved.version.clone());
             checksum = resolved.checksum.clone();
             source = Some("registry".to_string());
@@ -706,6 +776,75 @@ fn manifest_root_path(manifest: &ManifestModel) -> PathBuf {
         ManifestModel::Workspace(workspace) => workspace.root_path.clone(),
         ManifestModel::Package(package) => package.root_path.clone(),
     }
+}
+
+fn parse_cargo_dependencies(manifest_path: &Path) -> Result<HashMap<String, DependencyModel>> {
+    let content = std::fs::read_to_string(manifest_path)?;
+    let value: toml::Value = toml::from_str(&content)?;
+    Ok(parse_cargo_deps(value.get("dependencies")))
+}
+
+fn parse_cargo_deps(section: Option<&toml::Value>) -> HashMap<String, DependencyModel> {
+    let mut out = HashMap::new();
+    let Some(table) = section.and_then(|v| v.as_table()) else {
+        return out;
+    };
+    for (name, value) in table {
+        let mut model = DependencyModel::default();
+        match value {
+            toml::Value::String(version) => {
+                model.version = Some(version.to_string());
+            }
+            toml::Value::Table(table) => {
+                if let Some(version) = table.get("version").and_then(|v| v.as_str()) {
+                    model.version = Some(version.to_string());
+                }
+                if let Some(path) = table.get("path").and_then(|v| v.as_str()) {
+                    model.path = Some(Path::new(path).to_path_buf());
+                }
+                if let Some(git) = table.get("git").and_then(|v| v.as_str()) {
+                    model.git = Some(git.to_string());
+                }
+                if let Some(branch) = table.get("branch").and_then(|v| v.as_str()) {
+                    model.branch = Some(branch.to_string());
+                }
+                if let Some(tag) = table.get("tag").and_then(|v| v.as_str()) {
+                    model.tag = Some(tag.to_string());
+                }
+                if let Some(rev) = table.get("rev").and_then(|v| v.as_str()) {
+                    model.rev = Some(rev.to_string());
+                }
+                if let Some(features) = table.get("features").and_then(|v| v.as_array()) {
+                    let list = features
+                        .iter()
+                        .filter_map(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .collect::<Vec<_>>();
+                    if !list.is_empty() {
+                        model.features = Some(list);
+                    }
+                }
+                if let Some(default_features) = table
+                    .get("default-features")
+                    .and_then(|v| v.as_bool())
+                {
+                    model.default_features = Some(default_features);
+                }
+                if let Some(optional) = table.get("optional").and_then(|v| v.as_bool()) {
+                    model.optional = Some(optional);
+                }
+                if let Some(package) = table.get("package").and_then(|v| v.as_str()) {
+                    model.package = Some(package.to_string());
+                }
+                if let Some(registry) = table.get("registry").and_then(|v| v.as_str()) {
+                    model.registry = Some(registry.to_string());
+                }
+            }
+            _ => {}
+        }
+        out.insert(name.to_string(), model);
+    }
+    out
 }
 
 fn default_module_roots(root: &Path) -> Vec<PathBuf> {

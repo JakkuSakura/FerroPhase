@@ -15,6 +15,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         include_dependencies: true,
         cargo_fetch: true,
         resolve_registry: !offline,
+        allow_multiple_versions: true,
     };
     let graph = PackageGraph::from_path_with_options(config_path, &options)?;
 

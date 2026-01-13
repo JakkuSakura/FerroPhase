@@ -1,4 +1,5 @@
-use crates_index::{Index, INDEX_GIT_URL};
+use crates_index::SparseIndex;
+use http;
 use eyre::Result;
 use flate2::read::GzDecoder;
 use semver::{Version, VersionReq};
@@ -41,21 +42,14 @@ impl RegistryClient {
             .map_err(|err| eyre::eyre!("invalid version requirement '{req_str}': {err}"))?;
 
         let _guard = CargoHomeGuard::apply(&self.cache_dir)?;
-        let mut index = Index::from_url(INDEX_GIT_URL)?;
-        if self.options.offline {
-            if !index.path().exists() {
-                return Err(eyre::eyre!(
-                    "registry index not available offline (missing {})",
-                    index.path().display()
-                ));
-            }
+        let index = SparseIndex::new_cargo_default()?;
+        let krate = if self.options.offline {
+            index
+                .crate_from_cache(name)
+                .map_err(|err| eyre::eyre!("crate '{name}' not available offline: {err}"))?
         } else {
-            index.update()?;
-        }
-
-        let krate = index
-            .crate_(name)
-            .ok_or_else(|| eyre::eyre!("crate '{name}' not found"))?;
+            fetch_sparse_crate(&index, name)?
+        };
         let (version, checksum) = select_version(&krate, &req)?;
 
         let crate_root = self
@@ -119,6 +113,31 @@ fn select_version(krate: &crates_index::Crate, req: &VersionReq) -> Result<(Stri
     };
 
     Ok((version.to_string(), checksum.clone()))
+}
+
+fn fetch_sparse_crate(index: &SparseIndex, name: &str) -> Result<crates_index::Crate> {
+    let request = index.make_cache_request(name)?;
+    let mut ureq_request = ureq::request(request.method().as_str(), &request.uri().to_string());
+    for (name, value) in request.headers() {
+        ureq_request = ureq_request.set(name.as_str(), value.to_str()?);
+    }
+    let response = ureq_request.call()?;
+    let status = http::StatusCode::from_u16(response.status())?;
+    let mut builder = http::Response::builder()
+        .status(status)
+        .version(http::Version::HTTP_11);
+    for header_name in response.headers_names() {
+        if let Some(value) = response.header(&header_name) {
+            builder = builder.header(header_name.as_str(), value);
+        }
+    }
+    let mut body = Vec::new();
+    response.into_reader().read_to_end(&mut body)?;
+    let response = builder.body(body)?;
+    index
+        .parse_cache_response(name, response, true)?
+        .or_else(|| index.crate_from_cache(name).ok())
+        .ok_or_else(|| eyre::eyre!("crate '{name}' not found"))
 }
 
 fn download_and_unpack(
