@@ -795,9 +795,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             Ty::AnyBox(_) => {
-                // Unknown AnyBox payloads are treated as opaque custom
-                // types until a dedicated handler is added.
-                self.bind(var, TypeTerm::Custom(ty.clone()));
+                // Treat AnyBox payloads as fully dynamic until a specific handler exists.
+                self.bind(var, TypeTerm::Any);
             }
             Ty::Struct(struct_ty) => {
                 self.struct_defs

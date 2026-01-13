@@ -4664,6 +4664,19 @@ impl<'a> BodyBuilder<'a> {
                         user_ty: None,
                         literal: mir::ConstantKind::Int(variant.discriminant),
                     })
+                } else if matches!(
+                    pat.kind,
+                    hir::PatKind::Struct(_, _, _) | hir::PatKind::TupleStruct(_, _)
+                ) {
+                    self.lowering.emit_warning(
+                        span,
+                        "struct pattern match is not supported; treating as non-matching",
+                    );
+                    mir::Operand::Constant(mir::Constant {
+                        span,
+                        user_ty: None,
+                        literal: mir::ConstantKind::Bool(false),
+                    })
                 } else {
                     let expr = hir::Expr {
                         hir_id: 0,
@@ -4673,6 +4686,17 @@ impl<'a> BodyBuilder<'a> {
                     let operand = self.lower_operand(&expr, None)?;
                     operand.operand
                 }
+            }
+            hir::PatKind::Tuple(_) => {
+                self.lowering.emit_warning(
+                    span,
+                    "tuple pattern match is not supported; treating as non-matching",
+                );
+                mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Bool(false),
+                })
             }
             _ => {
                 self.lowering.emit_warning(

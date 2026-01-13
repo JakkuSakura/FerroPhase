@@ -4275,12 +4275,9 @@ impl LirGenerator {
         match op {
             mir::UnOp::Not => Ok(lir::LirInstructionKind::Not(operand)),
             mir::UnOp::Neg => {
-                let zero = self.zero_value_for_lir_type(result_ty).ok_or_else(|| {
-                    crate::error::optimization_error(format!(
-                        "MIR→LIR: unsupported type {:?} for unary negation",
-                        result_ty
-                    ))
-                })?;
+                let Some(zero) = self.zero_value_for_lir_type(result_ty) else {
+                    return Ok(lir::LirInstructionKind::Unreachable);
+                };
                 Ok(lir::LirInstructionKind::Sub(zero, operand))
             }
         }

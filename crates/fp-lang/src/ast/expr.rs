@@ -2324,13 +2324,17 @@ fn macro_callee_path(node: &SyntaxNode) -> Result<Path, LowerError> {
         if tok.text == "::" || tok.text == "." {
             continue;
         }
-        if tok
-            .text
+        let text = tok.text.strip_prefix("r#").unwrap_or(&tok.text);
+        if text == "crate" || text == "self" || text == "super" {
+            segments.push(Ident::new(text.to_string()));
+            continue;
+        }
+        if text
             .chars()
             .next()
             .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
         {
-            segments.push(Ident::new(tok.text.clone()));
+            segments.push(Ident::new(text.to_string()));
         }
     }
     if segments.is_empty() {
