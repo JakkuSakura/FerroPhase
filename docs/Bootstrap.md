@@ -147,6 +147,7 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Macro callees can be paths/selects; call targets accept function‑pointer operands beyond simple paths.
 - ConstantIndex and Subslice are lowered in MIR → LIR.
 - Generic call sites now specialize on‑demand during HIR → MIR lowering (no separate pass).
+- Field/index access now materializes non‑place bases into temporaries.
 
 ### Partial (works, but only in a reduced form)
 - Closures: still lowered to unit in bootstrap mode.
@@ -155,11 +156,11 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Typing for quote tokens: remains opaque; quote/splice checks still enforce shape.
 - Structural value materialization: now accepts `Value::Type`, but type coverage is still limited to literal-like kinds.
 - Monomorphization: specialization happens on‑demand, but there is no full pass to discover all instantiations.
-- Named arguments: calls now resolve by parameter name when available; format/printf named args still unsupported.
+- Named arguments: calls now resolve by parameter name when available; format/printf named args resolve but remain constrained by printf‑style type support.
+- Panic format payloads: format strings now lower through the format intrinsic, but inherit printf‑style type limits.
 
 ### Still Missing (true blockers)
 - Arbitrary precision decimals unsupported.
-- Panic format payload unsupported in compiled backends.
 - `printf` argument types limited.
 - Array length via pointer unsupported.
 - Field/index access still rejects some base expressions.
@@ -182,10 +183,8 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 
 #### HIR → MIR / MIR semantics
 - Arbitrary precision decimals unsupported.
-- Panic format payload unsupported in compiled backends.
 - `printf` argument types limited.
 - Array length via pointer unsupported.
-- Field/index access still has unsupported base expressions.
 
 #### MIR → LIR
 - Some place projections and MIR intrinsics are still unsupported (e.g., downcasts).

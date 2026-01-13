@@ -8425,7 +8425,9 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn emit_printf_call(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
-        let Some((template, call_args)) = self.format_call_parts(call, span) else {
+        let Some((template, call_args, name_map, positional_len)) =
+            self.format_call_parts(call, span)
+        else {
             return Ok(());
         };
 
@@ -8454,17 +8456,41 @@ impl<'a> BodyBuilder<'a> {
                         hir::FormatArgRef::Implicit => {
                             let current = implicit_index;
                             implicit_index += 1;
+                            if current >= positional_len {
+                                self.lowering.emit_error(
+                                    span,
+                                    format!(
+                                        "format placeholder references missing argument at index {}",
+                                        current
+                                    ),
+                                );
+                                return Ok(());
+                            }
                             current
                         }
                         hir::FormatArgRef::Positional(index) => *index,
                         hir::FormatArgRef::Named(name) => {
-                            self.lowering.emit_error(
-                                span,
-                                format!("named argument '{name}' is not supported"),
-                            );
-                            return Ok(());
+                            let Some(index) = name_map.get(name) else {
+                                self.lowering.emit_error(
+                                    span,
+                                    format!("format placeholder references missing argument `{name}`"),
+                                );
+                                return Ok(());
+                            };
+                            *index
                         }
                     };
+
+                    if arg_index >= positional_len && matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_)) {
+                        self.lowering.emit_error(
+                            span,
+                            format!(
+                                "format placeholder references missing argument at index {}",
+                                arg_index
+                            ),
+                        );
+                        return Ok(());
+                    }
 
                     let Some((_, _, spec)) = prepared_args.get(arg_index) else {
                         self.lowering.emit_error(
@@ -8520,7 +8546,9 @@ impl<'a> BodyBuilder<'a> {
         call: &hir::IntrinsicCallExpr,
         span: Span,
     ) -> Result<(String, Vec<mir::Operand>)> {
-        let Some((template, call_args)) = self.format_call_parts(call, span) else {
+        let Some((template, call_args, name_map, positional_len)) =
+            self.format_call_parts(call, span)
+        else {
             return Ok((String::new(), Vec::new()));
         };
 
@@ -8549,17 +8577,41 @@ impl<'a> BodyBuilder<'a> {
                         hir::FormatArgRef::Implicit => {
                             let current = implicit_index;
                             implicit_index += 1;
+                            if current >= positional_len {
+                                self.lowering.emit_error(
+                                    span,
+                                    format!(
+                                        "format placeholder references missing argument at index {}",
+                                        current
+                                    ),
+                                );
+                                return Ok((String::new(), Vec::new()));
+                            }
                             current
                         }
                         hir::FormatArgRef::Positional(index) => *index,
                         hir::FormatArgRef::Named(name) => {
-                            self.lowering.emit_error(
-                                span,
-                                format!("named argument '{name}' is not supported"),
-                            );
-                            return Ok((String::new(), Vec::new()));
+                            let Some(index) = name_map.get(name) else {
+                                self.lowering.emit_error(
+                                    span,
+                                    format!("format placeholder references missing argument `{name}`"),
+                                );
+                                return Ok((String::new(), Vec::new()));
+                            };
+                            *index
                         }
                     };
+
+                    if arg_index >= positional_len && matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_)) {
+                        self.lowering.emit_error(
+                            span,
+                            format!(
+                                "format placeholder references missing argument at index {}",
+                                arg_index
+                            ),
+                        );
+                        return Ok((String::new(), Vec::new()));
+                    }
 
                     let Some((_, _, spec)) = prepared_args.get(arg_index) else {
                         self.lowering.emit_error(
@@ -8602,7 +8654,7 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         call: &hir::IntrinsicCallExpr,
         span: Span,
-    ) -> Option<(hir::FormatString, Vec<hir::CallArg>)> {
+    ) -> Option<(hir::FormatString, Vec<hir::CallArg>, HashMap<String, usize>, usize)> {
         let Some(first) = call.callargs.first() else {
             self.lowering
                 .emit_error(span, "format intrinsic requires a template argument");
@@ -8615,19 +8667,64 @@ impl<'a> BodyBuilder<'a> {
             return None;
         };
 
-        let mut positional = Vec::new();
+        let mut max_index = None::<usize>;
+        let mut positional_slots: Vec<Option<hir::CallArg>> = Vec::new();
+        let mut named_args = Vec::new();
         for arg in &call.callargs[1..] {
             let name = arg.name.as_str();
-            if name.starts_with("arg") && name[3..].chars().all(|ch| ch.is_ascii_digit()) {
-                positional.push(arg.clone());
-            } else {
-                self.lowering
-                    .emit_error(span, "named arguments are not supported in format lowering");
+            if let Some(index) = name.strip_prefix("arg") {
+                if index.chars().all(|ch| ch.is_ascii_digit()) {
+                    let idx = index.parse::<usize>().unwrap_or(0);
+                    if positional_slots.len() <= idx {
+                        positional_slots.resize(idx + 1, None);
+                    }
+                    if positional_slots[idx].is_some() {
+                        self.lowering.emit_error(
+                            span,
+                            format!("format argument index {idx} is provided more than once"),
+                        );
+                        return None;
+                    }
+                    positional_slots[idx] = Some(arg.clone());
+                    max_index = Some(max_index.map_or(idx, |current| current.max(idx)));
+                    continue;
+                }
+            }
+            named_args.push(arg.clone());
+        }
+
+        if let Some(max_index) = max_index {
+            if positional_slots.iter().take(max_index + 1).any(|arg| arg.is_none()) {
+                self.lowering.emit_error(
+                    span,
+                    "format arguments must be contiguous starting from arg0",
+                );
                 return None;
             }
         }
 
-        Some((template.clone(), positional))
+        let mut positional = Vec::new();
+        for arg in positional_slots.into_iter().flatten() {
+            positional.push(arg);
+        }
+
+        let positional_len = positional.len();
+        let mut name_map = HashMap::new();
+        for (offset, arg) in named_args.iter().enumerate() {
+            let index = positional_len + offset;
+            let name = arg.name.as_str().to_string();
+            if name_map.insert(name.clone(), index).is_some() {
+                self.lowering.emit_error(
+                    span,
+                    format!("format argument '{name}' is provided more than once"),
+                );
+                return None;
+            }
+        }
+
+        positional.extend(named_args);
+
+        Some((template.clone(), positional, name_map, positional_len))
     }
 
     fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
@@ -8642,11 +8739,75 @@ impl<'a> BodyBuilder<'a> {
                         .iter()
                         .any(|part| matches!(part, hir::FormatTemplatePart::Placeholder(_)));
                     if has_placeholders {
-                        self.lowering.emit_error(
-                            span,
-                            "panic format payload is not supported in compiled backends",
-                        );
-                        "<panic message unavailable>".to_string()
+                        let format_call = hir::IntrinsicCallExpr {
+                            kind: IntrinsicCallKind::Format,
+                            callargs: call.callargs.clone(),
+                        };
+                        let (format, args) = match self.prepare_format_call(&format_call, span) {
+                            Ok(value) => value,
+                            Err(_) => (String::new(), Vec::new()),
+                        };
+                        if format.is_empty() && args.is_empty() {
+                            self.lowering.emit_error(
+                                span,
+                                "panic format payload is not supported in compiled backends",
+                            );
+                            "<panic message unavailable>".to_string()
+                        } else {
+                            let string_ty = self.lowering.raw_string_ptr_ty();
+                            let local_id = self.allocate_temp(string_ty.clone(), span);
+                            let local_place = mir::Place::from_local(local_id);
+                            self.push_statement(mir::Statement {
+                                source_info: span,
+                                kind: mir::StatementKind::Assign(
+                                    local_place.clone(),
+                                    mir::Rvalue::IntrinsicCall {
+                                        kind: IntrinsicCallKind::Format,
+                                        format,
+                                        args,
+                                    },
+                                ),
+                            });
+                            self.locals[local_id as usize].ty = string_ty.clone();
+                            let sig = mir::FunctionSig {
+                                inputs: vec![string_ty.clone()],
+                                output: MirLowering::unit_ty(),
+                            };
+                            self.lowering.ensure_runtime_stub("fp_panic", &sig);
+                            let fn_ty = self.lowering.function_pointer_ty(&sig);
+                            let func = mir::Operand::Constant(mir::Constant {
+                                span,
+                                user_ty: None,
+                                literal: mir::ConstantKind::Fn(
+                                    mir::Symbol::new("fp_panic".to_string()),
+                                    fn_ty,
+                                ),
+                            });
+                            let args = vec![mir::Operand::Copy(local_place)];
+
+                            let result_local = self.allocate_temp(MirLowering::unit_ty(), span);
+                            let after_block = self.new_block();
+                            let terminator = mir::Terminator {
+                                source_info: span,
+                                kind: mir::TerminatorKind::Call {
+                                    func,
+                                    args,
+                                    destination: Some((mir::Place::from_local(result_local), after_block)),
+                                    cleanup: None,
+                                    from_hir_call: true,
+                                    fn_span: span,
+                                },
+                            };
+                            self.blocks[self.current_block as usize].terminator = Some(terminator);
+
+                            self.current_block = after_block;
+                            self.set_current_terminator(mir::Terminator {
+                                source_info: span,
+                                kind: mir::TerminatorKind::Unreachable,
+                            });
+                            self.current_block = self.new_block();
+                            return Ok(());
+                        }
                     } else {
                         template
                             .parts
@@ -9513,11 +9674,7 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::FieldAccess(base, field) => {
                 let base_place = match self.lower_place(base)? {
                     Some(info) => info,
-                    None => {
-                        self.lowering
-                            .emit_error(base.span, "unsupported base expression for field access");
-                        return Ok(None);
-                    }
+                    None => self.materialize_expr_place(base)?,
                 };
 
                 let mut place = base_place.place.clone();
@@ -9578,11 +9735,7 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Index(base, index) => {
                 let base_place = match self.lower_place(base)? {
                     Some(info) => info,
-                    None => {
-                        self.lowering
-                            .emit_error(base.span, "unsupported base expression for index access");
-                        return Ok(None);
-                    }
+                    None => self.materialize_expr_place(base)?,
                 };
 
                 let index_ty = Ty {
@@ -9642,6 +9795,57 @@ impl<'a> BodyBuilder<'a> {
             }
             _ => Ok(None),
         }
+    }
+
+    fn materialize_expr_place(&mut self, expr: &hir::Expr) -> Result<PlaceInfo> {
+        let value = self.lower_operand(expr, None)?;
+        let local_id = self.allocate_temp(value.ty.clone(), expr.span);
+        let place = mir::Place::from_local(local_id);
+        let container_kind = match &value.operand {
+            mir::Operand::Constant(constant) => match &constant.literal {
+                mir::ConstantKind::Val(mir::ConstValue::List { elements, elem_ty }, _) => {
+                    Some(mir::ContainerKind::List {
+                        elem_ty: elem_ty.clone(),
+                        len: elements.len() as u64,
+                    })
+                }
+                mir::ConstantKind::Val(
+                    mir::ConstValue::Map {
+                        entries,
+                        key_ty,
+                        value_ty,
+                    },
+                    _,
+                ) => Some(mir::ContainerKind::Map {
+                    key_ty: key_ty.clone(),
+                    value_ty: value_ty.clone(),
+                    len: entries.len() as u64,
+                }),
+                _ => None,
+            },
+            _ => None,
+        };
+        let statement = mir::Statement {
+            source_info: expr.span,
+            kind: mir::StatementKind::Assign(
+                place.clone(),
+                mir::Rvalue::Use(value.operand),
+            ),
+        };
+        self.push_statement(statement);
+        self.locals[local_id as usize].ty = value.ty.clone();
+        let struct_def = self.struct_def_from_ty(&value.ty);
+        if let Some(def_id) = struct_def {
+            self.local_structs.insert(local_id, def_id);
+        }
+        if let Some(kind) = container_kind {
+            self.container_locals.insert(local_id, kind);
+        }
+        Ok(PlaceInfo {
+            place,
+            ty: value.ty.clone(),
+            struct_def,
+        })
     }
 
     fn lower_expr_into_place(
