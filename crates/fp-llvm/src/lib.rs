@@ -102,7 +102,7 @@ impl LlvmConfig {
         self
     }
 
-    /// Allow unresolved globals during codegen (bootstrap fallback)
+    /// Allow unresolved globals during codegen (fallback).
     pub fn with_allow_unresolved_globals(mut self, allow: bool) -> Self {
         self.allow_unresolved_globals = allow;
         self

@@ -42,7 +42,7 @@ globset = "0.4"
 # Logging and diagnostics
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
-miette = { version = "7.6.0", features = ["fancy"], optional = true }
+miette = { version = "7.6.0", features = ["fancy"] }
 
 # Serialization for configuration
 serde = { version = "1.0", features = ["derive"] }
@@ -75,11 +75,3 @@ tempfile = "3.8"
 assert_cmd = "2.0"
 predicates = "3.0"
 criterion = { version = "0.7.0" }
-
-[features]
-default = ["miette"]
-bootstrap = [
-    "fp-core/bootstrap",
-    "fp-typing/bootstrap",
-    "fp-backend/bootstrap",
-]

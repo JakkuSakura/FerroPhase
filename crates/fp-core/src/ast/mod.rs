@@ -13,14 +13,12 @@ mod deserialize;
 mod expr;
 mod ident;
 mod item;
-#[cfg(feature = "bootstrap")]
 pub mod json;
 mod macros;
 mod pat;
 mod pretty;
 mod schema;
 mod serialize;
-#[cfg(feature = "bootstrap")]
 pub mod snapshot;
 
 mod value;
@@ -29,12 +27,10 @@ pub use attr::*;
 pub use expr::*;
 pub use ident::*;
 pub use item::*;
-#[cfg(feature = "bootstrap")]
 pub use json::*;
 pub use macros::*;
 pub use pat::*;
 pub use schema::*;
-#[cfg(feature = "bootstrap")]
 pub use snapshot::*;
 #[allow(dead_code)]
 pub use value::*;
@@ -64,7 +60,7 @@ common_enum! {
     /// - `Item`/`Expr`/`File`: the canonical FerroPhase AST hierarchy.
     /// - `Query`: textual query documents (SQL, PRQL, ...).
     /// - `Schema`: validation schemas such as JSON Schema.
-    /// - `Workspace`: metadata describing a Rust workspace (used for bootstrap).
+    /// - `Workspace`: metadata describing a Rust workspace.
     pub enum NodeKind {
         Item(Item),
         Expr(Expr),

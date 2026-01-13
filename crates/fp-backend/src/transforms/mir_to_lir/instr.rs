@@ -3726,7 +3726,7 @@ impl LirGenerator {
                 return lir::LirValue::Register(instr_id);
             }
 
-            // Pointer/integer interop for bootstrap tolerance
+            // Pointer/integer interop for tolerant lowering.
             let current_is_int = self.is_integral_type(&current_ty);
             let target_is_int = self.is_integral_type(&target_ty);
             let current_is_ptr = matches!(&current_ty, lir::LirType::Ptr(_));

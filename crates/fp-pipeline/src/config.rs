@@ -38,10 +38,6 @@ pub struct PipelineOptions {
     pub release: bool,
     /// Execute `main` during const evaluation instead of running backend
     pub execute_main: bool,
-    /// Run pipeline in bootstrap mode (requires `FERROPHASE_BOOTSTRAP` and bootstrap feature)
-    pub bootstrap_mode: bool,
-    /// Emit bootstrap snapshots (JSON) for downstream replay
-    pub emit_bootstrap_snapshot: bool,
 
     /// Disable specific pipeline stages by name (best-effort; mainly for debugging).
     pub disabled_stages: Vec<String>,
@@ -134,8 +130,6 @@ impl Default for PipelineOptions {
             error_tolerance: ErrorToleranceOptions::default(),
             release: false,
             execute_main: false,
-            bootstrap_mode: false,
-            emit_bootstrap_snapshot: false,
             disabled_stages: Vec::new(),
         }
     }
@@ -187,8 +181,6 @@ impl From<&PipelineConfig> for PipelineOptions {
             error_tolerance: ErrorToleranceOptions::default(),
             release: false,
             execute_main: false,
-            bootstrap_mode: false,
-            emit_bootstrap_snapshot: false,
             disabled_stages: Vec::new(),
         }
     }

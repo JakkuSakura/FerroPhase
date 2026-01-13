@@ -108,15 +108,6 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Minimal bootstrap fast-path: when self-hosting (Stage 2), bypass Clap/Tracing and
-    // invoke the pipeline deterministically from the AST snapshot.
-    if std::env::var_os("FERROPHASE_BOOTSTRAP").is_some()
-        && std::env::var_os("FP_BOOTSTRAP_STAGE").as_deref() == Some(std::ffi::OsStr::new("2"))
-    {
-        return fp_cli::bootstrap::bootstrap_compile_from_env();
-    }
-
-    // Note: in bootstrap runs we still use the standard CLI + pipeline.
     let cli = Cli::parse();
 
     // Set up error reporting

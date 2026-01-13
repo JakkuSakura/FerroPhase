@@ -13,10 +13,5 @@ fn bool_from_env(key: &str) -> bool {
 
 pub fn lossy_mode() -> bool {
     static LOSSY: OnceLock<bool> = OnceLock::new();
-    *LOSSY.get_or_init(|| bootstrap_mode() || bool_from_env("FERROPHASE_LOSSY"))
-}
-
-pub fn bootstrap_mode() -> bool {
-    static BOOT: OnceLock<bool> = OnceLock::new();
-    *BOOT.get_or_init(|| std::env::var_os("FERROPHASE_BOOTSTRAP").is_some())
+    *LOSSY.get_or_init(|| bool_from_env("FERROPHASE_LOSSY"))
 }

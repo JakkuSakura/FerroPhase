@@ -23,12 +23,7 @@ pub(crate) struct WorkspaceLirReplay {
 
 /// Derive the main package name used for body retention in merged LIR.
 pub(crate) fn determine_main_package_name(workspace: &WorkspaceDocument) -> String {
-    // Priority: FP_BOOTSTRAP_MAIN → package named "fp-cli" → first package name
-    if let Ok(val) = std::env::var("FP_BOOTSTRAP_MAIN") {
-        if !val.trim().is_empty() {
-            return val;
-        }
-    }
+    // Priority: package named "fp-cli" → first package name
     if let Some(pkg) = workspace.packages.iter().find(|p| p.name == "fp-cli") {
         return pkg.name.clone();
     }

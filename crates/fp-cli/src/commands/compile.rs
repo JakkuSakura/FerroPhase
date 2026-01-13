@@ -273,8 +273,6 @@ async fn compile_file(
         },
         release: args.release,
         execute_main: execute_const_main,
-        bootstrap_mode: std::env::var_os("FERROPHASE_BOOTSTRAP").is_some(),
-        emit_bootstrap_snapshot: false,
         disabled_stages,
     };
 
@@ -293,25 +291,17 @@ async fn compile_file(
         }
     }
 
-    // Write output to file (or stdout in bootstrap mode with no explicit output)
+    // Write output to file.
     let artifact = match pipeline_output {
         PipelineOutput::Code(code) => {
-            let bootstrap = std::env::var_os("FERROPHASE_BOOTSTRAP").is_some();
-            if bootstrap && args.output.is_none() && args.backend == "llvm" {
-                print!("{}", code);
-                let _ = io::stdout().flush();
-                info!("Emitted LLVM IR to stdout (bootstrap)");
-                None
-            } else {
-                if let Some(parent) = output.parent() {
-                    std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
-                }
-
-                std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
-
-                info!("Generated code: {}", output.display());
-                Some(output.to_path_buf())
+            if let Some(parent) = output.parent() {
+                std::fs::create_dir_all(parent).map_err(|e| CliError::Io(e))?;
             }
+
+            std::fs::write(output, &code).map_err(|e| CliError::Io(e))?;
+
+            info!("Generated code: {}", output.display());
+            Some(output.to_path_buf())
         }
         PipelineOutput::Binary(path) => {
             let binary_path = path;

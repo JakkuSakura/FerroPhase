@@ -6,7 +6,3 @@ edition = "2021"
 [dependencies]
 fp-core = { path = "../fp-core" }
 tracing = "0.1"
-
-[features]
-default = []
-bootstrap = ["fp-core/bootstrap"]

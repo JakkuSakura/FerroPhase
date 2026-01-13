@@ -118,7 +118,7 @@ impl HirGenerator {
                 if self.error_tolerance {
                     self.add_warning(
                         Diagnostic::warning(
-                            "closure lowering is not supported during bootstrap; substituting unit"
+                            "closure lowering is not supported; substituting unit"
                                 .to_string(),
                         )
                         .with_source_context(DIAGNOSTIC_CONTEXT),

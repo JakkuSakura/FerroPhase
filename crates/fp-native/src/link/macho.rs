@@ -809,7 +809,7 @@ fn codesign_if_needed(path: &Path) -> Result<()> {
 
 /// Emit a minimal 64-bit Mach-O object file that defines `_main` and returns 0.
 ///
-/// This is a bootstrapping emitter to validate the pipeline and linker
+/// This is a minimal emitter to validate the pipeline and linker
 /// integration without LLVM/Cranelift.
 ///
 /// Limitations:

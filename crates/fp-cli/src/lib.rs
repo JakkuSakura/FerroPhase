@@ -3,7 +3,6 @@
 //! This crate provides the command-line interface for FerroPhase, a meta-compilation
 //! framework that enables multi-language development with advanced compile-time capabilities.
 
-pub mod bootstrap;
 pub mod cli;
 pub mod codegen;
 pub mod commands;

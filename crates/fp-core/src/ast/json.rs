@@ -1,4 +1,4 @@
-//! Helpers for serializing/deserializing AST snapshots in bootstrap mode.
+//! Helpers for serializing/deserializing AST snapshots.
 //!
 //! These utilities provide a thin wrapper over `serde_json` so higher-level
 //! tooling can load ASTs produced by a previous build when running inside a

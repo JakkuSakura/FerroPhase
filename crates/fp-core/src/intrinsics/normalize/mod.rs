@@ -4,7 +4,6 @@ use crate::ast::{
 };
 use crate::error::Result;
 use crate::intrinsics::{IntrinsicNormalizer, NoopIntrinsicNormalizer, NormalizeOutcome};
-mod bootstrap;
 mod format;
 
 /// Normalize intrinsic expressions into a canonical AST form so that typing and
@@ -48,9 +47,6 @@ fn normalize_item(item: &mut Item, strategy: &dyn IntrinsicNormalizer) -> Result
             }
         }
         ItemKind::DefFunction(function) => {
-            if bootstrap::maybe_rewrite_cli_main(function) {
-                return Ok(());
-            }
             for param in &mut function.sig.params {
                 if let Some(ty) = param.ty_annotation.as_mut() {
                     normalize_ty(ty, strategy)?;
@@ -204,13 +200,9 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
 
                 if let Some(intrinsic_call) = crate::ast::intrinsic_call_from_invoke(invoke) {
                     replacement = Some(Expr::new(ExprKind::IntrinsicCall(intrinsic_call)));
-                } else if let Some(repl) = bootstrap::maybe_bootstrap_invoke_replacement(invoke) {
-                    replacement = Some(repl);
                 } else if let Some(mut collection) = ExprIntrinsicContainer::from_invoke(invoke) {
                     let new_expr = apply_intrinsic_collection(&mut collection, strategy)?;
                     replacement = Some(new_expr);
-                } else if bootstrap::is_bootstrap_cli_side_effect_call(invoke) {
-                    replacement = Some(Expr::new(ExprKind::Value(Box::new(Value::unit()))));
                 }
             }
             ExprKind::Await(await_expr) => normalize_expr(await_expr.base.as_mut(), strategy)?,
@@ -478,8 +470,7 @@ fn normalize_intrinsic_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::{FormatTemplatePart, Ident, Locator, Path};
-    use crate::intrinsics::normalize::bootstrap as b;
+    use crate::ast::FormatTemplatePart;
 
     #[test]
     fn test_convert_print_args_to_template() {
@@ -494,27 +485,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_bootstrap_env_replacement() {
-        std::env::set_var("FERROPHASE_BOOTSTRAP", "1");
-        let path = Path::new(vec![
-            Ident::new("std".to_string()),
-            Ident::new("env".to_string()),
-            Ident::new("var".to_string()),
-        ]);
-        let loc = Locator::Path(path);
-        let invoke = ExprInvoke {
-            target: ExprInvokeTarget::Function(loc),
-            args: vec![],
-        };
-        let out = b::maybe_bootstrap_invoke_replacement(&invoke).expect("some");
-        match out.kind() {
-            ExprKind::Value(v) => match v.as_ref() {
-                Value::String(s) => assert!(s.value.is_empty()),
-                _ => panic!("expected string"),
-            },
-            _ => panic!("expected value"),
-        }
-        std::env::remove_var("FERROPHASE_BOOTSTRAP");
-    }
 }

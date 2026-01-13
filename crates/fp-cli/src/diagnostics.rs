@@ -3,23 +3,14 @@
 #![allow(unused_assignments)] // miette derive generates unused assignments in macro-expanded code.
 
 use crate::Result;
-#[cfg(not(feature = "bootstrap"))]
 use miette::Diagnostic;
-#[cfg(not(feature = "bootstrap"))]
 use thiserror::Error;
 
-#[cfg(feature = "bootstrap")]
-type SourceSpan = (usize, usize);
-#[cfg(not(feature = "bootstrap"))]
 type SourceSpan = miette::SourceSpan;
 
-#[cfg(feature = "bootstrap")]
-type OptionalSourceSpan = Option<(usize, usize)>;
-#[cfg(not(feature = "bootstrap"))]
 type OptionalSourceSpan = Option<miette::SourceSpan>;
 
 /// Set up enhanced error reporting with miette
-#[cfg(not(feature = "bootstrap"))]
 pub fn setup_error_reporting() -> Result<()> {
     miette::set_hook(Box::new(|_| {
         Box::new(
@@ -35,73 +26,53 @@ pub fn setup_error_reporting() -> Result<()> {
     Ok(())
 }
 
-#[cfg(feature = "bootstrap")]
-pub fn setup_error_reporting() -> Result<()> {
-    Ok(())
-}
-
 /// Enhanced diagnostic error for FerroPhase CLI
-#[cfg_attr(feature = "bootstrap", derive(Debug))]
-#[cfg_attr(not(feature = "bootstrap"), derive(Error, Debug, Diagnostic))]
+#[derive(Error, Debug, Diagnostic)]
 pub enum FerroPhaseError {
-    #[cfg_attr(not(feature = "bootstrap"), error("Syntax error in FerroPhase code"))]
-    #[cfg_attr(
-        not(feature = "bootstrap"),
-        diagnostic(
-            code(ferrophase::syntax_error),
-            help("Check your syntax against the FerroPhase language reference")
-        )
+    #[error("Syntax error in FerroPhase code")]
+    #[diagnostic(
+        code(ferrophase::syntax_error),
+        help("Check your syntax against the FerroPhase language reference")
     )]
     SyntaxError {
-        #[cfg_attr(not(feature = "bootstrap"), source_code)]
         src: String,
-        #[cfg_attr(not(feature = "bootstrap"), label("syntax error here"))]
+        #[label("syntax error here")]
         err_span: SourceSpan,
     },
 
-    #[cfg_attr(not(feature = "bootstrap"), error("Type error in FerroPhase code"))]
-    #[cfg_attr(
-        not(feature = "bootstrap"),
-        diagnostic(
-            code(ferrophase::type_error),
-            help("Ensure all types are correctly specified and compatible")
-        )
+    #[error("Type error in FerroPhase code")]
+    #[diagnostic(
+        code(ferrophase::type_error),
+        help("Ensure all types are correctly specified and compatible")
     )]
     TypeError {
-        #[cfg_attr(not(feature = "bootstrap"), source_code)]
         src: String,
-        #[cfg_attr(not(feature = "bootstrap"), label("type error here"))]
+        #[label("type error here")]
         err_span: SourceSpan,
         message: String,
     },
 
-    #[cfg_attr(not(feature = "bootstrap"), error("Compilation error"))]
-    #[cfg_attr(
-        not(feature = "bootstrap"),
-        diagnostic(
-            code(ferrophase::compilation_error),
-            help("Check the compilation logs for more details")
-        )
+    #[error("Compilation error")]
+    #[diagnostic(
+        code(ferrophase::compilation_error),
+        help("Check the compilation logs for more details")
     )]
     CompilationError {
         message: String,
         src: Option<String>,
-        #[cfg_attr(not(feature = "bootstrap"), label("error occurred here"))]
+        #[label("error occurred here")]
         err_span: OptionalSourceSpan,
     },
 
-    #[cfg_attr(not(feature = "bootstrap"), error("Project configuration error"))]
-    #[cfg_attr(
-        not(feature = "bootstrap"),
-        diagnostic(
-            code(ferrophase::config_error),
-            help("Check your configuration file or use magnet for package manifests")
-        )
+    #[error("Project configuration error")]
+    #[diagnostic(
+        code(ferrophase::config_error),
+        help("Check your configuration file or use magnet for package manifests")
     )]
     ConfigError {
         message: String,
         config_src: Option<String>,
-        #[cfg_attr(not(feature = "bootstrap"), label("configuration error"))]
+        #[label("configuration error")]
         err_span: OptionalSourceSpan,
     },
 }
@@ -153,17 +124,11 @@ pub fn config_error(message: String) -> FerroPhaseError {
 }
 
 /// Pretty print diagnostics with context
-#[cfg(not(feature = "bootstrap"))]
 pub fn print_diagnostic(error: &dyn Diagnostic) {
     eprintln!("{:?}", error);
 }
 
-#[cfg(feature = "bootstrap")]
-pub fn print_diagnostic(error: &FerroPhaseError) {
-    eprintln!("{:?}", error);
-}
-
-#[cfg(all(test, not(feature = "bootstrap")))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
