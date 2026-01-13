@@ -422,6 +422,11 @@ enum BitOp {
     Xor,
 }
 
+enum ShiftKind {
+    Left,
+    Right,
+}
+
 fn emit_bitwise_binop(
     asm: &mut Assembler,
     layout: &FrameLayout,
@@ -443,6 +448,43 @@ fn emit_bitwise_binop(
     Ok(())
 }
 
+fn emit_shift(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: ShiftKind,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    load_value(asm, layout, lhs, Reg::R10, reg_types, local_types)?;
+    match rhs {
+        LirValue::Constant(constant) => {
+            let mut shift = constant_to_i64(constant)?;
+            if shift < 0 {
+                return Err(Error::from("shift count must be non-negative"));
+            }
+            shift &= 0x3f;
+            let imm = u8::try_from(shift).unwrap_or(0);
+            match kind {
+                ShiftKind::Left => emit_shl_imm8(asm, Reg::R10, imm),
+                ShiftKind::Right => emit_shr_imm8(asm, Reg::R10, imm),
+            }
+        }
+        _ => {
+            load_value(asm, layout, rhs, Reg::R11, reg_types, local_types)?;
+            emit_mov_rr(asm, Reg::Rcx, Reg::R11);
+            match kind {
+                ShiftKind::Left => emit_shl_cl(asm, Reg::R10),
+                ShiftKind::Right => emit_shr_cl(asm, Reg::R10),
+            }
+        }
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
 fn emit_not(
     asm: &mut Assembler,
     layout: &FrameLayout,
@@ -453,6 +495,130 @@ fn emit_not(
 ) -> Result<()> {
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     emit_not_r64(asm, Reg::R10);
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_sext(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    dst_ty: &LirType,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let src_ty = value_type(value, reg_types, local_types)?;
+    let src_bits = int_bits(&src_ty)?;
+    let dst_bits = int_bits(dst_ty)?;
+    if src_bits > dst_bits {
+        return Err(Error::from("sext expects wider destination"));
+    }
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    if src_bits < 64 {
+        let shift = 64 - src_bits;
+        emit_shl_imm8(asm, Reg::R10, shift as u8);
+        emit_sar_imm8(asm, Reg::R10, shift as u8);
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_sext_or_trunc(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    dst_ty: &LirType,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let src_ty = value_type(value, reg_types, local_types)?;
+    let src_bits = int_bits(&src_ty)?;
+    let dst_bits = int_bits(dst_ty)?;
+    if src_bits >= dst_bits {
+        return emit_trunc(asm, layout, dst_id, value, dst_ty, reg_types, local_types);
+    }
+    emit_sext(asm, layout, dst_id, value, dst_ty, reg_types, local_types)
+}
+
+fn emit_ptr_to_int(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    let dst_ty = reg_types
+        .get(&dst_id)
+        .ok_or_else(|| Error::from("missing type for ptrtoint"))?;
+    let dst_bits = int_bits(dst_ty)?;
+    if dst_bits < 64 {
+        let mask = (1u64 << dst_bits) - 1;
+        emit_mov_imm64(asm, Reg::R11, mask);
+        emit_and_rr(asm, Reg::R10, Reg::R11);
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_int_to_ptr(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let src_ty = value_type(value, reg_types, local_types)?;
+    let src_bits = int_bits(&src_ty)?;
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    if src_bits < 64 {
+        let mask = (1u64 << src_bits) - 1;
+        emit_mov_imm64(asm, Reg::R11, mask);
+        emit_and_rr(asm, Reg::R10, Reg::R11);
+    }
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_freeze(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    value: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let ty = value_type(value, reg_types, local_types)?;
+    if is_float_type(&ty) {
+        load_value_float(asm, layout, value, FReg::Xmm0, &ty, reg_types, local_types)?;
+        store_vreg_float(asm, layout, dst_id, FReg::Xmm0, &ty)?;
+        return Ok(());
+    }
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_inline_asm(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    output_ty: &LirType,
+) -> Result<()> {
+    if matches!(output_ty, LirType::Void) {
+        return Ok(());
+    }
+    let size = size_of(output_ty) as i32;
+    let dst_offset = vreg_offset(layout, dst_id)?;
+    if is_aggregate_type(output_ty) && size > 8 {
+        zero_sp_range(asm, dst_offset, size)?;
+        return Ok(());
+    }
+    emit_mov_imm64(asm, Reg::R10, 0);
     store_vreg(asm, layout, dst_id, Reg::R10)?;
     Ok(())
 }
@@ -1005,6 +1171,10 @@ fn emit_ret(asm: &mut Assembler) {
     asm.push(0xC3);
 }
 
+fn emit_trap(asm: &mut Assembler) {
+    asm.extend(&[0x0F, 0x0B]);
+}
+
 fn emit_exit_syscall(asm: &mut Assembler, code: u32) -> Result<()> {
     if code > i32::MAX as u32 {
         return Err(Error::from("exit code exceeds i32 range"));
@@ -1097,11 +1267,43 @@ fn emit_and_ri32(asm: &mut Assembler, dst: Reg, imm: i32) {
     asm.extend(&imm.to_le_bytes());
 }
 
+fn emit_shl_imm8(asm: &mut Assembler, dst: Reg, imm: u8) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0xC1);
+    emit_modrm(asm, 0b11, 4, dst.id());
+    asm.push(imm);
+}
+
 fn emit_shr_imm8(asm: &mut Assembler, dst: Reg, imm: u8) {
     emit_rex(asm, true, 0, dst.id());
     asm.push(0xC1);
     emit_modrm(asm, 0b11, 5, dst.id());
     asm.push(imm);
+}
+
+fn emit_sar_imm8(asm: &mut Assembler, dst: Reg, imm: u8) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0xC1);
+    emit_modrm(asm, 0b11, 7, dst.id());
+    asm.push(imm);
+}
+
+fn emit_shl_cl(asm: &mut Assembler, dst: Reg) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0xD3);
+    emit_modrm(asm, 0b11, 4, dst.id());
+}
+
+fn emit_shr_cl(asm: &mut Assembler, dst: Reg) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0xD3);
+    emit_modrm(asm, 0b11, 5, dst.id());
+}
+
+fn emit_sar_cl(asm: &mut Assembler, dst: Reg) {
+    emit_rex(asm, true, 0, dst.id());
+    asm.push(0xD3);
+    emit_modrm(asm, 0b11, 7, dst.id());
 }
 
 fn emit_rex(asm: &mut Assembler, w: bool, reg: u8, rm: u8) {
@@ -1243,6 +1445,12 @@ fn emit_block(
             }
             LirInstructionKind::Xor(lhs, rhs) => {
                 emit_bitwise_binop(asm, layout, inst.id, lhs, rhs, BitOp::Xor, reg_types, local_types)?
+            }
+            LirInstructionKind::Shl(lhs, rhs) => {
+                emit_shift(asm, layout, inst.id, lhs, rhs, ShiftKind::Left, reg_types, local_types)?
+            }
+            LirInstructionKind::Shr(lhs, rhs) => {
+                emit_shift(asm, layout, inst.id, lhs, rhs, ShiftKind::Right, reg_types, local_types)?
             }
             LirInstructionKind::Eq(lhs, rhs) => {
                 emit_cmp(
@@ -1419,8 +1627,20 @@ fn emit_block(
             LirInstructionKind::FPExt(value, ty) => {
                 emit_fp_ext(asm, layout, inst.id, value, ty, reg_types, local_types)?;
             }
+            LirInstructionKind::SExt(value, ty) => {
+                emit_sext(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            }
+            LirInstructionKind::SextOrTrunc(value, ty) => {
+                emit_sext_or_trunc(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            }
             LirInstructionKind::Bitcast(value, ty) => {
                 emit_bitcast(asm, layout, inst.id, value, ty, reg_types, local_types)?;
+            }
+            LirInstructionKind::PtrToInt(value) => {
+                emit_ptr_to_int(asm, layout, inst.id, value, reg_types, local_types)?;
+            }
+            LirInstructionKind::IntToPtr(value) => {
+                emit_int_to_ptr(asm, layout, inst.id, value, reg_types, local_types)?;
             }
             LirInstructionKind::InsertValue { aggregate, element, indices } => {
                 emit_insert_value(
@@ -1465,6 +1685,15 @@ fn emit_block(
             }
             LirInstructionKind::LandingPad { result_type, .. } => {
                 emit_landingpad(asm, layout, inst.id, result_type)?;
+            }
+            LirInstructionKind::Freeze(value) => {
+                emit_freeze(asm, layout, inst.id, value, reg_types, local_types)?;
+            }
+            LirInstructionKind::InlineAsm { output_type, .. } => {
+                emit_inline_asm(asm, layout, inst.id, output_type)?;
+            }
+            LirInstructionKind::Unreachable => {
+                emit_trap(asm);
             }
             other => {
                 return Err(Error::from(format!(
@@ -1569,7 +1798,23 @@ fn emit_block(
             )?;
             asm.emit_jmp(Label::Block(asm.current_function, *normal_dest));
         }
-        _ => {}
+        LirTerminator::Switch { value, default, cases } => {
+            emit_switch(
+                asm,
+                layout,
+                value,
+                *default,
+                cases,
+                reg_types,
+                local_types,
+            )?;
+        }
+        LirTerminator::Unreachable => {
+            emit_trap(asm);
+        }
+        _ => {
+            return Err(Error::from("unsupported terminator for x86_64"));
+        }
     }
 
     Ok(())
@@ -1696,6 +1941,29 @@ fn emit_cond_branch(
         }
         _ => return Err(Error::from("unsupported condition value")),
     }
+    Ok(())
+}
+
+fn emit_switch(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    value: &LirValue,
+    default: BasicBlockId,
+    cases: &[(u64, BasicBlockId)],
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    for (case_val, target) in cases {
+        if *case_val <= i32::MAX as u64 {
+            emit_cmp_imm32(asm, Reg::R10, *case_val as i32);
+        } else {
+            emit_mov_imm64(asm, Reg::R11, *case_val);
+            emit_cmp_rr(asm, Reg::R10, Reg::R11);
+        }
+        asm.emit_jcc(0x84, Label::Block(asm.current_function, *target));
+    }
+    asm.emit_jmp(Label::Block(asm.current_function, default));
     Ok(())
 }
 

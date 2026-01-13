@@ -1,5 +1,5 @@
 use super::TargetArch;
-use crate::emit::{EmitPlan, RelocKind};
+use crate::emit::{EmitPlan, RelocKind, Relocation};
 use fp_core::error::{Error, Result};
 use std::collections::HashMap;
 use std::fs;
@@ -134,6 +134,44 @@ fn write_u64(buf: &mut [u8], offset: usize, value: u64) {
     buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
+fn build_base_relocs(text_rva: u32, relocs: &[Relocation]) -> Vec<u8> {
+    const IMAGE_REL_BASED_DIR64: u16 = 10;
+
+    let mut entries: Vec<u32> = relocs
+        .iter()
+        .filter(|reloc| reloc.kind == RelocKind::Abs64)
+        .filter_map(|reloc| u32::try_from(reloc.offset).ok())
+        .map(|offset| text_rva + offset)
+        .collect();
+    if entries.is_empty() {
+        return Vec::new();
+    }
+
+    entries.sort_unstable();
+    let mut out = Vec::new();
+    let mut idx = 0;
+    while idx < entries.len() {
+        let page = entries[idx] & 0xFFFF_F000;
+        let mut block_entries = Vec::new();
+        while idx < entries.len() && (entries[idx] & 0xFFFF_F000) == page {
+            let offset = (entries[idx] & 0xFFF) as u16;
+            block_entries.push((IMAGE_REL_BASED_DIR64 << 12) | offset);
+            idx += 1;
+        }
+        let mut block_size = 8 + block_entries.len() * 2;
+        if block_size % 4 != 0 {
+            block_entries.push(0);
+            block_size += 2;
+        }
+        put_u32(&mut out, page);
+        put_u32(&mut out, block_size as u32);
+        for entry in block_entries {
+            put_u16(&mut out, entry);
+        }
+    }
+    out
+}
+
 pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
     const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
@@ -193,6 +231,10 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
 
     const IMAGE_SUBSYSTEM_WINDOWS_CUI: u16 = 3;
+    const IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE: u16 = 0x0040;
+
+    const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
+    const IMAGE_SCN_MEM_DISCARDABLE: u32 = 0x0200_0000;
 
     if plan.text.is_empty() {
         return Err(Error::from("PE executable requires non-empty text"));
@@ -241,6 +283,10 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     let rdata_len = import_start + import_len;
     let has_rdata = rdata_len > 0;
 
+    let reloc_data = build_base_relocs(text_rva, &plan.relocs);
+    let reloc_len = reloc_data.len() as u32;
+    let has_reloc = reloc_len > 0;
+
     let rdata_rva = if has_rdata {
         align_up(
             text_rva + align_up(text.len() as u32, section_alignment),
@@ -250,7 +296,19 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         0
     };
 
-    let section_count = if has_rdata { 2u32 } else { 1u32 };
+    let reloc_rva = if has_reloc {
+        let base = if has_rdata {
+            rdata_rva + align_up(rdata_len, section_alignment)
+        } else {
+            align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment)
+        };
+        base
+    } else {
+        0
+    };
+
+    let section_count =
+        1u32 + u32::from(has_rdata) + u32::from(has_reloc);
     let headers_size = align_up(
         pe_offset + 4 + coff_header_size + optional_header_size + section_header_size * section_count,
         file_alignment,
@@ -262,11 +320,17 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     } else {
         0
     };
+    let reloc_raw_size = if has_reloc {
+        align_up(reloc_len, file_alignment)
+    } else {
+        0
+    };
 
     let text_raw_offset = headers_size;
     let rdata_raw_offset = text_raw_offset + text_raw_size;
+    let reloc_raw_offset = rdata_raw_offset + rdata_raw_size;
 
-    let size_of_image = if has_rdata {
+    let mut size_of_image = if has_rdata {
         align_up(
             rdata_rva + align_up(rdata_len, section_alignment),
             section_alignment,
@@ -274,6 +338,12 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     } else {
         align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment)
     };
+    if has_reloc {
+        size_of_image = align_up(
+            reloc_rva + align_up(reloc_len, section_alignment),
+            section_alignment,
+        );
+    }
     let entry_rva = text_rva
         + u32::try_from(plan.entry_offset).map_err(|_| Error::from("entry offset out of range"))?;
 
@@ -352,7 +422,12 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     put_u32(&mut out, section_alignment);
     put_u32(&mut out, file_alignment);
     put_u16(&mut out, 6);
-    put_u16(&mut out, 0);
+    let dll_characteristics = if has_reloc {
+        IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
+    } else {
+        0
+    };
+    put_u16(&mut out, dll_characteristics);
     put_u16(&mut out, 0);
     put_u16(&mut out, 0);
     put_u16(&mut out, 6);
@@ -371,12 +446,19 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     put_u32(&mut out, 16);
 
     for idx in 0..16 {
-        if idx == 1 {
-            put_u32(&mut out, import_table_rva);
-            put_u32(&mut out, import_table_size);
-        } else {
-            put_u32(&mut out, 0);
-            put_u32(&mut out, 0);
+        match idx {
+            1 => {
+                put_u32(&mut out, import_table_rva);
+                put_u32(&mut out, import_table_size);
+            }
+            5 => {
+                put_u32(&mut out, reloc_rva);
+                put_u32(&mut out, reloc_len);
+            }
+            _ => {
+                put_u32(&mut out, 0);
+                put_u32(&mut out, 0);
+            }
         }
     }
 
@@ -402,7 +484,23 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         put_u32(&mut out, 0);
         put_u16(&mut out, 0);
         put_u16(&mut out, 0);
-        put_u32(&mut out, IMAGE_SCN_MEM_READ);
+        put_u32(&mut out, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ);
+    }
+
+    if has_reloc {
+        put_bytes_fixed::<8>(&mut out, ".reloc");
+        put_u32(&mut out, reloc_len);
+        put_u32(&mut out, reloc_rva);
+        put_u32(&mut out, reloc_raw_size);
+        put_u32(&mut out, reloc_raw_offset);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+        put_u16(&mut out, 0);
+        put_u16(&mut out, 0);
+        put_u32(
+            &mut out,
+            IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ | IMAGE_SCN_MEM_DISCARDABLE,
+        );
     }
 
     if out.len() > headers_size as usize {
@@ -423,6 +521,10 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
             out.extend_from_slice(&layout.data);
         }
         out.resize((rdata_raw_offset + rdata_raw_size) as usize, 0);
+    }
+    if has_reloc {
+        out.extend_from_slice(&reloc_data);
+        out.resize((reloc_raw_offset + reloc_raw_size) as usize, 0);
     }
 
     let text_addr = image_base + text_rva as u64;

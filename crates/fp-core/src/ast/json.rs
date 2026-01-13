@@ -20,14 +20,12 @@ pub fn load_node_from_file(path: &Path) -> Result<Node> {
 /// Load an AST `Node` directly from a string slice containing JSON.
 pub fn load_node_from_str(contents: &str) -> Result<Node> {
     let mut deserializer = serde_json::Deserializer::from_str(contents);
-    deserializer.disable_recursion_limit();
     Ok(Node::deserialize(&mut deserializer)?)
 }
 
 /// Load an AST `Node` from any reader producing JSON.
 pub fn load_node_from_reader(reader: impl Read) -> Result<Node> {
     let mut deserializer = serde_json::Deserializer::from_reader(reader);
-    deserializer.disable_recursion_limit();
     Ok(Node::deserialize(&mut deserializer)?)
 }
 

@@ -16,6 +16,28 @@ fn host_arch() -> TargetArch {
     }
 }
 
+#[cfg(target_arch = "x86_64")]
+fn read_u32_le(bytes: &[u8], offset: usize) -> u32 {
+    let chunk: [u8; 4] = bytes[offset..offset + 4].try_into().unwrap();
+    u32::from_le_bytes(chunk)
+}
+
+#[cfg(target_arch = "x86_64")]
+fn pe_data_directory(bytes: &[u8], index: usize) -> Option<(u32, u32)> {
+    if bytes.len() < 0x40 {
+        return None;
+    }
+    let pe_offset = read_u32_le(bytes, 0x3c) as usize;
+    if bytes.len() < pe_offset + 4 + 20 + 0x70 + (index + 1) * 8 {
+        return None;
+    }
+    let optional_offset = pe_offset + 4 + 20;
+    let data_dir = optional_offset + 0x70 + index * 8;
+    let rva = read_u32_le(bytes, data_dir);
+    let size = read_u32_le(bytes, data_dir + 4);
+    Some((rva, size))
+}
+
 fn minimal_program() -> LirProgram {
     let func = LirFunction {
         name: Name::new("main"),
@@ -376,6 +398,19 @@ fn pe_executable_supports_printf() {
     let bytes = std::fs::read(&exe).unwrap();
     assert_eq!(&bytes[..2], b"MZ");
     assert_eq!(&bytes[0x80..0x84], b"PE\0\0");
+}
+
+#[test]
+#[cfg(target_arch = "x86_64")]
+fn pe_executable_emits_base_relocs() {
+    let arch = host_arch();
+    let plan = emit::emit_plan(&program_with_print(), TargetFormat::Coff, arch).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let exe = out_dir.path().join("printf-reloc.exe");
+    emit::write_executable(&exe, &plan).unwrap();
+    let bytes = std::fs::read(&exe).unwrap();
+    let (_rva, size) = pe_data_directory(&bytes, 5).expect("missing PE data directory");
+    assert!(size > 0, "expected base reloc directory to be populated");
 }
 
 #[test]
