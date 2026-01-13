@@ -26,12 +26,9 @@ pub fn emit_text_from_lir(
     for block in &func.basic_blocks {
         for inst in &block.instructions {
             if let LirInstructionKind::Call { function, args, .. } = &inst.kind {
-                if !matches!(function, LirValue::Function(_)) {
-                    return Err(Error::from("native emitter only supports direct calls"));
-                }
-                if !args.iter().all(is_simple_value) {
+                if !args.iter().all(is_call_arg_value) {
                     return Err(Error::from(
-                        "native emitter only supports register/constant call args",
+                        "native emitter only supports register/constant/local/stack call args",
                     ));
                 }
             }
@@ -57,8 +54,17 @@ pub fn emit_text_from_lir(
     }
 }
 
-fn is_simple_value(value: &LirValue) -> bool {
-    matches!(value, LirValue::Register(_) | LirValue::Constant(_))
+fn is_call_arg_value(value: &LirValue) -> bool {
+    matches!(
+        value,
+        LirValue::Register(_)
+            | LirValue::Constant(_)
+            | LirValue::Local(_)
+            | LirValue::StackSlot(_)
+            | LirValue::Global(_, _)
+            | LirValue::Null(_)
+            | LirValue::Undef(_)
+    )
 }
 
 fn lower_phi_in_program(program: &mut LirProgram) -> Result<()> {

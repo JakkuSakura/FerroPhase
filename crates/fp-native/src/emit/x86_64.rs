@@ -1,5 +1,5 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::layout::{size_of, struct_layout};
+use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirIntrinsicKind,
     LirProgram, LirTerminator, LirType, LirValue,
@@ -89,13 +89,18 @@ fn build_frame_layout(
     let mut max_call_args = 0usize;
     let mut has_calls = false;
     let mut alloca_info = Vec::new();
+    let local_types = build_local_types(func);
 
     for block in &func.basic_blocks {
         for inst in &block.instructions {
             vreg_ids.insert(inst.id);
             if let LirInstructionKind::Call { args, .. } = &inst.kind {
                 has_calls = true;
-                max_call_args = max_call_args.max(args.len());
+                let mut count = 0usize;
+                for arg in args {
+                    count += call_arg_units(arg, reg_types, &local_types);
+                }
+                max_call_args = max_call_args.max(count);
             } else if let LirInstructionKind::IntrinsicCall { kind, args, .. } = &inst.kind {
                 has_calls = true;
                 let fixed = if matches!(kind, LirIntrinsicKind::Format) {
@@ -103,7 +108,27 @@ fn build_frame_layout(
                 } else {
                     1
                 };
-                max_call_args = max_call_args.max(args.len() + fixed);
+                let mut count = fixed;
+                for arg in args {
+                    count += call_arg_units(arg, reg_types, &local_types);
+                }
+                max_call_args = max_call_args.max(count);
+            } else if matches!(
+                inst.kind,
+                LirInstructionKind::Mul(_, _)
+                    | LirInstructionKind::Div(_, _)
+                    | LirInstructionKind::Rem(_, _)
+                    | LirInstructionKind::Shl(_, _)
+                    | LirInstructionKind::Shr(_, _)
+            ) {
+                if matches!(inst.type_hint, Some(LirType::I128)) {
+                    has_calls = true;
+                    let args = match inst.kind {
+                        LirInstructionKind::Shl(_, _) | LirInstructionKind::Shr(_, _) => 3,
+                        _ => 4,
+                    };
+                    max_call_args = max_call_args.max(args);
+                }
             } else if let LirInstructionKind::Alloca { size, alignment } = &inst.kind {
                 let ty = inst
                     .type_hint
@@ -139,7 +164,9 @@ fn build_frame_layout(
     let mut offset = 0i32;
 
     for id in &vreg_ids {
-        offset += 8;
+        let (size, align) = vreg_slot_spec(*id, reg_types);
+        offset = align_to(offset, align);
+        offset += size;
         vreg_offsets.insert(*id, -offset);
     }
 
@@ -219,6 +246,41 @@ fn build_frame_layout(
     })
 }
 
+fn build_local_types(func: &LirFunction) -> HashMap<u32, LirType> {
+    let mut map = HashMap::new();
+    for local in &func.locals {
+        map.insert(local.id, local.ty.clone());
+    }
+    map
+}
+
+fn call_arg_units(
+    arg: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> usize {
+    let ty = value_type(arg, reg_types, local_types).unwrap_or(LirType::I64);
+    if matches!(ty, LirType::I128) {
+        2
+    } else {
+        1
+    }
+}
+
+fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, LirType>) -> (i32, i32) {
+    let Some(ty) = reg_types.get(&id) else {
+        return (8, 8);
+    };
+    if is_large_aggregate(ty) {
+        return (8, 8);
+    }
+    if matches!(ty, LirType::I128) {
+        let align = align_of(ty) as i32;
+        return (16, align.max(16));
+    }
+    (8, 8)
+}
+
 fn build_reg_types(func: &LirFunction) -> HashMap<u32, LirType> {
     let mut map = HashMap::new();
     for block in &func.basic_blocks {
@@ -247,14 +309,6 @@ fn build_reg_types(func: &LirFunction) -> HashMap<u32, LirType> {
                 }
             }
         }
-    }
-    map
-}
-
-fn build_local_types(func: &LirFunction) -> HashMap<u32, LirType> {
-    let mut map = HashMap::new();
-    for local in &func.locals {
-        map.insert(local.id, local.ty.clone());
     }
     map
 }
@@ -442,6 +496,27 @@ fn emit_bitwise_binop(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
+    let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if matches!(lhs_ty, LirType::I128) {
+        load_i128_value(asm, layout, lhs, Reg::R10, Reg::R11, reg_types, local_types)?;
+        load_i128_value(asm, layout, rhs, Reg::R8, Reg::R9, reg_types, local_types)?;
+        match op {
+            BitOp::And => {
+                emit_and_rr(asm, Reg::R10, Reg::R8);
+                emit_and_rr(asm, Reg::R11, Reg::R9);
+            }
+            BitOp::Or => {
+                emit_or_rr(asm, Reg::R10, Reg::R8);
+                emit_or_rr(asm, Reg::R11, Reg::R9);
+            }
+            BitOp::Xor => {
+                emit_xor_rr(asm, Reg::R10, Reg::R8);
+                emit_xor_rr(asm, Reg::R11, Reg::R9);
+            }
+        }
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        return Ok(());
+    }
     load_value(asm, layout, lhs, Reg::R10, reg_types, local_types)?;
     load_value(asm, layout, rhs, Reg::R11, reg_types, local_types)?;
     match op {
@@ -461,6 +536,14 @@ fn emit_not(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
+    let ty = value_type(value, reg_types, local_types)?;
+    if matches!(ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::R10, Reg::R11, reg_types, local_types)?;
+        emit_not_r64(asm, Reg::R10);
+        emit_not_r64(asm, Reg::R11);
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        return Ok(());
+    }
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     emit_not_r64(asm, Reg::R10);
     store_vreg(asm, layout, dst_id, Reg::R10)?;
@@ -481,6 +564,17 @@ fn emit_zext(
     let dst_bits = int_bits(dst_ty)?;
     if src_bits > dst_bits {
         return Err(Error::from("zext expects wider destination"));
+    }
+    if matches!(dst_ty, LirType::I128) {
+        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+        if src_bits < 64 {
+            let mask = (1u64 << src_bits) - 1;
+            emit_mov_imm64(asm, Reg::R11, mask);
+            emit_and_rr(asm, Reg::R10, Reg::R11);
+        }
+        emit_mov_imm64(asm, Reg::R11, 0);
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        return Ok(());
     }
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     if src_bits < 64 {
@@ -506,7 +600,12 @@ fn emit_trunc(
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     let dst_bits = int_bits(dst_ty)?;
-    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    let src_ty = value_type(value, reg_types, local_types)?;
+    if matches!(src_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::R10, Reg::R11, reg_types, local_types)?;
+    } else {
+        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    }
     if dst_bits < 64 {
         let mask = (1u64 << dst_bits) - 1;
         emit_mov_imm64(asm, Reg::R11, mask);
@@ -525,8 +624,12 @@ fn emit_shift(
     kind: ShiftKind,
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
 ) -> Result<()> {
     let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if matches!(lhs_ty, LirType::I128) {
+        return emit_i128_shift(asm, layout, dst_id, lhs, rhs, kind, reg_types, local_types, format);
+    }
     if !is_integer_type(&lhs_ty) {
         return Err(Error::from("shift expects integer operands"));
     }
@@ -594,6 +697,13 @@ fn emit_sext(
     if dst_bits < src_bits {
         return Err(Error::from("sext expects wider destination"));
     }
+    if matches!(dst_ty, LirType::I128) {
+        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+        emit_mov_rr(asm, Reg::R11, Reg::R10);
+        emit_sar_imm8(asm, Reg::R11, 63);
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        return Ok(());
+    }
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     if src_bits < 64 {
         let shift = (64 - src_bits) as u8;
@@ -616,9 +726,17 @@ fn emit_sext_or_trunc(
     let src_ty = value_type(value, reg_types, local_types)?;
     let src_bits = int_bits(&src_ty)?;
     let dst_bits = int_bits(dst_ty)?;
+    if matches!(dst_ty, LirType::I128) {
+        return emit_sext(asm, layout, dst_id, value, dst_ty, reg_types, local_types);
+    }
     if src_bits == dst_bits {
-        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
-        store_vreg(asm, layout, dst_id, Reg::R10)?;
+        if matches!(src_ty, LirType::I128) {
+            load_i128_value(asm, layout, value, Reg::R10, Reg::R11, reg_types, local_types)?;
+            store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        } else {
+            load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+            store_vreg(asm, layout, dst_id, Reg::R10)?;
+        }
         return Ok(());
     }
     if src_bits < dst_bits {
@@ -643,6 +761,12 @@ fn emit_ptr_to_int(
         return Err(Error::from("ptrtoint expects integer destination"));
     }
     let dst_bits = int_bits(&dst_ty)?;
+    if matches!(dst_ty, LirType::I128) {
+        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+        emit_mov_imm64(asm, Reg::R11, 0);
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        return Ok(());
+    }
     load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
     if dst_bits < 64 {
         let mask = (1u64 << dst_bits) - 1;
@@ -668,7 +792,12 @@ fn emit_int_to_ptr(
     if !matches!(dst_ty, LirType::Ptr(_)) {
         return Err(Error::from("inttoptr expects pointer destination"));
     }
-    load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    let src_ty = value_type(value, reg_types, local_types)?;
+    if matches!(src_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::R10, Reg::R11, reg_types, local_types)?;
+    } else {
+        load_value(asm, layout, value, Reg::R10, reg_types, local_types)?;
+    }
     store_vreg(asm, layout, dst_id, Reg::R10)?;
     Ok(())
 }
@@ -688,6 +817,11 @@ fn emit_freeze(
     if is_float_type(&value_ty) {
         load_value_float(asm, layout, value, FReg::Xmm0, &value_ty, reg_types, local_types)?;
         store_vreg_float(asm, layout, dst_id, FReg::Xmm0, &value_ty)?;
+        return Ok(());
+    }
+    if matches!(value_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::R10, Reg::R11, reg_types, local_types)?;
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
         return Ok(());
     }
     if is_large_aggregate(&value_ty) {
@@ -712,6 +846,12 @@ fn emit_inline_asm(
             store_vreg_float(asm, layout, dst_id, FReg::Xmm0, ty)?;
             Ok(())
         }
+        LirType::I128 => {
+            emit_mov_imm64(asm, Reg::R10, 0);
+            emit_mov_imm64(asm, Reg::R11, 0);
+            store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+            Ok(())
+        }
         ty if is_large_aggregate(ty) => Err(Error::from("inline asm output too large")),
         _ => {
             emit_mov_imm64(asm, Reg::R10, 0);
@@ -731,10 +871,24 @@ fn emit_binop(
     ty: &LirType,
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
 ) -> Result<()> {
     if is_float_type(ty) {
         emit_float_binop(asm, layout, dst_id, lhs, rhs, op, ty, reg_types, local_types)?;
         return Ok(());
+    }
+    if matches!(ty, LirType::I128) {
+        return emit_i128_binop(
+            asm,
+            layout,
+            dst_id,
+            lhs,
+            rhs,
+            op,
+            reg_types,
+            local_types,
+            format,
+        );
     }
 
     load_value(asm, layout, lhs, Reg::R10, reg_types, local_types)?;
@@ -789,6 +943,9 @@ fn load_value(
                 emit_mov_rm64(asm, dst, Reg::Rbp, offset);
                 return Ok(());
             }
+            if matches!(ty, LirType::I128) {
+                return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
             match ty {
                 LirType::I1 => emit_movzx_rm8(asm, dst, Reg::Rbp, offset),
                 LirType::I8 => emit_movsx_rm8(asm, dst, Reg::Rbp, offset),
@@ -817,6 +974,9 @@ fn load_value(
                 emit_add_ri32(asm, dst, offset);
                 return Ok(());
             }
+            if matches!(ty, LirType::I128) {
+                return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
             match ty {
                 LirType::I1 => emit_movzx_rm8(asm, dst, Reg::Rbp, offset),
                 LirType::I8 => emit_movsx_rm8(asm, dst, Reg::Rbp, offset),
@@ -842,6 +1002,9 @@ fn load_value(
                 emit_mov_imm64(asm, dst, 0);
                 return Ok(());
             }
+            if matches!(constant_type(constant), LirType::I128) {
+                return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
             let imm = constant_to_i64(constant)?;
             emit_mov_imm64(asm, dst, imm as u64);
             Ok(())
@@ -858,6 +1021,214 @@ fn load_value(
             )))
         }
     }
+}
+
+fn i128_parts_from_const(constant: &LirConstant) -> Result<(u64, u64)> {
+    match constant {
+        LirConstant::Int(value, ty) if matches!(ty, LirType::I128) => {
+            let lo = *value as u64;
+            let hi = if *value < 0 { u64::MAX } else { 0 };
+            Ok((lo, hi))
+        }
+        LirConstant::UInt(value, ty) if matches!(ty, LirType::I128) => Ok((*value as u64, 0)),
+        LirConstant::Bool(value) => Ok((if *value { 1 } else { 0 }, 0)),
+        LirConstant::Null(_) | LirConstant::Undef(_) => Ok((0, 0)),
+        other => Err(Error::from(format!(
+            "unsupported i128 constant: {:?}",
+            other
+        ))),
+    }
+}
+
+fn load_i128_value(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    value: &LirValue,
+    lo: Reg,
+    hi: Reg,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    match value {
+        LirValue::Register(id) => {
+            let offset = vreg_offset(layout, *id)?;
+            emit_mov_rm64(asm, lo, Reg::Rbp, offset);
+            emit_mov_rm64(asm, hi, Reg::Rbp, offset + 8);
+            Ok(())
+        }
+        LirValue::Local(id) => {
+            let offset = local_offset(layout, *id)?;
+            emit_mov_rm64(asm, lo, Reg::Rbp, offset);
+            emit_mov_rm64(asm, hi, Reg::Rbp, offset + 8);
+            Ok(())
+        }
+        LirValue::StackSlot(id) => {
+            let offset = stack_slot_offset(layout, *id)?;
+            emit_mov_rm64(asm, lo, Reg::Rbp, offset);
+            emit_mov_rm64(asm, hi, Reg::Rbp, offset + 8);
+            Ok(())
+        }
+        LirValue::Constant(constant) => {
+            let (lo_val, hi_val) = i128_parts_from_const(constant)?;
+            emit_mov_imm64(asm, lo, lo_val);
+            emit_mov_imm64(asm, hi, hi_val);
+            Ok(())
+        }
+        LirValue::Null(_) | LirValue::Undef(_) => {
+            emit_mov_imm64(asm, lo, 0);
+            emit_mov_imm64(asm, hi, 0);
+            Ok(())
+        }
+        _ => Err(Error::from("unsupported i128 value")),
+    }
+}
+
+fn store_i128_value(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lo: Reg,
+    hi: Reg,
+) -> Result<()> {
+    let offset = vreg_offset(layout, dst_id)?;
+    emit_mov_mr64(asm, Reg::Rbp, offset, lo);
+    emit_mov_mr64(asm, Reg::Rbp, offset + 8, hi);
+    Ok(())
+}
+
+fn emit_i128_binop(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    op: BinOp,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
+) -> Result<()> {
+    match op {
+        BinOp::Add => {
+            load_i128_value(asm, layout, lhs, Reg::R10, Reg::R11, reg_types, local_types)?;
+            load_i128_value(asm, layout, rhs, Reg::R8, Reg::R9, reg_types, local_types)?;
+            emit_add_rr(asm, Reg::R10, Reg::R8);
+            emit_adc_rr(asm, Reg::R11, Reg::R9);
+            store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        }
+        BinOp::Sub => {
+            load_i128_value(asm, layout, lhs, Reg::R10, Reg::R11, reg_types, local_types)?;
+            load_i128_value(asm, layout, rhs, Reg::R8, Reg::R9, reg_types, local_types)?;
+            emit_sub_rr(asm, Reg::R10, Reg::R8);
+            emit_sbb_rr(asm, Reg::R11, Reg::R9);
+            store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        }
+        BinOp::Mul => {
+            emit_i128_libcall(
+                asm,
+                layout,
+                dst_id,
+                "__multi3",
+                lhs,
+                Some(rhs),
+                None,
+                reg_types,
+                local_types,
+                format,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_i128_shift(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: ShiftKind,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
+) -> Result<()> {
+    let symbol = match kind {
+        ShiftKind::Left => "__ashlti3",
+        ShiftKind::Right => "__lshrti3",
+    };
+    emit_i128_libcall(
+        asm,
+        layout,
+        dst_id,
+        symbol,
+        lhs,
+        None,
+        Some(rhs),
+        reg_types,
+        local_types,
+        format,
+    )
+}
+
+fn emit_i128_divrem(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    want_rem: bool,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
+) -> Result<()> {
+    let symbol = if want_rem { "__modti3" } else { "__divti3" };
+    emit_i128_libcall(
+        asm,
+        layout,
+        dst_id,
+        symbol,
+        lhs,
+        Some(rhs),
+        None,
+        reg_types,
+        local_types,
+        format,
+    )
+}
+
+fn emit_i128_libcall(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    symbol: &str,
+    lhs: &LirValue,
+    rhs: Option<&LirValue>,
+    shift: Option<&LirValue>,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
+) -> Result<()> {
+    let (arg_regs, _, _) = call_abi(format);
+    let mut int_idx = 0usize;
+    let mut stack_idx = 0usize;
+
+    load_i128_value(asm, layout, lhs, Reg::R10, Reg::R11, reg_types, local_types)?;
+    push_reg_arg(asm, layout, Reg::R10, &mut int_idx, &mut stack_idx, arg_regs)?;
+    push_reg_arg(asm, layout, Reg::R11, &mut int_idx, &mut stack_idx, arg_regs)?;
+
+    if let Some(rhs) = rhs {
+        load_i128_value(asm, layout, rhs, Reg::R8, Reg::R9, reg_types, local_types)?;
+        push_reg_arg(asm, layout, Reg::R8, &mut int_idx, &mut stack_idx, arg_regs)?;
+        push_reg_arg(asm, layout, Reg::R9, &mut int_idx, &mut stack_idx, arg_regs)?;
+    }
+
+    if let Some(shift) = shift {
+        load_value(asm, layout, shift, Reg::Rax, reg_types, local_types)?;
+        push_reg_arg(asm, layout, Reg::Rax, &mut int_idx, &mut stack_idx, arg_regs)?;
+    }
+
+    asm.emit_call_external(symbol);
+    store_i128_value(asm, layout, dst_id, Reg::Rax, Reg::Rdx)?;
+    Ok(())
 }
 
 fn load_value_float(
@@ -1020,7 +1391,7 @@ fn int_bits(ty: &LirType) -> Result<u32> {
         LirType::I16 => Ok(16),
         LirType::I32 => Ok(32),
         LirType::I64 => Ok(64),
-        LirType::I128 => Err(Error::from("i128 not supported in native emitter")),
+        LirType::I128 => Ok(128),
         _ => Err(Error::from("expected integer type")),
     }
 }
@@ -1259,9 +1630,21 @@ fn emit_add_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
     emit_modrm(asm, 0b11, src.id(), dst.id());
 }
 
+fn emit_adc_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, src.id(), dst.id());
+    asm.push(0x11);
+    emit_modrm(asm, 0b11, src.id(), dst.id());
+}
+
 fn emit_sub_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
     emit_rex(asm, true, src.id(), dst.id());
     asm.push(0x29);
+    emit_modrm(asm, 0b11, src.id(), dst.id());
+}
+
+fn emit_sbb_rr(asm: &mut Assembler, dst: Reg, src: Reg) {
+    emit_rex(asm, true, src.id(), dst.id());
+    asm.push(0x19);
     emit_modrm(asm, 0b11, src.id(), dst.id());
 }
 
@@ -1450,6 +1833,7 @@ fn emit_block(
                     ty,
                     reg_types,
                     local_types,
+                    format,
                 )?
             }
             LirInstructionKind::Sub(lhs, rhs) => {
@@ -1467,6 +1851,7 @@ fn emit_block(
                     ty,
                     reg_types,
                     local_types,
+                    format,
                 )?
             }
             LirInstructionKind::Mul(lhs, rhs) => {
@@ -1484,6 +1869,7 @@ fn emit_block(
                     ty,
                     reg_types,
                     local_types,
+                    format,
                 )?
             }
             LirInstructionKind::And(lhs, rhs) => {
@@ -1496,10 +1882,30 @@ fn emit_block(
                 emit_bitwise_binop(asm, layout, inst.id, lhs, rhs, BitOp::Xor, reg_types, local_types)?
             }
             LirInstructionKind::Shl(lhs, rhs) => {
-                emit_shift(asm, layout, inst.id, lhs, rhs, ShiftKind::Left, reg_types, local_types)?
+                emit_shift(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    ShiftKind::Left,
+                    reg_types,
+                    local_types,
+                    format,
+                )?
             }
             LirInstructionKind::Shr(lhs, rhs) => {
-                emit_shift(asm, layout, inst.id, lhs, rhs, ShiftKind::Right, reg_types, local_types)?
+                emit_shift(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    ShiftKind::Right,
+                    reg_types,
+                    local_types,
+                    format,
+                )?
             }
             LirInstructionKind::Eq(lhs, rhs) => {
                 emit_cmp(
@@ -1574,10 +1980,30 @@ fn emit_block(
                 )?
             }
             LirInstructionKind::Div(lhs, rhs) => {
-                emit_divrem(asm, layout, inst.id, lhs, rhs, false, reg_types, local_types)?
+                emit_divrem(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    false,
+                    reg_types,
+                    local_types,
+                    format,
+                )?
             }
             LirInstructionKind::Rem(lhs, rhs) => {
-                emit_divrem(asm, layout, inst.id, lhs, rhs, true, reg_types, local_types)?
+                emit_divrem(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    true,
+                    reg_types,
+                    local_types,
+                    format,
+                )?
             }
             LirInstructionKind::Not(value) => {
                 emit_not(asm, layout, inst.id, value, reg_types, local_types)?;
@@ -1782,7 +2208,10 @@ fn emit_block(
                 emit_ret(asm);
                 return Ok(());
             }
-            if is_float_type(return_ty) {
+            if matches!(return_ty, LirType::I128) {
+                load_i128_value(asm, layout, value, Reg::Rax, Reg::Rdx, reg_types, local_types)?;
+                exit_reg = Some(Reg::Rax);
+            } else if is_float_type(return_ty) {
                 load_value_float(
                     asm,
                     layout,
@@ -1889,6 +2318,9 @@ fn emit_cmp(
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if matches!(lhs_ty, LirType::I128) {
+        return emit_i128_cmp(asm, layout, dst_id, lhs, rhs, kind, reg_types, local_types);
+    }
     if is_float_type(&lhs_ty) {
         emit_float_cmp(
             asm,
@@ -1936,6 +2368,66 @@ fn emit_cmp(
     emit_setcc(asm, cc, Reg::R11);
     emit_movzx_r64_rm8(asm, Reg::R10, Reg::R11);
     store_vreg(asm, layout, dst_id, Reg::R10)?;
+    Ok(())
+}
+
+fn emit_i128_cmp(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: CmpKind,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    load_i128_value(asm, layout, lhs, Reg::R10, Reg::R11, reg_types, local_types)?;
+    load_i128_value(asm, layout, rhs, Reg::Rax, Reg::Rdx, reg_types, local_types)?;
+
+    emit_cmp_rr(asm, Reg::R11, Reg::Rdx);
+    emit_setcc(asm, 0xC, Reg::R8); // signed lt
+    emit_setcc(asm, 0xF, Reg::R9); // signed gt
+    emit_setcc(asm, 0x4, Reg::Rcx); // eq
+
+    emit_cmp_rr(asm, Reg::R10, Reg::Rax);
+    emit_setcc(asm, 0x2, Reg::R10); // unsigned lt
+    emit_setcc(asm, 0x7, Reg::R11); // unsigned gt
+    emit_setcc(asm, 0x4, Reg::Rdx); // eq
+
+    match kind {
+        CmpKind::Eq => {
+            emit_and_rr(asm, Reg::Rcx, Reg::Rdx);
+            store_vreg(asm, layout, dst_id, Reg::Rcx)?;
+        }
+        CmpKind::Ne => {
+            emit_and_rr(asm, Reg::Rcx, Reg::Rdx);
+            emit_mov_imm64(asm, Reg::R8, 1);
+            emit_xor_rr(asm, Reg::Rcx, Reg::R8);
+            store_vreg(asm, layout, dst_id, Reg::Rcx)?;
+        }
+        CmpKind::Lt => {
+            emit_and_rr(asm, Reg::Rcx, Reg::R10);
+            emit_or_rr(asm, Reg::R8, Reg::Rcx);
+            store_vreg(asm, layout, dst_id, Reg::R8)?;
+        }
+        CmpKind::Gt => {
+            emit_and_rr(asm, Reg::Rcx, Reg::R11);
+            emit_or_rr(asm, Reg::R9, Reg::Rcx);
+            store_vreg(asm, layout, dst_id, Reg::R9)?;
+        }
+        CmpKind::Le => {
+            emit_or_rr(asm, Reg::R10, Reg::Rdx);
+            emit_and_rr(asm, Reg::Rcx, Reg::R10);
+            emit_or_rr(asm, Reg::R8, Reg::Rcx);
+            store_vreg(asm, layout, dst_id, Reg::R8)?;
+        }
+        CmpKind::Ge => {
+            emit_or_rr(asm, Reg::R11, Reg::Rdx);
+            emit_and_rr(asm, Reg::Rcx, Reg::R11);
+            emit_or_rr(asm, Reg::R9, Reg::Rcx);
+            store_vreg(asm, layout, dst_id, Reg::R9)?;
+        }
+    }
     Ok(())
 }
 
@@ -2115,6 +2607,12 @@ impl Assembler {
         self.fixups.push(Fixup { pos, target });
     }
 
+    fn emit_call_reg(&mut self, reg: Reg) {
+        emit_rex(self, true, 2, reg.id());
+        self.buf.push(0xFF);
+        emit_modrm(self, 0b11, 2, reg.id());
+    }
+
     fn emit_call_external(&mut self, symbol: &str) {
         self.buf.push(0xE8);
         let offset = self.buf.len();
@@ -2204,6 +2702,30 @@ fn emit_load(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
+    if matches!(ty, LirType::I128) {
+        match address {
+            LirValue::StackSlot(id) => {
+                let offset = stack_slot_offset(layout, *id)?;
+                emit_mov_rm64(asm, Reg::R10, Reg::Rbp, offset);
+                emit_mov_rm64(asm, Reg::R11, Reg::Rbp, offset + 8);
+            }
+            LirValue::Register(id) => {
+                let addr_offset = vreg_offset(layout, *id)?;
+                emit_mov_rm64(asm, Reg::R11, Reg::Rbp, addr_offset);
+                emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
+                emit_mov_rm64(asm, Reg::R11, Reg::R11, 8);
+            }
+            LirValue::Local(id) => {
+                let addr_offset = local_offset(layout, *id)?;
+                emit_mov_rm64(asm, Reg::R11, Reg::Rbp, addr_offset);
+                emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
+                emit_mov_rm64(asm, Reg::R11, Reg::R11, 8);
+            }
+            _ => return Err(Error::from("unsupported load address for i128 on x86_64")),
+        }
+        store_i128_value(asm, layout, dst_id, Reg::R10, Reg::R11)?;
+        return Ok(());
+    }
     if is_large_aggregate(ty) {
         let size = size_of(ty) as i32;
         if size == 0 {
@@ -2338,14 +2860,37 @@ fn emit_divrem(
     want_rem: bool,
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
+    format: TargetFormat,
 ) -> Result<()> {
     let lhs_ty = value_type(lhs, reg_types, local_types)?;
     if is_float_type(&lhs_ty) {
         if want_rem {
-            return Err(Error::from("float remainder is not supported on x86_64"));
+            load_value_float(asm, layout, lhs, FReg::Xmm0, &lhs_ty, reg_types, local_types)?;
+            load_value_float(asm, layout, rhs, FReg::Xmm1, &lhs_ty, reg_types, local_types)?;
+            let symbol = if matches!(lhs_ty, LirType::F32) {
+                "fmodf"
+            } else {
+                "fmod"
+            };
+            asm.emit_call_external(symbol);
+            store_vreg_float(asm, layout, dst_id, FReg::Xmm0, &lhs_ty)?;
+            return Ok(());
         }
         emit_float_div(asm, layout, dst_id, lhs, rhs, &lhs_ty, reg_types, local_types)?;
         return Ok(());
+    }
+    if matches!(lhs_ty, LirType::I128) {
+        return emit_i128_divrem(
+            asm,
+            layout,
+            dst_id,
+            lhs,
+            rhs,
+            want_rem,
+            reg_types,
+            local_types,
+            format,
+        );
     }
 
     load_value(asm, layout, lhs, Reg::Rax, reg_types, local_types)?;
@@ -2363,6 +2908,7 @@ fn emit_divrem(
 enum CallTarget {
     Internal(u32),
     External(String),
+    Indirect,
 }
 
 const SYSV_INT_ARGS: [Reg; 6] = [Reg::Rdi, Reg::Rsi, Reg::Rdx, Reg::Rcx, Reg::R8, Reg::R9];
@@ -2406,6 +2952,9 @@ fn emit_call(
             .copied()
             .map(CallTarget::Internal)
             .unwrap_or_else(|| CallTarget::External(name.clone())),
+        LirValue::Register(_) | LirValue::Local(_) | LirValue::StackSlot(_) => {
+            CallTarget::Indirect
+        }
         _ => return Err(Error::from("unsupported callee for x86_64")),
     };
 
@@ -2440,6 +2989,12 @@ fn emit_call(
             continue;
         }
         let arg_ty = value_type(arg, reg_types, local_types)?;
+        if matches!(arg_ty, LirType::I128) {
+            load_i128_value(asm, layout, arg, Reg::R10, Reg::R11, reg_types, local_types)?;
+            push_reg_arg(asm, layout, Reg::R10, &mut int_idx, &mut stack_idx, arg_regs)?;
+            push_reg_arg(asm, layout, Reg::R11, &mut int_idx, &mut stack_idx, arg_regs)?;
+            continue;
+        }
         if is_float_type(&arg_ty) {
             if float_idx < float_regs.len() {
                 load_value_float(
@@ -2474,6 +3029,10 @@ fn emit_call(
     match target {
         CallTarget::Internal(target) => asm.emit_call(Label::Function(target)),
         CallTarget::External(symbol) => asm.emit_call_external(&symbol),
+        CallTarget::Indirect => {
+            load_value(asm, layout, function, Reg::R11, reg_types, local_types)?;
+            asm.emit_call_reg(Reg::R11);
+        }
     }
 
     if needs_sret {
@@ -2482,6 +3041,8 @@ fn emit_call(
             emit_add_ri32(asm, Reg::R10, agg_off);
             store_vreg(asm, layout, dst_id, Reg::R10)?;
         }
+    } else if matches!(ret_ty, LirType::I128) {
+        store_i128_value(asm, layout, dst_id, Reg::Rax, Reg::Rdx)?;
     } else if !matches!(ret_ty, LirType::Void) {
         if is_float_type(ret_ty) {
             store_vreg_float(asm, layout, dst_id, FReg::Xmm0, ret_ty)?;
@@ -2965,6 +3526,30 @@ fn emit_store(
     }
     let value_ty = value_type(value, reg_types, local_types)?;
     if size_of(&value_ty) == 0 {
+        return Ok(());
+    }
+    if matches!(value_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::R10, Reg::R11, reg_types, local_types)?;
+        match address {
+            LirValue::StackSlot(id) => {
+                let dst_offset = stack_slot_offset(layout, *id)?;
+                emit_mov_mr64(asm, Reg::Rbp, dst_offset, Reg::R10);
+                emit_mov_mr64(asm, Reg::Rbp, dst_offset + 8, Reg::R11);
+            }
+            LirValue::Register(id) => {
+                let addr_offset = vreg_offset(layout, *id)?;
+                emit_mov_rm64(asm, Reg::Rcx, Reg::Rbp, addr_offset);
+                emit_mov_mr64(asm, Reg::Rcx, 0, Reg::R10);
+                emit_mov_mr64(asm, Reg::Rcx, 8, Reg::R11);
+            }
+            LirValue::Local(id) => {
+                let addr_offset = local_offset(layout, *id)?;
+                emit_mov_rm64(asm, Reg::Rcx, Reg::Rbp, addr_offset);
+                emit_mov_mr64(asm, Reg::Rcx, 0, Reg::R10);
+                emit_mov_mr64(asm, Reg::Rcx, 8, Reg::R11);
+            }
+            _ => return Err(Error::from("unsupported store address for i128 on x86_64")),
+        }
         return Ok(());
     }
     if let LirValue::Constant(constant) = value {

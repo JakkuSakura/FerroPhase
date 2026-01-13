@@ -1,5 +1,5 @@
 use fp_core::error::{Error, Result};
-use fp_core::lir::layout::{size_of, struct_layout};
+use fp_core::lir::layout::{align_of, size_of, struct_layout};
 use fp_core::lir::{
     BasicBlockId, LirBasicBlock, LirConstant, LirFunction, LirInstructionKind, LirIntrinsicKind,
     LirProgram, LirTerminator, LirType, LirValue,
@@ -20,6 +20,12 @@ enum Reg {
     X7,
     X8,
     X9,
+    X10,
+    X11,
+    X12,
+    X13,
+    X14,
+    X15,
     X16,
     X17,
     X29,
@@ -40,6 +46,12 @@ impl Reg {
             Reg::X7 => 7,
             Reg::X8 => 8,
             Reg::X9 => 9,
+            Reg::X10 => 10,
+            Reg::X11 => 11,
+            Reg::X12 => 12,
+            Reg::X13 => 13,
+            Reg::X14 => 14,
+            Reg::X15 => 15,
             Reg::X16 => 16,
             Reg::X17 => 17,
             Reg::X29 => 29,
@@ -95,7 +107,11 @@ fn build_frame_layout(
             vreg_ids.insert(inst.id);
             if let LirInstructionKind::Call { function, args, .. } = &inst.kind {
                 has_calls = true;
-                max_call_args = max_call_args.max(args.len());
+                let mut count = 0usize;
+                for arg in args {
+                    count += call_arg_units(arg, reg_types, &local_types);
+                }
+                max_call_args = max_call_args.max(count);
                 if matches!(function, LirValue::Function(name) if name == "printf") {
                     let bytes = vararg_outgoing_size(args, true, reg_types, &local_types)?;
                     max_vararg_stack = max_vararg_stack.max(bytes);
@@ -107,9 +123,29 @@ fn build_frame_layout(
                 } else {
                     1
                 };
-                max_call_args = max_call_args.max(args.len() + fixed);
+                let mut count = fixed;
+                for arg in args {
+                    count += call_arg_units(arg, reg_types, &local_types);
+                }
+                max_call_args = max_call_args.max(count);
                 let bytes = vararg_outgoing_size(args, false, reg_types, &local_types)?;
                 max_vararg_stack = max_vararg_stack.max(bytes);
+            } else if matches!(
+                inst.kind,
+                LirInstructionKind::Mul(_, _)
+                    | LirInstructionKind::Div(_, _)
+                    | LirInstructionKind::Rem(_, _)
+                    | LirInstructionKind::Shl(_, _)
+                    | LirInstructionKind::Shr(_, _)
+            ) {
+                if matches!(inst.type_hint, Some(LirType::I128)) {
+                    has_calls = true;
+                    let args = match inst.kind {
+                        LirInstructionKind::Shl(_, _) | LirInstructionKind::Shr(_, _) => 3,
+                        _ => 4,
+                    };
+                    max_call_args = max_call_args.max(args);
+                }
             } else if let LirInstructionKind::Alloca { size, alignment } = &inst.kind {
                 let ty = inst
                     .type_hint
@@ -148,8 +184,10 @@ fn build_frame_layout(
     let mut offset = outgoing_size;
 
     for id in &vreg_ids {
+        let (size, align) = vreg_slot_spec(*id, reg_types);
+        offset = align_to(offset, align);
         vreg_offsets.insert(*id, offset);
-        offset += 8;
+        offset += size;
     }
 
     for slot in &func.stack_slots {
@@ -249,6 +287,33 @@ fn build_frame_layout(
         outgoing_size,
         frame_size,
     })
+}
+
+fn call_arg_units(
+    arg: &LirValue,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> usize {
+    let ty = value_type(arg, reg_types, local_types).unwrap_or(LirType::I64);
+    if matches!(ty, LirType::I128) {
+        2
+    } else {
+        1
+    }
+}
+
+fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, LirType>) -> (i32, i32) {
+    let Some(ty) = reg_types.get(&id) else {
+        return (8, 8);
+    };
+    if is_large_aggregate(ty) {
+        return (8, 8);
+    }
+    if matches!(ty, LirType::I128) {
+        let align = align_of(ty) as i32;
+        return (16, align.max(16));
+    }
+    (8, 8)
 }
 
 fn vararg_outgoing_size(
@@ -366,6 +431,12 @@ fn reg_name(reg: Reg) -> &'static str {
         Reg::X7 => "x7",
         Reg::X8 => "x8",
         Reg::X9 => "x9",
+        Reg::X10 => "x10",
+        Reg::X11 => "x11",
+        Reg::X12 => "x12",
+        Reg::X13 => "x13",
+        Reg::X14 => "x14",
+        Reg::X15 => "x15",
         Reg::X16 => "x16",
         Reg::X17 => "x17",
         Reg::X29 => "x29",
@@ -539,6 +610,27 @@ fn emit_bitwise_binop(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
+    let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if matches!(lhs_ty, LirType::I128) {
+        load_i128_value(asm, layout, lhs, Reg::X16, Reg::X17, reg_types, local_types)?;
+        load_i128_value(asm, layout, rhs, Reg::X9, Reg::X10, reg_types, local_types)?;
+        match op {
+            BitOp::And => {
+                emit_and_reg(asm, Reg::X16, Reg::X16, Reg::X9);
+                emit_and_reg(asm, Reg::X17, Reg::X17, Reg::X10);
+            }
+            BitOp::Or => {
+                emit_or_reg(asm, Reg::X16, Reg::X16, Reg::X9);
+                emit_or_reg(asm, Reg::X17, Reg::X17, Reg::X10);
+            }
+            BitOp::Xor => {
+                emit_eor_reg(asm, Reg::X16, Reg::X16, Reg::X9);
+                emit_eor_reg(asm, Reg::X17, Reg::X17, Reg::X10);
+            }
+        }
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
+    }
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
     load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
     match op {
@@ -560,6 +652,10 @@ fn emit_shift(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
+    let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if matches!(lhs_ty, LirType::I128) {
+        return emit_i128_shift(asm, layout, dst_id, lhs, rhs, kind, reg_types, local_types);
+    }
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
     load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
     match kind {
@@ -578,6 +674,16 @@ fn emit_not(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
+    let ty = value_type(value, reg_types, local_types)?;
+    if matches!(ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        emit_mov_imm16(asm, Reg::X9, 0);
+        emit_sub_imm12(asm, Reg::X9, Reg::X9, 1);
+        emit_sub_reg(asm, Reg::X16, Reg::X9, Reg::X16);
+        emit_sub_reg(asm, Reg::X17, Reg::X9, Reg::X17);
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
+    }
     load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
     emit_mov_imm16(asm, Reg::X17, 0);
     emit_sub_imm12(asm, Reg::X17, Reg::X17, 1);
@@ -600,6 +706,17 @@ fn emit_zext(
     let dst_bits = int_bits(dst_ty)?;
     if src_bits > dst_bits {
         return Err(Error::from("zext expects wider destination"));
+    }
+    if matches!(dst_ty, LirType::I128) {
+        load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+        if src_bits < 64 {
+            let mask = (1u64 << src_bits) - 1;
+            emit_mov_imm64(asm, Reg::X17, mask);
+            emit_and_reg(asm, Reg::X16, Reg::X16, Reg::X17);
+        }
+        emit_mov_imm16(asm, Reg::X17, 0);
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
     }
     load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
     if src_bits < 64 {
@@ -625,7 +742,12 @@ fn emit_trunc(
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     let dst_bits = int_bits(dst_ty)?;
-    load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+    let src_ty = value_type(value, reg_types, local_types)?;
+    if matches!(src_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+    } else {
+        load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+    }
     if dst_bits < 64 {
         let mask = (1u64 << dst_bits) - 1;
         emit_mov_imm64(asm, Reg::X17, mask);
@@ -650,6 +772,14 @@ fn emit_sext(
     if src_bits > dst_bits {
         return Err(Error::from("sext expects wider destination"));
     }
+    if matches!(dst_ty, LirType::I128) {
+        load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+        emit_mov_reg(asm, Reg::X17, Reg::X16);
+        emit_mov_imm16(asm, Reg::X9, 63);
+        emit_asrv(asm, Reg::X17, Reg::X17, Reg::X9);
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
+    }
     load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
     if src_bits < 64 {
         let shift = 64 - src_bits;
@@ -673,6 +803,9 @@ fn emit_sext_or_trunc(
     let src_ty = value_type(value, reg_types, local_types)?;
     let src_bits = int_bits(&src_ty)?;
     let dst_bits = int_bits(dst_ty)?;
+    if matches!(dst_ty, LirType::I128) {
+        return emit_sext(asm, layout, dst_id, value, dst_ty, reg_types, local_types);
+    }
     if src_bits >= dst_bits {
         return emit_trunc(asm, layout, dst_id, value, dst_ty, reg_types, local_types);
     }
@@ -692,6 +825,11 @@ fn emit_ptr_to_int(
         .get(&dst_id)
         .ok_or_else(|| Error::from("missing type for ptrtoint"))?;
     let dst_bits = int_bits(dst_ty)?;
+    if matches!(dst_ty, LirType::I128) {
+        emit_mov_imm16(asm, Reg::X17, 0);
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
+    }
     if dst_bits < 64 {
         let mask = (1u64 << dst_bits) - 1;
         emit_mov_imm64(asm, Reg::X17, mask);
@@ -711,7 +849,11 @@ fn emit_int_to_ptr(
 ) -> Result<()> {
     let src_ty = value_type(value, reg_types, local_types)?;
     let src_bits = int_bits(&src_ty)?;
-    load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+    if matches!(src_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+    } else {
+        load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
+    }
     if src_bits < 64 {
         let mask = (1u64 << src_bits) - 1;
         emit_mov_imm64(asm, Reg::X17, mask);
@@ -735,6 +877,11 @@ fn emit_freeze(
         store_vreg_float(asm, layout, dst_id, FReg::V0, &ty)?;
         return Ok(());
     }
+    if matches!(ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
+    }
     load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
     store_vreg(asm, layout, dst_id, Reg::X16)?;
     Ok(())
@@ -753,6 +900,12 @@ fn emit_inline_asm(
     let dst_offset = vreg_offset(layout, dst_id)?;
     if is_aggregate_type(output_ty) && size > 8 {
         zero_sp_range(asm, dst_offset, size)?;
+        return Ok(());
+    }
+    if matches!(output_ty, LirType::I128) {
+        emit_mov_imm16(asm, Reg::X16, 0);
+        emit_mov_imm16(asm, Reg::X17, 0);
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
         return Ok(());
     }
     emit_mov_imm16(asm, Reg::X16, 0);
@@ -781,6 +934,9 @@ fn emit_binop(
         }
         store_vreg_float(asm, layout, dst_id, FReg::V0, ty)?;
         return Ok(());
+    }
+    if matches!(ty, LirType::I128) {
+        return emit_i128_binop(asm, layout, dst_id, lhs, rhs, op, reg_types, local_types);
     }
 
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
@@ -842,6 +998,9 @@ fn load_value(
                 emit_load_from_sp(asm, dst, offset);
                 return Ok(());
             }
+            if matches!(ty, LirType::I128) {
+                return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
             match ty {
                 LirType::I1 => emit_load8u_from_sp(asm, dst, offset)?,
                 LirType::I8 => emit_load8s_from_sp(asm, dst, offset)?,
@@ -870,6 +1029,9 @@ fn load_value(
                 add_immediate_offset(asm, dst, offset as i64)?;
                 return Ok(());
             }
+            if matches!(ty, LirType::I128) {
+                return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
             match ty {
                 LirType::I1 => emit_load8u_from_sp(asm, dst, offset)?,
                 LirType::I8 => emit_load8s_from_sp(asm, dst, offset)?,
@@ -895,6 +1057,9 @@ fn load_value(
                 emit_mov_imm16(asm, dst, 0);
                 return Ok(());
             }
+            if matches!(constant_type(constant), LirType::I128) {
+                return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
             let imm = constant_to_i64(constant)?;
             if imm < 0 || imm > u16::MAX as i64 {
                 return Err(Error::from("aarch64 immediate out of range"));
@@ -919,6 +1084,231 @@ fn load_value(
             Err(Error::from(format!("unsupported value for aarch64: {:?}", ty)))
         }
     }
+}
+
+fn i128_parts_from_const(constant: &LirConstant) -> Result<(u64, u64)> {
+    match constant {
+        LirConstant::Int(value, ty) if matches!(ty, LirType::I128) => {
+            let lo = *value as u64;
+            let hi = if *value < 0 { u64::MAX } else { 0 };
+            Ok((lo, hi))
+        }
+        LirConstant::UInt(value, ty) if matches!(ty, LirType::I128) => Ok((*value as u64, 0)),
+        LirConstant::Bool(value) => Ok((if *value { 1 } else { 0 }, 0)),
+        LirConstant::Null(_) | LirConstant::Undef(_) => Ok((0, 0)),
+        other => Err(Error::from(format!(
+            "unsupported i128 constant: {:?}",
+            other
+        ))),
+    }
+}
+
+fn load_i128_value(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    value: &LirValue,
+    lo: Reg,
+    hi: Reg,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    match value {
+        LirValue::Register(id) => {
+            let offset = vreg_offset(layout, *id)?;
+            emit_load_from_sp(asm, lo, offset);
+            emit_load_from_sp(asm, hi, offset + 8);
+            Ok(())
+        }
+        LirValue::Local(id) => {
+            let offset = local_offset(layout, *id)?;
+            emit_load_from_sp(asm, lo, offset);
+            emit_load_from_sp(asm, hi, offset + 8);
+            Ok(())
+        }
+        LirValue::StackSlot(id) => {
+            let offset = stack_slot_offset(layout, *id)?;
+            emit_load_from_sp(asm, lo, offset);
+            emit_load_from_sp(asm, hi, offset + 8);
+            Ok(())
+        }
+        LirValue::Constant(constant) => {
+            let (lo_val, hi_val) = i128_parts_from_const(constant)?;
+            emit_mov_imm64(asm, lo, lo_val);
+            emit_mov_imm64(asm, hi, hi_val);
+            Ok(())
+        }
+        LirValue::Null(_) | LirValue::Undef(_) => {
+            emit_mov_imm16(asm, lo, 0);
+            emit_mov_imm16(asm, hi, 0);
+            Ok(())
+        }
+        _ => Err(Error::from("unsupported i128 value")),
+    }
+}
+
+fn store_i128_value(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lo: Reg,
+    hi: Reg,
+) -> Result<()> {
+    let offset = vreg_offset(layout, dst_id)?;
+    emit_store_to_sp(asm, lo, offset);
+    emit_store_to_sp(asm, hi, offset + 8);
+    Ok(())
+}
+
+fn emit_i128_binop(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    op: BinOp,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    match op {
+        BinOp::Add => {
+            load_i128_value(asm, layout, lhs, Reg::X16, Reg::X17, reg_types, local_types)?;
+            load_i128_value(asm, layout, rhs, Reg::X9, Reg::X10, reg_types, local_types)?;
+            emit_adds_reg(asm, Reg::X16, Reg::X16, Reg::X9);
+            emit_adc_reg(asm, Reg::X17, Reg::X17, Reg::X10);
+            store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        }
+        BinOp::Sub => {
+            load_i128_value(asm, layout, lhs, Reg::X16, Reg::X17, reg_types, local_types)?;
+            load_i128_value(asm, layout, rhs, Reg::X9, Reg::X10, reg_types, local_types)?;
+            emit_subs_reg(asm, Reg::X16, Reg::X16, Reg::X9);
+            emit_sbc_reg(asm, Reg::X17, Reg::X17, Reg::X10);
+            store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        }
+        BinOp::Mul => {
+            emit_i128_libcall(
+                asm,
+                layout,
+                dst_id,
+                "__multi3",
+                lhs,
+                Some(rhs),
+                None,
+                reg_types,
+                local_types,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn emit_i128_shift(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: ShiftKind,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let symbol = match kind {
+        ShiftKind::Left => "__ashlti3",
+        ShiftKind::Right => "__lshrti3",
+    };
+    emit_i128_libcall(
+        asm,
+        layout,
+        dst_id,
+        symbol,
+        lhs,
+        None,
+        Some(rhs),
+        reg_types,
+        local_types,
+    )
+}
+
+fn emit_i128_divrem(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    want_rem: bool,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let symbol = if want_rem { "__modti3" } else { "__divti3" };
+    emit_i128_libcall(
+        asm,
+        layout,
+        dst_id,
+        symbol,
+        lhs,
+        Some(rhs),
+        None,
+        reg_types,
+        local_types,
+    )
+}
+
+fn emit_i128_libcall(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    symbol: &str,
+    lhs: &LirValue,
+    rhs: Option<&LirValue>,
+    shift: Option<&LirValue>,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    let arg_regs = [
+        Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+    ];
+    let mut int_idx = 0usize;
+    let mut stack_idx = 0usize;
+
+    load_i128_value(asm, layout, lhs, Reg::X16, Reg::X17, reg_types, local_types)?;
+    push_int_arg(asm, layout, Reg::X16, &mut int_idx, &mut stack_idx, &arg_regs)?;
+    push_int_arg(asm, layout, Reg::X17, &mut int_idx, &mut stack_idx, &arg_regs)?;
+
+    if let Some(rhs) = rhs {
+        load_i128_value(asm, layout, rhs, Reg::X9, Reg::X10, reg_types, local_types)?;
+        push_int_arg(asm, layout, Reg::X9, &mut int_idx, &mut stack_idx, &arg_regs)?;
+        push_int_arg(asm, layout, Reg::X10, &mut int_idx, &mut stack_idx, &arg_regs)?;
+    }
+
+    if let Some(shift) = shift {
+        load_value(asm, layout, shift, Reg::X9, reg_types, local_types)?;
+        push_int_arg(asm, layout, Reg::X9, &mut int_idx, &mut stack_idx, &arg_regs)?;
+    }
+
+    asm.emit_bl_external(symbol);
+    store_i128_value(asm, layout, dst_id, Reg::X0, Reg::X1)?;
+    Ok(())
+}
+
+fn push_int_arg(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    value: Reg,
+    int_idx: &mut usize,
+    stack_idx: &mut usize,
+    arg_regs: &[Reg],
+) -> Result<()> {
+    if *int_idx < arg_regs.len() {
+        emit_mov_reg(asm, arg_regs[*int_idx], value);
+        *int_idx += 1;
+    } else {
+        let offset = (*stack_idx as i32) * 8;
+        if offset + 8 > layout.outgoing_size {
+            return Err(Error::from("outgoing arg offset out of range"));
+        }
+        emit_store_to_sp(asm, value, offset);
+        *stack_idx += 1;
+    }
+    Ok(())
 }
 
 fn load_value_float(
@@ -992,6 +1382,32 @@ fn emit_load(
     address: &LirValue,
     ty: &LirType,
 ) -> Result<()> {
+    if matches!(ty, LirType::I128) {
+        match address {
+            LirValue::StackSlot(id) => {
+                let offset = stack_slot_offset(layout, *id)?;
+                emit_load_from_sp(asm, Reg::X16, offset);
+                emit_load_from_sp(asm, Reg::X17, offset + 8);
+            }
+            LirValue::Register(id) => {
+                let offset = vreg_offset(layout, *id)?;
+                emit_load_from_sp(asm, Reg::X9, offset);
+                emit_load_from_reg(asm, Reg::X16, Reg::X9);
+                add_immediate_offset(asm, Reg::X9, 8)?;
+                emit_load_from_reg(asm, Reg::X17, Reg::X9);
+            }
+            LirValue::Local(id) => {
+                let offset = local_offset(layout, *id)?;
+                emit_load_from_sp(asm, Reg::X9, offset);
+                emit_load_from_reg(asm, Reg::X16, Reg::X9);
+                add_immediate_offset(asm, Reg::X9, 8)?;
+                emit_load_from_reg(asm, Reg::X17, Reg::X9);
+            }
+            _ => return Err(Error::from("unsupported load address for i128 on aarch64")),
+        }
+        store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
+        return Ok(());
+    }
     if is_large_aggregate(ty) {
         let size = size_of(ty) as i32;
         if size == 0 {
@@ -1229,10 +1645,36 @@ fn emit_store(
         }
         return Ok(());
     }
+    let value_ty = value_type(value, reg_types, local_types)?;
+    if matches!(value_ty, LirType::I128) {
+        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        match address {
+            LirValue::StackSlot(id) => {
+                let dst_offset = stack_slot_offset(layout, *id)?;
+                emit_store_to_sp(asm, Reg::X16, dst_offset);
+                emit_store_to_sp(asm, Reg::X17, dst_offset + 8);
+            }
+            LirValue::Register(id) => {
+                let addr_offset = vreg_offset(layout, *id)?;
+                emit_load_from_sp(asm, Reg::X9, addr_offset);
+                emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                add_immediate_offset(asm, Reg::X9, 8)?;
+                emit_store_to_reg(asm, Reg::X17, Reg::X9);
+            }
+            LirValue::Local(id) => {
+                let addr_offset = local_offset(layout, *id)?;
+                emit_load_from_sp(asm, Reg::X9, addr_offset);
+                emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                add_immediate_offset(asm, Reg::X9, 8)?;
+                emit_store_to_reg(asm, Reg::X17, Reg::X9);
+            }
+            _ => return Err(Error::from("unsupported store address for i128 on aarch64")),
+        }
+        return Ok(());
+    }
     if matches!(value, LirValue::Constant(LirConstant::Array(values, _)) if values.is_empty()) {
         return Ok(());
     }
-    let value_ty = value_type(value, reg_types, local_types)?;
     if size_of(&value_ty) == 0 {
         return Ok(());
     }
@@ -1571,13 +2013,25 @@ fn emit_divrem(
     let lhs_ty = value_type(lhs, reg_types, local_types)?;
     if is_float_type(&lhs_ty) {
         if want_rem {
-            return Err(Error::from("float remainder is not supported on aarch64"));
+            load_value_float(asm, layout, lhs, FReg::V0, &lhs_ty, reg_types, local_types)?;
+            load_value_float(asm, layout, rhs, FReg::V1, &lhs_ty, reg_types, local_types)?;
+            let symbol = if matches!(lhs_ty, LirType::F32) {
+                "fmodf"
+            } else {
+                "fmod"
+            };
+            asm.emit_bl_external(symbol);
+            store_vreg_float(asm, layout, dst_id, FReg::V0, &lhs_ty)?;
+            return Ok(());
         }
         load_value_float(asm, layout, lhs, FReg::V0, &lhs_ty, reg_types, local_types)?;
         load_value_float(asm, layout, rhs, FReg::V1, &lhs_ty, reg_types, local_types)?;
         emit_fdiv(asm, FReg::V0, FReg::V0, FReg::V1, &lhs_ty);
         store_vreg_float(asm, layout, dst_id, FReg::V0, &lhs_ty)?;
         return Ok(());
+    }
+    if matches!(lhs_ty, LirType::I128) {
+        return emit_i128_divrem(asm, layout, dst_id, lhs, rhs, want_rem, reg_types, local_types);
     }
 
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
@@ -1767,6 +2221,15 @@ fn emit_call(
                 continue;
             }
             let arg_ty = value_type(arg, reg_types, local_types)?;
+            if matches!(arg_ty, LirType::I128) {
+                load_i128_value(asm, layout, arg, Reg::X16, Reg::X17, reg_types, local_types)?;
+                push_int_arg(asm, layout, Reg::X16, &mut int_idx, &mut stack_idx, &arg_regs)?;
+                push_int_arg(asm, layout, Reg::X17, &mut int_idx, &mut stack_idx, &arg_regs)?;
+                if abi_debug_enabled() {
+                    abi_log("  arg i128 -> pair");
+                }
+                continue;
+            }
             if is_float_type(&arg_ty) {
                 if float_idx < float_regs.len() {
                     load_value_float(
@@ -1852,6 +2315,8 @@ fn emit_call(
             add_immediate_offset(asm, Reg::X16, agg_off as i64)?;
             store_vreg(asm, layout, dst_id, Reg::X16)?;
         }
+    } else if matches!(ret_ty, LirType::I128) {
+        store_i128_value(asm, layout, dst_id, Reg::X0, Reg::X1)?;
     } else if !matches!(ret_ty, LirType::Void) {
         if is_float_type(ret_ty) {
             store_vreg_float(asm, layout, dst_id, FReg::V0, ret_ty)?;
@@ -2357,7 +2822,19 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
         return Ok(());
     }
     if offset < 0 {
-        return Err(Error::from("negative GEP offsets not supported on aarch64"));
+        let abs = (-offset) as u64;
+        if abs <= 4095 {
+            emit_sub_imm12(asm, base, base, abs as u32);
+            return Ok(());
+        }
+        if let Ok(imm) = u16::try_from(abs) {
+            emit_mov_imm16(asm, Reg::X17, imm);
+            emit_sub_reg(asm, base, base, Reg::X17);
+        } else {
+            emit_mov_imm64(asm, Reg::X9, abs as u64);
+            emit_sub_reg(asm, base, base, Reg::X9);
+        }
+        return Ok(());
     }
     if offset <= 4095 {
         emit_add_imm12(asm, base, base, offset as u32);
@@ -3093,7 +3570,7 @@ fn int_bits(ty: &LirType) -> Result<u32> {
         LirType::I16 => Ok(16),
         LirType::I32 => Ok(32),
         LirType::I64 => Ok(64),
-        LirType::I128 => Err(Error::from("i128 not supported in native emitter")),
+        LirType::I128 => Ok(128),
         _ => Err(Error::from("expected integer type")),
     }
 }
@@ -3254,6 +3731,11 @@ fn emit_add_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
     asm.extend(&instr.to_le_bytes());
 }
 
+fn emit_adds_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
+    let instr = 0xAB00_0000u32 | (rhs.id() << 16) | (lhs.id() << 5) | dst.id();
+    asm.extend(&instr.to_le_bytes());
+}
+
 fn emit_and_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
     let instr = 0x8A00_0000u32 | (rhs.id() << 16) | (lhs.id() << 5) | dst.id();
     asm.extend(&instr.to_le_bytes());
@@ -3286,6 +3768,21 @@ fn emit_asrv(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
 
 fn emit_sub_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
     let instr = 0xCB00_0000u32 | (rhs.id() << 16) | (lhs.id() << 5) | dst.id();
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_subs_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
+    let instr = 0xEB00_0000u32 | (rhs.id() << 16) | (lhs.id() << 5) | dst.id();
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_adc_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
+    let instr = 0x9A00_0000u32 | (rhs.id() << 16) | (lhs.id() << 5) | dst.id();
+    asm.extend(&instr.to_le_bytes());
+}
+
+fn emit_sbc_reg(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
+    let instr = 0xDA00_0000u32 | (rhs.id() << 16) | (lhs.id() << 5) | dst.id();
     asm.extend(&instr.to_le_bytes());
 }
 
@@ -3378,174 +3875,187 @@ fn emit_msub(asm: &mut Assembler, dst: Reg, mul_lhs: Reg, mul_rhs: Reg, add: Reg
     asm.extend(&instr.to_le_bytes());
 }
 fn emit_load_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) {
-    let imm12 = (offset / 8) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0xF940_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
-        emit_load_from_reg(asm, dst, Reg::X17);
+    if offset >= 0 && (offset % 8) == 0 {
+        let imm12 = (offset / 8) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0xF940_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return;
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
+    emit_load_from_reg(asm, dst, Reg::X17);
 }
 
 fn emit_load8u_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()> {
-    if offset < 0 {
-        return Err(Error::from("negative load offsets not supported on aarch64"));
+    if offset >= 0 {
+        let imm12 = offset as u32;
+        if imm12 <= 0xfff {
+            let instr = 0x3940_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
-    let imm12 = offset as u32;
-    if imm12 <= 0xfff {
-        let instr = 0x3940_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load8u_from_reg(asm, dst, Reg::X17);
-    }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_load8u_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
 
 fn emit_load8s_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()> {
-    if offset < 0 {
-        return Err(Error::from("negative load offsets not supported on aarch64"));
+    if offset >= 0 {
+        let imm12 = offset as u32;
+        if imm12 <= 0xfff {
+            let instr = 0x39C0_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
-    let imm12 = offset as u32;
-    if imm12 <= 0xfff {
-        let instr = 0x39C0_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load8s_from_reg(asm, dst, Reg::X17);
-    }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_load8s_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
 
 fn emit_load16u_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()> {
-    if offset < 0 || (offset % 2) != 0 {
+    if (offset % 2) != 0 {
         return Err(Error::from("unaligned 16-bit load on aarch64"));
     }
-    let imm12 = (offset / 2) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0x7940_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load16u_from_reg(asm, dst, Reg::X17);
+    if offset >= 0 {
+        let imm12 = (offset / 2) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0x7940_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_load16u_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
 
 fn emit_load16s_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()> {
-    if offset < 0 || (offset % 2) != 0 {
+    if (offset % 2) != 0 {
         return Err(Error::from("unaligned 16-bit load on aarch64"));
     }
-    let imm12 = (offset / 2) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0x79C0_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load16s_from_reg(asm, dst, Reg::X17);
+    if offset >= 0 {
+        let imm12 = (offset / 2) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0x79C0_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_load16s_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
 
 fn emit_load32u_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()> {
-    if offset < 0 || (offset % 4) != 0 {
+    if (offset % 4) != 0 {
         return Err(Error::from("unaligned 32-bit load on aarch64"));
     }
-    let imm12 = (offset / 4) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0xB940_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load32u_from_reg(asm, dst, Reg::X17);
+    if offset >= 0 {
+        let imm12 = (offset / 4) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0xB940_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_load32u_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
 
 fn emit_load32s_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) -> Result<()> {
-    if offset < 0 || (offset % 4) != 0 {
+    if (offset % 4) != 0 {
         return Err(Error::from("unaligned 32-bit load on aarch64"));
     }
-    let imm12 = (offset / 4) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0xB980_03E0u32 | (imm12 << 10) | dst.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load32s_from_reg(asm, dst, Reg::X17);
+    if offset >= 0 {
+        let imm12 = (offset / 4) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0xB980_03E0u32 | (imm12 << 10) | dst.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_load32s_from_reg(asm, dst, Reg::X17);
     Ok(())
 }
 
 fn emit_store_to_sp(asm: &mut Assembler, src: Reg, offset: i32) {
     asm.log_stack_write(offset, 8, "str");
-    let imm12 = (offset / 8) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0xF900_03E0u32 | (imm12 << 10) | src.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
-        emit_store_to_reg(asm, src, Reg::X17);
+    if offset >= 0 && (offset % 8) == 0 {
+        let imm12 = (offset / 8) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0xF900_03E0u32 | (imm12 << 10) | src.id();
+            asm.extend(&instr.to_le_bytes());
+            return;
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    let _ = add_immediate_offset(asm, Reg::X17, offset as i64);
+    emit_store_to_reg(asm, src, Reg::X17);
 }
 
 fn emit_store8_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> {
-    if offset < 0 {
-        return Err(Error::from("negative store offsets not supported on aarch64"));
-    }
     asm.log_stack_write(offset, 1, "strb");
-    let imm12 = offset as u32;
-    if imm12 <= 0xfff {
-        let instr = 0x3900_03E0u32 | (imm12 << 10) | src.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_store8_to_reg(asm, src, Reg::X17);
+    if offset >= 0 {
+        let imm12 = offset as u32;
+        if imm12 <= 0xfff {
+            let instr = 0x3900_03E0u32 | (imm12 << 10) | src.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_store8_to_reg(asm, src, Reg::X17);
     Ok(())
 }
 
 fn emit_store16_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> {
-    if offset < 0 || (offset % 2) != 0 {
+    if (offset % 2) != 0 {
         return Err(Error::from("unaligned 16-bit store on aarch64"));
     }
     asm.log_stack_write(offset, 2, "strh");
-    let imm12 = (offset / 2) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0x7900_03E0u32 | (imm12 << 10) | src.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_store16_to_reg(asm, src, Reg::X17);
+    if offset >= 0 {
+        let imm12 = (offset / 2) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0x7900_03E0u32 | (imm12 << 10) | src.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_store16_to_reg(asm, src, Reg::X17);
     Ok(())
 }
 
 fn emit_store32_to_sp(asm: &mut Assembler, src: Reg, offset: i32) -> Result<()> {
-    if offset < 0 || (offset % 4) != 0 {
+    if (offset % 4) != 0 {
         return Err(Error::from("unaligned 32-bit store on aarch64"));
     }
     asm.log_stack_write(offset, 4, "strw");
-    let imm12 = (offset / 4) as u32;
-    if imm12 <= 0xfff {
-        let instr = 0xB900_03E0u32 | (imm12 << 10) | src.id();
-        asm.extend(&instr.to_le_bytes());
-    } else {
-        emit_mov_reg(asm, Reg::X17, Reg::X31);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_store32_to_reg(asm, src, Reg::X17);
+    if offset >= 0 {
+        let imm12 = (offset / 4) as u32;
+        if imm12 <= 0xfff {
+            let instr = 0xB900_03E0u32 | (imm12 << 10) | src.id();
+            asm.extend(&instr.to_le_bytes());
+            return Ok(());
+        }
     }
+    emit_mov_reg(asm, Reg::X17, Reg::X31);
+    add_immediate_offset(asm, Reg::X17, offset as i64)?;
+    emit_store32_to_reg(asm, src, Reg::X17);
     Ok(())
 }
 
@@ -4094,7 +4604,10 @@ fn emit_block(
                 emit_ret(asm);
                 return Ok(());
             }
-            if is_float_type(return_ty) {
+            if matches!(return_ty, LirType::I128) {
+                load_i128_value(asm, layout, value, Reg::X0, Reg::X1, reg_types, local_types)?;
+                exit_reg = Some(Reg::X0);
+            } else if is_float_type(return_ty) {
                 load_value_float(asm, layout, value, FReg::V0, return_ty, reg_types, local_types)?;
             } else {
                 load_value(asm, layout, value, Reg::X0, reg_types, local_types)?;
@@ -4193,6 +4706,9 @@ fn emit_cmp(
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     let lhs_ty = value_type(lhs, reg_types, local_types)?;
+    if matches!(lhs_ty, LirType::I128) {
+        return emit_i128_cmp(asm, layout, dst_id, lhs, rhs, kind, reg_types, local_types);
+    }
     if is_float_type(&lhs_ty) {
         load_value_float(asm, layout, lhs, FReg::V0, &lhs_ty, reg_types, local_types)?;
         load_value_float(asm, layout, rhs, FReg::V1, &lhs_ty, reg_types, local_types)?;
@@ -4234,6 +4750,66 @@ fn emit_cmp(
     };
     emit_cset(asm, Reg::X16, cond);
     store_vreg(asm, layout, dst_id, Reg::X16)?;
+    Ok(())
+}
+
+fn emit_i128_cmp(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    dst_id: u32,
+    lhs: &LirValue,
+    rhs: &LirValue,
+    kind: CmpKind,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<()> {
+    load_i128_value(asm, layout, lhs, Reg::X16, Reg::X17, reg_types, local_types)?;
+    load_i128_value(asm, layout, rhs, Reg::X9, Reg::X10, reg_types, local_types)?;
+
+    emit_cmp_reg(asm, Reg::X17, Reg::X10);
+    emit_cset(asm, Reg::X11, 11); // signed lt
+    emit_cset(asm, Reg::X12, 12); // signed gt
+    emit_cset(asm, Reg::X13, 0); // eq
+
+    emit_cmp_reg(asm, Reg::X16, Reg::X9);
+    emit_cset(asm, Reg::X14, 3); // unsigned lt (LO)
+    emit_cset(asm, Reg::X15, 8); // unsigned gt (HI)
+    emit_cset(asm, Reg::X9, 0); // eq
+
+    match kind {
+        CmpKind::Eq => {
+            emit_and_reg(asm, Reg::X13, Reg::X13, Reg::X9);
+            store_vreg(asm, layout, dst_id, Reg::X13)?;
+        }
+        CmpKind::Ne => {
+            emit_and_reg(asm, Reg::X13, Reg::X13, Reg::X9);
+            emit_mov_imm16(asm, Reg::X10, 1);
+            emit_eor_reg(asm, Reg::X13, Reg::X13, Reg::X10);
+            store_vreg(asm, layout, dst_id, Reg::X13)?;
+        }
+        CmpKind::Lt => {
+            emit_and_reg(asm, Reg::X13, Reg::X13, Reg::X14);
+            emit_or_reg(asm, Reg::X11, Reg::X11, Reg::X13);
+            store_vreg(asm, layout, dst_id, Reg::X11)?;
+        }
+        CmpKind::Gt => {
+            emit_and_reg(asm, Reg::X13, Reg::X13, Reg::X15);
+            emit_or_reg(asm, Reg::X12, Reg::X12, Reg::X13);
+            store_vreg(asm, layout, dst_id, Reg::X12)?;
+        }
+        CmpKind::Le => {
+            emit_or_reg(asm, Reg::X14, Reg::X14, Reg::X9);
+            emit_and_reg(asm, Reg::X13, Reg::X13, Reg::X14);
+            emit_or_reg(asm, Reg::X11, Reg::X11, Reg::X13);
+            store_vreg(asm, layout, dst_id, Reg::X11)?;
+        }
+        CmpKind::Ge => {
+            emit_or_reg(asm, Reg::X15, Reg::X15, Reg::X9);
+            emit_and_reg(asm, Reg::X13, Reg::X13, Reg::X15);
+            emit_or_reg(asm, Reg::X12, Reg::X12, Reg::X13);
+            store_vreg(asm, layout, dst_id, Reg::X12)?;
+        }
+    }
     Ok(())
 }
 
