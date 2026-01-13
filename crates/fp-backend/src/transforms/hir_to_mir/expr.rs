@@ -8906,6 +8906,19 @@ impl<'a> BodyBuilder<'a> {
             | TyKind::Placeholder(_)
             | TyKind::Bound(_, _)
             | TyKind::Infer(_) => {
+                if let TyKind::Adt(_, _) = &ty.kind {
+                    if let Some(layout) = self.lowering.struct_layout_for_ty(ty) {
+                        let mut total = 0u64;
+                        for field in &layout.field_tys {
+                            let size = match self.compute_ty_size(span, field) {
+                                Some(value) => value,
+                                None => return None,
+                            };
+                            total = total.saturating_add(size);
+                        }
+                        return Some(total);
+                    }
+                }
                 self.lowering.emit_error(
                     span,
                     format!("size_of for type `{:?}` is not supported", ty.kind),

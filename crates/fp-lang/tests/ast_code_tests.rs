@@ -155,6 +155,7 @@ fn node_contains_splice_quote(node: &Node) -> bool {
                         .map(|e| expr_contains(e.as_ref()))
                         .unwrap_or(false)
             }
+            ExprKind::ConstBlock(cb) => expr_contains(cb.expr.as_ref()),
             ExprKind::While(w) => expr_contains(w.cond.as_ref()) || expr_contains(w.body.as_ref()),
             ExprKind::Loop(l) => expr_contains(l.body.as_ref()),
             ExprKind::Invoke(inv) => inv.args.iter().any(expr_contains),
@@ -284,8 +285,12 @@ fn splice_stmt_in_item_position_errors() {
 
 #[test]
 fn emit_outside_const_errors() {
-    // `emit!` requires `{ ... }`.
-    expect_parse_err("fn main() { emit! ( let x = 1; ) }");
+    // `emit! ( ... )` is parsed as a normal macro-style call.
+    let fe = FerroFrontend::new();
+    let res = fe
+        .parse("fn main() { emit! ( let x = 1; ) }", None)
+        .expect("parse");
+    assert!(matches!(res.ast.kind(), NodeKind::File(_)));
 }
 
 #[test]

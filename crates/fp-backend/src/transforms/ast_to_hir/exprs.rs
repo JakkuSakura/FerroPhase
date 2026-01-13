@@ -161,19 +161,25 @@ impl HirGenerator {
                     let boxed: ast::BValue = Box::new(value.clone());
                     self.transform_value_to_hir(&boxed)?
                 } else {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "unsupported dynamic expression payload for `Any` node; substituting unit"
-                                .to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    let block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    hir::ExprKind::Block(block)
+                    if self.error_tolerance {
+                        self.add_warning(
+                            Diagnostic::warning(
+                                "unsupported dynamic expression payload for `Any` node; substituting unit"
+                                    .to_string(),
+                            )
+                            .with_source_context(DIAGNOSTIC_CONTEXT),
+                        );
+                        let block = hir::Block {
+                            hir_id: self.next_id(),
+                            stmts: Vec::new(),
+                            expr: None,
+                        };
+                        hir::ExprKind::Block(block)
+                    } else {
+                        return Err(crate::error::optimization_error(
+                            "unsupported dynamic expression payload for `Any` node",
+                        ));
+                    }
                 }
             }
             ExprKind::Macro(mac) => {

@@ -85,6 +85,10 @@ impl HirGenerator {
                     false,
                 ))
             }
+            PatternKind::Box(box_pat) => {
+                let inner = self.transform_pattern(box_pat.pattern.as_ref())?;
+                Ok((inner, None, false))
+            }
             PatternKind::Struct(struct_pat) => {
                 let path = self.locator_to_hir_path_with_scope(
                     &Locator::Ident(struct_pat.name.clone()),
@@ -165,10 +169,6 @@ impl HirGenerator {
                     self.transform_variant_pattern(&variant.name, variant.pattern.as_deref())?;
                 Ok((hir_pat, ty, mutable))
             }
-            other => Err(crate::error::optimization_error(format!(
-                "unsupported pattern kind in AST→HIR lowering: {:?}",
-                other
-            ))),
         }
     }
 

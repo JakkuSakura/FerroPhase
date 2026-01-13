@@ -688,9 +688,8 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             if raw.starts_with("f\"") {
                 parse_f_string_literal(&raw)
             } else if raw.starts_with("t\"") {
-                Err(LowerError::Unsupported(
-                    "t-strings are not supported yet".to_string(),
-                ))
+                let decoded = decode_string_literal(&raw).unwrap_or(raw);
+                Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
             } else {
                 let decoded = decode_string_literal(&raw).unwrap_or(raw);
                 // String literals should lower to borrowed `&'static str` equivalents by default.
