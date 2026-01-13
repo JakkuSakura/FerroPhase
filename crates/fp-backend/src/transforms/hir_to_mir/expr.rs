@@ -4835,95 +4835,152 @@ impl<'a> BodyBuilder<'a> {
         scrutinee_ty: &Ty,
         span: Span,
     ) -> Result<mir::Operand> {
-        let literal = match &pat.kind {
-            hir::PatKind::Lit(lit) => {
-                let (literal, _) = self.lower_literal(lit, None);
+        if let hir::PatKind::Tuple(items) = &pat.kind {
+            let mut tuple_place = scrutinee_place.clone();
+            let mut tuple_ty = scrutinee_ty.clone();
+            if matches!(tuple_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                tuple_place.projection.push(mir::PlaceElem::Deref);
+                tuple_ty = match &tuple_ty.kind {
+                    TyKind::Ref(_, inner, _) => (*inner.as_ref()).clone(),
+                    TyKind::RawPtr(type_and_mut) => (*type_and_mut.ty).clone(),
+                    _ => tuple_ty,
+                };
+            }
+
+            let TyKind::Tuple(elem_tys) = &tuple_ty.kind else {
+                self.lowering.emit_warning(
+                    span,
+                    "tuple pattern match requires tuple scrutinee; treating as non-matching",
+                );
+                return Ok(mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Bool(false),
+                }));
+            };
+
+            if items.len() != elem_tys.len() {
+                self.lowering.emit_warning(
+                    span,
+                    "tuple pattern length mismatch; treating as non-matching",
+                );
+                return Ok(mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal: mir::ConstantKind::Bool(false),
+                }));
+            }
+
+            let mut combined: Option<mir::Operand> = None;
+            for (index, item) in items.iter().enumerate() {
+                match &item.kind {
+                    hir::PatKind::Lit(lit) => {
+                        let (literal, _) = self.lower_literal(lit, None);
+                        let mut field_place = tuple_place.clone();
+                        field_place.projection.push(mir::PlaceElem::Field(
+                            index,
+                            (*elem_tys[index]).clone(),
+                        ));
+                        let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                        let eq_place = mir::Place::from_local(eq_temp);
+                        self.push_statement(mir::Statement {
+                            source_info: span,
+                            kind: mir::StatementKind::Assign(
+                                eq_place.clone(),
+                                mir::Rvalue::BinaryOp(
+                                    mir::BinOp::Eq,
+                                    mir::Operand::Copy(field_place),
+                                    mir::Operand::Constant(mir::Constant {
+                                        span,
+                                        user_ty: None,
+                                        literal,
+                                    }),
+                                ),
+                            ),
+                        });
+                        let eq_operand = mir::Operand::Copy(eq_place);
+                        combined = Some(match combined {
+                            None => eq_operand,
+                            Some(existing) => {
+                                let and_temp =
+                                    self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                                let and_place = mir::Place::from_local(and_temp);
+                                self.push_statement(mir::Statement {
+                                    source_info: span,
+                                    kind: mir::StatementKind::Assign(
+                                        and_place.clone(),
+                                        mir::Rvalue::BinaryOp(
+                                            mir::BinOp::And,
+                                            existing,
+                                            eq_operand,
+                                        ),
+                                    ),
+                                });
+                                mir::Operand::Copy(and_place)
+                            }
+                        });
+                    }
+                    hir::PatKind::Wild | hir::PatKind::Binding { .. } => {}
+                    _ => {
+                        self.lowering.emit_warning(
+                            span,
+                            "tuple pattern element not supported; treating as non-matching",
+                        );
+                        return Ok(mir::Operand::Constant(mir::Constant {
+                            span,
+                            user_ty: None,
+                            literal: mir::ConstantKind::Bool(false),
+                        }));
+                    }
+                }
+            }
+
+            return Ok(combined.unwrap_or_else(|| {
                 mir::Operand::Constant(mir::Constant {
                     span,
                     user_ty: None,
-                    literal,
+                    literal: mir::ConstantKind::Bool(true),
                 })
-            }
-            hir::PatKind::Variant(path)
-            | hir::PatKind::Struct(path, _, _)
-            | hir::PatKind::TupleStruct(path, _) => {
-                if let Some(variant) = self.enum_variant_info_from_path(path) {
-                    mir::Operand::Constant(mir::Constant {
-                        span,
-                        user_ty: None,
-                        literal: mir::ConstantKind::Int(variant.discriminant),
-                    })
-                } else if matches!(
-                    pat.kind,
-                    hir::PatKind::Struct(_, _, _) | hir::PatKind::TupleStruct(_, _)
-                ) {
-                    self.lowering.emit_warning(
-                        span,
-                        "struct pattern match is not supported; treating as non-matching",
-                    );
-                    mir::Operand::Constant(mir::Constant {
-                        span,
-                        user_ty: None,
-                        literal: mir::ConstantKind::Bool(false),
-                    })
-                } else {
-                    let expr = hir::Expr {
-                        hir_id: 0,
-                        kind: hir::ExprKind::Path(path.clone()),
-                        span,
-                    };
-                    let operand = self.lower_operand(&expr, None)?;
-                    operand.operand
-                }
-            }
-            hir::PatKind::Tuple(_) => {
-                let hir::PatKind::Tuple(items) = &pat.kind else {
-                    unreachable!("tuple pattern checked");
+            }));
+        }
+        if let hir::PatKind::Struct(_path, fields, _) = &pat.kind {
+            let mut base_place = scrutinee_place.clone();
+            let mut base_ty = scrutinee_ty.clone();
+            if matches!(base_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                base_place.projection.push(mir::PlaceElem::Deref);
+                base_ty = match &base_ty.kind {
+                    TyKind::Ref(_, inner, _) => (*inner.as_ref()).clone(),
+                    TyKind::RawPtr(type_and_mut) => (*type_and_mut.ty).clone(),
+                    _ => base_ty,
                 };
-                let mut tuple_place = scrutinee_place.clone();
-                let mut tuple_ty = scrutinee_ty.clone();
-                if matches!(tuple_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
-                    tuple_place.projection.push(mir::PlaceElem::Deref);
-                    tuple_ty = match &tuple_ty.kind {
-                        TyKind::Ref(_, inner, _) => (*inner.as_ref()).clone(),
-                        TyKind::RawPtr(type_and_mut) => (*type_and_mut.ty).clone(),
-                        _ => tuple_ty,
-                    };
-                }
-
-                let TyKind::Tuple(elem_tys) = &tuple_ty.kind else {
-                    self.lowering.emit_warning(
-                        span,
-                        "tuple pattern match requires tuple scrutinee; treating as non-matching",
-                    );
-                    return Ok(mir::Operand::Constant(mir::Constant {
-                        span,
-                        user_ty: None,
-                        literal: mir::ConstantKind::Bool(false),
-                    }));
-                };
-
-                if items.len() != elem_tys.len() {
-                    self.lowering.emit_warning(
-                        span,
-                        "tuple pattern length mismatch; treating as non-matching",
-                    );
-                    return Ok(mir::Operand::Constant(mir::Constant {
-                        span,
-                        user_ty: None,
-                        literal: mir::ConstantKind::Bool(false),
-                    }));
-                }
-
+            }
+            if let Some(struct_def) = self.struct_def_from_ty(&base_ty) {
                 let mut combined: Option<mir::Operand> = None;
-                for (index, item) in items.iter().enumerate() {
-                    match &item.kind {
+                for field in fields {
+                    match &field.pat.kind {
                         hir::PatKind::Lit(lit) => {
+                            let Some((field_index, field_info)) = self
+                                .lowering
+                                .struct_field(struct_def, &base_ty, field.name.as_str(), span)
+                            else {
+                                self.lowering.emit_warning(
+                                    span,
+                                    format!(
+                                        "struct pattern field `{}` not found; treating as non-matching",
+                                        field.name
+                                    ),
+                                );
+                                return Ok(mir::Operand::Constant(mir::Constant {
+                                    span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Bool(false),
+                                }));
+                            };
                             let (literal, _) = self.lower_literal(lit, None);
-                            let mut field_place = tuple_place.clone();
+                            let mut field_place = base_place.clone();
                             field_place.projection.push(mir::PlaceElem::Field(
-                                index,
-                                (*elem_tys[index]).clone(),
+                                field_index,
+                                field_info.ty.clone(),
                             ));
                             let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                             let eq_place = mir::Place::from_local(eq_temp);
@@ -4968,7 +5025,7 @@ impl<'a> BodyBuilder<'a> {
                         _ => {
                             self.lowering.emit_warning(
                                 span,
-                                "tuple pattern element not supported; treating as non-matching",
+                                "struct pattern field not supported; treating as non-matching",
                             );
                             return Ok(mir::Operand::Constant(mir::Constant {
                                 span,
@@ -4979,13 +5036,43 @@ impl<'a> BodyBuilder<'a> {
                     }
                 }
 
-                combined.unwrap_or_else(|| {
+                return Ok(combined.unwrap_or_else(|| {
                     mir::Operand::Constant(mir::Constant {
                         span,
                         user_ty: None,
                         literal: mir::ConstantKind::Bool(true),
                     })
+                }));
+            }
+        }
+
+        let literal = match &pat.kind {
+            hir::PatKind::Lit(lit) => {
+                let (literal, _) = self.lower_literal(lit, None);
+                mir::Operand::Constant(mir::Constant {
+                    span,
+                    user_ty: None,
+                    literal,
                 })
+            }
+            hir::PatKind::Variant(path)
+            | hir::PatKind::Struct(path, _, _)
+            | hir::PatKind::TupleStruct(path, _) => {
+                if let Some(variant) = self.enum_variant_info_from_path(path) {
+                    mir::Operand::Constant(mir::Constant {
+                        span,
+                        user_ty: None,
+                        literal: mir::ConstantKind::Int(variant.discriminant),
+                    })
+                } else {
+                    let expr = hir::Expr {
+                        hir_id: 0,
+                        kind: hir::ExprKind::Path(path.clone()),
+                        span,
+                    };
+                    let operand = self.lower_operand(&expr, None)?;
+                    operand.operand
+                }
             }
             _ => {
                 self.lowering.emit_warning(

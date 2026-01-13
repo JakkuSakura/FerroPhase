@@ -160,6 +160,7 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Panic format payloads: format strings now lower through the format intrinsic, but inherit printf‑style type limits.
 - Match patterns: tuple/struct patterns made of only bindings/wildcards now short‑circuit as always‑match.
 - Tuple match conditions now support literal element checks (bindings/wildcards still skip).
+- Struct match conditions now support literal field checks (bindings/wildcards still skip).
 - Array lengths from pointer values default to zero with a warning.
 - printf pointer args now use `%p` for non‑string references/pointers.
 - Arbitrary precision decimals now lower to `f64` with a warning.
