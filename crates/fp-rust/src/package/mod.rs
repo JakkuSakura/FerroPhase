@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use cargo_metadata::{
-    Dependency, DependencyKind as CargoDepKind, Metadata, MetadataCommand, Package, Target,
+    Dependency, DependencyKind as CargoDepKind, Metadata, MetadataCommand, Package, Target, semver,
 };
 
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};
@@ -19,15 +19,36 @@ use fp_core::package::provider::{
 
 pub struct CargoPackageProvider {
     workspace_root: PathBuf,
+    options: CargoMetadataOptions,
     packages: RwLock<HashMap<PackageId, Arc<PackageDescriptor>>>,
     modules: RwLock<HashMap<ModuleId, Arc<ModuleDescriptor>>>,
     modules_by_package: RwLock<HashMap<PackageId, Vec<ModuleId>>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct CargoMetadataOptions {
+    pub offline: bool,
+    pub include_dependencies: bool,
+}
+
+impl Default for CargoMetadataOptions {
+    fn default() -> Self {
+        Self {
+            offline: false,
+            include_dependencies: false,
+        }
+    }
+}
+
 impl CargoPackageProvider {
     pub fn new(workspace_root: PathBuf) -> Self {
+        Self::new_with_options(workspace_root, CargoMetadataOptions::default())
+    }
+
+    pub fn new_with_options(workspace_root: PathBuf, options: CargoMetadataOptions) -> Self {
         Self {
             workspace_root,
+            options,
             packages: RwLock::new(HashMap::new()),
             modules: RwLock::new(HashMap::new()),
             modules_by_package: RwLock::new(HashMap::new()),
@@ -39,8 +60,15 @@ impl CargoPackageProvider {
     }
 
     fn metadata(&self) -> ProviderResult<Metadata> {
-        MetadataCommand::new()
-            .manifest_path(&self.workspace_manifest())
+        let mut command = MetadataCommand::new();
+        command.manifest_path(&self.workspace_manifest());
+        if self.options.offline {
+            command.other_options(vec!["--offline".to_string()]);
+        }
+        if !self.options.include_dependencies {
+            command.no_deps();
+        }
+        command
             .exec()
             .map_err(|err| ProviderError::metadata(err.to_string()))
     }
@@ -134,12 +162,36 @@ impl PackageProvider for CargoPackageProvider {
         let mut module_map = HashMap::new();
         let mut modules_by_pkg = HashMap::new();
 
-        for member in &metadata.workspace_members {
-            let pkg = metadata
-                .packages
+        let packages_iter: Vec<&Package> = if self.options.include_dependencies {
+            metadata.packages.iter().collect()
+        } else {
+            metadata
+                .workspace_members
                 .iter()
-                .find(|candidate| &candidate.id == member)
-                .ok_or_else(|| ProviderError::other(format!("missing package for id {member}")))?;
+                .map(|member| {
+                    metadata
+                        .packages
+                        .iter()
+                        .find(|candidate| &candidate.id == member)
+                        .ok_or_else(|| {
+                            ProviderError::other(format!("missing package for id {member}"))
+                        })
+                })
+                .collect::<ProviderResult<Vec<_>>>()?
+        };
+
+        let mut seen_versions: HashMap<String, semver::Version> = HashMap::new();
+        for pkg in packages_iter {
+            if let Some(prev) = seen_versions.get(&pkg.name) {
+                if prev != &pkg.version {
+                    return Err(ProviderError::other(format!(
+                        "multiple versions of package '{}' are not supported ({} vs {})",
+                        pkg.name, prev, pkg.version
+                    )));
+                }
+            } else {
+                seen_versions.insert(pkg.name.clone(), pkg.version.clone());
+            }
 
             let descriptor = self.convert_package(pkg, &mut module_map, &mut modules_by_pkg)?;
             package_map.insert(descriptor.id.clone(), Arc::new(descriptor));

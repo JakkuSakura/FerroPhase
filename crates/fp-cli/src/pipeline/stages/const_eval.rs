@@ -12,19 +12,21 @@ impl Pipeline {
         options: &PipelineOptions,
     ) -> Result<ConstEvalOutcome, CliError> {
         let mut std_modules = Vec::new();
-        for std_path in runtime_std_paths() {
-            let source = match fs::read_to_string(&std_path) {
-                Ok(source) => source,
-                Err(err) => {
-                    return Err(CliError::Compilation(format!(
-                        "failed to read std module {}: {}",
-                        std_path.display(),
-                        err
-                    )));
-                }
-            };
-            let std_node = self.parse_input_source(options, &source, Some(&std_path))?;
-            std_modules.push(std_node);
+        if !matches!(options.target, fp_pipeline::PipelineTarget::Interpret) {
+            for std_path in runtime_std_paths() {
+                let source = match fs::read_to_string(&std_path) {
+                    Ok(source) => source,
+                    Err(err) => {
+                        return Err(CliError::Compilation(format!(
+                            "failed to read std module {}: {}",
+                            std_path.display(),
+                            err
+                        )));
+                    }
+                };
+                let std_node = self.parse_input_source(options, &source, Some(&std_path))?;
+                std_modules.push(std_node);
+            }
         }
 
         let stage = ConstEvalStage;

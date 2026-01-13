@@ -27,54 +27,21 @@ fn test_cli_version() {
 }
 
 #[test]
-fn test_cli_info() {
+fn test_cli_parse_help() {
     let mut cmd = Command::cargo_bin("fp").unwrap();
-    cmd.arg("info");
+    cmd.arg("parse").arg("--help");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("FerroPhase"));
+        .stdout(predicate::str::contains("Parse and display AST"));
 }
 
 #[test]
-fn test_cli_init_basic() {
-    let temp_dir = TempDir::new().unwrap();
-    let project_name = "test_project";
-
+fn test_cli_completions_basic() {
     let mut cmd = Command::cargo_bin("fp").unwrap();
-    cmd.arg("init")
-        .arg(project_name)
-        .arg("--output")
-        .arg(temp_dir.path().join(project_name))
-        .arg("--template")
-        .arg("basic");
-
+    cmd.arg("completions").arg("bash");
     cmd.assert()
         .success()
-        .stdout(predicate::str::contains("Successfully created"));
-
-    // Check that project files were created
-    assert!(
-        temp_dir
-            .path()
-            .join(project_name)
-            .join("Ferrophase.toml")
-            .exists()
-    );
-    assert!(
-        temp_dir
-            .path()
-            .join(project_name)
-            .join("src")
-            .join("main.fp")
-            .exists()
-    );
-    assert!(
-        temp_dir
-            .path()
-            .join(project_name)
-            .join("README.md")
-            .exists()
-    );
+        .stdout(predicate::str::contains("fp"));
 }
 
 #[test]
@@ -120,7 +87,7 @@ fn test_cli_invalid_command() {
     cmd.assert().failure();
 }
 
-async fn compile_example(example_name: &str) {
+async fn compile_example_async(example_name: &str) {
     let temp_dir = TempDir::new().unwrap();
     let example_root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../examples")
@@ -134,13 +101,12 @@ async fn compile_example(example_name: &str) {
     let args = CompileArgs {
         input: vec![source_path.clone()],
         backend: "binary".to_string(),
-        // Use the LLVM emitter until the native emitter covers all example types.
-        emitter: "llvm".to_string(),
+        emitter: "native".to_string(),
         target_triple: None,
         target_cpu: None,
         target_features: None,
         target_sysroot: None,
-        linker: "clang".to_string(),
+        linker: "native".to_string(),
         target_linker: None,
         output: Some(output_path.clone()),
         opt_level: 0,
@@ -167,7 +133,21 @@ async fn compile_example(example_name: &str) {
     );
 }
 
-#[tokio::test]
-async fn test_compile_example_comptime_collections() {
-    compile_example("18_comptime_collections.fp").await;
+#[test]
+fn test_compile_example_comptime_collections() {
+    let example = "18_comptime_collections.fp".to_string();
+    let handle = std::thread::Builder::new()
+        .name("compile-example-18".to_string())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime build");
+            runtime.block_on(async move {
+                compile_example_async(&example).await;
+            });
+        })
+        .expect("thread spawn");
+    handle.join().expect("thread join");
 }

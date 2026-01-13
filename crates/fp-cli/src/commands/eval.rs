@@ -5,7 +5,7 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
-use fp_pipeline::PipelineConfig;
+use fp_pipeline::{PipelineConfig, PipelineOptions};
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
 use clap::{ArgAction, Args};
@@ -40,7 +40,8 @@ pub struct EvalArgs {
 }
 
 /// Execute the eval command
-pub async fn eval_command(args: EvalArgs, _config: &CliConfig) -> Result<()> {
+pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()> {
+    args.print_result = true;
     if let Some(expr) = &args.expr {
         let input = PipelineInput::Expression(expr.clone());
         let description = format!("expression: {}", expr);
@@ -76,7 +77,14 @@ async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -
     };
 
     let mut pipeline = Pipeline::new();
-    let output = pipeline.execute(input, &config).await?;
+    let output = match input {
+        PipelineInput::Expression(_) => {
+            let mut options: PipelineOptions = (&config).into();
+            options.disabled_stages.push("const-eval".to_string());
+            pipeline.execute_with_options(input, options).await?
+        }
+        _ => pipeline.execute(input, &config).await?,
+    };
     print_eval_output(&output, args, None)?;
 
     Ok(())
