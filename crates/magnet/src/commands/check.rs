@@ -24,7 +24,7 @@ pub fn check(config_path: &Path) -> Result<()> {
     let graph_options = PackageGraphOptions {
         offline,
         cache_dir: Some(cache_dir),
-        include_dependencies: true,
+        include_dependencies: false,
         cargo_fetch: false,
         resolve_registry: !offline,
     };
