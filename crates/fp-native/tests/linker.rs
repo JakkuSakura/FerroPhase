@@ -169,6 +169,44 @@ fn assert_range_in_file(label: &str, offset: u32, size: u32, len: usize) {
     );
 }
 
+fn read_u32(bytes: &[u8], offset: usize) -> u32 {
+    let end = offset + 4;
+    u32::from_le_bytes(bytes[offset..end].try_into().unwrap())
+}
+
+fn read_fixed_str(bytes: &[u8], offset: usize, len: usize) -> String {
+    let end = offset + len;
+    let raw = &bytes[offset..end];
+    let s = std::str::from_utf8(raw).unwrap();
+    s.trim_matches('\0').to_string()
+}
+
+fn text_section_file_offset(bytes: &[u8]) -> Option<u32> {
+    const LC_SEGMENT_64: u32 = 0x19;
+    let ncmds = read_u32(bytes, 16) as usize;
+    let mut offset = 32usize;
+    for _ in 0..ncmds {
+        let cmd = read_u32(bytes, offset);
+        let cmdsize = read_u32(bytes, offset + 4) as usize;
+        if cmd == LC_SEGMENT_64 {
+            let segname = read_fixed_str(bytes, offset + 8, 16);
+            if segname == "__TEXT" {
+                let nsects = read_u32(bytes, offset + 64) as usize;
+                let section_base = offset + 72;
+                for idx in 0..nsects {
+                    let section_offset = section_base + idx * 80;
+                    let sectname = read_fixed_str(bytes, section_offset, 16);
+                    if sectname == "__text" {
+                        return Some(read_u32(bytes, section_offset + 48));
+                    }
+                }
+            }
+        }
+        offset += cmdsize;
+    }
+    None
+}
+
 #[test]
 #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
 fn emitter_handles_stack_call_args() {
@@ -187,6 +225,15 @@ fn elf_executable_has_magic() {
     emit::write_executable(&exe, &plan).unwrap();
     let bytes = std::fs::read(&exe).unwrap();
     assert_eq!(&bytes[..4], b"\x7FELF");
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn emit_plan_records_function_symbols() {
+    let arch = host_arch();
+    let plan = emit::emit_plan(&program_with_many_call_args(), TargetFormat::Elf, arch).unwrap();
+    assert!(plan.symbols.contains_key("main"));
+    assert!(plan.symbols.contains_key("callee"));
 }
 
 #[test]
@@ -293,6 +340,26 @@ fn macho_dump_offsets_stay_in_file() {
             bytes.len(),
         );
     }
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn macho_text_section_does_not_overlap_load_commands() {
+    let arch = host_arch();
+    let plan = emit::emit_plan(&program_with_print(), TargetFormat::MachO, arch).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let exe = out_dir.path().join("codesign-slack.macho");
+    emit::write_executable(&exe, &plan).unwrap();
+    let bytes = std::fs::read(&exe).unwrap();
+    let sizeofcmds = read_u32(&bytes, 20);
+    let header_end = 32u32 + sizeofcmds;
+    let text_offset = text_section_file_offset(&bytes).expect("missing __text section");
+    assert!(
+        text_offset >= header_end,
+        "__text offset {} overlaps load commands (header_end={})",
+        text_offset,
+        header_end
+    );
 }
 
 #[test]
