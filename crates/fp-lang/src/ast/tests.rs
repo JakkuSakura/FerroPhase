@@ -1,7 +1,7 @@
 use super::*;
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use crate::syntax::SyntaxPrinter;
-use fp_core::ast::{BlockStmt, ExprKind, ItemKind, MacroDelimiter};
+use fp_core::ast::{AttrMeta, BlockStmt, ExprKind, ItemKind, MacroDelimiter};
 use fp_core::ops::BinOpKind;
 
 #[test]
@@ -386,6 +386,26 @@ fn parse_items_supports_fn_attributes() {
     let src = "#[inline] fn f() {}";
     let items = parser.parse_items_ast(src).unwrap();
     assert!(matches!(items[0].kind(), ItemKind::DefFunction(_)));
+}
+
+#[test]
+fn parse_items_supports_lang_name_value_attributes() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let src = "#[lang = \"time_now\"] fn f() {}";
+    let items = parser.parse_items_ast(src).unwrap();
+    let ItemKind::DefFunction(function) = items[0].kind() else {
+        panic!("expected function");
+    };
+    let attr = function
+        .attrs
+        .iter()
+        .find(|attr| matches!(&attr.meta, AttrMeta::NameValue(_)))
+        .expect("expected name-value attribute");
+    let AttrMeta::NameValue(meta) = &attr.meta else {
+        unreachable!();
+    };
+    assert_eq!(meta.name.last().as_str(), "lang");
 }
 
 #[test]

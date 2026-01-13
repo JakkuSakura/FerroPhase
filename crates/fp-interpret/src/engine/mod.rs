@@ -484,10 +484,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn attr_to_locator(&mut self, attr: &Attribute) -> Option<Locator> {
         match &attr.meta {
             AttrMeta::Path(path) => Some(Locator::path(path.clone())),
-            _ => {
-                self.emit_error("attribute must be a simple path");
-                None
-            }
+            _ => None,
         }
     }
 
@@ -515,6 +512,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             return true;
         }
 
+        let has_applicable = attrs.iter().any(|attr| matches!(attr.meta, AttrMeta::Path(_)));
+        if !has_applicable {
+            return false;
+        }
+
         let mut quoted_item = item.clone();
         if let ItemKind::DefFunction(func) = quoted_item.kind_mut() {
             func.attrs.clear();
@@ -528,7 +530,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for attr in attrs {
             let Some(mut locator) = self.attr_to_locator(attr) else {
-                return true;
+                continue;
             };
             let mut invoke = ExprInvoke {
                 target: ExprInvokeTarget::Function(locator.clone()),
@@ -563,6 +565,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             expr = Expr::new(ExprKind::Invoke(invoke));
         }
 
+        if matches!(expr.kind(), ExprKind::Quote(_)) {
+            return false;
+        }
+
         let mut token_expr = expr;
         let Some(fragments) = self.resolve_splice_fragments(&mut token_expr) else {
             return true;
@@ -587,6 +593,17 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn evaluate_item(&mut self, item: &mut Item) {
+        if matches!(self.mode, InterpreterMode::CompileTime) {
+            if let ItemKind::DefFunction(func) = item.kind() {
+                if !func.attrs.is_empty() {
+                    let attrs = func.attrs.clone();
+                    if self.apply_item_attributes(item, &attrs) {
+                        return;
+                    }
+                }
+            }
+        }
+
         match item.kind_mut() {
             ItemKind::Macro(_mac) => {
                 // Item macros are compile-time constructs; interpreter skips them.
@@ -866,11 +883,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.impl_stack.pop();
             }
             ItemKind::DefFunction(func) => {
-                if matches!(self.mode, InterpreterMode::CompileTime) && !func.attrs.is_empty() {
-                    let attrs = func.attrs.clone();
-                    let _ = self.apply_item_attributes(item, &attrs);
-                    return;
-                }
                 let base_name = func.name.as_str().to_string();
                 let qualified_name = self.qualified_name(func.name.as_str());
                 if let Some(context) = self

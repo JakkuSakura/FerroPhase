@@ -61,6 +61,8 @@ impl Pipeline {
         ast: &mut Node,
         options: &PipelineOptions,
     ) -> Result<(), CliError> {
+        let lang_items = fp_core::lang::collect_lang_items(ast);
+        fp_core::lang::register_threadlocal_lang_items(lang_items);
         let stage = NormalizeStage;
         let context = NormalizeContext {
             ast: ast.clone(),

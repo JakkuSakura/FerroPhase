@@ -5,6 +5,7 @@ use fp_core::ast::{
     register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, Module, Node, Ty,
     Value, Visibility,
 };
+use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result as CoreResult;
@@ -136,6 +137,18 @@ impl PipelineStage for ConstEvalStage {
         let mut ast = context.ast;
         for std_node in context.std_modules {
             ast = merge_std_module(ast, std_node, diagnostics)?;
+        }
+        let lang_items = collect_lang_items(&ast);
+        register_threadlocal_lang_items(lang_items);
+        if let Err(err) = fp_core::intrinsics::normalize_intrinsics(&mut ast) {
+            diagnostics.push(
+                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                    .with_source_context(STAGE_CONST_EVAL),
+            );
+            return Err(PipelineError::new(
+                STAGE_CONST_EVAL,
+                "Intrinsic normalization failed",
+            ));
         }
 
         let shared_context = SharedScopedContext::new();

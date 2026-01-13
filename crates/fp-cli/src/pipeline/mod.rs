@@ -1205,6 +1205,35 @@ mod tests {
     }
 
     #[test]
+    fn lang_item_intrinsics_normalize_calls() {
+        let source = r#"
+mod std {
+    mod time {
+        #[lang = "time_now"]
+        fn now() -> f64 {
+            std::time::now()
+        }
+    }
+}
+
+fn main() {
+    std::time::now();
+}
+"#;
+
+        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut ast = harness.parse(source);
+        harness.normalize(&mut ast);
+        let intrinsic_calls = find_intrinsic_calls(&ast);
+        assert!(
+            intrinsic_calls
+                .iter()
+                .any(|call| call.kind == IntrinsicCallKind::TimeNow),
+            "expected time_now intrinsic from lang item"
+        );
+    }
+
+    #[test]
     fn external_mod_declarations_load_files() {
         let temp_dir = TempDir::new().expect("tempdir");
         let root = temp_dir.path();

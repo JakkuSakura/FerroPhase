@@ -468,6 +468,10 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
 }
 
 fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
+    if let Some(kind) = crate::lang::lookup_lang_item_intrinsic(locator) {
+        return Some(kind);
+    }
+
     match locator {
         Locator::Ident(ident) => match ident.name.as_str() {
             "print" => Some(IntrinsicCallKind::Print),

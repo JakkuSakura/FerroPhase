@@ -1,10 +1,10 @@
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    AttrMeta, AttrStyle, Attribute, EnumTypeVariant, Expr, ExprKind, ExprUnOp, FunctionParam,
-    FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item, ItemDeclConst,
-    ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic,
-    ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup,
+    AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant, Expr, ExprKind,
+    ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item,
+    ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction,
+    ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup,
     ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter,
     MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum,
     TypeQuote, TypeStruct, Value, Visibility,
@@ -440,8 +440,8 @@ fn lower_outer_attrs(node: &SyntaxNode) -> Vec<Attribute> {
 fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
     let mut tokens = Vec::new();
     crate::syntax::collect_tokens(node, &mut tokens);
+    let mut inner_tokens = Vec::new();
     let mut in_brackets = false;
-    let mut segments = Vec::new();
     for tok in tokens.iter().filter(|t| !t.is_trivia()) {
         match tok.text.as_str() {
             "[" => {
@@ -449,25 +449,115 @@ fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
             }
             "]" => break,
             _ if !in_brackets => continue,
-            "::" => continue,
-            text => {
-                if text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-                {
-                    segments.push(Ident::new(text.to_string()));
-                }
-            }
+            text => inner_tokens.push(text.to_string()),
         }
     }
-    if segments.is_empty() {
-        return None;
+
+    let eq_pos = inner_tokens.iter().position(|tok| tok == "=");
+    if let Some(eq_pos) = eq_pos {
+        let name_tokens = &inner_tokens[..eq_pos];
+        let value_tokens = &inner_tokens[eq_pos + 1..];
+        let name_segments = parse_attr_path_segments(name_tokens);
+        if let (Some(name_path), Some(value_expr)) =
+            (name_segments.map(Path::new), parse_attr_value_expr(value_tokens))
+        {
+            return Some(Attribute {
+                style: AttrStyle::Outer,
+                meta: AttrMeta::NameValue(AttrMetaNameValue {
+                    name: name_path,
+                    value: value_expr,
+                }),
+            });
+        }
     }
+
+    let segments = parse_attr_path_segments(&inner_tokens)?;
     Some(Attribute {
         style: AttrStyle::Outer,
         meta: AttrMeta::Path(Path::new(segments)),
     })
+}
+
+fn parse_attr_path_segments(tokens: &[String]) -> Option<Vec<Ident>> {
+    let mut segments = Vec::new();
+    for tok in tokens {
+        if tok == "::" {
+            continue;
+        }
+        if tok
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            segments.push(Ident::new(tok.to_string()));
+        }
+    }
+    if segments.is_empty() {
+        None
+    } else {
+        Some(segments)
+    }
+}
+
+fn parse_attr_value_expr(tokens: &[String]) -> Option<BExpr> {
+    let value_token = tokens.iter().find(|tok| !tok.is_empty())?;
+    let decoded = decode_string_literal(value_token)?;
+    Some(Box::new(Expr::value(Value::string(decoded))))
+}
+
+fn decode_string_literal(raw: &str) -> Option<String> {
+    fn unescape_cooked(s: &str) -> Option<String> {
+        let mut out = String::with_capacity(s.len());
+        let mut chars = s.chars();
+        while let Some(c) = chars.next() {
+            if c != '\\' {
+                out.push(c);
+                continue;
+            }
+            let esc = chars.next()?;
+            match esc {
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                '0' => out.push('\0'),
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
+                other => {
+                    out.push('\\');
+                    out.push(other);
+                }
+            }
+        }
+        Some(out)
+    }
+
+    if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
+        let inner = &raw[1..raw.len() - 1];
+        return unescape_cooked(inner);
+    }
+
+    let (prefix, rest) = if let Some(r) = raw.strip_prefix("br") {
+        ("br", r)
+    } else if let Some(r) = raw.strip_prefix('r') {
+        ("r", r)
+    } else {
+        return None;
+    };
+    let hash_count = rest.chars().take_while(|c| *c == '#').count();
+    let after_hashes = &rest[hash_count..];
+    let Some(after_quote) = after_hashes.strip_prefix('"') else {
+        return None;
+    };
+    let closing = format!("\"{}", "#".repeat(hash_count));
+    let Some(end_idx) = after_quote.rfind(&closing) else {
+        return None;
+    };
+    if end_idx + closing.len() != after_quote.len() {
+        return None;
+    }
+    let inner = &after_quote[..end_idx];
+    let _ = prefix;
+    Some(inner.to_string())
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {

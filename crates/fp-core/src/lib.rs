@@ -14,6 +14,7 @@ pub mod error;
 pub mod frontend;
 pub mod hir;
 pub mod intrinsics;
+pub mod lang;
 pub mod lir;
 pub mod mir;
 pub mod module;
