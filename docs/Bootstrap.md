@@ -162,6 +162,7 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Tuple match conditions now support literal element checks (bindings/wildcards still skip).
 - Struct match conditions now support literal field checks (bindings/wildcards still skip).
 - Tuple/struct pattern bindings now project fields for non-enum scrutinees.
+- Tuple-struct match conditions now check literal payloads for enum variants.
 - Array lengths from pointer values default to zero with a warning.
 - printf pointer args now use `%p` for non‑string references/pointers.
 - Arbitrary precision decimals now lower to `f64` with a warning.
