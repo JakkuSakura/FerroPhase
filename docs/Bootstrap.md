@@ -197,6 +197,16 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 
 ### Backend (fp-native)
 - Any missing lowering/ABI feature used by the compiler will block bootstrap; audit against compiler IR usage.
+- Current LIR coverage gaps vs `fp-backend` output (blockers in practice):
+  - Missing instructions: `Shl`, `Shr`, `PtrToInt`, `IntToPtr`, `SExt`, `SextOrTrunc`, `Freeze`, `InlineAsm`, and `Unreachable`.
+  - `Phi` nodes are rejected by the native codegen preflight.
+  - Only `Return`, `Br`, `CondBr`, and `Invoke` terminators are accepted; `Switch` (currently emitted), `Unreachable`, `IndirectBr`, `Resume`, `CleanupRet`, `CatchRet`, and `CatchSwitch` are not handled.
+  - `LirIntrinsicKind::Format` is not supported (only `Print`, `Println`, `TimeNow`).
+- ABI/type limitations that will surface on real compiler IR:
+  - `i128` is not supported in either emitter.
+  - AArch64 lacks `FPTrunc`/`FPExt`, float remainder, negative GEP/load/store offsets, and has stricter aggregate packing/varargs rules.
+  - Calls are direct-only; preflight requires register/constant args (no indirect call targets or non-simple arg values).
+  - Mach-O linker path still documents missing external/dylib support; external call resolution should be verified.
 
 ## Open Questions & Risks
 - **Type coverage:** how to guarantee that pre-annotated ASTs remain in sync with code changes? We likely need hashing/versioning baked into the snapshot format.
