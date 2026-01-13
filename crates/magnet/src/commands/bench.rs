@@ -1,4 +1,4 @@
-//! Command implementation for running package tests
+//! Command implementation for running FerroPhase benchmarks
 
 use crate::commands::run::resolve_package;
 use crate::models::{PackageGraph, PackageGraphOptions, PackageModel};
@@ -10,19 +10,19 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-pub struct TestOptions {
+pub struct BenchOptions {
     pub path: PathBuf,
     pub package: Option<String>,
     pub release: bool,
     pub profile: Option<String>,
-    pub test: Vec<String>,
-    pub tests: bool,
+    pub bench: Vec<String>,
+    pub benches: bool,
     pub example: Vec<String>,
     pub examples: bool,
     pub args: Vec<String>,
 }
 
-pub fn test(options: &TestOptions) -> Result<()> {
+pub fn bench(options: &BenchOptions) -> Result<()> {
     let start_dir = resolve_start_dir(&options.path)?;
     let (root, manifest) = find_furthest_manifest(&start_dir)?;
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
@@ -35,33 +35,33 @@ pub fn test(options: &TestOptions) -> Result<()> {
         .unwrap_or(false)
         && !package.root_path.join("Magnet.toml").exists();
     if is_cargo {
-        return run_cargo_test(options, &package);
+        return run_cargo_bench(options, &package);
     }
 
-    run_fp_tests(options, &root, &package)
+    run_fp_bench(options, &root, &package)
 }
 
-fn run_cargo_test(options: &TestOptions, package: &PackageModel) -> Result<()> {
+fn run_cargo_bench(options: &BenchOptions, package: &PackageModel) -> Result<()> {
     let cargo_path = package.root_path.join("Cargo.toml");
     if !cargo_path.exists() {
         bail!(
-            "Cargo.toml not found for package {}; magnet test currently supports Rust packages only",
+            "Cargo.toml not found for package {}; magnet bench currently supports Rust packages only",
             package.name
         );
     }
 
     let mut command = Command::new("cargo");
-    command.arg("test").arg("--manifest-path").arg(&cargo_path);
+    command.arg("bench").arg("--manifest-path").arg(&cargo_path);
     if let Some(profile) = options.profile.as_ref() {
         command.arg("--profile").arg(profile);
     } else if options.release {
         command.arg("--release");
     }
-    for test in &options.test {
-        command.arg("--test").arg(test);
+    for bench in &options.bench {
+        command.arg("--bench").arg(bench);
     }
-    if options.tests {
-        command.arg("--tests");
+    if options.benches {
+        command.arg("--benches");
     }
     for example in &options.example {
         command.arg("--example").arg(example);
@@ -80,13 +80,13 @@ fn run_cargo_test(options: &TestOptions, package: &PackageModel) -> Result<()> {
 
     let status = command.status().with_context(|| {
         format!(
-            "Failed to execute cargo test for {}",
+            "Failed to execute cargo bench for {}",
             package.root_path.display()
         )
     })?;
     if !status.success() {
         bail!(
-            "cargo test failed with status {}",
+            "cargo bench failed with status {}",
             status.code().unwrap_or(-1)
         );
     }
@@ -94,20 +94,20 @@ fn run_cargo_test(options: &TestOptions, package: &PackageModel) -> Result<()> {
     Ok(())
 }
 
-fn run_fp_tests(options: &TestOptions, root: &Path, package: &PackageModel) -> Result<()> {
+fn run_fp_bench(options: &BenchOptions, root: &Path, package: &PackageModel) -> Result<()> {
     let profile = resolve_profile(options.release, options.profile.as_deref());
-    let output_dir = build_output_dir(package, &profile, "tests");
+    let output_dir = build_output_dir(package, &profile, "bench");
     fs::create_dir_all(&output_dir)?;
 
-    let runner_path = output_dir.join("test_main.fp");
+    let runner_path = output_dir.join("bench_main.fp");
     let runner_contents = r#"fn main() {
-    let report = std::test::run_tests();
+    let report = std::bench::run_benches();
     assert!(report.failed == 0);
 }
 "#;
     fs::write(&runner_path, runner_contents)?;
 
-    let sources = collect_test_sources(options, package, &runner_path)?;
+    let sources = collect_bench_sources(options, package, &runner_path)?;
     let graph_path = write_package_graph(root, package, &output_dir)?;
 
     compile_and_run(
@@ -148,8 +148,8 @@ fn build_output_dir(package: &PackageModel, profile: &str, kind: &str) -> PathBu
         .join(kind)
 }
 
-fn collect_test_sources(
-    options: &TestOptions,
+fn collect_bench_sources(
+    options: &BenchOptions,
     package: &PackageModel,
     runner_path: &Path,
 ) -> Result<Vec<PathBuf>> {
@@ -157,14 +157,14 @@ fn collect_test_sources(
     let src_root = package.root_path.join("src");
     collect_dir_sources(&src_root, &mut sources)?;
 
-    let tests_root = package.root_path.join("tests");
-    if !options.test.is_empty() {
-        for test in &options.test {
-            let path = resolve_named_source(&tests_root, test)?;
+    let benches_root = package.root_path.join("benches");
+    if !options.bench.is_empty() {
+        for bench in &options.bench {
+            let path = resolve_named_source(&benches_root, bench)?;
             sources.insert(path);
         }
-    } else if (options.tests || options.test.is_empty()) && tests_root.exists() {
-        collect_dir_sources(&tests_root, &mut sources)?;
+    } else if (options.benches || options.bench.is_empty()) && benches_root.exists() {
+        collect_dir_sources(&benches_root, &mut sources)?;
     }
 
     let examples_root = package.root_path.join("examples");

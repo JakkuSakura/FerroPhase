@@ -75,6 +75,8 @@ pub struct PackageGraphOptions {
     pub offline: bool,
     pub cache_dir: Option<PathBuf>,
     pub include_dependencies: bool,
+    pub include_dev_dependencies: bool,
+    pub include_build_dependencies: bool,
     pub cargo_fetch: bool,
     pub resolve_registry: bool,
     pub allow_multiple_versions: bool,
@@ -86,6 +88,8 @@ impl Default for PackageGraphOptions {
             offline: false,
             cache_dir: None,
             include_dependencies: true,
+            include_dev_dependencies: false,
+            include_build_dependencies: false,
             cargo_fetch: true,
             resolve_registry: true,
             allow_multiple_versions: false,
@@ -114,7 +118,7 @@ impl PackageGraph {
         };
         let packages = packages
             .into_iter()
-            .map(|package| package_to_node(package, registry.as_ref()))
+            .map(|package| package_to_node(package, registry.as_ref(), options))
             .collect::<Result<Vec<_>>>()?;
 
         Ok(Self {
@@ -223,9 +227,29 @@ impl PackageGraph {
                     .map_err(|err| eyre::eyre!("Failed to list modules for {package_id}: {err}"))?;
                 let module_roots = default_module_roots(&descriptor.root.to_path_buf());
                 let entry = detect_entry(&descriptor.root.to_path_buf(), &["rs"]);
-                let dependencies = if options.include_dependencies {
+                let dependencies = if options.include_dependencies
+                    || options.include_dev_dependencies
+                    || options.include_build_dependencies
+                {
                     let deps = parse_cargo_dependencies(&descriptor.manifest_path.to_path_buf())?;
-                    deps.into_iter()
+                    let mut dep_map = HashMap::new();
+                    if options.include_dependencies {
+                        for (name, dep) in deps.dependencies {
+                            dep_map.entry(name).or_insert(dep);
+                        }
+                    }
+                    if options.include_dev_dependencies {
+                        for (name, dep) in deps.dev_dependencies {
+                            dep_map.entry(name).or_insert(dep);
+                        }
+                    }
+                    if options.include_build_dependencies {
+                        for (name, dep) in deps.build_dependencies {
+                            dep_map.entry(name).or_insert(dep);
+                        }
+                    }
+                    dep_map
+                        .into_iter()
                         .map(|(name, dep)| dependency_to_edge(name, dep, registry.as_ref()))
                         .collect::<Result<Vec<_>>>()?
                 } else {
@@ -534,12 +558,30 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
 fn package_to_node(
     package: PackageModel,
     registry: Option<&RegistryClient>,
+    options: &PackageGraphOptions,
 ) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
         let path = module_root.join("main.fp");
         if path.exists() { Some(path) } else { None }
     };
+
+    let mut dep_map = std::collections::HashMap::new();
+    if options.include_dependencies {
+        for (name, dep) in package.dependencies {
+            dep_map.entry(name).or_insert(dep);
+        }
+    }
+    if options.include_dev_dependencies {
+        for (name, dep) in package.dev_dependencies {
+            dep_map.entry(name).or_insert(dep);
+        }
+    }
+    if options.include_build_dependencies {
+        for (name, dep) in package.build_dependencies {
+            dep_map.entry(name).or_insert(dep);
+        }
+    }
 
     Ok(PackageNode {
         name: package.name,
@@ -549,8 +591,7 @@ fn package_to_node(
         language: None,
         module_roots: vec![module_root],
         entry,
-        dependencies: package
-            .dependencies
+        dependencies: dep_map
             .into_iter()
             .map(|(name, dep)| dependency_to_edge(name, dep, registry))
             .collect::<Result<Vec<_>>>()?,
@@ -778,10 +819,20 @@ fn manifest_root_path(manifest: &ManifestModel) -> PathBuf {
     }
 }
 
-fn parse_cargo_dependencies(manifest_path: &Path) -> Result<HashMap<String, DependencyModel>> {
+struct CargoDependencies {
+    dependencies: HashMap<String, DependencyModel>,
+    dev_dependencies: HashMap<String, DependencyModel>,
+    build_dependencies: HashMap<String, DependencyModel>,
+}
+
+fn parse_cargo_dependencies(manifest_path: &Path) -> Result<CargoDependencies> {
     let content = std::fs::read_to_string(manifest_path)?;
     let value: toml::Value = toml::from_str(&content)?;
-    Ok(parse_cargo_deps(value.get("dependencies")))
+    Ok(CargoDependencies {
+        dependencies: parse_cargo_deps(value.get("dependencies")),
+        dev_dependencies: parse_cargo_deps(value.get("dev-dependencies")),
+        build_dependencies: parse_cargo_deps(value.get("build-dependencies")),
+    })
 }
 
 fn parse_cargo_deps(section: Option<&toml::Value>) -> HashMap<String, DependencyModel> {

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 // Use local utils module instead of common crate
-use magnet::commands::{self, RunMode, RunOptions, TestOptions, generate::GenerateOptions};
+use magnet::commands::{self, BenchOptions, RunMode, RunOptions, TestOptions, generate::GenerateOptions};
 use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point
@@ -116,14 +116,48 @@ fn main() -> Result<()> {
             package,
             release,
             profile,
+            test,
+            tests,
+            example,
+            examples,
+            args,
         }) => {
             let options = TestOptions {
                 path,
                 package,
                 release,
                 profile,
+                test,
+                tests,
+                example,
+                examples,
+                args,
             };
             commands::test(&options)
+        }
+        Some(Commands::Bench {
+            path,
+            package,
+            release,
+            profile,
+            bench,
+            benches,
+            example,
+            examples,
+            args,
+        }) => {
+            let options = BenchOptions {
+                path,
+                package,
+                release,
+                profile,
+                bench,
+                benches,
+                example,
+                examples,
+                args,
+            };
+            commands::bench(&options)
         }
         None => {
             info!("No command specified. Run with --help for usage information.");
@@ -283,7 +317,7 @@ enum Commands {
         #[arg(long = "no-fetch", default_value_t = true, action = clap::ArgAction::SetFalse)]
         fetch: bool,
     },
-    /// Run cargo tests for a package
+    /// Run tests for a package
     Test {
         /// Path to a package/workspace directory or manifest
         #[arg(default_value = ".")]
@@ -300,6 +334,64 @@ enum Commands {
         /// Cargo-style profile name (overrides --release)
         #[arg(long)]
         profile: Option<String>,
+
+        /// Run only the specified test target(s)
+        #[arg(long)]
+        test: Vec<String>,
+
+        /// Run all tests
+        #[arg(long)]
+        tests: bool,
+
+        /// Run only the specified example target(s)
+        #[arg(long)]
+        example: Vec<String>,
+
+        /// Run all examples
+        #[arg(long)]
+        examples: bool,
+
+        /// Arguments passed to the test binary after '--'
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Run benchmarks for a package
+    Bench {
+        /// Path to a package/workspace directory or manifest
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Select a package by name
+        #[arg(long)]
+        package: Option<String>,
+
+        /// Run benchmarks in release mode
+        #[arg(long)]
+        release: bool,
+
+        /// Cargo-style profile name (overrides --release)
+        #[arg(long)]
+        profile: Option<String>,
+
+        /// Run only the specified benchmark target(s)
+        #[arg(long)]
+        bench: Vec<String>,
+
+        /// Run all benchmarks
+        #[arg(long)]
+        benches: bool,
+
+        /// Run only the specified example target(s)
+        #[arg(long)]
+        example: Vec<String>,
+
+        /// Run all examples
+        #[arg(long)]
+        examples: bool,
+
+        /// Arguments passed to the benchmark binary after '--'
+        #[arg(last = true)]
+        args: Vec<String>,
     },
     /// Manage git submodules
     Submodule {

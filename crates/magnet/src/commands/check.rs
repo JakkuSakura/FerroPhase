@@ -25,6 +25,8 @@ pub fn check(config_path: &Path) -> Result<()> {
         offline,
         cache_dir: Some(cache_dir),
         include_dependencies: false,
+        include_dev_dependencies: false,
+        include_build_dependencies: false,
         cargo_fetch: false,
         resolve_registry: !offline,
         allow_multiple_versions: false,

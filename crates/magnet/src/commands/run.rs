@@ -44,6 +44,8 @@ pub fn run(options: &RunOptions) -> Result<()> {
         offline: options.offline,
         cache_dir: options.cache_dir.clone(),
         include_dependencies: true,
+        include_dev_dependencies: false,
+        include_build_dependencies: false,
         cargo_fetch: options.fetch,
         resolve_registry: true,
         allow_multiple_versions: false,
@@ -162,11 +164,15 @@ fn resolve_run_path(options: &RunOptions) -> Result<PathBuf> {
     if let Some(example) = options.example.as_ref() {
         let cwd =
             std::env::current_dir().map_err(|err| eyre::eyre!("Failed to resolve cwd: {err}"))?;
-        let path = cwd.join("examples").join(example);
-        if !path.exists() {
-            bail!("Example '{}' not found at {}", example, path.display());
+        let base = cwd.join("examples").join(example);
+        if base.exists() {
+            return Ok(base);
         }
-        return Ok(path);
+        let with_ext = base.with_extension("fp");
+        if with_ext.exists() {
+            return Ok(with_ext);
+        }
+        bail!("Example '{}' not found at {}", example, base.display());
     }
 
     Ok(options.path.clone())

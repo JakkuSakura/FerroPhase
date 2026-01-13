@@ -15,6 +15,8 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         offline,
         cache_dir: Some(root.join("target").join("magnet")),
         include_dependencies: true,
+        include_dev_dependencies: false,
+        include_build_dependencies: false,
         cargo_fetch: true,
         resolve_registry: !offline,
         allow_multiple_versions: true,
