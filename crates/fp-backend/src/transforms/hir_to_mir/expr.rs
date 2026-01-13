@@ -8621,24 +8621,38 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn emit_printf_call(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {
-        let Some((template, call_args, name_map, positional_len)) =
+        let Some((template, positional_slots, named_args, name_map)) =
             self.format_call_parts(call, span)
         else {
             return Ok(());
         };
 
-        let mut lowered_args = Vec::with_capacity(call_args.len());
-        for arg in call_args {
-            if let Some(formatted) = self.try_format_const_expr_for_printf(&arg.value, span) {
-                lowered_args.push(formatted);
+        let mut prepared_positional = Vec::with_capacity(positional_slots.len());
+        for slot in positional_slots {
+            if let Some(arg) = slot {
+                let lowered = if let Some(formatted) =
+                    self.try_format_const_expr_for_printf(&arg.value, span)
+                {
+                    formatted
+                } else {
+                    self.lower_operand(&arg.value, None)?
+                };
+                prepared_positional.push(Some(self.prepare_printf_arg(lowered, span)?));
             } else {
-                lowered_args.push(self.lower_operand(&arg.value, None)?);
+                prepared_positional.push(None);
             }
         }
 
-        let mut prepared_args = Vec::with_capacity(lowered_args.len());
-        for arg in lowered_args {
-            prepared_args.push(self.prepare_printf_arg(arg, span)?);
+        let mut prepared_named = Vec::with_capacity(named_args.len());
+        for arg in named_args {
+            let lowered = if let Some(formatted) =
+                self.try_format_const_expr_for_printf(&arg.value, span)
+            {
+                formatted
+            } else {
+                self.lower_operand(&arg.value, None)?
+            };
+            prepared_named.push(self.prepare_printf_arg(lowered, span)?);
         }
 
         let mut format = String::new();
@@ -8649,23 +8663,27 @@ impl<'a> BodyBuilder<'a> {
             match part {
                 hir::FormatTemplatePart::Literal(text) => format.push_str(text.as_str()),
                 hir::FormatTemplatePart::Placeholder(placeholder) => {
-                    let arg_index = match &placeholder.arg_ref {
+                    let (prepared_ref, missing_message) = match &placeholder.arg_ref {
                         hir::FormatArgRef::Implicit => {
                             let current = implicit_index;
                             implicit_index += 1;
-                            if current >= positional_len {
-                                self.lowering.emit_error(
-                                    span,
-                                    format!(
-                                        "format placeholder references missing argument at index {}",
-                                        current
-                                    ),
-                                );
-                                return Ok(());
-                            }
-                            current
+                            (
+                                prepared_positional.get(current).and_then(Option::as_ref),
+                                format!(
+                                    "format placeholder references missing argument at index {}",
+                                    current
+                                ),
+                            )
                         }
-                        hir::FormatArgRef::Positional(index) => *index,
+                        hir::FormatArgRef::Positional(index) => {
+                            (
+                                prepared_positional.get(*index).and_then(Option::as_ref),
+                                format!(
+                                    "format placeholder references missing argument at index {}",
+                                    index
+                                ),
+                            )
+                        }
                         hir::FormatArgRef::Named(name) => {
                             let Some(index) = name_map.get(name) else {
                                 self.lowering.emit_error(
@@ -8674,31 +8692,16 @@ impl<'a> BodyBuilder<'a> {
                                 );
                                 return Ok(());
                             };
-                            *index
+                            (
+                                prepared_named.get(*index),
+                                format!("format placeholder references missing argument `{name}`"),
+                            )
                         }
                     };
+                    let prepared = prepared_ref.cloned();
 
-                    if matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_))
-                        && arg_index >= positional_len
-                    {
-                        self.lowering.emit_error(
-                            span,
-                            format!(
-                                "format placeholder references missing argument at index {}",
-                                arg_index
-                            ),
-                        );
-                        return Ok(());
-                    }
-
-                    let Some((operand, _ty, spec)) = prepared_args.get(arg_index).cloned() else {
-                        self.lowering.emit_error(
-                            span,
-                            format!(
-                                "format placeholder references missing argument at index {}",
-                                arg_index
-                            ),
-                        );
+                    let Some((operand, _ty, spec)) = prepared else {
+                        self.lowering.emit_error(span, missing_message);
                         return Ok(());
                     };
                     ordered_operands.push(operand);
@@ -8741,24 +8744,38 @@ impl<'a> BodyBuilder<'a> {
         call: &hir::IntrinsicCallExpr,
         span: Span,
     ) -> Result<(String, Vec<mir::Operand>)> {
-        let Some((template, call_args, name_map, positional_len)) =
+        let Some((template, positional_slots, named_args, name_map)) =
             self.format_call_parts(call, span)
         else {
             return Ok((String::new(), Vec::new()));
         };
 
-        let mut lowered_args = Vec::with_capacity(call_args.len());
-        for arg in call_args {
-            if let Some(formatted) = self.try_format_const_expr_for_printf(&arg.value, span) {
-                lowered_args.push(formatted);
+        let mut prepared_positional = Vec::with_capacity(positional_slots.len());
+        for slot in positional_slots {
+            if let Some(arg) = slot {
+                let lowered = if let Some(formatted) =
+                    self.try_format_const_expr_for_printf(&arg.value, span)
+                {
+                    formatted
+                } else {
+                    self.lower_operand(&arg.value, None)?
+                };
+                prepared_positional.push(Some(self.prepare_printf_arg(lowered, span)?));
             } else {
-                lowered_args.push(self.lower_operand(&arg.value, None)?);
+                prepared_positional.push(None);
             }
         }
 
-        let mut prepared_args = Vec::with_capacity(lowered_args.len());
-        for arg in lowered_args {
-            prepared_args.push(self.prepare_printf_arg(arg, span)?);
+        let mut prepared_named = Vec::with_capacity(named_args.len());
+        for arg in named_args {
+            let lowered = if let Some(formatted) =
+                self.try_format_const_expr_for_printf(&arg.value, span)
+            {
+                formatted
+            } else {
+                self.lower_operand(&arg.value, None)?
+            };
+            prepared_named.push(self.prepare_printf_arg(lowered, span)?);
         }
 
         let mut format = String::new();
@@ -8769,23 +8786,25 @@ impl<'a> BodyBuilder<'a> {
             match part {
                 hir::FormatTemplatePart::Literal(text) => format.push_str(text.as_str()),
                 hir::FormatTemplatePart::Placeholder(placeholder) => {
-                    let arg_index = match &placeholder.arg_ref {
+                    let (prepared_ref, missing_message) = match &placeholder.arg_ref {
                         hir::FormatArgRef::Implicit => {
                             let current = implicit_index;
                             implicit_index += 1;
-                            if current >= positional_len {
-                                self.lowering.emit_error(
-                                    span,
-                                    format!(
-                                        "format placeholder references missing argument at index {}",
-                                        current
-                                    ),
-                                );
-                                return Ok((String::new(), Vec::new()));
-                            }
-                            current
+                            (
+                                prepared_positional.get(current).and_then(Option::as_ref),
+                                format!(
+                                    "format placeholder references missing argument at index {}",
+                                    current
+                                ),
+                            )
                         }
-                        hir::FormatArgRef::Positional(index) => *index,
+                        hir::FormatArgRef::Positional(index) => (
+                            prepared_positional.get(*index).and_then(Option::as_ref),
+                            format!(
+                                "format placeholder references missing argument at index {}",
+                                index
+                            ),
+                        ),
                         hir::FormatArgRef::Named(name) => {
                             let Some(index) = name_map.get(name) else {
                                 self.lowering.emit_error(
@@ -8794,31 +8813,16 @@ impl<'a> BodyBuilder<'a> {
                                 );
                                 return Ok((String::new(), Vec::new()));
                             };
-                            *index
+                            (
+                                prepared_named.get(*index),
+                                format!("format placeholder references missing argument `{name}`"),
+                            )
                         }
                     };
+                    let prepared = prepared_ref.cloned();
 
-                    if matches!(placeholder.arg_ref, hir::FormatArgRef::Positional(_))
-                        && arg_index >= positional_len
-                    {
-                        self.lowering.emit_error(
-                            span,
-                            format!(
-                                "format placeholder references missing argument at index {}",
-                                arg_index
-                            ),
-                        );
-                        return Ok((String::new(), Vec::new()));
-                    }
-
-                    let Some((operand, _ty, spec)) = prepared_args.get(arg_index).cloned() else {
-                        self.lowering.emit_error(
-                            span,
-                            format!(
-                                "format placeholder references missing argument at index {}",
-                                arg_index
-                            ),
-                        );
+                    let Some((operand, _ty, spec)) = prepared else {
+                        self.lowering.emit_error(span, missing_message);
                         return Ok((String::new(), Vec::new()));
                     };
                     ordered_operands.push(operand);
@@ -8848,7 +8852,12 @@ impl<'a> BodyBuilder<'a> {
         &mut self,
         call: &hir::IntrinsicCallExpr,
         span: Span,
-    ) -> Option<(hir::FormatString, Vec<hir::CallArg>, HashMap<String, usize>, usize)> {
+    ) -> Option<(
+        hir::FormatString,
+        Vec<Option<hir::CallArg>>,
+        Vec<hir::CallArg>,
+        HashMap<String, usize>,
+    )> {
         let Some(first) = call.callargs.first() else {
             self.lowering
                 .emit_error(span, "format intrinsic requires a template argument");
@@ -8861,7 +8870,6 @@ impl<'a> BodyBuilder<'a> {
             return None;
         };
 
-        let mut max_index = None::<usize>;
         let mut positional_slots: Vec<Option<hir::CallArg>> = Vec::new();
         let mut named_args = Vec::new();
         for arg in &call.callargs[1..] {
@@ -8869,6 +8877,11 @@ impl<'a> BodyBuilder<'a> {
             if let Some(index) = name.strip_prefix("arg") {
                 if index.chars().all(|ch| ch.is_ascii_digit()) {
                     let idx = index.parse::<usize>().unwrap_or(0);
+                    if idx == 0 {
+                        named_args.push(arg.clone());
+                        continue;
+                    }
+                    let idx = idx - 1;
                     if positional_slots.len() <= idx {
                         positional_slots.resize(idx + 1, None);
                     }
@@ -8880,32 +8893,15 @@ impl<'a> BodyBuilder<'a> {
                         return None;
                     }
                     positional_slots[idx] = Some(arg.clone());
-                    max_index = Some(max_index.map_or(idx, |current| current.max(idx)));
                     continue;
                 }
             }
             named_args.push(arg.clone());
         }
 
-        if let Some(max_index) = max_index {
-            if positional_slots.iter().take(max_index + 1).any(|arg| arg.is_none()) {
-                self.lowering.emit_error(
-                    span,
-                    "format arguments must be contiguous starting from arg0",
-                );
-                return None;
-            }
-        }
-
-        let mut positional = Vec::new();
-        for arg in positional_slots.into_iter().flatten() {
-            positional.push(arg);
-        }
-
-        let positional_len = positional.len();
         let mut name_map = HashMap::new();
         for (offset, arg) in named_args.iter().enumerate() {
-            let index = positional_len + offset;
+            let index = offset;
             let name = arg.name.as_str().to_string();
             if name_map.insert(name.clone(), index).is_some() {
                 self.lowering.emit_error(
@@ -8915,10 +8911,8 @@ impl<'a> BodyBuilder<'a> {
                 return None;
             }
         }
-        let mut call_args = positional;
-        call_args.extend(named_args);
 
-        Some((template.clone(), call_args, name_map, positional_len))
+        Some((template.clone(), positional_slots, named_args, name_map))
     }
 
     fn emit_panic_intrinsic(&mut self, call: &hir::IntrinsicCallExpr, span: Span) -> Result<()> {

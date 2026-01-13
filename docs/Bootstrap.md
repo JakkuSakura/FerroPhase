@@ -189,7 +189,7 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 
 
 #### MIR → LIR
- - Some MIR intrinsics remain unsupported.
+ - Unsupported MIR intrinsics are lowered with warnings (no-op for statements, undef for assignments).
 
 
 ### Backend (fp-native)

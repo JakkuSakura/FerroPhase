@@ -732,10 +732,14 @@ impl LirGenerator {
                         ))
                     }
                     _ => {
-                        return Err(fp_core::error::Error::from(format!(
-                            "unsupported MIR intrinsic in LIR lowering: {:?}",
-                            kind
-                        )))
+                        fp_core::diagnostics::report_warning_with_context(
+                            "mir→lir",
+                            format!(
+                                "unsupported MIR intrinsic in LIR lowering: {:?}; ignoring",
+                                kind
+                            ),
+                        );
+                        return Ok(Vec::new());
                     }
                 };
                 let mut instructions = Vec::new();
@@ -862,10 +866,19 @@ impl LirGenerator {
                         ))
                     }
                     _ => {
-                        return Err(fp_core::error::Error::from(format!(
-                            "unsupported intrinsic in assignment: {:?}",
-                            kind
-                        )))
+                        fp_core::diagnostics::report_warning_with_context(
+                            "mir→lir",
+                            format!(
+                                "unsupported intrinsic in assignment: {:?}; lowering to undef",
+                                kind
+                            ),
+                        );
+                        let fallback_ty =
+                            destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
+                        result_value = Some(lir::LirValue::Constant(
+                            lir::LirConstant::Undef(fallback_ty),
+                        ));
+                        return Ok(instructions);
                     }
                 };
                 let mut lir_args = Vec::with_capacity(args.len());
