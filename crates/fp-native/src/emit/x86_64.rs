@@ -96,9 +96,14 @@ fn build_frame_layout(
             if let LirInstructionKind::Call { args, .. } = &inst.kind {
                 has_calls = true;
                 max_call_args = max_call_args.max(args.len());
-            } else if let LirInstructionKind::IntrinsicCall { args, .. } = &inst.kind {
+            } else if let LirInstructionKind::IntrinsicCall { kind, args, .. } = &inst.kind {
                 has_calls = true;
-                max_call_args = max_call_args.max(args.len() + 1);
+                let fixed = if matches!(kind, LirIntrinsicKind::Format) {
+                    3
+                } else {
+                    1
+                };
+                max_call_args = max_call_args.max(args.len() + fixed);
             } else if let LirInstructionKind::Alloca { size, alignment } = &inst.kind {
                 let ty = inst
                     .type_hint
@@ -2458,7 +2463,120 @@ fn emit_intrinsic_call(
 ) -> Result<()> {
     match kind {
         LirIntrinsicKind::Print | LirIntrinsicKind::Println => {}
-        LirIntrinsicKind::Format => return Err(Error::from("unsupported intrinsic for x86_64")),
+        LirIntrinsicKind::Format => {
+            if !matches!(result_ty, LirType::Ptr(_)) {
+                return Err(Error::from("Format expects pointer result"));
+            }
+            let format_offset = intern_cstring(rodata, rodata_pool, format);
+            let (arg_regs, float_regs, use_al) = call_abi(target_format);
+
+            let mut int_idx = 0usize;
+            let mut float_idx = 0usize;
+            let mut stack_idx = 0usize;
+
+            push_int_arg(asm, layout, 0, &mut int_idx, &mut stack_idx, arg_regs)?;
+            push_int_arg(asm, layout, 0, &mut int_idx, &mut stack_idx, arg_regs)?;
+            push_rodata_arg(
+                asm,
+                layout,
+                format_offset,
+                &mut int_idx,
+                &mut stack_idx,
+                arg_regs,
+            )?;
+            for arg in args {
+                push_value_arg(
+                    asm,
+                    layout,
+                    arg,
+                    &mut int_idx,
+                    &mut float_idx,
+                    &mut stack_idx,
+                    arg_regs,
+                    float_regs,
+                    reg_types,
+                    local_types,
+                    rodata,
+                    rodata_pool,
+                )?;
+            }
+
+            if use_al {
+                emit_mov_al_imm8(asm, float_idx as u8);
+            }
+
+            asm.emit_call_external("snprintf");
+
+            store_vreg(asm, layout, dst_id, Reg::Rax)?;
+            emit_mov_rr(asm, Reg::R10, Reg::Rax);
+            emit_add_ri32(asm, Reg::R10, 1);
+            if arg_regs[0] != Reg::R10 {
+                emit_mov_rr(asm, arg_regs[0], Reg::R10);
+            }
+            asm.emit_call_external("malloc");
+
+            let len_offset = vreg_offset(layout, dst_id)?;
+            emit_mov_rm64(asm, Reg::R10, Reg::Rbp, len_offset);
+            emit_add_ri32(asm, Reg::R10, 1);
+            store_vreg(asm, layout, dst_id, Reg::Rax)?;
+
+            int_idx = 0usize;
+            float_idx = 0usize;
+            stack_idx = 0usize;
+            push_value_arg(
+                asm,
+                layout,
+                &LirValue::Register(dst_id),
+                &mut int_idx,
+                &mut float_idx,
+                &mut stack_idx,
+                arg_regs,
+                float_regs,
+                reg_types,
+                local_types,
+                rodata,
+                rodata_pool,
+            )?;
+            push_reg_arg(
+                asm,
+                layout,
+                Reg::R10,
+                &mut int_idx,
+                &mut stack_idx,
+                arg_regs,
+            )?;
+            push_rodata_arg(
+                asm,
+                layout,
+                format_offset,
+                &mut int_idx,
+                &mut stack_idx,
+                arg_regs,
+            )?;
+            for arg in args {
+                push_value_arg(
+                    asm,
+                    layout,
+                    arg,
+                    &mut int_idx,
+                    &mut float_idx,
+                    &mut stack_idx,
+                    arg_regs,
+                    float_regs,
+                    reg_types,
+                    local_types,
+                    rodata,
+                    rodata_pool,
+                )?;
+            }
+
+            if use_al {
+                emit_mov_al_imm8(asm, float_idx as u8);
+            }
+
+            asm.emit_call_external("snprintf");
+            return Ok(());
+        }
         LirIntrinsicKind::TimeNow => {
             if !is_float_type(result_ty) {
                 return Err(Error::from("TimeNow expects floating-point result"));
@@ -2479,43 +2597,29 @@ fn emit_intrinsic_call(
     let mut float_idx = 0usize;
     let mut stack_idx = 0usize;
 
-    if int_idx < arg_regs.len() {
-        asm.emit_mov_imm64_reloc(arg_regs[int_idx], ".rodata", format_offset as i64);
-        int_idx += 1;
-    } else {
-        asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", format_offset as i64);
-        let offset = layout.shadow_space + (stack_idx as i32) * 8;
-        emit_mov_mr64_sp(asm, offset, Reg::R10);
-        stack_idx += 1;
-    }
-
+    push_rodata_arg(
+        asm,
+        layout,
+        format_offset,
+        &mut int_idx,
+        &mut stack_idx,
+        arg_regs,
+    )?;
     for arg in args {
-        let arg_ty = value_type(arg, reg_types, local_types)?;
-        if is_float_type(&arg_ty) {
-            if float_idx < float_regs.len() {
-                load_value_float(
-                    asm,
-                    layout,
-                    arg,
-                    float_regs[float_idx],
-                    &arg_ty,
-                    reg_types,
-                    local_types,
-                )?;
-                float_idx += 1;
-            } else {
-                let offset = layout.shadow_space + (stack_idx as i32) * 8;
-                store_outgoing_arg(asm, layout, offset, arg, reg_types, local_types)?;
-                stack_idx += 1;
-            }
-        } else if int_idx < arg_regs.len() {
-            load_value(asm, layout, arg, arg_regs[int_idx], reg_types, local_types)?;
-            int_idx += 1;
-        } else {
-            let offset = layout.shadow_space + (stack_idx as i32) * 8;
-            store_outgoing_arg(asm, layout, offset, arg, reg_types, local_types)?;
-            stack_idx += 1;
-        }
+        push_value_arg(
+            asm,
+            layout,
+            arg,
+            &mut int_idx,
+            &mut float_idx,
+            &mut stack_idx,
+            arg_regs,
+            float_regs,
+            reg_types,
+            local_types,
+            rodata,
+            rodata_pool,
+        )?;
     }
 
     if use_al {
@@ -2523,6 +2627,129 @@ fn emit_intrinsic_call(
     }
 
     asm.emit_call_external("printf");
+    Ok(())
+}
+
+fn push_stack_qword(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    offset: i32,
+    src: Reg,
+) -> Result<()> {
+    if offset < 0 || offset + 8 > layout.outgoing_size {
+        return Err(Error::from("outgoing arg offset out of range"));
+    }
+    emit_mov_mr64_sp(asm, offset, src);
+    Ok(())
+}
+
+fn push_int_arg(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    value: i64,
+    int_idx: &mut usize,
+    stack_idx: &mut usize,
+    arg_regs: &[Reg],
+) -> Result<()> {
+    if *int_idx < arg_regs.len() {
+        emit_mov_imm64(asm, arg_regs[*int_idx], value as u64);
+        *int_idx += 1;
+    } else {
+        emit_mov_imm64(asm, Reg::R10, value as u64);
+        let offset = layout.shadow_space + (*stack_idx as i32) * 8;
+        push_stack_qword(asm, layout, offset, Reg::R10)?;
+        *stack_idx += 1;
+    }
+    Ok(())
+}
+
+fn push_rodata_arg(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    offset: u64,
+    int_idx: &mut usize,
+    stack_idx: &mut usize,
+    arg_regs: &[Reg],
+) -> Result<()> {
+    if *int_idx < arg_regs.len() {
+        asm.emit_mov_imm64_reloc(arg_regs[*int_idx], ".rodata", offset as i64);
+        *int_idx += 1;
+    } else {
+        asm.emit_mov_imm64_reloc(Reg::R10, ".rodata", offset as i64);
+        let offset = layout.shadow_space + (*stack_idx as i32) * 8;
+        push_stack_qword(asm, layout, offset, Reg::R10)?;
+        *stack_idx += 1;
+    }
+    Ok(())
+}
+
+fn push_reg_arg(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    reg: Reg,
+    int_idx: &mut usize,
+    stack_idx: &mut usize,
+    arg_regs: &[Reg],
+) -> Result<()> {
+    if *int_idx < arg_regs.len() {
+        if arg_regs[*int_idx] != reg {
+            emit_mov_rr(asm, arg_regs[*int_idx], reg);
+        }
+        *int_idx += 1;
+    } else {
+        let offset = layout.shadow_space + (*stack_idx as i32) * 8;
+        push_stack_qword(asm, layout, offset, reg)?;
+        *stack_idx += 1;
+    }
+    Ok(())
+}
+
+fn push_value_arg(
+    asm: &mut Assembler,
+    layout: &FrameLayout,
+    arg: &LirValue,
+    int_idx: &mut usize,
+    float_idx: &mut usize,
+    stack_idx: &mut usize,
+    arg_regs: &[Reg],
+    float_regs: &[FReg],
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+    rodata: &mut Vec<u8>,
+    rodata_pool: &mut HashMap<String, u64>,
+) -> Result<()> {
+    if let LirValue::Constant(LirConstant::String(text)) = arg {
+        let offset = intern_cstring(rodata, rodata_pool, text);
+        return push_rodata_arg(asm, layout, offset, int_idx, stack_idx, arg_regs);
+    }
+
+    let arg_ty = value_type(arg, reg_types, local_types)?;
+    if is_float_type(&arg_ty) {
+        if *float_idx < float_regs.len() {
+            load_value_float(
+                asm,
+                layout,
+                arg,
+                float_regs[*float_idx],
+                &arg_ty,
+                reg_types,
+                local_types,
+            )?;
+            *float_idx += 1;
+        } else {
+            let offset = layout.shadow_space + (*stack_idx as i32) * 8;
+            store_outgoing_arg(asm, layout, offset, arg, reg_types, local_types)?;
+            *stack_idx += 1;
+        }
+    } else if *int_idx < arg_regs.len() {
+        load_value(asm, layout, arg, arg_regs[*int_idx], reg_types, local_types)?;
+        *int_idx += 1;
+    } else {
+        let offset = layout.shadow_space + (*stack_idx as i32) * 8;
+        store_outgoing_arg(asm, layout, offset, arg, reg_types, local_types)?;
+        *stack_idx += 1;
+    }
+
     Ok(())
 }
 
