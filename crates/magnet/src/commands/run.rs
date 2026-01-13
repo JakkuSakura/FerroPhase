@@ -1,6 +1,6 @@
 //! Command implementation for running FerroPhase code via fp-cli
 
-use crate::models::{ManifestModel, PackageGraph, PackageModel};
+use crate::models::{ManifestModel, PackageGraph, PackageGraphOptions, PackageModel};
 use crate::utils::find_furthest_manifest;
 use eyre::{Context, Result, bail};
 use glob::glob;
@@ -25,6 +25,9 @@ pub struct RunOptions {
     pub release: bool,
     pub profile: Option<String>,
     pub build_options: Vec<String>,
+    pub offline: bool,
+    pub cache_dir: Option<PathBuf>,
+    pub fetch: bool,
 }
 
 pub fn run(options: &RunOptions) -> Result<()> {
@@ -37,7 +40,19 @@ pub fn run(options: &RunOptions) -> Result<()> {
     let profile = resolve_profile(options);
     let output_dir = build_output_dir(&package, &profile);
     let build_options = parse_build_options(&options.build_options)?;
-    let graph_path = write_package_graph(&root, &package, &output_dir, build_options)?;
+    let graph_options = PackageGraphOptions {
+        offline: options.offline,
+        cache_dir: options.cache_dir.clone(),
+        include_dependencies: true,
+        cargo_fetch: options.fetch,
+    };
+    let graph_path = write_package_graph(
+        &root,
+        &package,
+        &output_dir,
+        build_options,
+        &graph_options,
+    )?;
 
     match options.mode {
         RunMode::Compile => run_compile(
@@ -245,8 +260,9 @@ fn write_package_graph(
     package: &PackageModel,
     output_dir: &Path,
     build_options: std::collections::HashMap<String, String>,
+    graph_options: &PackageGraphOptions,
 ) -> Result<PathBuf> {
-    let mut graph = PackageGraph::from_path(manifest_root)?;
+    let mut graph = PackageGraph::from_path_with_options(manifest_root, graph_options)?;
     graph.selected_package = Some(package.name.clone());
     graph.build_options = build_options;
     fs::create_dir_all(&output_dir).with_context(|| {

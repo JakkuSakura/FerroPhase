@@ -90,6 +90,9 @@ fn main() -> Result<()> {
             release,
             profile,
             build_options,
+            offline,
+            cache_dir,
+            fetch,
         }) => {
             let options = RunOptions {
                 path,
@@ -101,6 +104,9 @@ fn main() -> Result<()> {
                 release,
                 profile,
                 build_options,
+                offline,
+                cache_dir,
+                fetch,
             };
             commands::run(&options)
         }
@@ -254,6 +260,18 @@ enum Commands {
         /// Build options forwarded to fp (key=value)
         #[arg(long = "build-option")]
         build_options: Vec<String>,
+
+        /// Run without network access (use cached crates)
+        #[arg(long)]
+        offline: bool,
+
+        /// Override the cargo registry cache directory
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
+
+        /// Skip prefetching registry dependencies
+        #[arg(long = "no-fetch", default_value_t = true, action = clap::ArgAction::SetFalse)]
+        fetch: bool,
     },
     /// Run cargo tests for a package
     Test {

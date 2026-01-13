@@ -2,12 +2,14 @@ use crate::models::{DependencyModel, ManifestModel, PackageModel};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleProvider, ModuleSource, PackageProvider};
-use fp_rust::package::{CargoPackageProvider, RustModuleProvider};
+use fp_rust::package::{CargoMetadataOptions, CargoPackageProvider, RustModuleProvider};
 use fp_typescript::TypeScriptPackageProvider;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +62,25 @@ pub struct DependencyEdge {
     pub features: Option<Vec<String>>,
 }
 
+#[derive(Debug, Clone)]
+pub struct PackageGraphOptions {
+    pub offline: bool,
+    pub cache_dir: Option<PathBuf>,
+    pub include_dependencies: bool,
+    pub cargo_fetch: bool,
+}
+
+impl Default for PackageGraphOptions {
+    fn default() -> Self {
+        Self {
+            offline: false,
+            cache_dir: None,
+            include_dependencies: true,
+            cargo_fetch: true,
+        }
+    }
+}
+
 impl PackageGraph {
     pub fn from_manifest(manifest: &ManifestModel) -> Result<Self> {
         let root = manifest_root_path(manifest);
@@ -79,6 +100,10 @@ impl PackageGraph {
     }
 
     pub fn from_path(path: &Path) -> Result<Self> {
+        Self::from_path_with_options(path, &PackageGraphOptions::default())
+    }
+
+    pub fn from_path_with_options(path: &Path, options: &PackageGraphOptions) -> Result<Self> {
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if path.is_dir() {
             let magnet_path = path.join("Magnet.toml");
@@ -90,7 +115,7 @@ impl PackageGraph {
                 return Self::from_manifest(&manifest);
             }
             if cargo_path.exists() {
-                return Self::from_cargo_manifest(&cargo_path);
+                return Self::from_cargo_manifest_with_options(&cargo_path, options);
             }
             if pyproject_path.exists() {
                 return Self::from_python_manifest(&pyproject_path);
@@ -114,7 +139,7 @@ impl PackageGraph {
                 let manifest = ManifestModel::from_dir(root)?;
                 Self::from_manifest(&manifest)
             }
-            "Cargo.toml" => Self::from_cargo_manifest(&path),
+            "Cargo.toml" => Self::from_cargo_manifest_with_options(&path, options),
             "pyproject.toml" => Self::from_python_manifest(&path),
             "package.json" => Self::from_package_json(&path),
             _ => Err(eyre::eyre!(
@@ -125,11 +150,28 @@ impl PackageGraph {
     }
 
     pub fn from_cargo_manifest(manifest_path: &Path) -> Result<Self> {
+        Self::from_cargo_manifest_with_options(manifest_path, &PackageGraphOptions::default())
+    }
+
+    pub fn from_cargo_manifest_with_options(
+        manifest_path: &Path,
+        options: &PackageGraphOptions,
+    ) -> Result<Self> {
         let root = manifest_path
             .parent()
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
             .to_path_buf();
-        let provider = Arc::new(CargoPackageProvider::new(root.clone()));
+        let _guard = apply_cargo_home(resolve_cache_dir(options))?;
+        if options.cargo_fetch && !options.offline {
+            prefetch_cargo_dependencies(manifest_path)?;
+        }
+        let provider = Arc::new(CargoPackageProvider::new_with_options(
+            root.clone(),
+            CargoMetadataOptions {
+                offline: options.offline,
+                include_dependencies: options.include_dependencies,
+            },
+        ));
         provider
             .refresh()
             .map_err(|err| eyre::eyre!("Failed to load Cargo workspace: {err}"))?;
@@ -311,6 +353,84 @@ impl PackageGraph {
             build_options: HashMap::new(),
         })
     }
+}
+
+fn prefetch_cargo_dependencies(manifest_path: &Path) -> Result<()> {
+    let status = Command::new("cargo")
+        .arg("fetch")
+        .arg("--manifest-path")
+        .arg(manifest_path)
+        .status()
+        .map_err(|err| eyre::eyre!("Failed to execute cargo fetch: {err}"))?;
+    if !status.success() {
+        return Err(eyre::eyre!(
+            "cargo fetch failed with status {}",
+            status.code().unwrap_or(-1)
+        ));
+    }
+    Ok(())
+}
+
+struct CargoHomeGuard {
+    previous: Option<OsString>,
+    applied: bool,
+}
+
+impl Drop for CargoHomeGuard {
+    fn drop(&mut self) {
+        if !self.applied {
+            return;
+        }
+        match &self.previous {
+            Some(value) => unsafe {
+                std::env::set_var("CARGO_HOME", value);
+            },
+            None => unsafe {
+                std::env::remove_var("CARGO_HOME");
+            },
+        }
+    }
+}
+
+fn apply_cargo_home(cache_dir: Option<PathBuf>) -> Result<CargoHomeGuard> {
+    let Some(cache_dir) = cache_dir else {
+        return Ok(CargoHomeGuard {
+            previous: None,
+            applied: false,
+        });
+    };
+
+    std::fs::create_dir_all(&cache_dir).map_err(|err| {
+        eyre::eyre!(
+            "Failed to create cargo cache directory {}: {err}",
+            cache_dir.display()
+        )
+    })?;
+    let previous = std::env::var_os("CARGO_HOME");
+    // Safe: we control the value and restore the previous setting in the guard.
+    unsafe {
+        std::env::set_var("CARGO_HOME", &cache_dir);
+    }
+    Ok(CargoHomeGuard {
+        previous,
+        applied: true,
+    })
+}
+
+fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
+    if let Some(cache_dir) = options.cache_dir.clone() {
+        return Some(cache_dir);
+    }
+    if let Some(cache_dir) = std::env::var_os("MAGNET_CACHE_DIR") {
+        return Some(PathBuf::from(cache_dir));
+    }
+    if std::env::var_os("CARGO_HOME").is_some() {
+        return None;
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from)?;
+    Some(home.join(".cache").join("magnet").join("cargo"))
 }
 
 fn package_to_node(package: PackageModel) -> PackageNode {
