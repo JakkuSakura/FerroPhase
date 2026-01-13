@@ -133,36 +133,62 @@ When using the bootstrap binary, default features (and therefore optional depend
 - Preserve Rust-like name resolution rules (shadowing, nested modules, qualified paths).
 - Avoid any `fp-rust`/`syn`-only resolution paths when `bootstrap` is enabled.
 
-## Missing Language Features (Bootstrap Blockers)
+## Progress and Remaining Gaps (Bootstrap)
 
-### fp-lang frontend
-- `t-strings` are not supported yet.
-- CST parser rejects trailing tokens and macro callees in some expr paths.
-- `emit!` token rewrite is partial and uses placeholder spans.
+This section is split into **Done**, **Partial**, and **Still Missing** so it’s clear what moved forward and what is still blocking full bootstrap.
 
-### AST → HIR
-- Closures are disabled in bootstrap (lowered to unit).
-- `Expr::Any` dynamic payloads are unsupported (lowered to unit).
-- Pattern lowering is incomplete (unsupported pattern kinds and some variant patterns).
+### Done (recent wins)
+- `t-strings` now lower to string literals (no template semantics yet).
+- CST expr parsing now tolerates trailing tokens and macro callees on paths/selects.
+- `emit!` token rewrite has improved span anchoring.
+- `Expr::Any` now accepts common dynamic payloads (raw expr / expr / value) in tolerant mode.
+- Unary deref, `Any(_)`, and binary‑op‑as‑function calls are accepted in typing.
+- `size_of` supports ADTs and slices.
+- Macro callees can be paths/selects; call targets accept function‑pointer operands beyond simple paths.
+- ConstantIndex and Subslice are lowered in MIR → LIR.
+- Generic call sites now specialize on‑demand during HIR → MIR lowering (no separate pass).
+
+### Partial (works, but only in a reduced form)
+- Closures: still lowered to unit in bootstrap mode.
+- Patterns: more variants are accepted, but many complex patterns (nested/structural) still fall back.
+- Match conditions: unsupported patterns are treated as non‑matching (warnings), not fully evaluated.
+- Typing for quote tokens: remains opaque; quote/splice checks still enforce shape.
+- Structural value materialization: now accepts `Value::Type`, but type coverage is still limited to literal-like kinds.
+- Monomorphization: specialization happens on‑demand, but there is no full pass to discover all instantiations.
+- Named arguments: calls now resolve by parameter name when available; format/printf named args still unsupported.
+
+### Still Missing (true blockers)
+- Arbitrary precision decimals unsupported.
+- Panic format payload unsupported in compiled backends.
+- `printf` argument types limited.
+- Array length via pointer unsupported.
+- Field/index access still rejects some base expressions.
+- Some MIR intrinsics and place projections (e.g., downcasts) are not lowered.
+
+### Notes by Stage (for tracking)
+#### fp-lang frontend
+- Template‑string semantics (not just literal lowering) remain missing.
+- Token‑level rewrite for `emit!` is still context‑free; semantic restrictions are not enforced here.
+
+#### AST → HIR
+- Closures remain disabled in bootstrap (lowered to unit).
+- Pattern lowering is incomplete (some nested/structural/variant patterns still lack coverage).
 - Module-level expression items can be dropped when unsupported.
 
-### Typing / inference
-- Some unary ops and binary‑op‑as‑function calls are unsupported.
-- Certain literals/values are rejected by inference.
+#### Typing / inference
+- Quote token types are still opaque for inference (enforced only by shape checks).
 - Pattern inference is incomplete.
 - HIR→MIR rejects inference markers (uses error type).
 
-### HIR → MIR / MIR semantics
-- Monomorphization pass is missing.
+#### HIR → MIR / MIR semantics
 - Arbitrary precision decimals unsupported.
-- Named arguments unsupported (calls + format).
 - Panic format payload unsupported in compiled backends.
 - `printf` argument types limited.
-- `size_of` unsupported for some types; array length via pointer unsupported.
-- Field/index access has unsupported base expressions.
+- Array length via pointer unsupported.
+- Field/index access still has unsupported base expressions.
 
-### MIR → LIR
-- Some place projections and MIR intrinsics are still unsupported.
+#### MIR → LIR
+- Some place projections and MIR intrinsics are still unsupported (e.g., downcasts).
 
 ### Backend (fp-native)
 - Any missing lowering/ABI feature used by the compiler will block bootstrap; audit against compiler IR usage.

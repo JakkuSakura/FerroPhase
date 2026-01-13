@@ -5996,6 +5996,14 @@ impl<'a> BodyBuilder<'a> {
         args: &[hir::CallArg],
         destination: Option<(mir::Place, Ty)>,
     ) -> Result<Option<PlaceInfo>> {
+        let mut reordered_args = None;
+        if let hir::ExprKind::Path(path) = &callee.kind {
+            if let Some(param_names) = self.param_names_for_callee(path) {
+                let ordered = self.reorder_named_call_args(args, &param_names, expr.span)?;
+                reordered_args = Some(ordered);
+            }
+        }
+        let args = reordered_args.as_deref().unwrap_or(args);
         let arg_values = call_arg_values(args);
         if let hir::ExprKind::Path(path) = &callee.kind {
             let segments = &path.segments;
@@ -6831,6 +6839,123 @@ impl<'a> BodyBuilder<'a> {
         }
 
         Ok(place_info)
+    }
+
+    fn param_names_for_callee(&self, path: &hir::Path) -> Option<Vec<hir::Symbol>> {
+        match &path.res {
+            Some(hir::Res::Def(def_id)) => self.param_names_for_def_id(*def_id),
+            _ => {
+                let qualified_name = path
+                    .segments
+                    .iter()
+                    .map(|seg| seg.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join("::");
+                if let Some(def) = self.lowering.method_defs.get(&qualified_name) {
+                    return self.param_names_from_params(&def.function.sig.inputs);
+                }
+                if path.segments.len() >= 2 {
+                    let tail = format!(
+                        "{}::{}",
+                        path.segments[path.segments.len() - 2].name.as_str(),
+                        path.segments[path.segments.len() - 1].name.as_str()
+                    );
+                    if let Some(def) = self.lowering.method_defs.get(&tail) {
+                        return self.param_names_from_params(&def.function.sig.inputs);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn param_names_for_def_id(&self, def_id: hir::DefId) -> Option<Vec<hir::Symbol>> {
+        let item = self.program.def_map.get(&def_id)?;
+        match &item.kind {
+            hir::ItemKind::Function(function) => {
+                self.param_names_from_params(&function.sig.inputs)
+            }
+            _ => None,
+        }
+    }
+
+    fn param_names_from_params(&self, params: &[hir::Param]) -> Option<Vec<hir::Symbol>> {
+        let mut names = Vec::with_capacity(params.len());
+        for param in params {
+            match &param.pat.kind {
+                hir::PatKind::Binding { name, .. } => names.push(name.clone()),
+                _ => return None,
+            }
+        }
+        Some(names)
+    }
+
+    fn reorder_named_call_args(
+        &mut self,
+        args: &[hir::CallArg],
+        param_names: &[hir::Symbol],
+        span: Span,
+    ) -> Result<Vec<hir::CallArg>> {
+        if args.len() != param_names.len() {
+            return Ok(args.to_vec());
+        }
+
+        let mut has_named = false;
+        for (index, arg) in args.iter().enumerate() {
+            let expected = format!("arg{}", index);
+            if arg.name.as_str() != expected {
+                has_named = true;
+                break;
+            }
+        }
+
+        if !has_named {
+            return Ok(args.to_vec());
+        }
+
+        let mut index_map = HashMap::new();
+        for (index, name) in param_names.iter().enumerate() {
+            index_map.insert(name.as_str().to_string(), index);
+        }
+
+        let mut reordered: Vec<Option<hir::CallArg>> = vec![None; param_names.len()];
+        for (index, arg) in args.iter().enumerate() {
+            let mut target = None;
+            let expected = format!("arg{}", index);
+            if arg.name.as_str() == expected {
+                target = Some(index);
+            } else if let Some(mapped) = index_map.get(arg.name.as_str()) {
+                target = Some(*mapped);
+            }
+
+            let Some(slot) = target else {
+                self.lowering.emit_error(
+                    span,
+                    format!("unknown named argument `{}` in call", arg.name),
+                );
+                return Ok(args.to_vec());
+            };
+
+            if slot >= reordered.len() || reordered[slot].is_some() {
+                self.lowering.emit_error(
+                    span,
+                    format!("duplicate or out-of-range argument `{}`", arg.name),
+                );
+                return Ok(args.to_vec());
+            }
+            reordered[slot] = Some(arg.clone());
+        }
+
+        let mut flattened = Vec::with_capacity(reordered.len());
+        for arg in reordered {
+            let Some(value) = arg else {
+                self.lowering.emit_error(span, "missing named argument in call");
+                return Ok(args.to_vec());
+            };
+            flattened.push(value);
+        }
+
+        Ok(flattened)
     }
 
     fn resolve_callee(
@@ -10376,11 +10501,25 @@ impl<'a> BodyBuilder<'a> {
                                 let receiver_operand =
                                     self.lower_operand(receiver, receiver_expected)?;
 
-                                let mut lowered_args = Vec::with_capacity(args.len() + 1);
-                                let mut arg_types = Vec::with_capacity(args.len() + 1);
+                                let mut call_args = args.to_vec();
+                                if let Some(mut param_names) =
+                                    self.param_names_from_params(&def.function.sig.inputs)
+                                {
+                                    if !param_names.is_empty() {
+                                        param_names.remove(0);
+                                    }
+                                    call_args = self.reorder_named_call_args(
+                                        args,
+                                        &param_names,
+                                        expr.span,
+                                    )?;
+                                }
+
+                                let mut lowered_args = Vec::with_capacity(call_args.len() + 1);
+                                let mut arg_types = Vec::with_capacity(call_args.len() + 1);
                                 arg_types.push(receiver_operand.ty.clone());
                                 lowered_args.push(receiver_operand.operand);
-                                for (idx, arg) in args.iter().enumerate() {
+                                for (idx, arg) in call_args.iter().enumerate() {
                                     let expected = tentative_sig.inputs.get(idx + 1);
                                     let operand = self.lower_operand(&arg.value, expected)?;
                                     arg_types.push(operand.ty.clone());
@@ -10446,11 +10585,25 @@ impl<'a> BodyBuilder<'a> {
                                 let receiver_operand =
                                     self.lower_operand(receiver, receiver_expected)?;
 
-                                let mut lowered_args = Vec::with_capacity(args.len() + 1);
-                                let mut arg_types = Vec::with_capacity(args.len() + 1);
+                                let mut call_args = args.to_vec();
+                                if let Some(mut param_names) =
+                                    self.param_names_from_params(&def.function.sig.inputs)
+                                {
+                                    if !param_names.is_empty() {
+                                        param_names.remove(0);
+                                    }
+                                    call_args = self.reorder_named_call_args(
+                                        args,
+                                        &param_names,
+                                        expr.span,
+                                    )?;
+                                }
+
+                                let mut lowered_args = Vec::with_capacity(call_args.len() + 1);
+                                let mut arg_types = Vec::with_capacity(call_args.len() + 1);
                                 arg_types.push(receiver_operand.ty.clone());
                                 lowered_args.push(receiver_operand.operand);
-                                for (idx, arg) in args.iter().enumerate() {
+                                for (idx, arg) in call_args.iter().enumerate() {
                                     let expected = tentative_sig.inputs.get(idx + 1);
                                     let operand = self.lower_operand(&arg.value, expected)?;
                                     arg_types.push(operand.ty.clone());
