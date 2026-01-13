@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    register_threadlocal_serializer, AstSerializer, Item, ItemKind, Node, Ty, Value,
+    register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, Module, Node, Ty,
+    Value, Visibility,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
@@ -206,17 +207,18 @@ fn merge_std_module(
         }
         std_items.push(item);
     }
-    let Some(mut std_module) = std_module else {
-        diagnostics.push(
-            Diagnostic::error("std file must define module std".to_string())
-                .with_source_context(STAGE_CONST_EVAL),
-        );
-        return Err(PipelineError::new(
-            STAGE_CONST_EVAL,
-            "std file must define module std",
-        ));
+    let mut std_module = match std_module {
+        Some(mut module) => {
+            module.items.extend(std_items);
+            module
+        }
+        None => Module {
+            name: Ident::new("std"),
+            items: std_items,
+            visibility: Visibility::Public,
+            is_external: false,
+        },
     };
-    std_module.items.extend(std_items);
 
     let mut merged_into_existing = false;
     for item in &mut file.items {

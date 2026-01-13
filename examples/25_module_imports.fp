@@ -15,6 +15,8 @@ mod helpers {
     }
 }
 
+mod modules;
+
 use helpers;
 use helpers::greet as say_hi;
 use helpers::math::add;

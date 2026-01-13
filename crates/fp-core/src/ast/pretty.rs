@@ -420,14 +420,18 @@ impl PrettyPrintable for ast::Item {
                     module.name
                 );
                 header.push_str(&suffix);
-                ctx.writeln(f, format!("{} {{", header))?;
-                ctx.with_indent(|ctx| {
-                    for item in &module.items {
-                        item.fmt_pretty(f, ctx)?;
-                    }
-                    Ok(())
-                })?;
-                ctx.writeln(f, "}")
+                if module.is_external {
+                    ctx.writeln(f, format!("{};", header))
+                } else {
+                    ctx.writeln(f, format!("{} {{", header))?;
+                    ctx.with_indent(|ctx| {
+                        for item in &module.items {
+                            item.fmt_pretty(f, ctx)?;
+                        }
+                        Ok(())
+                    })?;
+                    ctx.writeln(f, "}")
+                }
             }
             ast::ItemKind::Macro(mac) => {
                 ctx.writeln(

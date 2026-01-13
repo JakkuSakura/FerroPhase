@@ -318,6 +318,14 @@ fn parse_items_ast_handles_module_item() {
 }
 
 #[test]
+fn parse_items_ast_handles_external_module_item() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser.parse_items_ast("mod foo;").unwrap();
+    assert!(matches!(items[0].kind(), ItemKind::Module(_)));
+}
+
+#[test]
 fn parse_items_ast_handles_trait_item() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

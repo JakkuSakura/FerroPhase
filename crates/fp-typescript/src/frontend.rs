@@ -887,6 +887,7 @@ fn lower_class_like(
         name: Ident::new(class_name),
         items,
         visibility,
+        is_external: false,
     })]
 }
 

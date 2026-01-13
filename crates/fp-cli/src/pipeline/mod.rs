@@ -8,8 +8,8 @@ use crate::languages::{self, detect_source_language};
 use fp_bytecode;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{
-    AstSerializer, File, Ident, Item, ItemChunk, ItemImportTree, ItemKind, Module, Node, NodeKind,
-    RuntimeValue, Value, Visibility,
+    AstSerializer, File, Ident, Item, ItemChunk, ItemKind, Module, Node, NodeKind, RuntimeValue,
+    Value, Visibility,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
@@ -30,7 +30,7 @@ use fp_pipeline::{
 };
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::HashMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -441,13 +441,8 @@ impl Pipeline {
             .map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("."));
 
-        let mut loader = FileModuleLoader::new(self, root_dir, options, frontend);
-        let module_tree = loader.collect_modules(&file, Vec::new(), input_path)?;
-        if module_tree.children.is_empty() {
-            return Ok(Node::file(file));
-        }
-
-        let merged_items = merge_module_items(&file.items, module_tree);
+        let mut loader = FileModuleLoader::new(self, options, frontend);
+        let merged_items = loader.resolve_items(&file.items, &root_dir)?;
         Ok(Node::file(File {
             path: file.path,
             items: merged_items,
@@ -711,7 +706,7 @@ impl Pipeline {
                     return Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE));
                 }
             };
-            let std_node = self.parse_source_public(&source, Some(&std_path))?;
+            let std_node = self.parse_input_source(options, &source, Some(&std_path))?;
             let merged = merge_std_module(
                 ast.clone(),
                 std_node,
@@ -900,10 +895,7 @@ impl Pipeline {
 fn runtime_std_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     vec![
-        root.join("../../src/std/collection/hashmap.fp"),
-        root.join("../../src/std/bench/mod.fp"),
-        root.join("../../src/std/test/mod.fp"),
-        root.join("../../src/std/time/mod.fp"),
+        root.join("../../src/std/mod.fp"),
     ]
 }
 
@@ -942,14 +934,18 @@ fn merge_std_module(
         }
         std_items.push(item);
     }
-    let Some(mut std_module) = std_module else {
-        diagnostics.push(
-            Diagnostic::error("std file must define module std".to_string())
-                .with_source_context(stage),
-        );
-        return Err(PipelineError::new(stage, "std file must define module std"));
+    let mut std_module = match std_module {
+        Some(mut module) => {
+            module.items.extend(std_items);
+            module
+        }
+        None => Module {
+            name: Ident::new("std"),
+            items: std_items,
+            visibility: Visibility::Public,
+            is_external: false,
+        },
     };
-    std_module.items.extend(std_items);
 
     let mut merged_into_existing = false;
     for item in &mut file.items {
@@ -973,356 +969,114 @@ fn merge_std_module(
     })
 }
 
-#[derive(Default, Clone)]
-struct ModuleTree {
-    items: Option<ItemChunk>,
-    children: BTreeMap<String, ModuleTree>,
-}
-
-impl ModuleTree {
-    fn insert(&mut self, path: &[String], items: ItemChunk) {
-        if path.is_empty() {
-            return;
-        }
-        let head = path[0].clone();
-        let child = self
-            .children
-            .entry(head)
-            .or_insert_with(ModuleTree::default);
-        if path.len() == 1 {
-            if child.items.is_none() {
-                child.items = Some(items);
-            }
-            return;
-        }
-        child.insert(&path[1..], items);
-    }
-}
-
-fn merge_module_items(existing: &ItemChunk, tree: ModuleTree) -> ItemChunk {
-    let mut remaining_children = tree.children;
-    let mut out = Vec::new();
-
-    for item in existing {
-        if let ItemKind::Module(module) = item.kind() {
-            if let Some(child) = remaining_children.remove(module.name.as_str()) {
-                let merged_items = merge_module_items(&module.items, child);
-                let merged_module = Module {
-                    name: module.name.clone(),
-                    items: merged_items,
-                    visibility: module.visibility.clone(),
-                };
-                out.push(Item {
-                    ty: item.ty.clone(),
-                    kind: ItemKind::Module(merged_module),
-                });
-            } else {
-                out.push(item.clone());
-            }
-        } else {
-            out.push(item.clone());
-        }
-    }
-
-    for (name, child) in remaining_children {
-        let items = child.items.clone().unwrap_or_default();
-        let merged_items = merge_module_items(&items, child);
-        let module = Module {
-            name: Ident::new(name),
-            items: merged_items,
-            visibility: Visibility::Public,
-        };
-        out.push(Item::new(ItemKind::Module(module)));
-    }
-
-    out
-}
-
 struct FileModuleLoader<'a> {
     pipeline: &'a mut Pipeline,
-    root_dir: PathBuf,
     options: &'a PipelineOptions,
     frontend: &'a Arc<dyn LanguageFrontend>,
-    visited_files: HashSet<PathBuf>,
-    visited_modules: HashSet<Vec<String>>,
-    inline_modules: HashSet<Vec<String>>,
+    loaded_files: HashMap<PathBuf, ItemChunk>,
 }
 
 impl<'a> FileModuleLoader<'a> {
     fn new(
         pipeline: &'a mut Pipeline,
-        root_dir: PathBuf,
         options: &'a PipelineOptions,
         frontend: &'a Arc<dyn LanguageFrontend>,
     ) -> Self {
         Self {
             pipeline,
-            root_dir,
             options,
             frontend,
-            visited_files: HashSet::new(),
-            visited_modules: HashSet::new(),
-            inline_modules: HashSet::new(),
+            loaded_files: HashMap::new(),
         }
     }
 
-    fn collect_modules(
-        &mut self,
-        file: &File,
-        module_path: Vec<String>,
-        entry_path: &PathBuf,
-    ) -> Result<ModuleTree, CliError> {
-        self.register_inline_modules(&file.items, &module_path);
-        let mut tree = ModuleTree::default();
-        let mut queue = Vec::new();
-        self.collect_import_module_paths(&file.items, &module_path, &mut queue);
-        self.load_modules_from_queue(&mut tree, &mut queue, entry_path)?;
-        Ok(tree)
-    }
+    fn resolve_items(&mut self, items: &ItemChunk, base_dir: &Path) -> Result<ItemChunk, CliError> {
+        let mut resolved = Vec::with_capacity(items.len());
 
-    fn register_inline_modules(&mut self, items: &ItemChunk, module_path: &[String]) {
-        for item in items {
-            if let ItemKind::Module(module) = item.kind() {
-                let mut path = module_path.to_vec();
-                path.push(module.name.as_str().to_string());
-                self.inline_modules.insert(path.clone());
-                self.register_inline_modules(&module.items, &path);
-            }
-        }
-    }
-
-    fn collect_import_module_paths(
-        &mut self,
-        items: &ItemChunk,
-        module_path: &[String],
-        queue: &mut Vec<Vec<String>>,
-    ) {
         for item in items {
             match item.kind() {
-                ItemKind::Import(import) => {
-                    let entries = expand_import_tree(&import.tree, module_path);
-                    for path in entries {
-                        if let Some(first) = path.first() {
-                            if matches!(first.as_str(), "std" | "core" | "alloc" | "fp_rust") {
-                                continue;
-                            }
-                        }
-                        for prefix_len in 1..=path.len() {
-                            let prefix = path[..prefix_len].to_vec();
-                            if self.inline_modules.contains(&prefix) {
-                                continue;
-                            }
-                            if self.visited_modules.insert(prefix.clone()) {
-                                queue.push(prefix);
-                            }
-                        }
-                    }
-                }
                 ItemKind::Module(module) => {
-                    let mut path = module_path.to_vec();
-                    path.push(module.name.as_str().to_string());
-                    self.collect_import_module_paths(&module.items, &path, queue);
+                    let child_dir = base_dir.join(module.name.as_str());
+                    let resolved_module = if module.is_external {
+                        let module_items = self.load_module_items(base_dir, &module.name)?;
+                        let nested_items = self.resolve_items(&module_items, &child_dir)?;
+                        Module {
+                            name: module.name.clone(),
+                            items: nested_items,
+                            visibility: module.visibility.clone(),
+                            is_external: false,
+                        }
+                    } else {
+                        let nested_items = self.resolve_items(&module.items, &child_dir)?;
+                        Module {
+                            name: module.name.clone(),
+                            items: nested_items,
+                            visibility: module.visibility.clone(),
+                            is_external: false,
+                        }
+                    };
+                    resolved.push(Item {
+                        ty: item.ty.clone(),
+                        kind: ItemKind::Module(resolved_module),
+                    });
                 }
-                _ => {}
+                _ => resolved.push(item.clone()),
             }
         }
+
+        Ok(resolved)
     }
 
-    fn load_modules_from_queue(
+    fn load_module_items(
         &mut self,
-        tree: &mut ModuleTree,
-        queue: &mut Vec<Vec<String>>,
-        entry_path: &PathBuf,
-    ) -> Result<(), CliError> {
-        while let Some(module_path) = queue.pop() {
-            if self.inline_modules.contains(&module_path) {
-                continue;
-            }
-            let Some(module_file) = resolve_module_file(&self.root_dir, &module_path) else {
-                continue;
-            };
-            let canonical = module_file
-                .canonicalize()
-                .unwrap_or_else(|_| module_file.clone());
-            if !self.visited_files.insert(canonical.clone()) {
-                continue;
-            }
-
-            let ast = self
-                .pipeline
-                .parse_module_file(self.options, self.frontend, &canonical)?;
-            let NodeKind::File(file) = ast.kind() else {
-                continue;
-            };
-
-            self.register_inline_modules(&file.items, &module_path);
-            tree.insert(&module_path, file.items.clone());
-
-            let mut nested_imports = Vec::new();
-            self.collect_import_module_paths(&file.items, &module_path, &mut nested_imports);
-            for import_path in nested_imports {
-                if self.inline_modules.contains(&import_path) {
-                    continue;
-                }
-                if self.visited_modules.insert(import_path.clone()) {
-                    queue.push(import_path);
-                }
-            }
-
-            if canonical == *entry_path {
-                continue;
-            }
+        base_dir: &Path,
+        module_name: &Ident,
+    ) -> Result<ItemChunk, CliError> {
+        let module_path = resolve_module_file(base_dir, module_name.as_str())?;
+        let canonical = module_path
+            .canonicalize()
+            .unwrap_or_else(|_| module_path.clone());
+        if let Some(items) = self.loaded_files.get(&canonical) {
+            return Ok(items.clone());
         }
-        Ok(())
+
+        let ast = self
+            .pipeline
+            .parse_module_file(self.options, self.frontend, &canonical)?;
+        let NodeKind::File(file) = ast.kind() else {
+            return Err(CliError::Compilation(format!(
+                "module file {} did not parse as a file",
+                canonical.display()
+            )));
+        };
+
+        self.loaded_files
+            .insert(canonical.clone(), file.items.clone());
+        Ok(file.items.clone())
     }
 }
 
-fn resolve_module_file(root_dir: &Path, module_path: &[String]) -> Option<PathBuf> {
-    if module_path.is_empty() {
-        return None;
-    }
-    let mut base = root_dir.to_path_buf();
-    for segment in module_path {
-        base.push(segment);
-    }
-    let flat_path = base.with_extension("fp");
-    if flat_path.is_file() {
-        return Some(flat_path);
-    }
-    let mod_path = base.join("mod.fp");
-    if mod_path.is_file() {
-        return Some(mod_path);
-    }
-    None
-}
+fn resolve_module_file(base_dir: &Path, module_name: &str) -> Result<PathBuf, CliError> {
+    let flat_path = base_dir.join(format!("{module_name}.fp"));
+    let mod_path = base_dir.join(module_name).join("mod.fp");
+    let flat_exists = flat_path.is_file();
+    let mod_exists = mod_path.is_file();
 
-fn expand_import_tree(tree: &ItemImportTree, module_path: &[String]) -> Vec<Vec<String>> {
-    expand_import_tree_with_base(tree, Vec::new(), module_path)
-}
-
-fn expand_import_tree_with_base(
-    tree: &ItemImportTree,
-    base: Vec<String>,
-    module_path: &[String],
-) -> Vec<Vec<String>> {
-    match tree {
-        ItemImportTree::Path(path) => expand_import_segments(&path.segments, base, module_path),
-        ItemImportTree::Group(group) => {
-            let mut results = Vec::new();
-            for item in &group.items {
-                results.extend(expand_import_tree_with_base(
-                    item,
-                    base.clone(),
-                    module_path,
-                ));
-            }
-            results
-        }
-        ItemImportTree::Root => expand_import_segments(&[], Vec::new(), module_path),
-        ItemImportTree::SelfMod => expand_import_segments(&[], module_path.to_vec(), module_path),
-        ItemImportTree::SuperMod => {
-            let mut parent = module_path.to_vec();
-            parent.pop();
-            expand_import_segments(&[], parent, module_path)
-        }
-        ItemImportTree::Crate => expand_import_segments(&[], Vec::new(), module_path),
-        ItemImportTree::Glob => Vec::new(),
-        _ => expand_import_segments(std::slice::from_ref(tree), base, module_path),
-    }
-}
-
-fn expand_import_segments(
-    segments: &[ItemImportTree],
-    base: Vec<String>,
-    module_path: &[String],
-) -> Vec<Vec<String>> {
-    if segments.is_empty() {
-        return Vec::new();
-    }
-
-    let first = &segments[0];
-    let rest = &segments[1..];
-    match first {
-        ItemImportTree::Ident(ident) => {
-            let name = ident.name.as_str();
-            let mut new_base = base;
-            match name {
-                "self" => new_base = module_path.to_vec(),
-                "super" => {
-                    let mut parent = module_path.to_vec();
-                    parent.pop();
-                    new_base = parent;
-                }
-                "crate" => new_base = Vec::new(),
-                _ => new_base.push(ident.name.clone()),
-            }
-
-            if rest.is_empty() && !matches!(name, "self" | "super" | "crate") {
-                vec![new_base]
-            } else if rest.is_empty() {
-                Vec::new()
-            } else {
-                expand_import_segments(rest, new_base, module_path)
-            }
-        }
-        ItemImportTree::Rename(rename) => {
-            if !rest.is_empty() {
-                return Vec::new();
-            }
-            let mut new_base = base;
-            new_base.push(rename.from.name.clone());
-            vec![new_base]
-        }
-        ItemImportTree::Group(group) => {
-            let mut results = Vec::new();
-            for item in &group.items {
-                results.extend(expand_import_tree_with_base(
-                    item,
-                    base.clone(),
-                    module_path,
-                ));
-            }
-            if rest.is_empty() {
-                results
-            } else {
-                let mut final_results = Vec::new();
-                for path_segments in results {
-                    let mut more = expand_import_segments(rest, path_segments.clone(), module_path);
-                    if more.is_empty() {
-                        final_results.push(path_segments);
-                    } else {
-                        final_results.append(&mut more);
-                    }
-                }
-                final_results
-            }
-        }
-        ItemImportTree::Path(path) => {
-            let nested = expand_import_segments(&path.segments, base.clone(), module_path);
-            if rest.is_empty() {
-                nested
-            } else {
-                let mut results = Vec::new();
-                for path_segments in nested {
-                    let mut more = expand_import_segments(rest, path_segments.clone(), module_path);
-                    if more.is_empty() {
-                        results.push(path_segments);
-                    } else {
-                        results.append(&mut more);
-                    }
-                }
-                results
-            }
-        }
-        ItemImportTree::Root => expand_import_segments(rest, Vec::new(), module_path),
-        ItemImportTree::SelfMod => expand_import_segments(rest, module_path.to_vec(), module_path),
-        ItemImportTree::SuperMod => {
-            let mut parent = module_path.to_vec();
-            parent.pop();
-            expand_import_segments(rest, parent, module_path)
-        }
-        ItemImportTree::Crate => expand_import_segments(rest, Vec::new(), module_path),
-        ItemImportTree::Glob => Vec::new(),
+    match (flat_exists, mod_exists) {
+        (true, true) => Err(CliError::Compilation(format!(
+            "module `{}` is ambiguous; found both {} and {}",
+            module_name,
+            flat_path.display(),
+            mod_path.display()
+        ))),
+        (true, false) => Ok(flat_path),
+        (false, true) => Ok(mod_path),
+        (false, false) => Err(CliError::Compilation(format!(
+            "module `{}` not found; expected {} or {}",
+            module_name,
+            flat_path.display(),
+            mod_path.display()
+        ))),
     }
 }
 
@@ -1333,8 +1087,10 @@ mod tests {
     use fp_core::intrinsics::IntrinsicCallKind;
     use fp_core::{ast, hir, lir};
     use fp_pipeline::PipelineTarget;
+    use std::fs;
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
+    use tempfile::TempDir;
 
     struct PipelineHarness {
         pipeline: Pipeline,
@@ -1446,6 +1202,42 @@ mod tests {
             expected,
             lines
         );
+    }
+
+    #[test]
+    fn external_mod_declarations_load_files() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let root = temp_dir.path();
+        let main_path = root.join("main.fp");
+        let module_path = root.join("foo.fp");
+
+        fs::write(
+            &main_path,
+            "mod foo;\n\nfn main() { foo::bar(); }\n",
+        )
+        .expect("write main");
+        fs::write(&module_path, "fn bar() {}\n").expect("write module");
+
+        let mut pipeline = Pipeline::new();
+        let options = PipelineOptions::default();
+        let source = fs::read_to_string(&main_path).expect("read main");
+        let ast = pipeline
+            .parse_input_source(&options, &source, Some(&main_path))
+            .expect("parse main");
+        let ast::NodeKind::File(file) = ast.kind() else {
+            panic!("expected file AST");
+        };
+
+        let module = file.items.iter().find_map(|item| match item.kind() {
+            ast::ItemKind::Module(module) if module.name.as_str() == "foo" => Some(module),
+            _ => None,
+        });
+
+        let Some(module) = module else {
+            panic!("expected module foo");
+        };
+        assert!(!module.items.is_empty(), "expected foo to be populated");
+        assert!(module.items.iter().any(|item| matches!(item.kind(), ast::ItemKind::DefFunction(_))));
     }
 
     fn find_intrinsic_calls(ast: &ast::Node) -> Vec<ast::ExprIntrinsicCall> {

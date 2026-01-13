@@ -130,10 +130,14 @@ fn parse_item_cst(
             advance(input);
             let name = expect_ident_token(input)?;
             children.push(SyntaxElement::Token(name));
-            expect_symbol(input, "{")?;
-            let inner = parse_items_in_braces_to_item_list(input)?;
-            children.push(SyntaxElement::Node(Box::new(inner)));
-            Ok(node(SyntaxKind::ItemMod, children))
+            if match_symbol(input, ";") {
+                Ok(node(SyntaxKind::ItemMod, children))
+            } else {
+                expect_symbol(input, "{")?;
+                let inner = parse_items_in_braces_to_item_list(input)?;
+                children.push(SyntaxElement::Node(Box::new(inner)));
+                Ok(node(SyntaxKind::ItemMod, children))
+            }
         }
         TokenKind::Keyword(Keyword::Trait) => {
             advance(input);

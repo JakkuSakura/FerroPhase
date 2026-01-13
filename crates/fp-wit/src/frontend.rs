@@ -94,6 +94,7 @@ fn lower_package(package: &WitPackage) -> Option<Module> {
         name,
         items,
         visibility: Visibility::Public,
+        is_external: false,
     })
 }
 
@@ -116,6 +117,7 @@ fn lower_interface(interface: &WitInterface) -> Option<Module> {
         name: interface.name.clone(),
         items,
         visibility: Visibility::Public,
+        is_external: false,
     })
 }
 

@@ -153,19 +153,20 @@ fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name =
         Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("mod name"))?);
-    let inner_list = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Node(n) if n.kind == SyntaxKind::ItemList => Some(n.as_ref()),
-            _ => None,
-        })
-        .ok_or(LowerItemsError::MissingToken("mod items"))?;
-    let items = lower_items_from_cst(inner_list)?;
+    let inner_list = node.children.iter().find_map(|c| match c {
+        SyntaxElement::Node(n) if n.kind == SyntaxKind::ItemList => Some(n.as_ref()),
+        _ => None,
+    });
+    let (items, is_external) = if let Some(inner_list) = inner_list {
+        (lower_items_from_cst(inner_list)?, false)
+    } else {
+        (Vec::new(), true)
+    };
     Ok(Module {
         name,
         items,
         visibility,
+        is_external,
     })
 }
 

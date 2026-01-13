@@ -80,6 +80,7 @@ pub fn parse_cargo_workspace(manifest_path: &Path) -> CoreResult<Node> {
             name: Ident::new(sanitise_package_ident(&package)),
             items: package_ast,
             visibility: Visibility::Public,
+            is_external: false,
         };
         items.push(Item::from(module));
     }

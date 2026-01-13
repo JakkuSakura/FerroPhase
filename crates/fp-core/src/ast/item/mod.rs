@@ -255,6 +255,8 @@ common_struct! {
         pub name: Ident,
         pub items: ItemChunk,
         pub visibility: Visibility,
+        #[serde(default)]
+        pub is_external: bool,
     }
 }
 

@@ -349,6 +349,7 @@ impl RustParser {
         }
     }
     pub fn parse_module(&self, code: syn::ItemMod) -> Result<Module> {
+        let is_external = code.content.is_none();
         let items = if let Some((_, inner)) = code.content {
             inner
                 .into_iter()
@@ -361,6 +362,7 @@ impl RustParser {
             name: parse_ident(code.ident),
             items,
             visibility: parse_vis(code.vis),
+            is_external,
         })
     }
     pub fn parse_type(&self, code: syn::Type) -> Result<Ty> {
