@@ -3088,7 +3088,7 @@ impl LirGenerator {
                 value,
                 from_fields,
                 target_fields,
-                target_ty,
+                target_ty.clone(),
                 block,
             );
         }
@@ -3188,7 +3188,7 @@ impl LirGenerator {
             for (index, target_field) in target_fields.iter().enumerate() {
                 if let Some(field) = fields.get(index) {
                     adjusted.push(self.cast_constant_to_lir_type(field.clone(), target_field));
-                } else if let Some(zero) = self.zero_value_for_lir_type(target_field) {
+                } else if let Some(zero) = self.zero_constant_for_lir_type(target_field) {
                     adjusted.push(zero);
                 } else {
                     adjusted.push(lir::LirConstant::Undef(target_field.clone()));
@@ -3219,7 +3219,7 @@ impl LirGenerator {
                     block,
                 )
             } else if let Some(zero) = self.zero_value_for_lir_type(target_field) {
-                lir::LirValue::Constant(zero)
+                zero
             } else {
                 lir::LirValue::Constant(lir::LirConstant::Undef(target_field.clone()))
             };
@@ -4673,6 +4673,22 @@ impl LirGenerator {
                 lir::LirConstant::Float(0.0, ty.clone()),
             )),
             lir::LirType::Ptr(_) => Some(lir::LirValue::Null(ty.clone())),
+            _ => None,
+        }
+    }
+
+    fn zero_constant_for_lir_type(&self, ty: &lir::LirType) -> Option<lir::LirConstant> {
+        match ty {
+            lir::LirType::I1
+            | lir::LirType::I8
+            | lir::LirType::I16
+            | lir::LirType::I32
+            | lir::LirType::I64
+            | lir::LirType::I128 => Some(lir::LirConstant::Int(0, ty.clone())),
+            lir::LirType::F32 | lir::LirType::F64 => {
+                Some(lir::LirConstant::Float(0.0, ty.clone()))
+            }
+            lir::LirType::Ptr(_) => Some(lir::LirConstant::Null(ty.clone())),
             _ => None,
         }
     }

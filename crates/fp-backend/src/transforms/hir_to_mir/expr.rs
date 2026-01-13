@@ -4943,7 +4943,106 @@ impl<'a> BodyBuilder<'a> {
                 })
             }));
         }
-        if let hir::PatKind::Struct(_path, fields, _) = &pat.kind {
+        if let hir::PatKind::Struct(path, fields, _) = &pat.kind {
+            if let Some(variant) = self.enum_variant_info_from_path(path) {
+                let layout = self
+                    .lowering
+                    .enum_layout_for_def(variant.enum_def, span)
+                    .or_else(|| self.lowering.enum_layout_for_ty(scrutinee_ty).cloned());
+                if let Some(layout) = layout {
+                    let mut base_place = scrutinee_place.clone();
+                    if matches!(scrutinee_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
+                        base_place.projection.push(mir::PlaceElem::Deref);
+                    }
+
+                    let mut tag_place = base_place.clone();
+                    tag_place
+                        .projection
+                        .push(mir::PlaceElem::Field(0, layout.tag_ty.clone()));
+                    let tag_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                    let tag_place_out = mir::Place::from_local(tag_temp);
+                    self.push_statement(mir::Statement {
+                        source_info: span,
+                        kind: mir::StatementKind::Assign(
+                            tag_place_out.clone(),
+                            mir::Rvalue::BinaryOp(
+                                mir::BinOp::Eq,
+                                mir::Operand::Copy(tag_place),
+                                mir::Operand::Constant(mir::Constant {
+                                    span,
+                                    user_ty: None,
+                                    literal: mir::ConstantKind::Int(variant.discriminant),
+                                }),
+                            ),
+                        ),
+                    });
+                    let mut combined = mir::Operand::Copy(tag_place_out);
+
+                    let payload_tys = layout
+                        .variant_payloads
+                        .get(&variant.def_id)
+                        .cloned()
+                        .unwrap_or_default();
+                    for (idx, field) in fields.iter().enumerate() {
+                        if idx >= payload_tys.len() {
+                            break;
+                        }
+                        match &field.pat.kind {
+                            hir::PatKind::Lit(lit) => {
+                                let (literal, _) = self.lower_literal(lit, None);
+                                let field_ty = payload_tys[idx].clone();
+                                let mut field_place = base_place.clone();
+                                field_place.projection.push(mir::PlaceElem::Field(
+                                    idx + 1,
+                                    field_ty.clone(),
+                                ));
+                                let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                                let eq_place = mir::Place::from_local(eq_temp);
+                                self.push_statement(mir::Statement {
+                                    source_info: span,
+                                    kind: mir::StatementKind::Assign(
+                                        eq_place.clone(),
+                                        mir::Rvalue::BinaryOp(
+                                            mir::BinOp::Eq,
+                                            mir::Operand::Copy(field_place),
+                                            mir::Operand::Constant(mir::Constant {
+                                                span,
+                                                user_ty: None,
+                                                literal,
+                                            }),
+                                        ),
+                                    ),
+                                });
+                                let and_temp =
+                                    self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                                let and_place = mir::Place::from_local(and_temp);
+                                self.push_statement(mir::Statement {
+                                    source_info: span,
+                                    kind: mir::StatementKind::Assign(
+                                        and_place.clone(),
+                                        mir::Rvalue::BinaryOp(
+                                            mir::BinOp::And,
+                                            combined,
+                                            mir::Operand::Copy(eq_place),
+                                        ),
+                                    ),
+                                });
+                                combined = mir::Operand::Copy(and_place);
+                            }
+                            hir::PatKind::Wild | hir::PatKind::Binding { .. } => {}
+                            _ => {
+                                self.lowering.emit_warning(
+                                    span,
+                                    "enum struct pattern field not supported; ignoring",
+                                );
+                            }
+                        }
+                    }
+
+                    return Ok(combined);
+                }
+            }
+
             let mut base_place = scrutinee_place.clone();
             let mut base_ty = scrutinee_ty.clone();
             if matches!(base_ty.kind, TyKind::Ref(_, _, _) | TyKind::RawPtr(_)) {
