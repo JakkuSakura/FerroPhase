@@ -2003,11 +2003,13 @@ impl MirLowering {
                     kind: TyKind::Float(FloatTy::F64),
                 },
                 DecimalType::BigDecimal | DecimalType::Decimal { .. } => {
-                    self.emit_error(
+                    self.emit_warning(
                         span,
-                        "arbitrary precision decimals are not supported in MIR",
+                        "lowering arbitrary precision decimal to f64 in MIR",
                     );
-                    self.error_ty()
+                    Ty {
+                        kind: TyKind::Float(FloatTy::F64),
+                    }
                 }
             },
             TypePrimitive::String => Ty {

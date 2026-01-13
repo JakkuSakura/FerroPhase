@@ -162,9 +162,9 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - Tuple match conditions now support literal element checks (bindings/wildcards still skip).
 - Array lengths from pointer values default to zero with a warning.
 - printf pointer args now use `%p` for non‑string references/pointers.
+- Arbitrary precision decimals now lower to `f64` with a warning.
 
 ### Still Missing (true blockers)
-- Arbitrary precision decimals unsupported.
 - `printf` argument types limited.
 - Some MIR intrinsics and place projections (e.g., downcasts) are not lowered.
 
@@ -184,7 +184,6 @@ This section is split into **Done**, **Partial**, and **Still Missing** so it’
 - HIR→MIR rejects inference markers (uses error type).
 
 #### HIR → MIR / MIR semantics
-- Arbitrary precision decimals unsupported.
 - `printf` argument types limited.
 
 
