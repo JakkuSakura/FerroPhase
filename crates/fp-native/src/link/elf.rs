@@ -376,14 +376,21 @@ pub fn emit_executable_elf64(
     out.extend_from_slice(&vec![0u8; got_size]);
 
     // Patch relocations in text (rodata + calls).
+    let text_addr = base_addr + text_offset as u64;
     let rodata_addr = base_addr + rodata_offset as u64;
+    let resolve_symbol = |name: &str, addend: i64| -> Result<u64> {
+        if name == ".rodata" {
+            Ok(rodata_addr.wrapping_add(addend as u64))
+        } else if let Some(offset) = plan.symbols.get(name) {
+            Ok(text_addr.wrapping_add(*offset).wrapping_add(addend as u64))
+        } else {
+            Err(Error::from("unsupported relocation in ELF executable"))
+        }
+    };
     for reloc in &plan.relocs {
         match reloc.kind {
             crate::emit::RelocKind::Abs64 => {
-                if reloc.symbol != ".rodata" {
-                    return Err(Error::from("unsupported relocation in ELF executable"));
-                }
-                let value = rodata_addr.wrapping_add(reloc.addend as u64);
+                let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
                 let offset = text_offset + reloc.offset as usize;
                 if offset + 8 > out.len() {
                     return Err(Error::from("relocation offset out of range"));

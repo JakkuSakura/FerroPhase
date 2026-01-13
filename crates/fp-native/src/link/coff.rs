@@ -425,14 +425,21 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         out.resize((rdata_raw_offset + rdata_raw_size) as usize, 0);
     }
 
+    let text_addr = image_base + text_rva as u64;
     let rodata_addr = image_base + rdata_rva as u64;
+    let resolve_symbol = |name: &str, addend: i64| -> Result<u64> {
+        if name == ".rodata" {
+            Ok(rodata_addr.wrapping_add(addend as u64))
+        } else if let Some(offset) = plan.symbols.get(name) {
+            Ok(text_addr.wrapping_add(*offset).wrapping_add(addend as u64))
+        } else {
+            Err(Error::from("unsupported relocation in PE executable"))
+        }
+    };
     for reloc in &plan.relocs {
         match reloc.kind {
             crate::emit::RelocKind::Abs64 => {
-                if reloc.symbol != ".rodata" {
-                    return Err(Error::from("unsupported relocation in PE executable"));
-                }
-                let value = rodata_addr.wrapping_add(reloc.addend as u64);
+                let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
                 let offset = text_raw_offset as usize + reloc.offset as usize;
                 if offset + 8 > out.len() {
                     return Err(Error::from("relocation offset out of range"));

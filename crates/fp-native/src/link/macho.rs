@@ -272,6 +272,7 @@ pub fn emit_executable_macho(
     let lc_dysymtab_size = 80u64;
     let lc_segment_pagezero_size = segment_cmd_size;
     let lc_build_version_size = 24u64;
+    let lc_codesig_size = 16u64;
 
     let dyld_path = b"/usr/lib/dyld\0";
     let dylib_path = b"/usr/lib/libSystem.B.dylib\0";
@@ -291,7 +292,7 @@ pub fn emit_executable_macho(
         + lc_dylib_size
         + lc_build_version_size) as u32;
 
-    let file_start_of_text = align_up(header_size + sizeofcmds as u64, 16);
+    let file_start_of_text = align_up(header_size + sizeofcmds as u64 + lc_codesig_size, 16);
     let text_fileoff = 0u64;
     let text_offset = file_start_of_text;
     let text_size = plan.text.len() as u64;
@@ -362,7 +363,7 @@ pub fn emit_executable_macho(
         0
     };
     let indirectsym_size = (nindirectsyms as u64) * 4;
-    let linkedit_filesize = align_up(indirectsymoff + indirectsym_size, 8);
+    let linkedit_filesize = align_up(indirectsymoff + indirectsym_size, 16);
     let linkedit_vmsize = align_up(linkedit_filesize, page);
     vmaddr_linkedit = vmaddr_text + (linkedit_fileoff - text_fileoff);
 
@@ -678,6 +679,7 @@ pub fn emit_executable_macho(
     out.resize((linkedit_fileoff + linkedit_filesize) as usize, 0);
 
     // Patch rodata and call relocations.
+    let text_addr = vmaddr_text + text_offset;
     let rodata_addr = vmaddr_text + rodata_offset;
     let stubs_addr = vmaddr_text + stubs_offset;
     let ptr_addr = vmaddr_data;
@@ -695,24 +697,28 @@ pub fn emit_executable_macho(
         }
     }
 
+    let resolve_symbol = |name: &str, addend: i64| -> Result<u64> {
+        if name == ".rodata" {
+            Ok(rodata_addr.wrapping_add(addend as u64))
+        } else if let Some(offset) = plan.symbols.get(name) {
+            Ok(text_addr.wrapping_add(*offset).wrapping_add(addend as u64))
+        } else {
+            Err(Error::from("unsupported relocation in Mach-O executable"))
+        }
+    };
+
     for reloc in &plan.relocs {
         match reloc.kind {
             RelocKind::Abs64 => {
-                if reloc.symbol != ".rodata" {
-                    return Err(Error::from("unsupported relocation in Mach-O executable"));
-                }
-                let value = rodata_addr.wrapping_add(reloc.addend as u64);
+                let value = resolve_symbol(&reloc.symbol, reloc.addend)?;
                 let offset = text_offset as usize + reloc.offset as usize;
                 out[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
             }
             RelocKind::Aarch64AdrpAdd => {
-                if reloc.symbol != ".rodata" {
-                    return Err(Error::from("unsupported relocation in Mach-O executable"));
-                }
                 if !matches!(arch, TargetArch::Aarch64) {
                     return Err(Error::from("AArch64 relocation on non-AArch64 target"));
                 }
-                let target = rodata_addr.wrapping_add(reloc.addend as u64);
+                let target = resolve_symbol(&reloc.symbol, reloc.addend)?;
                 let adrp_addr = vmaddr_text + (text_offset - text_fileoff) + reloc.offset;
                 let pc_page = adrp_addr & !0xfff;
                 let target_page = target & !0xfff;

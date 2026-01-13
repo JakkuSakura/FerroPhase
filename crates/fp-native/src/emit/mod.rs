@@ -8,8 +8,9 @@ use fp_core::lir::{
     CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator,
     LirType, Linkage, Name,
 };
-use std::path::Path;
 use std::fs;
+use std::path::Path;
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetFormat {
@@ -84,6 +85,7 @@ pub struct EmitPlan {
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
+    pub symbols: HashMap<String, u64>,
     pub entry_offset: u64,
 }
 
@@ -91,6 +93,7 @@ pub struct CodegenOutput {
     pub text: Vec<u8>,
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
+    pub symbols: HashMap<String, u64>,
     pub entry_offset: u64,
 }
 
@@ -121,6 +124,7 @@ pub fn emit_plan(
         text: output.text,
         rodata: output.rodata,
         relocs: output.relocs,
+        symbols: output.symbols,
         entry_offset: output.entry_offset,
     })
 }

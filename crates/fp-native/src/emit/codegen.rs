@@ -38,7 +38,8 @@ pub fn emit_text_from_lir(
         match &block.terminator {
             LirTerminator::Return(_)
             | LirTerminator::Br(_)
-            | LirTerminator::CondBr { .. } => {}
+            | LirTerminator::CondBr { .. }
+            | LirTerminator::Invoke { .. } => {}
             other => {
                 return Err(Error::from(format!(
                     "native emitter does not support terminator {other:?}"

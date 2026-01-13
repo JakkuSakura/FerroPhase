@@ -94,21 +94,13 @@ fn build_frame_layout(
                 has_calls = true;
                 max_call_args = max_call_args.max(args.len());
                 if matches!(function, LirValue::Function(name) if name == "printf") {
-                    let mut bytes = 0usize;
-                    for arg in args.iter().skip(1) {
-                        let ty = value_type(arg, reg_types, &local_types)?;
-                        bytes += align8(size_of(&ty) as i32) as usize;
-                    }
+                    let bytes = vararg_outgoing_size(args, true, reg_types, &local_types)?;
                     max_vararg_stack = max_vararg_stack.max(bytes);
                 }
             } else if let LirInstructionKind::IntrinsicCall { args, .. } = &inst.kind {
                 has_calls = true;
                 max_call_args = max_call_args.max(args.len() + 1);
-                let mut bytes = 0usize;
-                for arg in args {
-                    let ty = value_type(arg, reg_types, &local_types)?;
-                    bytes += align8(size_of(&ty) as i32) as usize;
-                }
+                let bytes = vararg_outgoing_size(args, false, reg_types, &local_types)?;
                 max_vararg_stack = max_vararg_stack.max(bytes);
             } else if let LirInstructionKind::Alloca { size, alignment } = &inst.kind {
                 let ty = inst
@@ -214,6 +206,21 @@ fn build_frame_layout(
         outgoing_size,
         frame_size,
     })
+}
+
+fn vararg_outgoing_size(
+    args: &[LirValue],
+    format_in_args: bool,
+    reg_types: &HashMap<u32, LirType>,
+    local_types: &HashMap<u32, LirType>,
+) -> Result<usize> {
+    let start = if format_in_args { 1 } else { 0 };
+    let mut stack_bytes = 0i32;
+    for arg in args.iter().skip(start) {
+        let ty = value_type(arg, reg_types, local_types)?;
+        stack_bytes += align8(size_of(&ty) as i32);
+    }
+    Ok(stack_bytes as usize)
 }
 
 fn build_reg_types(func: &LirFunction) -> HashMap<u32, LirType> {
@@ -386,11 +393,19 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
     }
 
     let entry_offset = entry_offset.unwrap_or(0);
+    let func_offsets = asm.function_offsets();
+    let mut symbols = HashMap::new();
+    for (idx, func) in program.functions.iter().enumerate() {
+        if let Some(offset) = func_offsets.get(&(idx as u32)) {
+            symbols.insert(func.name.to_string(), *offset);
+        }
+    }
     let (text, relocs) = asm.finish()?;
     Ok(CodegenOutput {
         text,
         rodata,
         relocs,
+        symbols,
         entry_offset,
     })
 }
@@ -592,6 +607,14 @@ fn load_value(
         }
         LirValue::Null(_) | LirValue::Undef(_) => {
             emit_mov_imm16(asm, dst, 0);
+            Ok(())
+        }
+        LirValue::Global(name, _) => {
+            emit_load_symbol_addr(asm, dst, name, 0)?;
+            Ok(())
+        }
+        LirValue::Function(name) => {
+            emit_load_symbol_addr(asm, dst, name, 0)?;
             Ok(())
         }
         _ => {
@@ -1043,7 +1066,7 @@ fn emit_call(
             .copied()
             .map(CallTarget::Internal)
             .unwrap_or_else(|| CallTarget::External(name.clone())),
-        _ => return Err(Error::from("unsupported callee for aarch64")),
+        _ => CallTarget::Indirect,
     };
 
     let arg_regs = [
@@ -1102,12 +1125,33 @@ fn emit_call(
                 abi_log("  printf format -> x0");
             }
         }
-
         let mut stack_offset = 0i32;
+        int_idx = 1;
+        float_idx = 0;
         for arg in args.iter().skip(1) {
             let arg_ty = value_type(arg, reg_types, local_types)?;
+            if is_large_aggregate(&arg_ty) {
+                let size = store_vararg_value(
+                    asm,
+                    layout,
+                    stack_offset,
+                    arg,
+                    &arg_ty,
+                    reg_types,
+                    local_types,
+                )?;
+                if abi_debug_enabled() {
+                    abi_log(&format!("  vararg {:?} -> [sp+{}]", arg_ty, stack_offset));
+                }
+                stack_offset += size;
+                continue;
+            }
             if let LirValue::Constant(LirConstant::String(text)) = arg {
                 let offset = intern_cstring(rodata, rodata_pool, text);
+                if int_idx < arg_regs.len() {
+                    emit_load_rodata_addr(asm, arg_regs[int_idx], offset as i64)?;
+                    int_idx += 1;
+                }
                 emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
                 emit_store_to_sp(asm, Reg::X16, stack_offset);
                 if abi_debug_enabled() {
@@ -1115,6 +1159,23 @@ fn emit_call(
                 }
                 stack_offset += 8;
                 continue;
+            }
+            if is_float_type(&arg_ty) {
+                if float_idx < float_regs.len() {
+                    load_value_float(
+                        asm,
+                        layout,
+                        arg,
+                        float_regs[float_idx],
+                        &arg_ty,
+                        reg_types,
+                        local_types,
+                    )?;
+                    float_idx += 1;
+                }
+            } else if int_idx < arg_regs.len() {
+                load_value(asm, layout, arg, arg_regs[int_idx], reg_types, local_types)?;
+                int_idx += 1;
             }
             let size = store_vararg_value(
                 asm,
@@ -1230,6 +1291,10 @@ fn emit_call(
                 asm.emit_bl_external(&name);
             }
         }
+        CallTarget::Indirect => {
+            load_value(asm, layout, function, Reg::X16, reg_types, local_types)?;
+            emit_bl_reg(asm, Reg::X16);
+        }
     }
 
     if needs_sret {
@@ -1292,12 +1357,40 @@ fn emit_intrinsic_call(
         abi_log("  arg format -> x0");
     }
 
-    let mut stack_bytes = 0i32;
+    let arg_regs = [
+        Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+    ];
+    let float_regs = [
+        FReg::V0, FReg::V1, FReg::V2, FReg::V3, FReg::V4, FReg::V5, FReg::V6, FReg::V7,
+    ];
+
+    let mut int_idx = 1usize;
+    let mut float_idx = 0usize;
     let mut stack_offset = 0i32;
     for arg in args {
         let arg_ty = value_type(arg, reg_types, local_types)?;
+        if is_large_aggregate(&arg_ty) {
+            let size = store_vararg_value(
+                asm,
+                layout,
+                stack_offset,
+                arg,
+                &arg_ty,
+                reg_types,
+                local_types,
+            )?;
+            if abi_debug_enabled() {
+                abi_log(&format!("  vararg {:?} -> [sp+{}]", arg_ty, stack_offset));
+            }
+            stack_offset += size;
+            continue;
+        }
         if let LirValue::Constant(LirConstant::String(text)) = arg {
             let offset = intern_cstring(rodata, rodata_pool, text);
+            if int_idx < arg_regs.len() {
+                emit_load_rodata_addr(asm, arg_regs[int_idx], offset as i64)?;
+                int_idx += 1;
+            }
             emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
             emit_store_to_sp(asm, Reg::X16, stack_offset);
             if abi_debug_enabled() {
@@ -1305,6 +1398,23 @@ fn emit_intrinsic_call(
             }
             stack_offset += 8;
             continue;
+        }
+        if is_float_type(&arg_ty) {
+            if float_idx < float_regs.len() {
+                load_value_float(
+                    asm,
+                    layout,
+                    arg,
+                    float_regs[float_idx],
+                    &arg_ty,
+                    reg_types,
+                    local_types,
+                )?;
+                float_idx += 1;
+            }
+        } else if int_idx < arg_regs.len() {
+            load_value(asm, layout, arg, arg_regs[int_idx], reg_types, local_types)?;
+            int_idx += 1;
         }
         let size = store_vararg_value(
             asm,
@@ -1320,7 +1430,7 @@ fn emit_intrinsic_call(
         }
         stack_offset += size;
     }
-    stack_bytes = stack_offset;
+    let stack_bytes = stack_offset;
 
     if abi_debug_enabled() {
         abi_log(&format!(
@@ -1584,9 +1694,9 @@ fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<
     let mut offset = 0;
     while offset < size {
         emit_load_from_sp(asm, Reg::X16, src + offset);
-        emit_mov_reg(asm, Reg::X17, dst);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_store_to_reg(asm, Reg::X16, Reg::X17);
+        emit_mov_reg(asm, Reg::X9, dst);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_store_to_reg(asm, Reg::X16, Reg::X9);
         offset += 8;
     }
     Ok(())
@@ -1598,9 +1708,9 @@ fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<
     }
     let mut offset = 0;
     while offset < size {
-        emit_mov_reg(asm, Reg::X17, src);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load_from_reg(asm, Reg::X16, Reg::X17);
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load_from_reg(asm, Reg::X16, Reg::X9);
         emit_store_to_sp(asm, Reg::X16, dst + offset);
         offset += 8;
     }
@@ -1613,12 +1723,12 @@ fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result
     }
     let mut offset = 0;
     while offset < size {
-        emit_mov_reg(asm, Reg::X17, src);
-        add_immediate_offset(asm, Reg::X17, offset as i64)?;
-        emit_load_from_reg(asm, Reg::X16, Reg::X17);
-        emit_mov_reg(asm, Reg::X9, dst);
+        emit_mov_reg(asm, Reg::X9, src);
         add_immediate_offset(asm, Reg::X9, offset as i64)?;
-        emit_store_to_reg(asm, Reg::X16, Reg::X9);
+        emit_load_from_reg(asm, Reg::X16, Reg::X9);
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store_to_reg(asm, Reg::X16, Reg::X17);
         offset += 8;
     }
     Ok(())
@@ -1689,7 +1799,20 @@ fn emit_insert_value(
 ) -> Result<()> {
     let agg_ty = value_type(aggregate, reg_types, local_types)?;
     if !is_large_aggregate(&agg_ty) {
-        return Err(Error::from("InsertValue expects aggregate"));
+        let size = size_of(&agg_ty) as i32;
+        if size == 0 {
+            return Ok(());
+        }
+        let (field_offset, field_ty) = aggregate_field_offset(&agg_ty, indices)?;
+        if field_offset != 0 || size_of(&field_ty) as i32 != size {
+            return Err(Error::from("unsupported InsertValue for small aggregate"));
+        }
+        if is_float_type(&field_ty) {
+            return Err(Error::from("unsupported float InsertValue for small aggregate"));
+        }
+        load_value(asm, layout, element, Reg::X16, reg_types, local_types)?;
+        store_vreg(asm, layout, dst_id, Reg::X16)?;
+        return Ok(());
     }
     let size = size_of(&agg_ty) as i32;
     if size == 0 {
@@ -1859,6 +1982,45 @@ fn emit_load_rodata_addr(asm: &mut Assembler, dst: Reg, addend: i64) -> Result<(
         offset: literal_offset as u64,
         kind: RelocKind::Abs64,
         symbol: ".rodata".to_string(),
+        addend,
+    });
+    asm.extend(&0u64.to_le_bytes());
+    Ok(())
+}
+
+fn emit_load_symbol_addr(
+    asm: &mut Assembler,
+    dst: Reg,
+    symbol: &str,
+    addend: i64,
+) -> Result<()> {
+    if matches!(asm.target_format, TargetFormat::MachO) {
+        let adrp = 0x9000_0000u32 | dst.id();
+        let add = 0x9100_0000u32 | (dst.id() << 5) | dst.id();
+        let offset = asm.buf.len();
+        asm.emit_u32(adrp);
+        asm.emit_u32(add);
+        asm.relocs.push(Relocation {
+            offset: offset as u64,
+            kind: RelocKind::Aarch64AdrpAdd,
+            symbol: symbol.to_string(),
+            addend,
+        });
+        return Ok(());
+    }
+
+    if asm.buf.len() % 8 != 0 {
+        emit_nop(asm);
+    }
+    let ldr_instr = 0x5800_0000u32 | ((2u32 & 0x7ffff) << 5) | dst.id();
+    asm.emit_u32(ldr_instr);
+    let b_instr = 0x1400_0000u32 | 3;
+    asm.emit_u32(b_instr);
+    let literal_offset = asm.buf.len();
+    asm.relocs.push(Relocation {
+        offset: literal_offset as u64,
+        kind: RelocKind::Abs64,
+        symbol: symbol.to_string(),
         addend,
     });
     asm.extend(&0u64.to_le_bytes());
@@ -2408,6 +2570,11 @@ fn emit_cmp_imm12(asm: &mut Assembler, lhs: Reg, imm12: u32) {
     asm.extend(&instr.to_le_bytes());
 }
 
+fn emit_bl_reg(asm: &mut Assembler, reg: Reg) {
+    let instr = 0xD63F_0000u32 | (reg.id() << 5);
+    asm.extend(&instr.to_le_bytes());
+}
+
 fn emit_cset(asm: &mut Assembler, dst: Reg, cond: u32) {
     let inv = cond ^ 1;
     let instr = 0x9A9F_07E0u32 | ((inv & 0xF) << 12) | dst.id();
@@ -2835,20 +3002,8 @@ fn emit_cmp(
         store_vreg(asm, layout, dst_id, Reg::X16)?;
         return Ok(());
     }
-    match (lhs, rhs) {
-        (LirValue::Register(_), LirValue::Register(_))
-        | (LirValue::Register(_), LirValue::Constant(_))
-        | (LirValue::Constant(_), LirValue::Register(_))
-        | (LirValue::Constant(_), LirValue::Constant(_)) => {}
-        _ => return Err(Error::from("unsupported compare operands")),
-    }
-
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
     match rhs {
-        LirValue::Register(_) => {
-            load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
-            emit_cmp_reg(asm, Reg::X16, Reg::X17);
-        }
         LirValue::Constant(constant) => {
             let imm = constant_to_i64(constant)?;
             if imm < 0 || imm > 4095 {
@@ -2856,7 +3011,10 @@ fn emit_cmp(
             }
             emit_cmp_imm12(asm, Reg::X16, imm as u32);
         }
-        _ => {}
+        _ => {
+            load_value(asm, layout, rhs, Reg::X17, reg_types, local_types)?;
+            emit_cmp_reg(asm, Reg::X16, Reg::X17);
+        }
     }
 
     let cond = match kind {
@@ -2971,6 +3129,16 @@ impl Assembler {
         self.labels.insert(label, self.buf.len());
     }
 
+    fn function_offsets(&self) -> HashMap<u32, u64> {
+        let mut out = HashMap::new();
+        for (label, pos) in &self.labels {
+            if let Label::Function(id) = label {
+                out.insert(*id, *pos as u64);
+            }
+        }
+        out
+    }
+
     fn is_entry(&self) -> bool {
         self.current_function == 0
     }
@@ -3080,6 +3248,7 @@ enum Label {
 enum CallTarget {
     Internal(u32),
     External(String),
+    Indirect,
 }
 
 fn build_function_map(program: &LirProgram) -> Result<HashMap<String, u32>> {

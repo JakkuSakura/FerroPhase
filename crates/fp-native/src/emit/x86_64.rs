@@ -287,11 +287,19 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
     }
 
     let entry_offset = entry_offset.unwrap_or(0);
+    let func_offsets = asm.function_offsets();
+    let mut symbols = HashMap::new();
+    for (idx, func) in program.functions.iter().enumerate() {
+        if let Some(offset) = func_offsets.get(&(idx as u32)) {
+            symbols.insert(func.name.to_string(), *offset);
+        }
+    }
     let (text, relocs) = asm.finish()?;
     Ok(CodegenOutput {
         text,
         rodata,
         relocs,
+        symbols,
         entry_offset,
     })
 }
@@ -1571,6 +1579,16 @@ impl Assembler {
             self.current_function = id;
         }
         self.labels.insert(label, self.buf.len());
+    }
+
+    fn function_offsets(&self) -> HashMap<u32, u64> {
+        let mut out = HashMap::new();
+        for (label, pos) in &self.labels {
+            if let Label::Function(id) = label {
+                out.insert(*id, *pos as u64);
+            }
+        }
+        out
     }
 
     fn is_entry(&self) -> bool {
