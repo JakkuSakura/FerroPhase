@@ -38,6 +38,11 @@ fn pe_data_directory(bytes: &[u8], index: usize) -> Option<(u32, u32)> {
     Some((rva, size))
 }
 
+fn read_u16_le(bytes: &[u8], offset: usize) -> u16 {
+    let chunk: [u8; 2] = bytes[offset..offset + 2].try_into().unwrap();
+    u16::from_le_bytes(chunk)
+}
+
 fn minimal_program() -> LirProgram {
     let func = LirFunction {
         name: Name::new("main"),
@@ -411,6 +416,23 @@ fn pe_executable_emits_base_relocs() {
     let bytes = std::fs::read(&exe).unwrap();
     let (_rva, size) = pe_data_directory(&bytes, 5).expect("missing PE data directory");
     assert!(size > 0, "expected base reloc directory to be populated");
+}
+
+#[test]
+#[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+fn coff_object_records_relocs() {
+    let arch = host_arch();
+    let plan = emit::emit_plan(&program_with_print(), TargetFormat::Coff, arch).unwrap();
+    let out_dir = tempfile::tempdir().unwrap();
+    let obj = out_dir.path().join("printf.obj");
+    emit::write_object(&obj, &plan).unwrap();
+    let bytes = std::fs::read(&obj).unwrap();
+    let section_count = read_u16_le(&bytes, 2) as usize;
+    let section_offset = 20;
+    let text_header = section_offset;
+    let reloc_count = read_u16_le(&bytes, text_header + 32);
+    assert!(reloc_count > 0, "expected COFF relocations in .text");
+    let _ = section_count;
 }
 
 #[test]

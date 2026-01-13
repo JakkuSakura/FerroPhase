@@ -36,18 +36,65 @@ fn coff_machine(arch: TargetArch) -> u16 {
     }
 }
 
+fn emit_arm64_stub(buf: &mut [u8], stub_rva: u64, ptr_rva: u64) -> Result<()> {
+    let stub_page = stub_rva & !0xfff;
+    let ptr_page = ptr_rva & !0xfff;
+    let page_delta = ((ptr_page as i64 - stub_page as i64) >> 12) as i64;
+    if page_delta < -(1 << 20) || page_delta > (1 << 20) - 1 {
+        return Err(Error::from("stub page delta out of range"));
+    }
+    let imm = page_delta as u32;
+    let immlo = (imm & 0x3) << 29;
+    let immhi = ((imm >> 2) & 0x7ffff) << 5;
+    let adrp = 0x9000_0000u32 | immlo | immhi | 16;
+    let pageoff = (ptr_rva & 0xfff) as u32;
+    let imm12 = (pageoff / 8) << 10;
+    let ldr = 0xF940_0000u32 | imm12 | (16 << 5) | 16;
+    let br = 0xD61F_0000u32 | (16 << 5);
+    buf[0..4].copy_from_slice(&adrp.to_le_bytes());
+    buf[4..8].copy_from_slice(&ldr.to_le_bytes());
+    buf[8..12].copy_from_slice(&br.to_le_bytes());
+    Ok(())
+}
+
 struct ExternSymbol {
+    symbol: String,
+    dll: String,
     name: String,
+}
+
+struct ImportSymbol {
+    symbol: String,
+    name: String,
+    hint_name_offset: u32,
+}
+
+struct ImportDll {
+    name: String,
+    desc_offset: u32,
+    ilt_offset: u32,
+    iat_offset: u32,
+    name_offset: u32,
+    symbols: Vec<ImportSymbol>,
 }
 
 struct ImportLayout {
     data: Vec<u8>,
     desc_offset: u32,
     desc_size: u32,
-    ilt_offset: u32,
-    iat_offset: u32,
-    name_offsets: Vec<u32>,
-    dll_name_offset: u32,
+    dlls: Vec<ImportDll>,
+}
+
+fn split_import_symbol(symbol: &str) -> (String, String) {
+    const DEFAULT_DLL: &str = "msvcrt.dll";
+    if let Some((dll, name)) = symbol.split_once('!') {
+        let mut dll = dll.trim().to_string();
+        if !dll.to_ascii_lowercase().ends_with(".dll") {
+            dll.push_str(".dll");
+        }
+        return (dll, name.trim().to_string());
+    }
+    (DEFAULT_DLL.to_string(), symbol.to_string())
 }
 
 fn collect_external_symbols(plan: &EmitPlan) -> Vec<ExternSymbol> {
@@ -61,8 +108,11 @@ fn collect_external_symbols(plan: &EmitPlan) -> Vec<ExternSymbol> {
             continue;
         }
         seen.insert(reloc.symbol.clone(), externs.len());
+        let (dll, name) = split_import_symbol(&reloc.symbol);
         externs.push(ExternSymbol {
-            name: reloc.symbol.clone(),
+            symbol: reloc.symbol.clone(),
+            dll,
+            name,
         });
     }
     externs
@@ -71,59 +121,84 @@ fn collect_external_symbols(plan: &EmitPlan) -> Vec<ExternSymbol> {
 fn build_import_layout(externs: &[ExternSymbol]) -> ImportLayout {
     let mut data = Vec::new();
     let desc_offset = 0u32;
-    let desc_size = 40u32;
+    let mut dlls: Vec<ImportDll> = Vec::new();
+    let mut dll_index: HashMap<String, usize> = HashMap::new();
+    for ext in externs {
+        let idx = *dll_index.entry(ext.dll.clone()).or_insert_with(|| {
+            dlls.push(ImportDll {
+                name: ext.dll.clone(),
+                desc_offset: 0,
+                ilt_offset: 0,
+                iat_offset: 0,
+                name_offset: 0,
+                symbols: Vec::new(),
+            });
+            dlls.len() - 1
+        });
+        dlls[idx].symbols.push(ImportSymbol {
+            symbol: ext.symbol.clone(),
+            name: ext.name.clone(),
+            hint_name_offset: 0,
+        });
+    }
+    let desc_size = ((dlls.len() + 1) * 20) as u32;
     data.resize(desc_size as usize, 0);
 
-    let ilt_offset = align_up(data.len() as u32, 8);
-    let ilt_size = ((externs.len() + 1) * 8) as u32;
-    data.resize((ilt_offset + ilt_size) as usize, 0);
+    for (idx, dll) in dlls.iter_mut().enumerate() {
+        dll.desc_offset = desc_offset + (idx as u32) * 20;
 
-    let iat_offset = align_up(data.len() as u32, 8);
-    let iat_size = ((externs.len() + 1) * 8) as u32;
-    data.resize((iat_offset + iat_size) as usize, 0);
+        dll.ilt_offset = align_up(data.len() as u32, 8);
+        let ilt_size = ((dll.symbols.len() + 1) * 8) as u32;
+        data.resize((dll.ilt_offset + ilt_size) as usize, 0);
 
-    let mut name_offsets = Vec::with_capacity(externs.len());
-    for sym in externs {
-        let offset = align_up(data.len() as u32, 2);
-        data.resize(offset as usize, 0);
-        let name_offset = data.len() as u32;
-        data.extend_from_slice(&0u16.to_le_bytes());
-        data.extend_from_slice(sym.name.as_bytes());
+        dll.iat_offset = align_up(data.len() as u32, 8);
+        let iat_size = ((dll.symbols.len() + 1) * 8) as u32;
+        data.resize((dll.iat_offset + iat_size) as usize, 0);
+
+        for sym in &mut dll.symbols {
+            let offset = align_up(data.len() as u32, 2);
+            data.resize(offset as usize, 0);
+            sym.hint_name_offset = data.len() as u32;
+            data.extend_from_slice(&0u16.to_le_bytes());
+            data.extend_from_slice(sym.name.as_bytes());
+            data.push(0);
+        }
+
+        dll.name_offset = data.len() as u32;
+        data.extend_from_slice(dll.name.as_bytes());
         data.push(0);
-        name_offsets.push(name_offset);
     }
-
-    let dll_name_offset = data.len() as u32;
-    data.extend_from_slice(b"msvcrt.dll\0");
 
     ImportLayout {
         data,
         desc_offset,
         desc_size,
-        ilt_offset,
-        iat_offset,
-        name_offsets,
-        dll_name_offset,
+        dlls,
     }
 }
 
-fn patch_import_layout(layout: &mut ImportLayout, base_rva: u32) {
-    let desc_start = layout.desc_offset as usize;
-    let ilt_rva = base_rva + layout.ilt_offset;
-    let iat_rva = base_rva + layout.iat_offset;
-    let name_rva = base_rva + layout.dll_name_offset;
+fn patch_import_layout(layout: &mut ImportLayout, base_rva: u32) -> HashMap<String, u32> {
+    let mut iat_rvas = HashMap::new();
+    for dll in &layout.dlls {
+        let desc_start = dll.desc_offset as usize;
+        let ilt_rva = base_rva + dll.ilt_offset;
+        let iat_rva = base_rva + dll.iat_offset;
+        let name_rva = base_rva + dll.name_offset;
 
-    write_u32(&mut layout.data, desc_start, ilt_rva);
-    write_u32(&mut layout.data, desc_start + 12, name_rva);
-    write_u32(&mut layout.data, desc_start + 16, iat_rva);
+        write_u32(&mut layout.data, desc_start, ilt_rva);
+        write_u32(&mut layout.data, desc_start + 12, name_rva);
+        write_u32(&mut layout.data, desc_start + 16, iat_rva);
 
-    for (idx, name_offset) in layout.name_offsets.iter().enumerate() {
-        let entry_rva = base_rva + *name_offset;
-        let ilt_entry = layout.ilt_offset as usize + idx * 8;
-        let iat_entry = layout.iat_offset as usize + idx * 8;
-        write_u64(&mut layout.data, ilt_entry, entry_rva as u64);
-        write_u64(&mut layout.data, iat_entry, entry_rva as u64);
+        for (idx, sym) in dll.symbols.iter().enumerate() {
+            let entry_rva = base_rva + sym.hint_name_offset;
+            let ilt_entry = dll.ilt_offset as usize + idx * 8;
+            let iat_entry = dll.iat_offset as usize + idx * 8;
+            write_u64(&mut layout.data, ilt_entry, entry_rva as u64);
+            write_u64(&mut layout.data, iat_entry, entry_rva as u64);
+            iat_rvas.insert(sym.symbol.clone(), iat_rva + (idx as u32) * 8);
+        }
     }
+    iat_rvas
 }
 
 fn write_u32(buf: &mut [u8], offset: usize, value: u32) {
@@ -134,7 +209,46 @@ fn write_u64(buf: &mut [u8], offset: usize, value: u64) {
     buf[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
 }
 
-fn build_base_relocs(text_rva: u32, relocs: &[Relocation]) -> Vec<u8> {
+struct StringTable {
+    data: Vec<u8>,
+}
+
+impl StringTable {
+    fn new() -> Self {
+        Self {
+            data: vec![0u8; 4],
+        }
+    }
+
+    fn insert(&mut self, name: &str) -> u32 {
+        let offset = self.data.len() as u32;
+        self.data.extend_from_slice(name.as_bytes());
+        self.data.push(0);
+        offset
+    }
+
+    fn finish(mut self) -> Vec<u8> {
+        let size = self.data.len() as u32;
+        self.data[0..4].copy_from_slice(&size.to_le_bytes());
+        self.data
+    }
+}
+
+struct CoffSymbol {
+    name: String,
+    value: u32,
+    section: i16,
+    typ: u16,
+    storage_class: u8,
+}
+
+struct CoffReloc {
+    offset: u32,
+    symbol_index: u32,
+    reloc_type: u16,
+}
+
+fn build_base_relocs(text_rva: u32, relocs: &[Relocation], extra_rvas: &[u32]) -> Vec<u8> {
     const IMAGE_REL_BASED_DIR64: u16 = 10;
 
     let mut entries: Vec<u32> = relocs
@@ -143,6 +257,7 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation]) -> Vec<u8> {
         .filter_map(|reloc| u32::try_from(reloc.offset).ok())
         .map(|offset| text_rva + offset)
         .collect();
+    entries.extend(extra_rvas.iter().copied());
     if entries.is_empty() {
         return Vec::new();
     }
@@ -174,49 +289,191 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation]) -> Vec<u8> {
 
 pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const IMAGE_SCN_CNT_CODE: u32 = 0x0000_0020;
+    const IMAGE_SCN_CNT_INITIALIZED_DATA: u32 = 0x0000_0040;
     const IMAGE_SCN_MEM_EXECUTE: u32 = 0x2000_0000;
     const IMAGE_SCN_MEM_READ: u32 = 0x4000_0000;
     const IMAGE_SYM_CLASS_EXTERNAL: u8 = 2;
 
+    const IMAGE_SYM_UNDEFINED: i16 = 0;
+    const IMAGE_SYM_TYPE_FUNCTION: u16 = 0x20;
+
+    const IMAGE_REL_AMD64_ADDR64: u16 = 0x0001;
+    const IMAGE_REL_AMD64_REL32: u16 = 0x0004;
+    const IMAGE_REL_ARM64_ADDR64: u16 = 0x0001;
+    const IMAGE_REL_ARM64_BRANCH26: u16 = 0x0003;
+    const IMAGE_REL_ARM64_ADR_PREL_PG_HI21: u16 = 0x0005;
+    const IMAGE_REL_ARM64_ADD_LO12: u16 = 0x0006;
+
+    let has_rdata = !plan.rodata.is_empty();
+    let section_count = if has_rdata { 2u16 } else { 1u16 };
+
     let header_size = 20u32;
     let section_header_size = 40u32;
-    let section_offset = header_size + section_header_size;
+    let section_table_size = section_header_size * section_count as u32;
+    let text_offset = header_size + section_table_size;
+    let text_size = plan.text.len() as u32;
+    let rdata_offset = text_offset + text_size;
+    let rdata_size = plan.rodata.len() as u32;
 
-    let pointer_to_symbols = section_offset + plan.text.len() as u32;
-    let symbol_count = 1u32;
-    let string_table_size = 4u32;
+    let mut symbol_table: Vec<CoffSymbol> = Vec::new();
+    let mut symbol_index: HashMap<String, u32> = HashMap::new();
+
+    for (name, offset) in &plan.symbols {
+        let idx = symbol_table.len() as u32;
+        symbol_index.insert(name.clone(), idx);
+        symbol_table.push(CoffSymbol {
+            name: name.clone(),
+            value: *offset as u32,
+            section: 1,
+            typ: IMAGE_SYM_TYPE_FUNCTION,
+            storage_class: IMAGE_SYM_CLASS_EXTERNAL,
+        });
+    }
+
+    if has_rdata {
+        let idx = symbol_table.len() as u32;
+        symbol_index.insert(".rodata".to_string(), idx);
+        symbol_table.push(CoffSymbol {
+            name: ".rodata".to_string(),
+            value: 0,
+            section: 2,
+            typ: 0,
+            storage_class: IMAGE_SYM_CLASS_EXTERNAL,
+        });
+    }
+
+    for reloc in &plan.relocs {
+        if reloc.kind == RelocKind::CallRel32 {
+            if symbol_index.contains_key(&reloc.symbol) {
+                continue;
+            }
+            let idx = symbol_table.len() as u32;
+            symbol_index.insert(reloc.symbol.clone(), idx);
+            symbol_table.push(CoffSymbol {
+                name: reloc.symbol.clone(),
+                value: 0,
+                section: IMAGE_SYM_UNDEFINED,
+                typ: IMAGE_SYM_TYPE_FUNCTION,
+                storage_class: IMAGE_SYM_CLASS_EXTERNAL,
+            });
+        }
+    }
+
+    let mut relocs = Vec::new();
+    for reloc in &plan.relocs {
+        let symbol = if reloc.symbol == ".rodata" && has_rdata {
+            ".rodata"
+        } else {
+            reloc.symbol.as_str()
+        };
+        let symbol_idx = *symbol_index
+            .get(symbol)
+            .ok_or_else(|| Error::from("missing symbol for COFF relocation"))?;
+        match (arch, reloc.kind) {
+            (TargetArch::X86_64, RelocKind::Abs64) => relocs.push(CoffReloc {
+                offset: reloc.offset as u32,
+                symbol_index: symbol_idx,
+                reloc_type: IMAGE_REL_AMD64_ADDR64,
+            }),
+            (TargetArch::X86_64, RelocKind::CallRel32) => relocs.push(CoffReloc {
+                offset: reloc.offset as u32,
+                symbol_index: symbol_idx,
+                reloc_type: IMAGE_REL_AMD64_REL32,
+            }),
+            (TargetArch::Aarch64, RelocKind::Abs64) => relocs.push(CoffReloc {
+                offset: reloc.offset as u32,
+                symbol_index: symbol_idx,
+                reloc_type: IMAGE_REL_ARM64_ADDR64,
+            }),
+            (TargetArch::Aarch64, RelocKind::CallRel32) => relocs.push(CoffReloc {
+                offset: reloc.offset as u32,
+                symbol_index: symbol_idx,
+                reloc_type: IMAGE_REL_ARM64_BRANCH26,
+            }),
+            (TargetArch::Aarch64, RelocKind::Aarch64AdrpAdd) => {
+                relocs.push(CoffReloc {
+                    offset: reloc.offset as u32,
+                    symbol_index: symbol_idx,
+                    reloc_type: IMAGE_REL_ARM64_ADR_PREL_PG_HI21,
+                });
+                relocs.push(CoffReloc {
+                    offset: (reloc.offset + 4) as u32,
+                    symbol_index: symbol_idx,
+                    reloc_type: IMAGE_REL_ARM64_ADD_LO12,
+                });
+            }
+            (_, RelocKind::Aarch64AdrpAdd) => {
+                return Err(Error::from("AArch64 relocations are not supported for x86_64 COFF"));
+            }
+        }
+    }
+
+    let reloc_offset = rdata_offset + rdata_size;
+    let reloc_count = relocs.len() as u16;
+    let reloc_table_size = relocs.len() as u32 * 10;
+    let pointer_to_symbols = reloc_offset + reloc_table_size;
 
     let mut out = Vec::new();
     put_u16(&mut out, coff_machine(arch));
-    put_u16(&mut out, 1); // sections
+    put_u16(&mut out, section_count);
     put_u32(&mut out, 0);
     put_u32(&mut out, pointer_to_symbols);
-    put_u32(&mut out, symbol_count);
+    put_u32(&mut out, symbol_table.len() as u32);
     put_u16(&mut out, 0); // optional header size
     put_u16(&mut out, 0); // characteristics
 
     put_bytes_fixed::<8>(&mut out, ".text");
     put_u32(&mut out, 0);
     put_u32(&mut out, 0);
-    put_u32(&mut out, plan.text.len() as u32);
-    put_u32(&mut out, section_offset);
+    put_u32(&mut out, text_size);
+    put_u32(&mut out, text_offset);
+    put_u32(&mut out, reloc_offset);
     put_u32(&mut out, 0);
-    put_u32(&mut out, 0);
-    put_u16(&mut out, 0);
+    put_u16(&mut out, reloc_count);
     put_u16(&mut out, 0);
     put_u32(&mut out, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
 
+    if has_rdata {
+        put_bytes_fixed::<8>(&mut out, ".rdata");
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, rdata_size);
+        put_u32(&mut out, rdata_offset);
+        put_u32(&mut out, 0);
+        put_u32(&mut out, 0);
+        put_u16(&mut out, 0);
+        put_u16(&mut out, 0);
+        put_u32(&mut out, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ);
+    }
+
     out.extend_from_slice(&plan.text);
+    if has_rdata {
+        out.extend_from_slice(&plan.rodata);
+    }
 
-    // Symbol table
-    put_bytes_fixed::<8>(&mut out, "_start");
-    put_u32(&mut out, 0);
-    put_u16(&mut out, 1);
-    put_u16(&mut out, 0x20);
-    out.push(IMAGE_SYM_CLASS_EXTERNAL);
-    out.push(0);
+    for reloc in &relocs {
+        put_u32(&mut out, reloc.offset);
+        put_u32(&mut out, reloc.symbol_index);
+        put_u16(&mut out, reloc.reloc_type);
+    }
 
-    put_u32(&mut out, string_table_size);
+    let mut string_table = StringTable::new();
+    for sym in &symbol_table {
+        if sym.name.len() <= 8 {
+            put_bytes_fixed::<8>(&mut out, &sym.name);
+        } else {
+            let offset = string_table.insert(&sym.name);
+            put_u32(&mut out, 0);
+            put_u32(&mut out, offset);
+        }
+        put_u32(&mut out, sym.value);
+        put_u16(&mut out, sym.section as u16);
+        put_u16(&mut out, sym.typ);
+        out.push(sym.storage_class);
+        out.push(0);
+    }
+
+    out.extend_from_slice(&string_table.finish());
 
     fs::write(path, out).map_err(|e| Error::from(e.to_string()))?;
     Ok(())
@@ -241,13 +498,14 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     }
 
     let externs = collect_external_symbols(plan);
-    if !externs.is_empty() && !matches!(arch, TargetArch::X86_64) {
-        return Err(Error::from(
-            "external calls are not supported for AArch64 PE yet",
-        ));
-    }
-
-    let stub_size = if externs.is_empty() { 0 } else { 6 };
+    let stub_size = if externs.is_empty() {
+        0
+    } else {
+        match arch {
+            TargetArch::X86_64 => 6,
+            TargetArch::Aarch64 => 12,
+        }
+    };
     let mut text = plan.text.clone();
     if stub_size > 0 {
         text.resize(text.len() + stub_size * externs.len(), 0);
@@ -283,7 +541,7 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     let rdata_len = import_start + import_len;
     let has_rdata = rdata_len > 0;
 
-    let reloc_data = build_base_relocs(text_rva, &plan.relocs);
+    let reloc_data = build_base_relocs(text_rva, &plan.relocs, &[]);
     let reloc_len = reloc_data.len() as u32;
     let has_reloc = reloc_len > 0;
 
@@ -347,19 +605,19 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     let entry_rva = text_rva
         + u32::try_from(plan.entry_offset).map_err(|_| Error::from("entry offset out of range"))?;
 
-    let (import_table_rva, import_table_size, iat_rva) =
+    let (import_table_rva, import_table_size, iat_rvas) =
         if let Some(layout) = import_layout.as_mut() {
             let base_rva = rdata_rva + import_start;
-            patch_import_layout(layout, base_rva);
-            (base_rva + layout.desc_offset, layout.desc_size, base_rva + layout.iat_offset)
+            let iat_rvas = patch_import_layout(layout, base_rva);
+            (base_rva + layout.desc_offset, layout.desc_size, iat_rvas)
         } else {
-            (0, 0, 0)
+            (0, 0, HashMap::new())
         };
 
     if stub_size > 0 {
         let mut extern_index = HashMap::new();
         for (idx, sym) in externs.iter().enumerate() {
-            extern_index.insert(sym.name.clone(), idx);
+            extern_index.insert(sym.symbol.clone(), idx);
         }
         for reloc in &plan.relocs {
             if reloc.kind != RelocKind::CallRel32 {
@@ -370,20 +628,56 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 .ok_or_else(|| Error::from("missing external symbol"))?;
             let stub_rva = text_rva + plan.text.len() as u32 + (idx as u32 * stub_size as u32);
             let call_site = text_rva + reloc.offset as u32;
-            let rel = stub_rva as i64 - (call_site as i64 + 4);
-            let rel32 = i32::try_from(rel).map_err(|_| Error::from("call target out of range"))?;
             let offset = reloc.offset as usize;
-            text[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
+            match arch {
+                TargetArch::X86_64 => {
+                    let rel = stub_rva as i64 - (call_site as i64 + 4);
+                    let rel32 =
+                        i32::try_from(rel).map_err(|_| Error::from("call target out of range"))?;
+                    text[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
+                }
+                TargetArch::Aarch64 => {
+                    let delta = stub_rva as i64 - call_site as i64;
+                    let imm = delta / 4;
+                    if imm < -(1 << 25) || imm > (1 << 25) - 1 {
+                        return Err(Error::from("call target out of range"));
+                    }
+                    let encoded = 0x9400_0000u32 | ((imm as u32) & 0x03FF_FFFF);
+                    text[offset..offset + 4].copy_from_slice(&encoded.to_le_bytes());
+                }
+            }
         }
 
         for idx in 0..externs.len() {
             let stub_offset = plan.text.len() + idx * stub_size;
             let stub_rva = text_rva + stub_offset as u32;
-            let iat_entry_rva = iat_rva + (idx as u32 * 8);
-            let disp = iat_entry_rva as i64 - (stub_rva as i64 + 6);
-            let disp32 = i32::try_from(disp).map_err(|_| Error::from("IAT out of range"))?;
-            text[stub_offset..stub_offset + 6]
-                .copy_from_slice(&[0xFF, 0x25, disp32.to_le_bytes()[0], disp32.to_le_bytes()[1], disp32.to_le_bytes()[2], disp32.to_le_bytes()[3]]);
+            let iat_entry_rva = *iat_rvas
+                .get(&externs[idx].symbol)
+                .ok_or_else(|| Error::from("missing IAT entry for external symbol"))?;
+            match arch {
+                TargetArch::X86_64 => {
+                    let disp = iat_entry_rva as i64 - (stub_rva as i64 + 6);
+                    let disp32 =
+                        i32::try_from(disp).map_err(|_| Error::from("IAT out of range"))?;
+                    text[stub_offset..stub_offset + 6].copy_from_slice(&[
+                        0xFF,
+                        0x25,
+                        disp32.to_le_bytes()[0],
+                        disp32.to_le_bytes()[1],
+                        disp32.to_le_bytes()[2],
+                        disp32.to_le_bytes()[3],
+                    ]);
+                }
+                TargetArch::Aarch64 => {
+                    let start = stub_offset as usize;
+                    let end = start + 12;
+                    emit_arm64_stub(
+                        &mut text[start..end],
+                        image_base + stub_rva as u64,
+                        image_base + iat_entry_rva as u64,
+                    )?;
+                }
+            }
         }
     }
 
@@ -554,7 +848,40 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
                 }
             }
             crate::emit::RelocKind::Aarch64AdrpAdd => {
-                return Err(Error::from("unexpected AArch64 relocation in PE executable"));
+                if !matches!(arch, TargetArch::Aarch64) {
+                    return Err(Error::from("AArch64 relocation on non-AArch64 target"));
+                }
+                let target = resolve_symbol(&reloc.symbol, reloc.addend)?;
+                let adrp_addr = text_addr + reloc.offset;
+                let pc_page = adrp_addr & !0xfff;
+                let target_page = target & !0xfff;
+                let delta_pages = (target_page as i64 - pc_page as i64) >> 12;
+                if delta_pages < -(1 << 20) || delta_pages > (1 << 20) - 1 {
+                    return Err(Error::from("adrp target out of range"));
+                }
+                let imm = delta_pages as u32;
+                let immlo = imm & 0x3;
+                let immhi = (imm >> 2) & 0x7ffff;
+                let adrp_offset = text_raw_offset as usize + reloc.offset as usize;
+                let mut adrp = u32::from_le_bytes(
+                    out[adrp_offset..adrp_offset + 4]
+                        .try_into()
+                        .map_err(|_| Error::from("adrp relocation out of range"))?,
+                );
+                adrp &= !((0x3 << 29) | (0x7ffff << 5));
+                adrp |= (immlo << 29) | (immhi << 5);
+                out[adrp_offset..adrp_offset + 4].copy_from_slice(&adrp.to_le_bytes());
+
+                let add_offset = adrp_offset + 4;
+                let imm12 = (target & 0xfff) as u32;
+                let mut add = u32::from_le_bytes(
+                    out[add_offset..add_offset + 4]
+                        .try_into()
+                        .map_err(|_| Error::from("add relocation out of range"))?,
+                );
+                add &= !(0xfff << 10);
+                add |= imm12 << 10;
+                out[add_offset..add_offset + 4].copy_from_slice(&add.to_le_bytes());
             }
         }
     }
