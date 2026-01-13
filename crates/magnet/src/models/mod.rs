@@ -1,4 +1,4 @@
-use eyre::{Result, bail, ensure};
+use eyre::{Result, bail};
 use std::path::{Path, PathBuf};
 
 #[path = "crate.rs"]
@@ -46,14 +46,6 @@ impl ManifestModel {
             );
         };
         let config = ManifestConfig::from_file(&config_path)?;
-        let section_count = (config.nexus.is_some() as u8)
-            + (config.workspace.is_some() as u8)
-            + (config.package.is_some() as u8);
-        ensure!(
-            section_count == 1,
-            "Only one section of [nexus], [workspace], [package] is allowed in the manifest file"
-        );
-
         if let Some(_nexus) = config.nexus {
             NexusModel::from_dir(&root_path).map(ManifestModel::Nexus)
         } else if let Some(_workspace) = config.workspace {
@@ -107,5 +99,33 @@ impl ManifestModel {
             ManifestModel::Workspace(workspace) => &workspace.patch,
             ManifestModel::Package(package) => &package.patch,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn cargo_root_with_workspace_and_package_is_workspace() -> Result<()> {
+        let temp = tempdir()?;
+        let root = temp.path();
+        fs::write(
+            root.join("Cargo.toml"),
+            r#"[package]
+name = "root-demo"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["crates/*"]
+"#,
+        )?;
+
+        let manifest = ManifestModel::from_dir(root)?;
+        assert!(matches!(manifest, ManifestModel::Workspace(_)));
+        Ok(())
     }
 }

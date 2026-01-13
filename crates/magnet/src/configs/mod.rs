@@ -155,14 +155,15 @@ impl ManifestConfig {
     /// Get the configuration type based on which sections are defined
     pub fn config_type(&self) -> MagnetConfigType {
         if self.nexus.is_some() {
-            MagnetConfigType::Nexus
-        } else if self.workspace.is_some() {
-            MagnetConfigType::Workspace
-        } else if self.package.is_some() {
-            MagnetConfigType::Package
-        } else {
-            panic!("Magnet config type is undefined: {:?}", self.source_path)
+            return MagnetConfigType::Nexus;
         }
+        if self.workspace.is_some() {
+            return MagnetConfigType::Workspace;
+        }
+        if self.package.is_some() {
+            return MagnetConfigType::Package;
+        }
+        panic!("Magnet config type is undefined: {:?}", self.source_path)
     }
 
     /// Create a new empty configuration
