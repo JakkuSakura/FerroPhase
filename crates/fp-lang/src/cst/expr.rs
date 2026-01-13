@@ -152,7 +152,9 @@ impl Parser {
         self.bump_trivia_into(&mut children);
 
         if self.has_remaining_non_trivia() {
-            return Err(self.error("unsupported trailing tokens in CST-first expr"));
+            while self.idx < self.tokens.len() {
+                self.bump_token_into(&mut children);
+            }
         }
 
         Ok(SyntaxNode::new(

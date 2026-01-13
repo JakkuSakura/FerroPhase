@@ -107,12 +107,14 @@ fn lower_emit(tokens: Vec<Token>) -> Result<Vec<Token>> {
             // This is convenient but yields coarse diagnostics. Possible follow-ups:
             // - pick better spans per synthesized token (e.g. around `!` / `{`)
             // - or add a synthetic/derived marker to Token for diagnostics.
-            let anchor = tokens[i].span;
-            out.push(synth("splice", anchor)?);
-            out.push(synth("(", anchor)?);
-            out.push(synth("quote", anchor)?);
+            let emit_span = tokens[i].span;
+            let bang_span = tokens[i + 1].span;
+            let group_span = tokens[i + 2].span;
+            out.push(synth("splice", emit_span)?);
+            out.push(synth("(", bang_span)?);
+            out.push(synth("quote", group_span)?);
             out.extend(group_tokens.into_iter().cloned());
-            out.push(synth(")", anchor)?);
+            out.push(synth(")", group_span)?);
 
             i = group_end + 1;
             continue;

@@ -1929,8 +1929,23 @@ impl LirGenerator {
             mir::PlaceElem::Index(index_local) => {
                 self.apply_index_projection(&base_place, base_access, index_local)
             }
-            mir::PlaceElem::ConstantIndex { .. }
-            | mir::PlaceElem::Subslice { .. }
+            mir::PlaceElem::ConstantIndex {
+                offset,
+                from_end,
+                ..
+            } => {
+                if from_end {
+                    return Err(crate::error::optimization_error(
+                        "MIR→LIR: from_end constant index is not yet supported",
+                    ));
+                }
+                let index_value = lir::LirValue::Constant(lir::LirConstant::Int(
+                    offset as i64,
+                    lir::LirType::I64,
+                ));
+                self.apply_index_projection_value(&base_place, base_access, index_value)
+            }
+            mir::PlaceElem::Subslice { .. }
             | mir::PlaceElem::Downcast(_, _) => Err(crate::error::optimization_error(
                 "MIR→LIR: unsupported place projection for lowering",
             )),
@@ -2131,6 +2146,32 @@ impl LirGenerator {
         access: PlaceAccess,
         index_local: mir::LocalId,
     ) -> Result<PlaceAccess> {
+        let index_place = mir::Place::from_local(index_local);
+        let index_operand = mir::Operand::Copy(index_place);
+        let mut index_value = self.transform_operand(&index_operand)?;
+        let index_lir_ty = self
+            .type_of_operand(&index_operand)
+            .unwrap_or(lir::LirType::I64);
+        if index_lir_ty != lir::LirType::I64 {
+            let cast_id = self.next_id();
+            self.queued_instructions.push(lir::LirInstruction {
+                id: cast_id,
+                kind: lir::LirInstructionKind::SextOrTrunc(index_value.clone(), lir::LirType::I64),
+                type_hint: Some(lir::LirType::I64),
+                debug_info: None,
+            });
+            index_value = lir::LirValue::Register(cast_id);
+        }
+
+        self.apply_index_projection_value(base_place, access, index_value)
+    }
+
+    fn apply_index_projection_value(
+        &mut self,
+        base_place: &mir::Place,
+        access: PlaceAccess,
+        index_value: lir::LirValue,
+    ) -> Result<PlaceAccess> {
         let base_ty = self.lookup_place_type(base_place).ok_or_else(|| {
             crate::error::optimization_error("MIR→LIR: missing type for index projection")
         })?;
@@ -2225,23 +2266,6 @@ impl LirGenerator {
                 }
             },
         };
-
-        let index_place = mir::Place::from_local(index_local);
-        let index_operand = mir::Operand::Copy(index_place);
-        let mut index_value = self.transform_operand(&index_operand)?;
-        let index_lir_ty = self
-            .type_of_operand(&index_operand)
-            .unwrap_or(lir::LirType::I64);
-        if index_lir_ty != lir::LirType::I64 {
-            let cast_id = self.next_id();
-            self.queued_instructions.push(lir::LirInstruction {
-                id: cast_id,
-                kind: lir::LirInstructionKind::SextOrTrunc(index_value.clone(), lir::LirType::I64),
-                type_hint: Some(lir::LirType::I64),
-                debug_info: None,
-            });
-            index_value = lir::LirValue::Register(cast_id);
-        }
 
         let element_size = Self::size_of_lir_type(&element_lir_ty);
         let offset_value = if element_size == 1 {

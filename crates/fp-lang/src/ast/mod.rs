@@ -55,10 +55,15 @@ impl FerroPhaseParser {
             self.record_error(format!("failed to lex expression: {err}"));
             eyre::eyre!(err)
         })?;
-        let cst = crate::cst::parse_expr_lexemes_to_cst(&lexemes, 0).map_err(|err| {
-            self.record_error(format!("failed to parse expression CST: {err}"));
-            eyre::eyre!(err)
-        })?;
+        let (cst, idx) =
+            crate::cst::parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
+                self.record_error(format!("failed to parse expression CST: {err}"));
+                eyre::eyre!(err)
+            })?;
+        if lexemes[idx..].iter().any(|lexeme| !lexeme.is_trivia()) {
+            self.record_error("trailing tokens after expression");
+            return Err(eyre::eyre!("trailing tokens after expression"));
+        }
         crate::ast::lower_expr_from_cst(&cst).map_err(|err| {
             self.record_error(format!("failed to lower expression CST: {err}"));
             eyre::eyre!(err)

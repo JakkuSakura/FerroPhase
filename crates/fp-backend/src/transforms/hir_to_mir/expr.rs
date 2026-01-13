@@ -8891,9 +8891,8 @@ impl<'a> BodyBuilder<'a> {
             TyKind::Never => Some(0),
             TyKind::Error(_) => None,
             TyKind::Slice(_) => {
-                self.lowering
-                    .emit_error(span, "size_of for slice types is not yet supported");
-                None
+                // Slices are fat pointers (data + length).
+                Some(16)
             }
             TyKind::Adt(_, _)
             | TyKind::Dynamic(_, _)

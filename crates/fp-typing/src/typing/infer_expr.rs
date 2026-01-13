@@ -625,7 +625,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.ensure_numeric(value_var, "unary negation")?;
                 Ok(value_var)
             }
-            UnOpKind::Deref | UnOpKind::Any(_) => {
+            UnOpKind::Deref => self.expect_reference(value_var, "dereference expression"),
+            UnOpKind::Any(_) => {
                 let message = "unsupported unary operator in type inference".to_string();
                 self.emit_error(message.clone());
                 Err(typing_error(message))
