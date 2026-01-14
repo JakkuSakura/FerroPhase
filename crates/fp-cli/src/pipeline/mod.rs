@@ -25,7 +25,7 @@ use fp_interpret::engine::{
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_pipeline::{
-    PipelineBuilder, PipelineConfig, PipelineDiagnostics, PipelineError, PipelineOptions,
+    PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineOptions,
     PipelineStage, PipelineTarget,
 };
 use fp_typescript::frontend::TsParseMode;
@@ -179,15 +179,6 @@ impl Pipeline {
         self.last_const_eval
             .as_mut()
             .map(|outcome| std::mem::take(&mut outcome.stdout))
-    }
-
-    pub async fn execute(
-        &mut self,
-        input: PipelineInput,
-        config: &PipelineConfig,
-    ) -> Result<PipelineOutput, CliError> {
-        let options: PipelineOptions = config.into();
-        self.execute_with_options(input, options).await
     }
 
     pub fn parse_source_public(
@@ -617,7 +608,7 @@ impl Pipeline {
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
 
                     let backend = options
-                        .codegen_backend
+                        .backend
                         .as_deref()
                         .unwrap_or("native")
                         .to_lowercase();

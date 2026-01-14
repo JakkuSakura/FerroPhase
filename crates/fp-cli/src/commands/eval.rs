@@ -5,7 +5,9 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
-use fp_pipeline::{PipelineConfig, PipelineOptions};
+use fp_pipeline::{
+    DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
+};
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
 use clap::{ArgAction, Args};
@@ -64,26 +66,14 @@ pub async fn eval_command(mut args: EvalArgs, _config: &CliConfig) -> Result<()>
 
 async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -> Result<()> {
     info!("Evaluating {}", description);
-
-    let config = PipelineConfig {
-        optimization_level: 0,
-        print_ast: args.print_ast,
-        print_passes: args.print_passes,
-        target: "eval".to_string(),
-        runtime: args
-            .runtime
-            .clone()
-            .unwrap_or_else(|| "literal".to_string()),
-    };
-
+    let mut options = eval_pipeline_options(args);
     let mut pipeline = Pipeline::new();
     let output = match input {
         PipelineInput::Expression(_) => {
-            let mut options: PipelineOptions = (&config).into();
             options.disabled_stages.push("const-eval".to_string());
             pipeline.execute_with_options(input, options).await?
         }
-        _ => pipeline.execute(input, &config).await?,
+        _ => pipeline.execute_with_options(input, options).await?,
     };
     print_eval_output(&output, args, None)?;
 
@@ -91,23 +81,14 @@ async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -
 }
 
 async fn eval_files(args: &EvalArgs) -> Result<()> {
-    let config = PipelineConfig {
-        optimization_level: 0,
-        print_ast: args.print_ast,
-        print_passes: args.print_passes,
-        target: "eval".to_string(),
-        runtime: args
-            .runtime
-            .clone()
-            .unwrap_or_else(|| "literal".to_string()),
-    };
+    let options = eval_pipeline_options(args);
 
     for file in &args.file {
         let description = format!("file '{}'", file.display());
         info!("Evaluating {}", description);
         let mut pipeline = Pipeline::new();
         let output = pipeline
-            .execute(PipelineInput::File(file.clone()), &config)
+            .execute_with_options(PipelineInput::File(file.clone()), options.clone())
             .await?;
         let label = if args.file.len() > 1 {
             Some(file.as_path())
@@ -118,6 +99,39 @@ async fn eval_files(args: &EvalArgs) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
+    PipelineOptions {
+        target: PipelineTarget::Interpret,
+        backend: None,
+        target_triple: None,
+        target_cpu: None,
+        target_features: None,
+        target_sysroot: None,
+        linker: None,
+        target_linker: None,
+        runtime: RuntimeConfig {
+            runtime_type: args
+                .runtime
+                .clone()
+                .unwrap_or_else(|| "literal".to_string()),
+            options: std::collections::HashMap::new(),
+        },
+        source_language: None,
+        optimization_level: 0,
+        save_intermediates: true,
+        base_path: None,
+        debug: DebugOptions {
+            print_ast: args.print_ast,
+            print_passes: args.print_passes,
+            verbose: false,
+        },
+        error_tolerance: ErrorToleranceOptions::default(),
+        release: false,
+        execute_main: false,
+        disabled_stages: Vec::new(),
+    }
 }
 
 fn print_eval_output(

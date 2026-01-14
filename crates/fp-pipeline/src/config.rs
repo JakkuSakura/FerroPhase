@@ -7,7 +7,7 @@ pub struct PipelineOptions {
     /// Compilation target
     pub target: PipelineTarget,
     /// Code generation backend to use when producing native artifacts (e.g. "llvm", "native").
-    pub codegen_backend: Option<String>,
+    pub backend: Option<String>,
     /// Target triple for codegen (defaults to host when unset)
     pub target_triple: Option<String>,
     /// Target CPU for codegen (optional)
@@ -107,7 +107,7 @@ impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
             target: PipelineTarget::Interpret,
-            codegen_backend: None,
+            backend: None,
             target_triple: None,
             target_cpu: None,
             target_features: None,
@@ -125,57 +125,6 @@ impl Default for PipelineOptions {
             debug: DebugOptions {
                 print_ast: false,
                 print_passes: false,
-                verbose: false,
-            },
-            error_tolerance: ErrorToleranceOptions::default(),
-            release: false,
-            execute_main: false,
-            disabled_stages: Vec::new(),
-        }
-    }
-}
-
-/// Legacy pipeline configuration
-#[derive(Debug)]
-pub struct PipelineConfig {
-    pub optimization_level: u8,
-    pub print_ast: bool,
-    pub print_passes: bool,
-    pub target: String,
-    pub runtime: String,
-}
-
-impl From<&PipelineConfig> for PipelineOptions {
-    fn from(config: &PipelineConfig) -> Self {
-        let target = match config.target.as_str() {
-            "rust" => PipelineTarget::Rust,
-            "llvm" => PipelineTarget::Llvm,
-            "binary" => PipelineTarget::Binary,
-            "bytecode" => PipelineTarget::Bytecode,
-            "wasm" => PipelineTarget::Wasm,
-            _ => PipelineTarget::Interpret,
-        };
-
-        Self {
-            target,
-            codegen_backend: None,
-            target_triple: None,
-            target_cpu: None,
-            target_features: None,
-            target_sysroot: None,
-            linker: None,
-            target_linker: None,
-            runtime: RuntimeConfig {
-                runtime_type: config.runtime.clone(),
-                options: HashMap::new(),
-            },
-            source_language: None,
-            optimization_level: config.optimization_level,
-            save_intermediates: true, // Default for legacy compatibility
-            base_path: None,
-            debug: DebugOptions {
-                print_ast: config.print_ast,
-                print_passes: config.print_passes,
                 verbose: false,
             },
             error_tolerance: ErrorToleranceOptions::default(),
