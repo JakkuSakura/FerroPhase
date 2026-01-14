@@ -26,6 +26,83 @@ hir::Program {
         __env.test.run()
     }
 
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: [BenchCase; 0] =
+        [];
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 5;
+                    let measure_secs = 15;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf(arg0 = "  %s ... FAILED\n", arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf(arg0 = "bench result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
     pub struct std::collections::HashMapEntry<K, V> {
         pub key: K,
         pub value: V,
@@ -70,83 +147,6 @@ hir::Program {
         }
     }
 
-    pub struct std::bench::BenchCase {
-        pub name: str,
-        pub run: fn() -> (),
-    }
-
-    pub const std::bench::REGISTRY: [BenchCase; 0] =
-        [];
-
-    pub struct std::bench::BenchReport {
-        pub total: i64,
-        pub passed: i64,
-        pub failed: i64,
-    }
-
-    pub fn std::bench::run_benches() -> BenchReport {
-        {
-            let benches = REGISTRY;
-            let mut passed = 0;
-            let mut failed = 0;
-            let mut idx = 0;
-            while ((idx < benches.len()))
-                {
-                    let bench = benches[idx];
-                    let mut ok = true;
-                    let warmup_secs = 0.2;
-                    let measure_secs = 0.5;
-                    let warmup_start = std::time_now();
-                    let warmup_deadline = (warmup_start + warmup_secs);
-                    let mut warmup_iters = 0;
-                    while ((std::time_now() < warmup_deadline))
-                        {
-                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
-                            if ((!warm_ok))
-                                {
-                                    ok = false;
-                                    break;
-                                }
-                            warmup_iters = (warmup_iters + 1);
-                        }
-                    let measure_start = std::time_now();
-                    let measure_deadline = (measure_start + measure_secs);
-                    let mut measure_iters = 0;
-                    if (ok)
-                        {
-                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
-                                {
-                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
-                                    if ((!run_ok))
-                                        {
-                                            ok = false;
-                                            break;
-                                        }
-                                    measure_iters = (measure_iters + 1);
-                                }
-                        }
-                    let measure_end = std::time_now();
-                    let elapsed = (measure_end - measure_start);
-                    if (ok)
-                        {
-                            passed = (passed + 1);
-                            let iters_f = (measure_iters as f64);
-                            let ns_per_iter = <control-flow>;
-                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
-                        }
-                    else
-                        {
-                            failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
-                        }
-                    idx = (idx + 1);
-                }
-            let total = (passed + failed);
-            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
-            BenchReport { total: total, passed: passed, failed: failed }
-        }
-    }
-
     pub struct std::test::TestCase {
         pub name: str,
         pub run: fn() -> (),
@@ -174,17 +174,17 @@ hir::Program {
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                            printf(arg0 = "  %s ... ok\n", arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                            printf(arg0 = "  %s ... FAILED\n", arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "test result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -212,18 +212,18 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::println(arg0 = format_string("📘 Tutorial: 18_comptime_collections.fp"));
-            std::println(arg0 = format_string("🧭 Focus: Showcase compile-time Vec and HashMap construction."));
-            std::println(arg0 = format_string("🧪 What to look for: labeled outputs below"));
-            std::println(arg0 = format_string("✅ Expectation: outputs match labels"));
-            std::println(arg0 = format_string(""));
-            std::println(arg0 = format_string("=== Compile-time Collections ==="));
-            std::println(arg0 = format_string("Vec literals:"));
+            printf(arg0 = "📘 Tutorial: 18_comptime_collections.fp\n");
+            printf(arg0 = "🧭 Focus: Showcase compile-time Vec and HashMap construction.\n");
+            printf(arg0 = "🧪 What to look for: labeled outputs below\n");
+            printf(arg0 = "✅ Expectation: outputs match labels\n");
+            printf(arg0 = "\n");
+            printf(arg0 = "=== Compile-time Collections ===\n");
+            printf(arg0 = "Vec literals:\n");
             std::println(arg0 = format_string("  primes: {} elements -> {}"), arg1 = PRIMES.len(), arg2 = PRIMES);
-            std::println(arg0 = format_string("  zero buffer: {} elements"), arg1 = ZERO_BUFFER.len());
-            std::println(arg0 = format_string("  first four zeros: [{}, {}, {}, {}]"), arg1 = ZERO_BUFFER[0], arg2 = ZERO_BUFFER[1], arg3 = ZERO_BUFFER[2], arg4 = ZERO_BUFFER[3]);
-            std::println(arg0 = format_string("\nHashMap literal via HashMap::from:"));
-            std::println(arg0 = format_string("  tracked HTTP statuses: {} entries"), arg1 = HTTP_STATUSES.len());
+            printf(arg0 = "  zero buffer: %lld elements\n", arg1 = ZERO_BUFFER.len());
+            printf(arg0 = "  first four zeros: [%lld, %lld, %lld, %lld]\n", arg1 = ZERO_BUFFER[0], arg2 = ZERO_BUFFER[1], arg3 = ZERO_BUFFER[2], arg4 = ZERO_BUFFER[3]);
+            printf(arg0 = "\nHashMap literal via HashMap::from:\n");
+            printf(arg0 = "  tracked HTTP statuses: %lld entries\n", arg1 = HTTP_STATUSES.len());
             std::println(arg0 = format_string("  ok => {}"), arg1 = HTTP_STATUSES.get_unchecked(arg0 = "ok"));
             std::println(arg0 = format_string("  not_found => {}"), arg1 = HTTP_STATUSES.get_unchecked(arg0 = "not_found"));
         }

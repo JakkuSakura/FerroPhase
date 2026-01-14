@@ -1,103 +1,6 @@
 ast::File {
   items:
     pub module std : () {
-      pub module collections : () {
-        pub struct HashMapEntry : HashMapEntry{key: Expr(K), value: Expr(V)} {
-          key: Expr(K)
-          value: Expr(V)
-        }
-        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>} {
-          entries: Vec<Expr(HashMapEntry<K
-, V
->)>
-        }
-        impl HashMap<K
-, V
-> : () {
-          pub fn from(entries: Vec<Expr(HashMapEntry<K
-, V
->)>) -> Expr(HashMap<K
-, V
->) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>}
-            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>}
-              expr_stmt (value)
-                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>}
-                  entries:
-                    locator entries : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
-          pub fn len(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
-            block (1 stmt) : i64
-              expr_stmt (value)
-                invoke : i64
-                  target: self.entries.len
-          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any : fn(any) -> any
-            block (3 stmts) : !
-              let mut idx
-                init:
-                  value 0 : i64
-              expr_stmt (value)
-                while : ()
-                  cond:
-                    binop < : bool
-                      lhs:
-                        locator idx : i64
-                      rhs:
-                        invoke : i64
-                          target: self.entries.len
-                  body:
-                    block (3 stmts) : ()
-                      let entry
-                        init:
-                          index : HashMapEntry{key: Expr(K), value: Expr(V)}
-                            value:
-                              select .entries [unknown] : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
-                                object:
-                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>}
-                            index:
-                              locator idx : i64
-                      expr_stmt (value)
-                        if : ()
-                          cond:
-                            binop == : bool
-                              lhs:
-                                select .key [unknown] : any
-                                  object:
-                                    locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
-                              rhs:
-                                locator key : any
-                          then:
-                            block (1 stmt) : ()
-                              expr_stmt ;
-                                return : !
-                                  select .value [unknown] : any
-                                    object:
-                                      locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
-                      expr_stmt ;
-                        assign : i64
-                          target:
-                            locator idx : i64
-                          value:
-                            binop + : i64
-                              lhs:
-                                locator idx : i64
-                              rhs:
-                                value 1 : i64
-              expr_stmt (value)
-                loop : !
-                  block (0 stmts) : ()
-        }
-      }
       pub module bench : () {
         pub struct BenchCase : BenchCase{name: Expr(str), run: fn() -> ()} {
           name: Expr(str)
@@ -147,10 +50,10 @@ ast::File {
                         value true : bool
                     let warmup_secs
                       init:
-                        value 0.2 : f64
+                        value 5 : f64
                     let measure_secs
                       init:
-                        value 0.5 : f64
+                        value 15 : f64
                     let warmup_start
                       init:
                         intrinsic time_now : any
@@ -409,6 +312,103 @@ ast::File {
                 failed:
                   locator failed : i64
       }
+      pub module collections : () {
+        pub struct HashMapEntry : HashMapEntry{key: Expr(K), value: Expr(V)} {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>} {
+          entries: Vec<Expr(HashMapEntry<K
+, V
+>)>
+        }
+        impl HashMap<K
+, V
+> : () {
+          pub fn from(entries: Vec<Expr(HashMapEntry<K
+, V
+>)>) -> Expr(HashMap<K
+, V
+>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+              expr_stmt (value)
+                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+                  entries:
+                    locator entries : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
+          pub fn len(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
+            block (1 stmt) : i64
+              expr_stmt (value)
+                invoke : i64
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any : fn(any) -> any
+            block (3 stmts) : !
+              let mut idx
+                init:
+                  value 0 : i64
+              expr_stmt (value)
+                while : ()
+                  cond:
+                    binop < : bool
+                      lhs:
+                        locator idx : i64
+                      rhs:
+                        invoke : i64
+                          target: self.entries.len
+                  body:
+                    block (3 stmts) : ()
+                      let entry
+                        init:
+                          index : HashMapEntry{key: Expr(K), value: Expr(V)}
+                            value:
+                              select .entries [unknown] : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
+                                object:
+                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<K
+, V
+>)>}
+                            index:
+                              locator idx : i64
+                      expr_stmt (value)
+                        if : ()
+                          cond:
+                            binop == : bool
+                              lhs:
+                                select .key [unknown] : any
+                                  object:
+                                    locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                              rhs:
+                                locator key : any
+                          then:
+                            block (1 stmt) : ()
+                              expr_stmt ;
+                                return : !
+                                  select .value [unknown] : any
+                                    object:
+                                      locator entry : HashMapEntry{key: Expr(K), value: Expr(V)}
+                      expr_stmt ;
+                        assign : i64
+                          target:
+                            locator idx : i64
+                          value:
+                            binop + : i64
+                              lhs:
+                                locator idx : i64
+                              rhs:
+                                value 1 : i64
+              expr_stmt (value)
+                loop : !
+                  block (0 stmts) : ()
+        }
+      }
       pub module test : () {
         pub struct TestCase : TestCase{name: Expr(str), run: fn() -> ()} {
           name: Expr(str)
@@ -545,7 +545,7 @@ ast::File {
                 target: run_tests
       }
       pub module time : () {
-        pub fn now() -> Expr(f64) : fn() -> f64 : fn() -> f64
+        pub [attrs] fn now() -> Expr(f64) : fn() -> f64 : fn() -> f64
           block (1 stmt) : any
             expr_stmt (value)
               intrinsic time_now : any
@@ -574,6 +574,31 @@ ast::File {
                   locator a : i64
                 rhs:
                   locator b : i64
+      }
+    }
+    pub module modules : () {
+      pub module helpers : () {
+        pub module math : () {
+          pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
+            block (1 stmt) : i64
+              expr_stmt (value)
+                binop + : i64
+                  lhs:
+                    locator a : i64
+                  rhs:
+                    locator b : i64
+        }
+        pub const SOURCE: &string : &string
+          value "file module" : &string
+        pub fn greet_from_file(name: &Expr(str)) -> () : fn(&string) -> () : fn(&string) -> ()
+          block (1 stmt) : ()
+            expr_stmt ;
+              intrinsic println : ()
+                args:
+                  format_string "[{}] Hello, {}!" : string
+                  locator SOURCE : &string
+                  locator name : &string
+                kwargs: []
       }
     }
     pub import helpers : ()
@@ -658,29 +683,4 @@ ast::File {
               format_string "file_math.add(10, 32) = {}" : string
               locator file_sum : i64
             kwargs: []
-    pub module modules : () {
-      pub module helpers : () {
-        pub const SOURCE: &string : &string
-          value "file module" : &string
-        pub fn greet_from_file(name: &Expr(str)) -> () : fn(&string) -> () : fn(&string) -> ()
-          block (1 stmt) : ()
-            expr_stmt ;
-              intrinsic println : ()
-                args:
-                  format_string "[{}] Hello, {}!" : string
-                  locator SOURCE : &string
-                  locator name : &string
-                kwargs: []
-        pub module math : () {
-          pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64 : fn(i64, i64) -> i64
-            block (1 stmt) : i64
-              expr_stmt (value)
-                binop + : i64
-                  lhs:
-                    locator a : i64
-                  rhs:
-                    locator b : i64
-        }
-      }
-    }
 }

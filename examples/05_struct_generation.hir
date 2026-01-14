@@ -26,6 +26,83 @@ hir::Program {
         __env.test.run()
     }
 
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: [BenchCase; 0] =
+        [];
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 5;
+                    let measure_secs = 15;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf(arg0 = "  %s ... FAILED\n", arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf(arg0 = "bench result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
     pub struct std::collections::HashMapEntry<K, V> {
         pub key: K,
         pub value: V,
@@ -70,83 +147,6 @@ hir::Program {
         }
     }
 
-    pub struct std::bench::BenchCase {
-        pub name: str,
-        pub run: fn() -> (),
-    }
-
-    pub const std::bench::REGISTRY: [BenchCase; 0] =
-        [];
-
-    pub struct std::bench::BenchReport {
-        pub total: i64,
-        pub passed: i64,
-        pub failed: i64,
-    }
-
-    pub fn std::bench::run_benches() -> BenchReport {
-        {
-            let benches = REGISTRY;
-            let mut passed = 0;
-            let mut failed = 0;
-            let mut idx = 0;
-            while ((idx < benches.len()))
-                {
-                    let bench = benches[idx];
-                    let mut ok = true;
-                    let warmup_secs = 0.2;
-                    let measure_secs = 0.5;
-                    let warmup_start = std::time_now();
-                    let warmup_deadline = (warmup_start + warmup_secs);
-                    let mut warmup_iters = 0;
-                    while ((std::time_now() < warmup_deadline))
-                        {
-                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
-                            if ((!warm_ok))
-                                {
-                                    ok = false;
-                                    break;
-                                }
-                            warmup_iters = (warmup_iters + 1);
-                        }
-                    let measure_start = std::time_now();
-                    let measure_deadline = (measure_start + measure_secs);
-                    let mut measure_iters = 0;
-                    if (ok)
-                        {
-                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
-                                {
-                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
-                                    if ((!run_ok))
-                                        {
-                                            ok = false;
-                                            break;
-                                        }
-                                    measure_iters = (measure_iters + 1);
-                                }
-                        }
-                    let measure_end = std::time_now();
-                    let elapsed = (measure_end - measure_start);
-                    if (ok)
-                        {
-                            passed = (passed + 1);
-                            let iters_f = (measure_iters as f64);
-                            let ns_per_iter = <control-flow>;
-                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
-                        }
-                    else
-                        {
-                            failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
-                        }
-                    idx = (idx + 1);
-                }
-            let total = (passed + failed);
-            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
-            BenchReport { total: total, passed: passed, failed: failed }
-        }
-    }
-
     pub struct std::test::TestCase {
         pub name: str,
         pub run: fn() -> (),
@@ -174,17 +174,17 @@ hir::Program {
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                            printf(arg0 = "  %s ... ok\n", arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                            printf(arg0 = "  %s ... FAILED\n", arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "test result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -203,11 +203,11 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::println(arg0 = format_string("📘 Tutorial: 05_struct_generation.fp"));
-            std::println(arg0 = format_string("🧭 Focus: Struct generation with compile-time conditionals"));
-            std::println(arg0 = format_string("🧪 What to look for: labeled outputs below"));
-            std::println(arg0 = format_string("✅ Expectation: outputs match labels"));
-            std::println(arg0 = format_string(""));
+            printf(arg0 = "📘 Tutorial: 05_struct_generation.fp\n");
+            printf(arg0 = "🧭 Focus: Struct generation with compile-time conditionals\n");
+            printf(arg0 = "🧪 What to look for: labeled outputs below\n");
+            printf(arg0 = "✅ Expectation: outputs match labels\n");
+            printf(arg0 = "\n");
             pub const FLAG_A: bool =
                 true;
             pub const FLAG_B: bool =
@@ -227,16 +227,16 @@ hir::Program {
                 pub mode: &str,
             }
             let base = Base { id: 1, name: "core" };
-            std::println(arg0 = format_string("base: id={} name={}"), arg1 = base.id, arg2 = base.name);
+            printf(arg0 = "base: id=%lld name=%s\n", arg1 = base.id, arg2 = base.name);
             let config = Config { id: 2, name: "primary", mode: "strict" };
-            std::println(arg0 = format_string("config: id={} name={} mode={}"), arg1 = config.id, arg2 = config.name, arg3 = config.mode);
+            printf(arg0 = "config: id=%lld name=%s mode=%s\n", arg1 = config.id, arg2 = config.name, arg3 = config.mode);
             let clone = ConfigClone { id: 3, name: "shadow", mode: "relaxed" };
-            std::println(arg0 = format_string("config clone: id={} name={} mode={}"), arg1 = clone.id, arg2 = clone.name, arg3 = clone.mode);
-            std::println(arg0 = format_string("config fields: {}"), arg1 = 3);
-            std::println(arg0 = format_string("config has mode: {}"), arg1 = true);
-            std::println(arg0 = format_string("config has max_retries: {}"), arg1 = false);
-            std::println(arg0 = format_string("config size: {}"), arg1 = 24);
-            std::println(arg0 = format_string("config type: {}"), arg1 = "struct Config");
+            printf(arg0 = "config clone: id=%lld name=%s mode=%s\n", arg1 = clone.id, arg2 = clone.name, arg3 = clone.mode);
+            printf(arg0 = "config fields: %lld\n", arg1 = 3);
+            printf(arg0 = "config has mode: %d\n", arg1 = true);
+            printf(arg0 = "config has max_retries: %d\n", arg1 = false);
+            printf(arg0 = "config size: %lld\n", arg1 = 24);
+            printf(arg0 = "config type: %s\n", arg1 = "struct Config");
         }
     }
 }

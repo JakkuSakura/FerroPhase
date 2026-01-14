@@ -26,6 +26,83 @@ hir::Program {
         __env.test.run()
     }
 
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: [BenchCase; 0] =
+        [];
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 5;
+                    let measure_secs = 15;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            printf(arg0 = "  %s ... FAILED\n", arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            printf(arg0 = "bench result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
     pub struct std::collections::HashMapEntry<K, V> {
         pub key: K,
         pub value: V,
@@ -70,83 +147,6 @@ hir::Program {
         }
     }
 
-    pub struct std::bench::BenchCase {
-        pub name: str,
-        pub run: fn() -> (),
-    }
-
-    pub const std::bench::REGISTRY: [BenchCase; 0] =
-        [];
-
-    pub struct std::bench::BenchReport {
-        pub total: i64,
-        pub passed: i64,
-        pub failed: i64,
-    }
-
-    pub fn std::bench::run_benches() -> BenchReport {
-        {
-            let benches = REGISTRY;
-            let mut passed = 0;
-            let mut failed = 0;
-            let mut idx = 0;
-            while ((idx < benches.len()))
-                {
-                    let bench = benches[idx];
-                    let mut ok = true;
-                    let warmup_secs = 0.2;
-                    let measure_secs = 0.5;
-                    let warmup_start = std::time_now();
-                    let warmup_deadline = (warmup_start + warmup_secs);
-                    let mut warmup_iters = 0;
-                    while ((std::time_now() < warmup_deadline))
-                        {
-                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
-                            if ((!warm_ok))
-                                {
-                                    ok = false;
-                                    break;
-                                }
-                            warmup_iters = (warmup_iters + 1);
-                        }
-                    let measure_start = std::time_now();
-                    let measure_deadline = (measure_start + measure_secs);
-                    let mut measure_iters = 0;
-                    if (ok)
-                        {
-                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
-                                {
-                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
-                                    if ((!run_ok))
-                                        {
-                                            ok = false;
-                                            break;
-                                        }
-                                    measure_iters = (measure_iters + 1);
-                                }
-                        }
-                    let measure_end = std::time_now();
-                    let elapsed = (measure_end - measure_start);
-                    if (ok)
-                        {
-                            passed = (passed + 1);
-                            let iters_f = (measure_iters as f64);
-                            let ns_per_iter = <control-flow>;
-                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
-                        }
-                    else
-                        {
-                            failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
-                        }
-                    idx = (idx + 1);
-                }
-            let total = (passed + failed);
-            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
-            BenchReport { total: total, passed: passed, failed: failed }
-        }
-    }
-
     pub struct std::test::TestCase {
         pub name: str,
         pub run: fn() -> (),
@@ -174,17 +174,17 @@ hir::Program {
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                            printf(arg0 = "  %s ... ok\n", arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                            printf(arg0 = "  %s ... FAILED\n", arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "test result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -207,7 +207,7 @@ hir::Program {
     pub fn helpers::greet(name: &str) -> () {
         // params: [name: &str]
         {
-            std::println(arg0 = format_string("{} {}!"), arg1 = GREETING, arg2 = name);
+            printf(arg0 = "%s %s!\n", arg1 = GREETING, arg2 = name);
         }
     }
 
@@ -215,6 +215,23 @@ hir::Program {
         // params: [a: i64, b: i64]
         {
             (a + b)
+        }
+    }
+
+    pub fn modules::helpers::math::add(a: i64, b: i64) -> i64 {
+        // params: [a: i64, b: i64]
+        {
+            (a + b)
+        }
+    }
+
+    pub const modules::helpers::SOURCE: &str =
+        "file module";
+
+    pub fn modules::helpers::greet_from_file(name: &str) -> () {
+        // params: [name: &str]
+        {
+            printf(arg0 = "[%s] Hello, %s!\n", arg1 = SOURCE, arg2 = name);
         }
     }
 
@@ -227,35 +244,18 @@ hir::Program {
 
     pub fn main() -> () {
         {
-            std::println(arg0 = format_string("📦 Example: 25_module_imports.fp"));
-            std::println(arg0 = format_string("🔧 Focus: inline modules + external file modules + std imports"));
-            std::println(arg0 = format_string("🔍 Expect: greetings + math output using imported names"));
-            std::println(arg0 = format_string(""));
+            printf(arg0 = "📦 Example: 25_module_imports.fp\n");
+            printf(arg0 = "🔧 Focus: inline modules + external file modules + std imports\n");
+            printf(arg0 = "🔍 Expect: greetings + math output using imported names\n");
+            printf(arg0 = "\n");
             helpers::greet(name = "Ferro");
             say_hi(name = "module imports");
-            file_greet(arg0 = "external module");
+            file_greet(name = "external module");
             echo(value = 2025);
             let sum = add(a = 8, b = 34);
-            std::println(arg0 = format_string("math.add(8, 34) = {}"), arg1 = sum);
-            let file_sum = file_add(arg0 = 10, arg1 = 32);
-            std::println(arg0 = format_string("file_math.add(10, 32) = {}"), arg1 = file_sum);
-        }
-    }
-
-    pub const modules::helpers::SOURCE: &str =
-        "file module";
-
-    pub fn modules::helpers::greet_from_file(name: &str) -> () {
-        // params: [name: &str]
-        {
-            std::println(arg0 = format_string("[{}] Hello, {}!"), arg1 = SOURCE, arg2 = name);
-        }
-    }
-
-    pub fn modules::helpers::math::add(a: i64, b: i64) -> i64 {
-        // params: [a: i64, b: i64]
-        {
-            (a + b)
+            printf(arg0 = "math.add(8, 34) = %lld\n", arg1 = sum);
+            let file_sum = file_add(a = 10, b = 32);
+            printf(arg0 = "file_math.add(10, 32) = %lld\n", arg1 = file_sum);
         }
     }
 }

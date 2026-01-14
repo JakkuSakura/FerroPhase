@@ -26,9 +26,9 @@ mir::Program {
 
         fn main() -> () [body: body7]
 
-        fn BenchCase::run(arg0: <??>) -> () [body: body8]
+        fn TestCase::run(arg0: <??>) -> () [body: body8]
 
-        fn TestCase::run(arg0: <??>) -> () [body: body9]
+        fn BenchCase::run(arg0: <??>) -> () [body: body9]
     bodies:
         body0 { arg_count: 1, locals: 2 }
             return_local: _0
@@ -60,7 +60,7 @@ mir::Program {
                     terminator: call fn TestCase::run(copy _1[Field(0, Ty { kind: Adt(AdtDef { did: 3, variants: [VariantDef { def_id: 4, ctor_def_id: None, ident: Symbol { name: "TestCase" }, discr: Relative(0), fields: [], ctor_kind: Const, is_recovered: false }], flags: AdtFlags(IS_STRUCT), repr: ReprOptions { int: None, align: None, pack: None, flags: ReprFlags(0x0), field_shuffle_seed: 0 } }, []) })]) -> _0 then bb1
                 bb1:
                     terminator: return
-        body3 { arg_count: 0, locals: 60 }
+        body3 { arg_count: 0, locals: 59 }
             return_local: _0
             locals:
                 _0: (i64, i64, i64)
@@ -115,14 +115,13 @@ mir::Program {
                 _49: f64
                 _50: f64
                 _51: f64
-                _52: f64
-                _53: bool
-                _54: f64
-                _55: ()
-                _56: ()
+                _52: bool
+                _53: f64
+                _54: ()
+                _55: i32
+                _56: i64
                 _57: i64
-                _58: i64
-                _59: ()
+                _58: i32
             blocks:
                 bb0:
                     s0: _2 = aggregate(array [(<??>, <??>)]; [])
@@ -141,8 +140,8 @@ mir::Program {
                     s1: _11 = copy _6
                     s2: _9 = copy _1[Index(11)]
                     s3: _12 = true
-                    s4: _13 = 0.2
-                    s5: _14 = 0.5
+                    s4: _13 = 5
+                    s5: _14 = 15
                     s6: _16 = intrinsic TimeNow "" []
                     s7: _15 = copy _16
                     s8: _18 = Add(copy _15, copy _13)
@@ -150,13 +149,9 @@ mir::Program {
                     s10: _19 = 0
                     terminator: goto -> bb4
                 bb3:
-                    s0: _58 = Add(copy _4, copy _5)
-                    s1: _57 = copy _58
-                    s2: intrinsic Println "bench result: %lld passed; %lld failed; %lld total
-" [copy _4, copy _5, copy _57]
-                    s3: _59 = aggregate(tuple; [])
-                    s4: _0 = aggregate(tuple; [copy _57, copy _4, copy _5])
-                    terminator: <none>
+                    s0: _57 = Add(copy _4, copy _5)
+                    s1: _56 = copy _57
+                    terminator: call global printf("bench result: %lld passed; %lld failed; %lld total\n", copy _4, copy _5, copy _56) -> _58 then bb34
                 bb4:
                     s0: _21 = intrinsic TimeNow "" []
                     s1: _20 = Lt(copy _21, copy _17)
@@ -240,34 +235,35 @@ mir::Program {
                     terminator: goto -> bb25
                 bb27:
                     s0: _4 = Add(copy _4, 1)
-                    s1: _50 = cast(Misc, copy _32, f64)
-                    s2: _49 = copy _50
-                    s3: _53 = Gt(copy _49, 0)
-                    terminator: switch copy _53 [1 -> bb30] otherwise -> bb31
+                    s1: _49 = copy _32
+                    s2: _52 = Gt(copy _49, 0)
+                    terminator: switch copy _52 [1 -> bb30] otherwise -> bb31
                 bb28:
                     s0: _5 = Add(copy _5, 1)
-                    s1: intrinsic Println "  %s ... FAILED
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
-                    s2: _56 = aggregate(tuple; [])
-                    s3: _48 = aggregate(tuple; [])
-                    terminator: goto -> bb29
+                    terminator: call global printf("  %s ... FAILED\n", copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]) -> _55 then bb33
                 bb29:
                     s0: _6 = Add(copy _6, 1)
                     terminator: goto -> bb1
                 bb30:
-                    s0: _54 = Div(copy _46, copy _49)
-                    s1: _52 = Mul(copy _54, 1000000000)
+                    s0: _53 = Div(copy _46, copy _49)
+                    s1: _51 = Mul(copy _53, 1000000000)
                     terminator: goto -> bb32
                 bb31:
-                    s0: _52 = 0
+                    s0: _51 = 0
                     terminator: goto -> bb32
                 bb32:
-                    s0: _51 = copy _52
+                    s0: _50 = copy _51
                     s1: intrinsic Println "  %s ... ok (iters: %lld, time: %.6fs, ns/iter: %.2f)
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })], copy _32, copy _46, copy _51]
-                    s2: _55 = aggregate(tuple; [])
+" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })], copy _32, copy _46, copy _50]
+                    s2: _54 = aggregate(tuple; [])
                     s3: _48 = aggregate(tuple; [])
                     terminator: goto -> bb29
+                bb33:
+                    s0: _48 = aggregate(tuple; [])
+                    terminator: goto -> bb29
+                bb34:
+                    s0: _0 = aggregate(tuple; [copy _56, copy _4, copy _5])
+                    terminator: return
         body4 { arg_count: 0, locals: 22 }
             return_local: _0
             locals:
@@ -288,11 +284,11 @@ mir::Program {
                 _14: bool
                 _15: ()
                 _16: ()
-                _17: ()
-                _18: ()
+                _17: i32
+                _18: i32
                 _19: i64
                 _20: i64
-                _21: ()
+                _21: i32
             blocks:
                 bb0:
                     s0: _2 = aggregate(array [(<??>, <??>)]; [])
@@ -315,11 +311,7 @@ mir::Program {
                 bb3:
                     s0: _20 = Add(copy _4, copy _5)
                     s1: _19 = copy _20
-                    s2: intrinsic Println "test result: %lld passed; %lld failed; %lld total
-" [copy _4, copy _5, copy _19]
-                    s3: _21 = aggregate(tuple; [])
-                    s4: _0 = aggregate(tuple; [copy _19, copy _4, copy _5])
-                    terminator: <none>
+                    terminator: call global printf("test result: %lld passed; %lld failed; %lld total\n", copy _4, copy _5, copy _19) -> _21 then bb12
                 bb4:
                     s0: _14 = true
                     terminator: goto -> bb6
@@ -331,21 +323,22 @@ mir::Program {
                     terminator: switch copy _12 [1 -> bb7] otherwise -> bb8
                 bb7:
                     s0: _4 = Add(copy _4, 1)
-                    s1: intrinsic Println "  %s ... ok
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
-                    s2: _17 = aggregate(tuple; [])
-                    s3: _16 = aggregate(tuple; [])
-                    terminator: goto -> bb9
+                    terminator: call global printf("  %s ... ok\n", copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]) -> _17 then bb10
                 bb8:
                     s0: _5 = Add(copy _5, 1)
-                    s1: intrinsic Println "  %s ... FAILED
-" [copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]]
-                    s2: _18 = aggregate(tuple; [])
-                    s3: _16 = aggregate(tuple; [])
-                    terminator: goto -> bb9
+                    terminator: call global printf("  %s ... FAILED\n", copy _9[Field(0, Ty { kind: Slice(Ty { kind: Int(I8) }) })]) -> _18 then bb11
                 bb9:
                     s0: _6 = Add(copy _6, 1)
                     terminator: goto -> bb1
+                bb10:
+                    s0: _16 = aggregate(tuple; [])
+                    terminator: goto -> bb9
+                bb11:
+                    s0: _16 = aggregate(tuple; [])
+                    terminator: goto -> bb9
+                bb12:
+                    s0: _0 = aggregate(tuple; [copy _19, copy _4, copy _5])
+                    terminator: return
         body5 { arg_count: 0, locals: 1 }
             return_local: _0
             locals:
@@ -367,13 +360,13 @@ mir::Program {
             return_local: _0
             locals:
                 _0: ()
-                _1: ()
-                _2: ()
-                _3: ()
-                _4: ()
-                _5: ()
-                _6: ()
-                _7: ()
+                _1: i32
+                _2: i32
+                _3: i32
+                _4: i32
+                _5: i32
+                _6: i32
+                _7: i32
                 _8: usize
                 _9: <??>
                 _10: <??>
@@ -381,7 +374,7 @@ mir::Program {
                 _12: usize
                 _13: <??>
                 _14: <??>
-                _15: ()
+                _15: i32
                 _16: <??>
                 _17: usize
                 _18: <??>
@@ -390,8 +383,8 @@ mir::Program {
                 _21: usize
                 _22: <??>
                 _23: usize
-                _24: ()
-                _25: ()
+                _24: i32
+                _25: i32
                 _26: usize
                 _27: (<??>)
                 _28: (<??>, i64)
@@ -403,83 +396,71 @@ mir::Program {
                 _34: (<??>, i64)
                 _35: (<??>, i64)
                 _36: (<??>, i64)
-                _37: ()
+                _37: i32
                 _38: i64
                 _39: ()
                 _40: i64
                 _41: ()
             blocks:
                 bb0:
-                    s0: intrinsic Println "📘 Tutorial: 18_comptime_collections.fp
-" []
-                    s1: _1 = aggregate(tuple; [])
-                    s2: intrinsic Println "🧭 Focus: Showcase compile-time Vec and HashMap construction.
-" []
-                    s3: _2 = aggregate(tuple; [])
-                    s4: intrinsic Println "🧪 What to look for: labeled outputs below
-" []
-                    s5: _3 = aggregate(tuple; [])
-                    s6: intrinsic Println "✅ Expectation: outputs match labels
-" []
-                    s7: _4 = aggregate(tuple; [])
-                    s8: intrinsic Println "
-" []
-                    s9: _5 = aggregate(tuple; [])
-                    s10: intrinsic Println "=== Compile-time Collections ===
-" []
-                    s11: _6 = aggregate(tuple; [])
-                    s12: intrinsic Println "Vec literals:
-" []
-                    s13: _7 = aggregate(tuple; [])
-                    s14: _9 = aggregate(array [i64]; [2, 3, 5, 7, 11, 13])
-                    s15: _10 = aggregate(array [i64]; [2, 3, 5, 7, 11, 13])
-                    s16: _8 = 6u
-                    s17: intrinsic Println "  primes: %llu elements -> %s
+                    terminator: call global printf("📘 Tutorial: 18_comptime_collections.fp\n") -> _1 then bb1
+                bb1:
+                    terminator: call global printf("🧭 Focus: Showcase compile-time Vec and HashMap construction.\n") -> _2 then bb2
+                bb2:
+                    terminator: call global printf("🧪 What to look for: labeled outputs below\n") -> _3 then bb3
+                bb3:
+                    terminator: call global printf("✅ Expectation: outputs match labels\n") -> _4 then bb4
+                bb4:
+                    terminator: call global printf("\n") -> _5 then bb5
+                bb5:
+                    terminator: call global printf("=== Compile-time Collections ===\n") -> _6 then bb6
+                bb6:
+                    terminator: call global printf("Vec literals:\n") -> _7 then bb7
+                bb7:
+                    s0: _9 = aggregate(array [i64]; [2, 3, 5, 7, 11, 13])
+                    s1: _10 = aggregate(array [i64]; [2, 3, 5, 7, 11, 13])
+                    s2: _8 = 6u
+                    s3: intrinsic Println "  primes: %llu elements -> %s
 " [copy _8, "[2, 3, 5, 7, 11, 13]"]
-                    s18: _11 = aggregate(tuple; [])
-                    s19: _13 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s20: _14 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s21: _12 = 16u
-                    s22: intrinsic Println "  zero buffer: %llu elements
-" [copy _12]
-                    s23: _15 = aggregate(tuple; [])
-                    s24: _16 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s25: _17 = 0u
-                    s26: _18 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s27: _19 = 1u
-                    s28: _20 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s29: _21 = 2u
-                    s30: _22 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                    s31: _23 = 3u
-                    s32: intrinsic Println "  first four zeros: [%lld, %lld, %lld, %lld]
-" [copy _16[Index(17)], copy _18[Index(19)], copy _20[Index(21)], copy _22[Index(23)]]
-                    s33: _24 = aggregate(tuple; [])
-                    s34: intrinsic Println "
-HashMap literal via HashMap::from:
-" []
-                    s35: _25 = aggregate(tuple; [])
-                    s36: _28 = aggregate(tuple; ["ok", 200])
-                    s37: _29 = aggregate(tuple; ["created", 201])
-                    s38: _30 = aggregate(tuple; ["accepted", 202])
-                    s39: _31 = aggregate(tuple; ["not_found", 404])
-                    s40: _27 = aggregate(array [(<??>, i64)]; [copy _28, copy _29, copy _30, copy _31])
-                    s41: _33 = aggregate(tuple; ["ok", 200])
-                    s42: _34 = aggregate(tuple; ["created", 201])
-                    s43: _35 = aggregate(tuple; ["accepted", 202])
-                    s44: _36 = aggregate(tuple; ["not_found", 404])
-                    s45: _32 = aggregate(array [(<??>, i64)]; [copy _33, copy _34, copy _35, copy _36])
-                    s46: _26 = 4u
-                    s47: intrinsic Println "  tracked HTTP statuses: %llu entries
-" [copy _26]
-                    s48: _37 = aggregate(tuple; [])
-                    s49: _38 = 200
-                    s50: intrinsic Println "  ok => %lld
+                    s4: _11 = aggregate(tuple; [])
+                    s5: _13 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    s6: _14 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    s7: _12 = 16u
+                    terminator: call global printf("  zero buffer: %lld elements\n", copy _12) -> _15 then bb8
+                bb8:
+                    s0: _16 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    s1: _17 = 0u
+                    s2: _18 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    s3: _19 = 1u
+                    s4: _20 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    s5: _21 = 2u
+                    s6: _22 = aggregate(array [i64]; [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                    s7: _23 = 3u
+                    terminator: call global printf("  first four zeros: [%lld, %lld, %lld, %lld]\n", copy _16[Index(17)], copy _18[Index(19)], copy _20[Index(21)], copy _22[Index(23)]) -> _24 then bb9
+                bb9:
+                    terminator: call global printf("\nHashMap literal via HashMap::from:\n") -> _25 then bb10
+                bb10:
+                    s0: _28 = aggregate(tuple; ["ok", 200])
+                    s1: _29 = aggregate(tuple; ["created", 201])
+                    s2: _30 = aggregate(tuple; ["accepted", 202])
+                    s3: _31 = aggregate(tuple; ["not_found", 404])
+                    s4: _27 = aggregate(array [(<??>, i64)]; [copy _28, copy _29, copy _30, copy _31])
+                    s5: _33 = aggregate(tuple; ["ok", 200])
+                    s6: _34 = aggregate(tuple; ["created", 201])
+                    s7: _35 = aggregate(tuple; ["accepted", 202])
+                    s8: _36 = aggregate(tuple; ["not_found", 404])
+                    s9: _32 = aggregate(array [(<??>, i64)]; [copy _33, copy _34, copy _35, copy _36])
+                    s10: _26 = 4u
+                    terminator: call global printf("  tracked HTTP statuses: %lld entries\n", copy _26) -> _37 then bb11
+                bb11:
+                    s0: _38 = 200
+                    s1: intrinsic Println "  ok => %lld
 " [copy _38]
-                    s51: _39 = aggregate(tuple; [])
-                    s52: _40 = 404
-                    s53: intrinsic Println "  not_found => %lld
+                    s2: _39 = aggregate(tuple; [])
+                    s3: _40 = 404
+                    s4: intrinsic Println "  not_found => %lld
 " [copy _40]
-                    s54: _41 = aggregate(tuple; [])
+                    s5: _41 = aggregate(tuple; [])
                     terminator: return
         body8 { arg_count: 1, locals: 2 }
             return_local: _0
