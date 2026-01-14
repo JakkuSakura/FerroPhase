@@ -1062,9 +1062,10 @@ fn load_value(
             }
             let imm = constant_to_i64(constant)?;
             if imm < 0 || imm > u16::MAX as i64 {
-                return Err(Error::from("aarch64 immediate out of range"));
+                emit_mov_imm64(asm, dst, imm as u64);
+            } else {
+                emit_mov_imm16(asm, dst, imm as u16);
             }
-            emit_mov_imm16(asm, dst, imm as u16);
             Ok(())
         }
         LirValue::Null(_) | LirValue::Undef(_) => {

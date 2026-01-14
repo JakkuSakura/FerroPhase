@@ -523,6 +523,7 @@ fn collect_statement_uses(stmt: &mir::Statement, uses: &mut [bool], defs: &[bool
         mir::StatementKind::Assign(place, rvalue) => {
             if !place.projection.is_empty() {
                 uses[place.local as usize] = true;
+                collect_place_index_uses(place, uses, defs);
             }
             collect_rvalue_uses(rvalue, uses, defs);
         }
@@ -600,8 +601,20 @@ fn collect_operand_uses(operand: &mir::Operand, uses: &mut [bool], defs: &[bool]
             if !defs[place.local as usize] {
                 uses[place.local as usize] = true;
             }
+            collect_place_index_uses(place, uses, defs);
         }
         _ => {}
+    }
+}
+
+fn collect_place_index_uses(place: &mir::Place, uses: &mut [bool], defs: &[bool]) {
+    for elem in &place.projection {
+        if let mir::PlaceElem::Index(local) = elem {
+            let idx = *local as usize;
+            if !defs[idx] {
+                uses[idx] = true;
+            }
+        }
     }
 }
 

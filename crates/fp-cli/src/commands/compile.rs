@@ -65,6 +65,10 @@ pub struct CompileArgs {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
+    /// Path to a precomputed package graph (JSON) for dependency resolution
+    #[arg(long = "package-graph")]
+    pub package_graph: Option<PathBuf>,
+
     /// Optimization level (0, 1, 2, 3)
     #[arg(short = 'O', long, default_value_t = 2)]
     pub opt_level: u8,
@@ -387,6 +391,9 @@ fn exec_compiled_bytecode(path: &Path) -> Result<()> {
 
 fn validate_inputs(args: &CompileArgs) -> Result<()> {
     validate_paths_exist(&args.input, true, "compile")?;
+    if let Some(graph) = args.package_graph.as_ref() {
+        validate_paths_exist(&[graph.clone()], true, "compile")?;
+    }
 
     // Validate optimization level
     if args.opt_level > 3 {
