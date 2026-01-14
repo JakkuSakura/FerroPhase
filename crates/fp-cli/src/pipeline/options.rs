@@ -1,3 +1,4 @@
+use clap::ValueEnum;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -5,7 +6,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone)]
 pub struct PipelineOptions {
     /// Compilation target
-    pub target: PipelineTarget,
+    pub target: BackendKind,
     /// Code generation backend to use when producing native artifacts (e.g. "llvm", "native").
     pub backend: Option<String>,
     /// Target triple for codegen (defaults to host when unset)
@@ -43,8 +44,8 @@ pub struct PipelineOptions {
 }
 
 /// Compilation targets
-#[derive(Debug, Clone)]
-pub enum PipelineTarget {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BackendKind {
     /// Interpret the code directly
     Interpret,
     /// Generate Rust source code
@@ -55,7 +56,23 @@ pub enum PipelineTarget {
     Binary,
     /// Generate bytecode for the virtual machine backend
     Bytecode,
+    /// Generate human-readable bytecode text
+    TextBytecode,
     Wasm,
+}
+
+impl BackendKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BackendKind::Binary => "binary",
+            BackendKind::Rust => "rust",
+            BackendKind::Llvm => "llvm",
+            BackendKind::Wasm => "wasm",
+            BackendKind::Bytecode => "bytecode",
+            BackendKind::TextBytecode => "text-bytecode",
+            BackendKind::Interpret => "interpret",
+        }
+    }
 }
 
 /// Runtime configuration
@@ -105,7 +122,7 @@ impl Default for ErrorToleranceOptions {
 impl Default for PipelineOptions {
     fn default() -> Self {
         Self {
-            target: PipelineTarget::Interpret,
+            target: BackendKind::Interpret,
             backend: None,
             target_triple: None,
             target_cpu: None,

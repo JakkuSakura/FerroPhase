@@ -7,7 +7,7 @@ use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
 pub(crate) struct MaterializeContext {
     pub ast: Node,
-    pub target: PipelineTarget,
+    pub target: BackendKind,
 }
 
 pub(crate) struct MaterializeStage;
@@ -47,7 +47,7 @@ impl Pipeline {
     pub(crate) fn stage_materialize_runtime_intrinsics(
         &mut self,
         ast: &mut Node,
-        target: &PipelineTarget,
+        target: &BackendKind,
         options: &PipelineOptions,
     ) -> Result<(), CliError> {
         let stage = MaterializeStage;
@@ -70,9 +70,9 @@ struct NoopIntrinsicMaterializer;
 impl IntrinsicMaterializer for NoopIntrinsicMaterializer {}
 
 impl IntrinsicsMaterializer {
-    fn for_target(target: &PipelineTarget) -> Self {
+    fn for_target(target: &BackendKind) -> Self {
         match target {
-            PipelineTarget::Llvm | PipelineTarget::Binary => Self {
+            BackendKind::Llvm | BackendKind::Binary => Self {
                 strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
             },
             _ => Self {

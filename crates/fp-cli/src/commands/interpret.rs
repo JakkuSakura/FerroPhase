@@ -6,7 +6,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use clap::Args;
-use crate::pipeline::{PipelineOptions, PipelineTarget};
+use crate::pipeline::{BackendKind, PipelineOptions};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 
@@ -37,7 +37,7 @@ async fn interpret_source(path: &Path) -> Result<()> {
     let output = temp_dir.path().join("interpret.fbc");
 
     let mut options = PipelineOptions::default();
-    options.target = PipelineTarget::Bytecode;
+    options.target = BackendKind::Bytecode;
     options.base_path = Some(output.clone());
     options.save_intermediates = false;
     options.optimization_level = 0;

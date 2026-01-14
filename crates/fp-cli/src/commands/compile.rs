@@ -8,7 +8,7 @@ use crate::{
 };
 use console::style;
 use crate::pipeline::{
-    DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
+    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
 };
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -112,31 +112,6 @@ pub struct CompileArgs {
     /// Disable pipeline stages by name (repeatable).
     #[arg(long = "disable-stage", action = ArgAction::Append)]
     pub disable_stage: Vec<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
-pub enum BackendKind {
-    Binary,
-    Rust,
-    Llvm,
-    Wasm,
-    Bytecode,
-    TextBytecode,
-    Interpret,
-}
-
-impl BackendKind {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            BackendKind::Binary => "binary",
-            BackendKind::Rust => "rust",
-            BackendKind::Llvm => "llvm",
-            BackendKind::Wasm => "wasm",
-            BackendKind::Bytecode => "bytecode",
-            BackendKind::TextBytecode => "text-bytecode",
-            BackendKind::Interpret => "interpret",
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -265,12 +240,8 @@ async fn compile_file(
 
     // Configure pipeline for compilation with new options
     let target = match backend {
-        BackendKind::Rust => PipelineTarget::Rust,
-        BackendKind::Llvm => PipelineTarget::Llvm,
-        BackendKind::Binary => PipelineTarget::Binary,
-        BackendKind::Bytecode | BackendKind::TextBytecode => PipelineTarget::Bytecode,
-        BackendKind::Wasm => PipelineTarget::Wasm,
-        BackendKind::Interpret => PipelineTarget::Interpret,
+        BackendKind::TextBytecode => BackendKind::Bytecode,
+        other => other,
     };
 
     let execute_const_main = false;

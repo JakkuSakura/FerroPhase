@@ -6,7 +6,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use crate::pipeline::{
-    DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
+    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
 };
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};
@@ -103,7 +103,7 @@ async fn eval_files(args: &EvalArgs) -> Result<()> {
 
 fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
     PipelineOptions {
-        target: PipelineTarget::Interpret,
+        target: BackendKind::Interpret,
         backend: None,
         target_triple: None,
         target_cpu: None,

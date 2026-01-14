@@ -7,7 +7,8 @@
 use crate::{
     Result,
     cli::CliConfig,
-    commands::compile::{BackendKind, CompileArgs, EmitterKind, compile_command},
+    commands::compile::{CompileArgs, EmitterKind, compile_command},
+    pipeline::BackendKind,
 };
 use clap::{ArgAction, Args};
 use std::path::PathBuf;

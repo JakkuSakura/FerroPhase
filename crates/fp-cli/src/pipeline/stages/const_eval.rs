@@ -12,7 +12,7 @@ impl Pipeline {
         options: &PipelineOptions,
     ) -> Result<ConstEvalOutcome, CliError> {
         let mut std_modules = Vec::new();
-        if !matches!(options.target, PipelineTarget::Interpret) {
+        if !matches!(options.target, BackendKind::Interpret) {
             for std_path in runtime_std_paths() {
                 let source = match fs::read_to_string(&std_path) {
                     Ok(source) => source,

@@ -41,7 +41,7 @@ mod stages;
 mod options;
 use self::diagnostics as diag;
 use artifacts::LlvmArtifacts;
-pub use options::{DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig};
+pub use options::{BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig};
 
 const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
@@ -290,19 +290,21 @@ impl Pipeline {
         };
 
         match options.target {
-            PipelineTarget::Interpret => {
+            BackendKind::Interpret => {
                 self.execute_interpret_target(ast, &options, input_path.as_deref())
                     .await
             }
             ref target => {
                 let base_path = options.base_path.as_ref().ok_or_else(|| {
                     let msg = match target {
-                        PipelineTarget::Rust => "Missing base path for transpilation",
-                        PipelineTarget::Llvm => "Missing base path for LLVM generation",
-                        PipelineTarget::Binary => "Missing base path for binary generation",
-                        PipelineTarget::Bytecode => "Missing base path for bytecode generation",
-                        PipelineTarget::Wasm => "Missing base path for wasm generation",
-                        PipelineTarget::Interpret => unreachable!(),
+                        BackendKind::Rust => "Missing base path for transpilation",
+                        BackendKind::Llvm => "Missing base path for LLVM generation",
+                        BackendKind::Binary => "Missing base path for binary generation",
+                        BackendKind::Bytecode | BackendKind::TextBytecode => {
+                            "Missing base path for bytecode generation"
+                        }
+                        BackendKind::Wasm => "Missing base path for wasm generation",
+                        BackendKind::Interpret => unreachable!(),
                     };
                     CliError::Compilation(msg.to_string())
                 })?;
@@ -533,7 +535,7 @@ impl Pipeline {
 
     fn execute_compilation_target(
         &mut self,
-        target: &PipelineTarget,
+        target: &BackendKind,
         mut ast: Node,
         options: &PipelineOptions,
         base_path: &Path,
@@ -553,7 +555,7 @@ impl Pipeline {
 
         if matches!(
             target,
-            PipelineTarget::Llvm | PipelineTarget::Binary | PipelineTarget::Wasm
+            BackendKind::Llvm | BackendKind::Binary | BackendKind::Wasm
         ) && !did_const_eval
         {
             self.inject_runtime_std(&mut ast, options)?;
@@ -580,7 +582,7 @@ impl Pipeline {
             self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, options)?;
         }
 
-        let output = if matches!(target, PipelineTarget::Rust) {
+        let output = if matches!(target, BackendKind::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
             let _enter = span.enter();
             let code = CodeGenerator::generate_rust_code(&ast)?;
@@ -589,7 +591,7 @@ impl Pipeline {
             let hir_program = self.stage_hir_generation(&ast, options, input_path, base_path)?;
 
             match target {
-                PipelineTarget::Llvm => {
+                BackendKind::Llvm => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
 
@@ -602,7 +604,7 @@ impl Pipeline {
                     )?;
                     PipelineOutput::Code(llvm.ir_text)
                 }
-                PipelineTarget::Binary => {
+                BackendKind::Binary => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
 
@@ -629,7 +631,7 @@ impl Pipeline {
                         PipelineOutput::Binary(binary_path)
                     }
                 }
-                PipelineTarget::Bytecode => {
+                BackendKind::Bytecode | BackendKind::TextBytecode => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
                     let bytecode = fp_bytecode::lower_program(&mir.mir_program).map_err(|err| {
                         CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err))
@@ -661,13 +663,13 @@ impl Pipeline {
 
                     PipelineOutput::Binary(output_path)
                 }
-                PipelineTarget::Wasm => {
+                BackendKind::Wasm => {
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
                     let wasm_path = self.stage_emit_wasm(&lir.lir_program, base_path, options)?;
                     PipelineOutput::Binary(wasm_path)
                 }
-                PipelineTarget::Rust | PipelineTarget::Interpret => unreachable!(),
+                BackendKind::Rust | BackendKind::Interpret => unreachable!(),
             }
         };
 
@@ -1078,7 +1080,7 @@ mod tests {
     use crate::pipeline::artifacts::LirArtifacts;
     use fp_core::intrinsics::IntrinsicCallKind;
     use fp_core::{ast, hir, lir};
-    use super::PipelineTarget;
+    use super::BackendKind;
     use std::fs;
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};
@@ -1090,7 +1092,7 @@ mod tests {
     }
 
     impl PipelineHarness {
-        fn new(target: PipelineTarget) -> Self {
+        fn new(target: BackendKind) -> Self {
             let pipeline = Pipeline::new();
             let mut options = PipelineOptions::default();
             options.target = target.clone();
@@ -1126,7 +1128,7 @@ mod tests {
             }
         }
 
-        fn materialize_runtime(&mut self, ast: &mut Node, target: PipelineTarget) {
+        fn materialize_runtime(&mut self, ast: &mut Node, target: BackendKind) {
             if let Err(err) =
                 self.pipeline
                     .stage_materialize_runtime_intrinsics(ast, &target, &self.options)
@@ -1213,7 +1215,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         let intrinsic_calls = find_intrinsic_calls(&ast);
@@ -1475,7 +1477,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         assert!(matches!(ast.kind(), ast::NodeKind::File(_)));
         harness.normalize(&mut ast);
@@ -1506,7 +1508,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1529,7 +1531,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1556,7 +1558,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1586,7 +1588,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1659,7 +1661,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1685,7 +1687,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1711,11 +1713,11 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Llvm);
+        let mut harness = PipelineHarness::new(BackendKind::Llvm);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
-        harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
+        harness.materialize_runtime(&mut ast, BackendKind::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
         let backend = harness.backend(&hir);
@@ -1757,7 +1759,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1790,11 +1792,11 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Llvm);
+        let mut harness = PipelineHarness::new(BackendKind::Llvm);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
-        harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
+        harness.materialize_runtime(&mut ast, BackendKind::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
         harness.backend(&hir);
@@ -1821,7 +1823,7 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
@@ -1844,11 +1846,11 @@ fn main() {
 }
 "#;
 
-        let mut harness = PipelineHarness::new(PipelineTarget::Llvm);
+        let mut harness = PipelineHarness::new(BackendKind::Llvm);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
-        harness.materialize_runtime(&mut ast, PipelineTarget::Llvm);
+        harness.materialize_runtime(&mut ast, BackendKind::Llvm);
         harness.rerun_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE);
         let hir = harness.hir(&ast);
         harness.backend(&hir);
@@ -1986,7 +1988,7 @@ fn main() {
     println!("{}", identity(42));
 }
 "#;
-        let mut harness = PipelineHarness::new(PipelineTarget::Interpret);
+        let mut harness = PipelineHarness::new(BackendKind::Interpret);
         let mut ast = harness.parse(source);
         harness.normalize(&mut ast);
         harness.type_check(&mut ast);
