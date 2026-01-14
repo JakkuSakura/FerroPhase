@@ -7,7 +7,7 @@
 use crate::{
     Result,
     cli::CliConfig,
-    commands::compile::{CompileArgs, compile_command},
+    commands::compile::{BackendKind, CompileArgs, EmitterKind, compile_command},
 };
 use clap::{ArgAction, Args};
 use std::path::PathBuf;
@@ -24,7 +24,7 @@ pub struct TranspileArgs {
 
     /// Emitter target (rust, llvm, bytecode, binary, interpret)
     #[arg(short = 'b', long)]
-    pub backend: Option<String>,
+    pub backend: Option<BackendKind>,
 
     /// Output file or directory
     #[arg(short, long)]
@@ -66,8 +66,8 @@ pub struct TranspileArgs {
 pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Result<()> {
     let compile_args = CompileArgs {
         input: args.input,
-        backend: args.backend.unwrap_or_else(|| "rust".to_string()),
-        emitter: "llvm".to_string(),
+        backend: args.backend.unwrap_or(BackendKind::Rust),
+        emitter: EmitterKind::Llvm,
         target_triple: None,
         target_cpu: None,
         target_features: None,
@@ -75,6 +75,7 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
         linker: "clang".to_string(),
         target_linker: None,
         output: args.output,
+        package_graph: None,
         opt_level: args.opt_level,
         debug: args.debug,
         release: args.release,

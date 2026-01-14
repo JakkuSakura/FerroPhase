@@ -90,13 +90,13 @@ fi
 
 BIN_OUT="${OUT_DIR}/eight_queens_bin.out"
 bench_cmd "fp compile (native)" \
-  "${FP_BIN} compile --emitter native --release --output ${BIN_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --backend binary --emitter native --release --output ${BIN_OUT} ${EXAMPLE}"
 bench_cmd "fp native run" "${BIN_OUT}"
 
 # LLVM backend compile/run
 LLVM_OUT="${OUT_DIR}/eight_queens_llvm.out"
 bench_cmd "fp compile (llvm)" \
-  "${FP_BIN} compile --emitter llvm --release --output ${LLVM_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --backend binary --emitter llvm --release --output ${LLVM_OUT} ${EXAMPLE}"
 bench_cmd "fp llvm run" "${LLVM_OUT}"
 
 # Optional: fp-native codegen (requires building fp-cli with feature `native-backend`).
@@ -104,19 +104,19 @@ bench_cmd "fp llvm run" "${LLVM_OUT}"
 if [[ "${FP_CARGO_FEATURES:-}" == *"native-backend"* ]]; then
   NATIVE_BIN_OUT="${OUT_DIR}/eight_queens_native.out"
   bench_cmd "fp compile (binary, fp-native)" \
-    "${FP_BIN} compile --emitter binary --codegen-backend native --release --output ${NATIVE_BIN_OUT} ${EXAMPLE}"
+    "${FP_BIN} compile --backend binary --emitter native --release --output ${NATIVE_BIN_OUT} ${EXAMPLE}"
   bench_cmd "fp native binary run" "${NATIVE_BIN_OUT}"
 fi
 
 BYTECODE_OUT="${OUT_DIR}/eight_queens.fbc"
 bench_cmd "fp compile (bytecode)" \
-  "${FP_BIN} compile --emitter bytecode --save-intermediates --output ${BYTECODE_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --backend bytecode --save-intermediates --output ${BYTECODE_OUT} ${EXAMPLE}"
 bench_cmd "fp interpret (bytecode)" \
   "${FP_BIN} interpret ${BYTECODE_OUT}"
 
 WASM_OUT="${OUT_DIR}/eight_queens_wasm"
 bench_cmd "fp compile (wasm)" \
-  "${FP_BIN} compile --emitter wasm --release --output ${WASM_OUT} ${EXAMPLE}"
+  "${FP_BIN} compile --backend wasm --release --output ${WASM_OUT} ${EXAMPLE}"
 WASM_FILE="${WASM_OUT}.wasm"
 if [[ ! -f "${WASM_FILE}" ]]; then
   WASM_FILE="${WASM_OUT}"

@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
 use tracing::{info, warn};
 
-use clap::{ArgAction, Args};
+use clap::{ArgAction, Args, ValueEnum};
 
 /// Arguments for the compile command (also used by Clap)
 #[derive(Debug, Clone, Args)]
@@ -26,14 +26,14 @@ pub struct CompileArgs {
 
     /// Output backend (binary, rust, llvm, wasm, bytecode, text-bytecode, interpret)
     #[arg(short = 'b', long = "backend", default_value = "binary")]
-    pub backend: String,
+    pub backend: BackendKind,
 
     /// Codegen emitter engine (e.g. "llvm" or "native").
     ///
     /// This is only used for native codegen targets (like `--backend binary`).
     /// Default is `native`.
-    #[arg(long = "emitter", default_value = "native", value_parser = ["native", "llvm"])]
-    pub emitter: String,
+    #[arg(long = "emitter", default_value = "native")]
+    pub emitter: EmitterKind,
 
     /// Target triple for codegen (defaults to host if omitted)
     #[arg(long = "target")]
@@ -114,9 +114,49 @@ pub struct CompileArgs {
     pub disable_stage: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum BackendKind {
+    Binary,
+    Rust,
+    Llvm,
+    Wasm,
+    Bytecode,
+    TextBytecode,
+    Interpret,
+}
+
+impl BackendKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            BackendKind::Binary => "binary",
+            BackendKind::Rust => "rust",
+            BackendKind::Llvm => "llvm",
+            BackendKind::Wasm => "wasm",
+            BackendKind::Bytecode => "bytecode",
+            BackendKind::TextBytecode => "text-bytecode",
+            BackendKind::Interpret => "interpret",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+pub enum EmitterKind {
+    Native,
+    Llvm,
+}
+
+impl EmitterKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            EmitterKind::Native => "native",
+            EmitterKind::Llvm => "llvm",
+        }
+    }
+}
+
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    info!("Starting compilation with backend: {}", args.backend);
+    info!("Starting compilation with backend: {}", args.backend.as_str());
 
     // Validate inputs
     validate_inputs(&args)?;
@@ -129,13 +169,13 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     let mut compiled_files = Vec::new();
 
-    let is_text_emitter = args.backend == "text-bytecode";
-    let target_backend = if is_text_emitter {
-        "bytecode"
+    let is_text_backend = matches!(args.backend, BackendKind::TextBytecode);
+    let target_backend = if is_text_backend {
+        BackendKind::Bytecode
     } else {
-        args.backend.as_str()
+        args.backend
     };
-    let emit_text_bytecode = is_text_emitter;
+    let emit_text_bytecode = is_text_backend;
 
     let output_is_dir = args
         .output
@@ -172,7 +212,7 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     // Execute if requested
     if args.exec {
         match target_backend {
-            "binary" => match compiled_files.as_slice() {
+            BackendKind::Binary => match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled binaries available to execute");
                 }
@@ -185,12 +225,12 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
                     ));
                 }
             },
-            "bytecode" => match compiled_files.as_slice() {
+            BackendKind::Bytecode => match compiled_files.as_slice() {
                 [] => {
                     warn!("No compiled bytecode available to execute");
                 }
                 [path] => {
-                    if is_text_emitter {
+                    if emit_text_bytecode {
                         warn!("--exec is not supported for text-bytecode output");
                     } else {
                         exec_compiled_bytecode(path)?;
@@ -218,19 +258,19 @@ async fn compile_file(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    backend: &str,
+    backend: BackendKind,
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
 
     // Configure pipeline for compilation with new options
     let target = match backend {
-        "rust" => PipelineTarget::Rust,
-        "llvm" => PipelineTarget::Llvm,
-        "binary" => PipelineTarget::Binary,
-        "bytecode" => PipelineTarget::Bytecode,
-        "wasm" => PipelineTarget::Wasm,
-        _ => PipelineTarget::Interpret,
+        BackendKind::Rust => PipelineTarget::Rust,
+        BackendKind::Llvm => PipelineTarget::Llvm,
+        BackendKind::Binary => PipelineTarget::Binary,
+        BackendKind::Bytecode | BackendKind::TextBytecode => PipelineTarget::Bytecode,
+        BackendKind::Wasm => PipelineTarget::Wasm,
+        BackendKind::Interpret => PipelineTarget::Interpret,
     };
 
     let execute_const_main = false;
@@ -245,7 +285,7 @@ async fn compile_file(
 
     let pipeline_options = PipelineOptions {
         target,
-        codegen_backend: Some(args.emitter.clone()),
+        backend: Some(args.emitter.as_str().to_string()),
         target_triple: args.target_triple.clone(),
         target_cpu: args.target_cpu.clone(),
         target_features: args.target_features.clone(),
@@ -408,7 +448,7 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
 fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
-    backend: &str,
+    backend: BackendKind,
     target_triple: Option<&str>,
     emit_text_bytecode: bool,
     output_is_dir: bool,
@@ -416,24 +456,24 @@ fn determine_output_path(
     if let Some(output) = output {
         if output_is_dir {
             let extension = match backend {
-                "binary" => {
+                BackendKind::Binary => {
                     if is_windows_target(target_triple) {
                         "exe"
                     } else {
                         "out"
                     }
                 }
-                "rust" => "rs",
-                "llvm" => "ll",
-                "wasm" => "wasm",
-                "bytecode" => {
+                BackendKind::Rust => "rs",
+                BackendKind::Llvm => "ll",
+                BackendKind::Wasm => "wasm",
+                BackendKind::Bytecode | BackendKind::TextBytecode => {
                     if emit_text_bytecode {
                         "ftbc"
                     } else {
                         "fbc"
                     }
                 }
-                _ => "out",
+                BackendKind::Interpret => "out",
             };
             let stem = input
                 .file_stem()
@@ -444,7 +484,7 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if backend == "binary" {
+        if matches!(backend, BackendKind::Binary) {
             let mut path = output.clone();
             let desired_ext = if is_windows_target(target_triple) {
                 "exe"
@@ -465,7 +505,7 @@ fn determine_output_path(
             return Ok(path);
         }
 
-        if backend == "bytecode" && emit_text_bytecode {
+        if matches!(backend, BackendKind::Bytecode) && emit_text_bytecode {
             let mut path = output.clone();
             path.set_extension("ftbc");
             return Ok(path);
@@ -474,7 +514,7 @@ fn determine_output_path(
         Ok(output.clone())
     } else {
         let extension = match backend {
-            "binary" => {
+            BackendKind::Binary => {
                 // Use platform-specific executable extension
                 if is_windows_target(target_triple) {
                     "exe"
@@ -482,20 +522,20 @@ fn determine_output_path(
                     "out" // Use .out extension on Unix systems for clarity
                 }
             }
-            "rust" => "rs",
-            "llvm" => "ll",
-            "wasm" => "wasm",
-            "bytecode" => {
+            BackendKind::Rust => "rs",
+            BackendKind::Llvm => "ll",
+            BackendKind::Wasm => "wasm",
+            BackendKind::Bytecode | BackendKind::TextBytecode => {
                 if emit_text_bytecode {
                     "ftbc"
                 } else {
                     "fbc"
                 }
             }
-            _ => {
+            BackendKind::Interpret => {
                 return Err(CliError::InvalidInput(format!(
                     "Unknown backend for output extension: {}",
-                    backend
+                    backend.as_str()
                 )));
             }
         };
