@@ -1,17 +1,18 @@
 use crate::models::{DependencyModel, ManifestModel, PackageModel, WorkspaceModel};
-use crate::registry::{RegistryClient, RegistryOptions};
+use crate::registry::{RegistryClient, RegistryOptions, ResolvedCrate};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleSource, PackageProvider};
 use fp_typescript::TypeScriptPackageProvider;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
 #[cfg(feature = "cargo-fallback")]
 use std::process::Command;
 use std::sync::Arc;
+use tokio::task::JoinSet;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,10 +241,10 @@ impl PackageGraph {
         info!("graph: initializing Cargo workspace at {}", root.display());
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
-            Some(RegistryClient::new(RegistryOptions {
+            Some(Arc::new(RegistryClient::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: resolve_cache_dir(options),
-            })?)
+            })?))
         } else {
             None
         };
@@ -256,7 +257,11 @@ impl PackageGraph {
         }
         let mut resolver = CargoResolver::new(&root, options, registry)?;
         resolver.load_root(manifest_path)?;
-        let packages = resolver.resolve()?;
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .map_err(|err| eyre::eyre!("failed to start async resolver: {err}"))?;
+        let packages = runtime.block_on(resolver.resolve_async())?;
 
         Ok(Self {
             schema_version: 1,
@@ -477,7 +482,7 @@ fn package_to_node(
 struct CargoResolver {
     root: PathBuf,
     options: PackageGraphOptions,
-    registry: Option<RegistryClient>,
+    registry: Option<Arc<RegistryClient>>,
     workspace: Option<WorkspaceModel>,
     roots: Vec<PathBuf>,
     seen: HashSet<String>,
@@ -488,7 +493,7 @@ impl CargoResolver {
     fn new(
         root: &Path,
         options: &PackageGraphOptions,
-        registry: Option<RegistryClient>,
+        registry: Option<Arc<RegistryClient>>,
     ) -> Result<Self> {
         Ok(Self {
             root: root.to_path_buf(),
@@ -527,15 +532,38 @@ impl CargoResolver {
         Ok(())
     }
 
-    fn resolve(&mut self) -> Result<Vec<PackageNode>> {
-        let roots = self.roots.clone();
-        for root in roots {
-            self.resolve_package_dir(&root)?;
+    async fn resolve_async(&mut self) -> Result<Vec<PackageNode>> {
+        let mut queue: VecDeque<PathBuf> = self.roots.clone().into();
+        while let Some(dir) = queue.pop_front() {
+            let Some((package, deps)) = self.resolve_package_dir_sync(&dir)? else {
+                continue;
+            };
+            let mut resolved_registry = HashMap::new();
+            if let Some(registry) = self.registry.as_ref() {
+                let mut join_set = JoinSet::new();
+                for (name, dep) in deps.registry {
+                    let registry = Arc::clone(registry);
+                    join_set.spawn(async move { resolve_registry_dependency(registry, name, dep).await });
+                }
+                while let Some(result) = join_set.join_next().await {
+                    if let Some(resolved) = result?? {
+                        queue.push_back(resolved.resolved.root.clone());
+                        resolved_registry.insert(resolved.name, resolved.resolved);
+                    }
+                }
+            }
+
+            for path in deps.paths {
+                queue.push_back(path);
+            }
+
+            let node = package_to_node_with_resolved(package, resolved_registry, &self.options)?;
+            self.packages.push(node);
         }
         Ok(std::mem::take(&mut self.packages))
     }
 
-    fn resolve_package_dir(&mut self, dir: &Path) -> Result<()> {
+    fn resolve_package_dir_sync(&mut self, dir: &Path) -> Result<Option<(PackageModel, PackageDeps)>> {
         info!("graph: resolving package at {}", dir.display());
         let mut package = PackageModel::from_dir(dir)?;
         if let Some(workspace) = &self.workspace {
@@ -544,59 +572,12 @@ impl CargoResolver {
 
         let key = self.package_key(&package);
         if !self.seen.insert(key) {
-            return Ok(());
+            return Ok(None);
         }
-
-        let node = package_to_node(package.clone(), self.registry.as_ref(), &self.options)?;
-        self.packages.push(node);
 
         let deps = collect_dependencies(&package, &self.options);
-        for (name, dep) in deps {
-            self.resolve_dependency(&package.root_path, &name, dep)?;
-        }
-
-        Ok(())
-    }
-
-    fn resolve_dependency(
-        &mut self,
-        package_root: &Path,
-        name: &str,
-        dep: DependencyModel,
-    ) -> Result<()> {
-        if let Some(path) = dep.path.as_ref() {
-            let base = if dep.workspace.unwrap_or(false) {
-                self.workspace
-                    .as_ref()
-                    .map(|ws| ws.root_path.as_path())
-                    .unwrap_or(package_root)
-            } else {
-                package_root
-            };
-            let path = if path.is_absolute() {
-                path.to_path_buf()
-            } else {
-                base.join(path)
-            };
-            info!("graph: resolving path dependency {}", path.display());
-            return self.resolve_package_dir(&path);
-        }
-
-        if dep.git.is_some() {
-            info!("graph: skipping git dependency {}", name);
-            return Ok(());
-        }
-
-        let Some(registry) = self.registry.as_ref() else {
-            return Ok(());
-        };
-        let resolved_name = dep.package.as_deref().unwrap_or(name);
-        let Some(version) = dep.version.as_deref() else {
-            return Ok(());
-        };
-        info!("graph: resolving registry dependency {} {}", resolved_name, version);
-        let resolved = registry.resolve(resolved_name, Some(version))?;
-        self.resolve_package_dir(&resolved.root)
+        let resolved = split_dependencies(&package, deps, &self.workspace)?;
+        Ok(Some((package, resolved)))
     }
 
     fn package_key(&self, package: &PackageModel) -> String {
@@ -606,6 +587,108 @@ impl CargoResolver {
             package.name.clone()
         }
     }
+}
+
+struct PackageDeps {
+    paths: Vec<PathBuf>,
+    registry: Vec<(String, DependencyModel)>,
+}
+
+fn split_dependencies(
+    package: &PackageModel,
+    deps: HashMap<String, DependencyModel>,
+    workspace: &Option<WorkspaceModel>,
+) -> Result<PackageDeps> {
+    let mut paths = Vec::new();
+    let mut registry = Vec::new();
+    for (name, dep) in deps {
+        if let Some(path) = dep.path.as_ref() {
+            let base = if dep.workspace.unwrap_or(false) {
+                workspace
+                    .as_ref()
+                    .map(|ws| ws.root_path.as_path())
+                    .unwrap_or(package.root_path.as_path())
+            } else {
+                package.root_path.as_path()
+            };
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base.join(path)
+            };
+            info!("graph: resolving path dependency {}", path.display());
+            paths.push(path);
+            continue;
+        }
+
+        if dep.git.is_some() {
+            info!("graph: skipping git dependency {}", name);
+            continue;
+        }
+
+        registry.push((name, dep));
+    }
+    Ok(PackageDeps { paths, registry })
+}
+
+struct ResolvedRegistryDependency {
+    name: String,
+    resolved: ResolvedCrate,
+}
+
+async fn resolve_registry_dependency(
+    registry: Arc<RegistryClient>,
+    name: String,
+    dep: DependencyModel,
+) -> Result<Option<ResolvedRegistryDependency>> {
+    if let Some(registry_name) = dep.registry.as_deref() {
+        if registry_name != "crates-io" && registry_name != "crates.io" {
+            return Err(eyre::eyre!("unsupported registry '{}'", registry_name));
+        }
+    }
+    let Some(version) = dep.version.as_deref() else {
+        return Ok(None);
+    };
+    let resolved_name = dep.package.as_deref().unwrap_or(&name).to_string();
+    info!("graph: resolving registry dependency {} {}", resolved_name, version);
+    let resolved = registry.resolve_async(&resolved_name, Some(version)).await?;
+    Ok(Some(ResolvedRegistryDependency { name, resolved }))
+}
+
+fn package_to_node_with_resolved(
+    package: PackageModel,
+    resolved_registry: HashMap<String, ResolvedCrate>,
+    options: &PackageGraphOptions,
+) -> Result<PackageNode> {
+    let module_root = package.root_path.join("src");
+    let entry = {
+        let path = module_root.join("main.fp");
+        if path.exists() { Some(path) } else { None }
+    };
+
+    let deps = collect_dependencies(&package, options);
+    let mut edges = Vec::new();
+    for (name, dep) in deps {
+        let mut edge = dependency_to_edge(name.clone(), dep, None)?;
+        if let Some(resolved) = resolved_registry.get(&name) {
+            edge.resolved_version = Some(resolved.version.clone());
+            edge.checksum = resolved.checksum.clone();
+            edge.source = Some("registry".to_string());
+            edge.path = Some(resolved.root.clone());
+        }
+        edges.push(edge);
+    }
+
+    Ok(PackageNode {
+        name: package.name,
+        version: package.version,
+        root: package.root_path.clone(),
+        manifest_path: package.source_path,
+        language: None,
+        module_roots: vec![module_root],
+        entry,
+        dependencies: edges,
+    })
 }
 
 fn collect_dependencies(

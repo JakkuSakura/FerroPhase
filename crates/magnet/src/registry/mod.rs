@@ -1,13 +1,16 @@
 use crates_index::SparseIndex;
+use futures_util::StreamExt;
 use http;
 use eyre::Result;
 use flate2::read::GzDecoder;
+use reqwest::Client;
 use semver::{Version, VersionReq};
 use sha2::{Digest, Sha256};
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone)]
 pub struct RegistryOptions {
@@ -41,16 +44,12 @@ impl RegistryClient {
         let req = VersionReq::parse(req_str)
             .map_err(|err| eyre::eyre!("invalid version requirement '{req_str}': {err}"))?;
 
-        let _guard = CargoHomeGuard::apply(&self.cache_dir)?;
-        let index = SparseIndex::new_cargo_default()?;
-        let krate = if self.options.offline {
-            index
-                .crate_from_cache(name)
-                .map_err(|err| eyre::eyre!("crate '{name}' not available offline: {err}"))?
-        } else {
-            fetch_sparse_crate(&index, name)?
-        };
-        let (version, checksum) = select_version(&krate, &req)?;
+        let (version, checksum) = resolve_version_and_checksum(
+            &self.options,
+            &self.cache_dir,
+            name,
+            &req,
+        )?;
 
         let crate_root = self
             .cache_dir
@@ -77,6 +76,55 @@ impl RegistryClient {
         }
 
         download_and_unpack(name, &version, checksum.as_deref(), &crate_root)?;
+
+        Ok(ResolvedCrate {
+            name: name.to_string(),
+            version,
+            checksum,
+            root: crate_root,
+            manifest_path,
+        })
+    }
+
+    pub async fn resolve_async(&self, name: &str, version_req: Option<&str>) -> Result<ResolvedCrate> {
+        let req_str = version_req.ok_or_else(|| eyre::eyre!("missing version for {name}"))?;
+        let req = VersionReq::parse(req_str)
+            .map_err(|err| eyre::eyre!("invalid version requirement '{req_str}': {err}"))?;
+        let options = self.options.clone();
+        let cache_dir = self.cache_dir.clone();
+        let name_owned = name.to_string();
+        let req_owned = req.clone();
+        let (version, checksum) = tokio::task::spawn_blocking(move || {
+            resolve_version_and_checksum(&options, &cache_dir, &name_owned, &req_owned)
+        })
+        .await
+        .map_err(|err| eyre::eyre!("failed to resolve crate {name}: {err}"))??;
+
+        let crate_root = self
+            .cache_dir
+            .join("registry")
+            .join("crates")
+            .join(name)
+            .join(&version);
+        let manifest_path = crate_root.join("Cargo.toml");
+
+        if manifest_path.exists() {
+            return Ok(ResolvedCrate {
+                name: name.to_string(),
+                version,
+                checksum,
+                root: crate_root,
+                manifest_path,
+            });
+        }
+
+        if self.options.offline {
+            return Err(eyre::eyre!(
+                "crate '{name}' {version} not available offline"
+            ));
+        }
+
+        download_and_unpack_async(name, &version, checksum.as_deref(), &crate_root).await?;
 
         Ok(ResolvedCrate {
             name: name.to_string(),
@@ -113,6 +161,24 @@ fn select_version(krate: &crates_index::Crate, req: &VersionReq) -> Result<(Stri
     };
 
     Ok((version.to_string(), checksum.clone()))
+}
+
+fn resolve_version_and_checksum(
+    options: &RegistryOptions,
+    cache_dir: &Path,
+    name: &str,
+    req: &VersionReq,
+) -> Result<(String, Option<String>)> {
+    let _guard = CargoHomeGuard::apply(cache_dir)?;
+    let index = SparseIndex::new_cargo_default()?;
+    let krate = if options.offline {
+        index
+            .crate_from_cache(name)
+            .map_err(|err| eyre::eyre!("crate '{name}' not available offline: {err}"))?
+    } else {
+        fetch_sparse_crate(&index, name)?
+    };
+    select_version(&krate, req)
 }
 
 fn fetch_sparse_crate(index: &SparseIndex, name: &str) -> Result<crates_index::Crate> {
@@ -190,6 +256,73 @@ fn download_and_unpack(
     fs::create_dir_all(crate_root)?;
     let file = File::open(&archive_path)?;
     unpack_crate_archive(file, crate_root)?;
+
+    Ok(())
+}
+
+async fn download_and_unpack_async(
+    name: &str,
+    version: &str,
+    checksum: Option<&str>,
+    crate_root: &Path,
+) -> Result<()> {
+    let url = format!(
+        "https://crates.io/api/v1/crates/{}/{}/download",
+        name, version
+    );
+    let download_dir = crate_root
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or_else(|| eyre::eyre!("invalid cache path for {}", crate_root.display()))?
+        .join("downloads");
+    std::fs::create_dir_all(&download_dir)?;
+
+    let archive_path = download_dir.join(format!("{name}-{version}.crate"));
+    let client = Client::new();
+    let response = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|err| eyre::eyre!("failed to download crate {name} {version}: {err}"))?;
+    if !response.status().is_success() {
+        return Err(eyre::eyre!(
+            "failed to download crate {name} {version}: http {}",
+            response.status()
+        ));
+    }
+
+    let mut file = tokio::fs::File::create(&archive_path).await?;
+    let mut hasher = Sha256::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        hasher.update(&chunk);
+        file.write_all(&chunk).await?;
+    }
+    file.flush().await?;
+
+    if let Some(expected) = checksum {
+        let digest = hex::encode(hasher.finalize());
+        if digest != expected {
+            return Err(eyre::eyre!(
+                "checksum mismatch for {} {}: expected {}, got {}",
+                name,
+                version,
+                expected,
+                digest
+            ));
+        }
+    }
+
+    let crate_root = crate_root.to_path_buf();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        std::fs::create_dir_all(&crate_root)?;
+        let file = File::open(&archive_path)?;
+        unpack_crate_archive(file, &crate_root)?;
+        Ok(())
+    })
+    .await
+    .map_err(|err| eyre::eyre!("failed to unpack crate {name} {version}: {err}"))??;
 
     Ok(())
 }
