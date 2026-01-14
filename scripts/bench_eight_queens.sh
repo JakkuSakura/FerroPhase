@@ -79,6 +79,15 @@ JS
 echo "==> native rust (criterion)"
 cargo bench -p fp --bench eight_queens
 
+echo ""
+if command -v llvm-config >/dev/null 2>&1; then
+  echo "LLVM version: $(llvm-config --version)"
+elif command -v clang >/dev/null 2>&1; then
+  echo "LLVM version: $(clang --version | head -n 1)"
+else
+  echo "LLVM version: unknown (llvm-config/clang not found)"
+fi
+
 BIN_OUT="${OUT_DIR}/eight_queens_bin.out"
 bench_cmd "fp compile (binary)" \
   "${FP_BIN} compile --emitter binary --release --output ${BIN_OUT} ${EXAMPLE}"

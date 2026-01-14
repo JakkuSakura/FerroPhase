@@ -10126,6 +10126,16 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(None);
                 };
                 let cast_ty = self.lower_type_expr(ty);
+                let place_ok = match (&place_info.ty.kind, &cast_ty.kind) {
+                    (TyKind::Ref(_, _, _), TyKind::Ref(_, _, _)) => true,
+                    (TyKind::RawPtr(_), TyKind::RawPtr(_)) => true,
+                    (TyKind::FnDef(_, _), TyKind::FnPtr(_)) => true,
+                    (TyKind::FnPtr(_), TyKind::FnPtr(_)) => true,
+                    _ => false,
+                };
+                if !place_ok {
+                    return Ok(None);
+                }
                 place_info.ty = cast_ty.clone();
                 place_info.struct_def = self.struct_def_from_ty(&cast_ty);
                 Ok(Some(place_info))
