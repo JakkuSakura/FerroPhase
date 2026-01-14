@@ -1,8 +1,13 @@
 //! Command implementation for displaying workspace hierarchy as a tree
 
 use crate::models::{DependencyModel, ManifestModel, NexusModel, PackageModel, WorkspaceModel};
-use crate::registry::{RegistryClient, RegistryOptions};
+use crate::registry::RegistryOptions;
+use crate::models::LockIndex;
+use crate::resolver::lock::match_locked_registry;
+use crate::resolver::project::{load_lock_index, load_manifest};
+use crate::resolver::{RegistryLoader, ResolvedRegistry};
 use eyre::Result;
+use semver::VersionReq;
 use std::collections::HashSet;
 use std::path::Path;
 use tracing::info;
@@ -10,16 +15,26 @@ use tracing::info;
 /// Tree command for visualizing workspace structure
 pub fn tree(config_path: &Path) -> Result<()> {
     // Create a nexus manager
-    let manifest = ManifestModel::from_dir(config_path)?;
+    let manifest = load_manifest(config_path)?;
 
     let offline = env_flag_enabled("MAGNET_OFFLINE");
-    let registry = Some(RegistryClient::new(RegistryOptions {
+    let mut registry = RegistryLoader::new(RegistryOptions {
         offline,
         cache_dir: Some(manifest_root(&manifest).join("target").join("magnet")),
-    })?);
+    })?;
+    let lock_index = load_lock_index(&manifest_root(&manifest))?;
     let mut visited = HashSet::new();
     let mut visited_registry = HashSet::new();
-    print_manifest_tree(&manifest, 0, "", true, registry.as_ref(), &mut visited, &mut visited_registry)?;
+    print_manifest_tree(
+        &manifest,
+        0,
+        "",
+        true,
+        &mut registry,
+        lock_index.as_ref(),
+        &mut visited,
+        &mut visited_registry,
+    )?;
 
     Ok(())
 }
@@ -29,23 +44,47 @@ fn print_manifest_tree(
     depth: u32,
     prefix: &str,
     is_last: bool,
-    registry: Option<&RegistryClient>,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
     match manifest {
-        ManifestModel::Nexus(nexus) => print_nexus_tree(nexus, depth, prefix, registry, visited, visited_registry),
-        ManifestModel::Workspace(workspace) => {
-            print_workspace_tree(workspace, depth, prefix, is_last, registry, visited, visited_registry)
+        ManifestModel::Nexus(nexus) => {
+            print_nexus_tree(nexus, depth, prefix, registry, lock_index, visited, visited_registry)
         }
-        ManifestModel::Package(package) => print_package_tree(package, prefix, prefix, is_last, registry, visited, visited_registry),
+        ManifestModel::Workspace(workspace) => {
+            print_workspace_tree(
+                workspace,
+                depth,
+                prefix,
+                is_last,
+                registry,
+                lock_index,
+                visited,
+                visited_registry,
+            )
+        }
+        ManifestModel::Package(package) => {
+            print_package_tree(
+                package,
+                prefix,
+                prefix,
+                is_last,
+                registry,
+                lock_index,
+                visited,
+                visited_registry,
+            )
+        }
     }
 }
 fn print_nexus_tree(
     nexus: &NexusModel,
     depth: u32,
     prefix: &str,
-    registry: Option<&RegistryClient>,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -73,6 +112,7 @@ fn print_nexus_tree(
             workspace_prefix,
             is_last_workspace,
             registry,
+            lock_index,
             visited,
             visited_registry,
         )?;
@@ -92,6 +132,7 @@ fn print_nexus_tree(
             package_prefix,
             is_last_package,
             registry,
+            lock_index,
             visited,
             visited_registry,
         )?;
@@ -104,7 +145,8 @@ fn print_workspace_tree(
     depth: u32,
     prefix: &str,
     is_last: bool,
-    registry: Option<&RegistryClient>,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -142,6 +184,7 @@ fn print_workspace_tree(
             is_last_package,
             &package_map,
             registry,
+            lock_index,
             visited,
             visited_registry,
         )?;
@@ -155,7 +198,8 @@ fn print_package_tree(
     parent_indent: &str,
     prefix: &str,
     is_last: bool,
-    registry: Option<&RegistryClient>,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -167,6 +211,7 @@ fn print_package_tree(
         is_last,
         &package_map,
         registry,
+        lock_index,
         visited,
         visited_registry,
     )
@@ -178,7 +223,8 @@ fn print_package_tree_with_map(
     prefix: &str,
     is_last: bool,
     package_map: &std::collections::HashMap<String, PackageModel>,
-    registry: Option<&RegistryClient>,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -225,29 +271,28 @@ fn print_package_tree_with_map(
                     true,
                     package_map,
                     registry,
+                    lock_index,
                     visited,
                     visited_registry,
                 )?;
             }
-        } else if let Some(registry) = registry {
-            if let Some((resolved, deps)) = resolve_registry_deps(
-                registry,
-                resolved_name,
-                dep.model.version.as_deref(),
-            )?
-            {
-                let key = format!("registry:{}@{}", resolved.name, resolved.version);
-                if visited_registry.insert(key) {
-                    print_registry_deps(
-                        &next_indent,
-                        if is_last_dep { "    " } else { "│   " },
-                        &resolved,
-                        deps,
-                        registry,
-                        visited,
-                        visited_registry,
-                    )?;
-                }
+        } else if let Some(resolved) =
+            resolve_registry_deps(registry, lock_index, resolved_name, dep.model.version.as_deref())?
+        {
+            let key = format!(
+                "registry:{}@{}",
+                resolved.resolved.name, resolved.resolved.version
+            );
+            if visited_registry.insert(key) {
+                print_registry_deps(
+                    &next_indent,
+                    if is_last_dep { "    " } else { "│   " },
+                    &resolved,
+                    registry,
+                    lock_index,
+                    visited,
+                    visited_registry,
+                )?;
             }
         }
     }
@@ -258,22 +303,22 @@ fn print_package_tree_with_map(
 fn print_registry_deps(
     parent_indent: &str,
     prefix: &str,
-    resolved: &ResolvedCrateSummary,
-    deps: RegistryDeps,
-    registry: &RegistryClient,
+    resolved: &ResolvedRegistry,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
     let indent = format!("{}{}", parent_indent, prefix);
     info!(
         "{} 📦 {}@{} (registry)",
-        indent, resolved.name, resolved.version
+        indent, resolved.resolved.name, resolved.resolved.version
     );
     let next_indent = format!("{}{}", parent_indent, if prefix.trim().is_empty() { "    " } else { "│   " });
     let mut all_deps = Vec::new();
-    collect_deps(&deps.dependencies, DepKind::Normal, &mut all_deps);
-    collect_deps(&deps.dev_dependencies, DepKind::Dev, &mut all_deps);
-    collect_deps(&deps.build_dependencies, DepKind::Build, &mut all_deps);
+    collect_deps(&resolved.deps.dependencies, DepKind::Normal, &mut all_deps);
+    collect_deps(&resolved.deps.dev_dependencies, DepKind::Dev, &mut all_deps);
+    collect_deps(&resolved.deps.build_dependencies, DepKind::Build, &mut all_deps);
     for (idx, dep) in all_deps.iter().enumerate() {
         let is_last_dep = idx == all_deps.len() - 1;
         let dep_prefix = if is_last_dep { "└── " } else { "├── " };
@@ -290,17 +335,20 @@ fn print_registry_deps(
             .package
             .as_deref()
             .unwrap_or(dep.name.as_str());
-        if let Some((next_resolved, next_deps)) =
-            resolve_registry_deps(registry, resolved_name, dep.model.version.as_deref())?
+        if let Some(next_resolved) =
+            resolve_registry_deps(registry, lock_index, resolved_name, dep.model.version.as_deref())?
         {
-            let key = format!("registry:{}@{}", next_resolved.name, next_resolved.version);
+            let key = format!(
+                "registry:{}@{}",
+                next_resolved.resolved.name, next_resolved.resolved.version
+            );
             if visited_registry.insert(key) {
                 print_registry_deps(
                     &next_indent,
                     if is_last_dep { "    " } else { "│   " },
                     &next_resolved,
-                    next_deps,
                     registry,
+                    lock_index,
                     visited,
                     visited_registry,
                 )?;
@@ -347,110 +395,31 @@ fn collect_deps(
     }
 }
 
-struct ResolvedCrateSummary {
-    name: String,
-    version: String,
-}
-
-struct RegistryDeps {
-    dependencies: std::collections::HashMap<String, DependencyModel>,
-    dev_dependencies: std::collections::HashMap<String, DependencyModel>,
-    build_dependencies: std::collections::HashMap<String, DependencyModel>,
-}
-
 fn resolve_registry_deps(
-    registry: &RegistryClient,
+    registry: &mut RegistryLoader,
+    lock_index: Option<&LockIndex>,
     name: &str,
     version_req: Option<&str>,
-) -> Result<Option<(ResolvedCrateSummary, RegistryDeps)>> {
-    let resolved = match registry.resolve(name, version_req) {
+) -> Result<Option<ResolvedRegistry>> {
+    if version_req.is_none() {
+        tracing::warn!("registry resolution for {} skipped: missing version", name);
+        return Ok(None);
+    }
+    let requested = version_req.unwrap_or_default();
+    let mut locked_version = None;
+    if let Ok(req) = VersionReq::parse(requested) {
+        if let Some(locked) = match_locked_registry(lock_index, name, &req) {
+            locked_version = Some(locked.version);
+        }
+    }
+    let resolved = match registry.resolve_with_deps(name, locked_version.as_deref().or(version_req)) {
         Ok(resolved) => resolved,
         Err(err) => {
             tracing::warn!("registry resolution for {} failed: {}", name, err);
             return Ok(None);
         }
     };
-    let deps = parse_cargo_manifest(&resolved.manifest_path)?;
-    Ok(Some((
-        ResolvedCrateSummary {
-            name: resolved.name,
-            version: resolved.version,
-        },
-        deps,
-    )))
-}
-
-fn parse_cargo_manifest(path: &Path) -> Result<RegistryDeps> {
-    let content = std::fs::read_to_string(path)?;
-    let value: toml::Value = toml::from_str(&content)?;
-    let dependencies = parse_cargo_deps(value.get("dependencies"));
-    let dev_dependencies = parse_cargo_deps(value.get("dev-dependencies"));
-    let build_dependencies = parse_cargo_deps(value.get("build-dependencies"));
-    Ok(RegistryDeps {
-        dependencies,
-        dev_dependencies,
-        build_dependencies,
-    })
-}
-
-fn parse_cargo_deps(section: Option<&toml::Value>) -> std::collections::HashMap<String, DependencyModel> {
-    let mut out = std::collections::HashMap::new();
-    let Some(table) = section.and_then(|v| v.as_table()) else {
-        return out;
-    };
-    for (name, value) in table {
-        let mut model = DependencyModel::default();
-        match value {
-            toml::Value::String(version) => {
-                model.version = Some(version.to_string());
-            }
-            toml::Value::Table(table) => {
-                if let Some(version) = table.get("version").and_then(|v| v.as_str()) {
-                    model.version = Some(version.to_string());
-                }
-                if let Some(path) = table.get("path").and_then(|v| v.as_str()) {
-                    model.path = Some(Path::new(path).to_path_buf());
-                }
-                if let Some(git) = table.get("git").and_then(|v| v.as_str()) {
-                    model.git = Some(git.to_string());
-                }
-                if let Some(branch) = table.get("branch").and_then(|v| v.as_str()) {
-                    model.branch = Some(branch.to_string());
-                }
-                if let Some(tag) = table.get("tag").and_then(|v| v.as_str()) {
-                    model.tag = Some(tag.to_string());
-                }
-                if let Some(rev) = table.get("rev").and_then(|v| v.as_str()) {
-                    model.rev = Some(rev.to_string());
-                }
-                if let Some(features) = table.get("features").and_then(|v| v.as_array()) {
-                    let list = features
-                        .iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    if !list.is_empty() {
-                        model.features = Some(list);
-                    }
-                }
-                if let Some(default_features) = table.get("default-features").and_then(|v| v.as_bool()) {
-                    model.default_features = Some(default_features);
-                }
-                if let Some(optional) = table.get("optional").and_then(|v| v.as_bool()) {
-                    model.optional = Some(optional);
-                }
-                if let Some(package) = table.get("package").and_then(|v| v.as_str()) {
-                    model.package = Some(package.to_string());
-                }
-                if let Some(registry) = table.get("registry").and_then(|v| v.as_str()) {
-                    model.registry = Some(registry.to_string());
-                }
-            }
-            _ => {}
-        }
-        out.insert(name.to_string(), model);
-    }
-    out
+    Ok(Some(resolved))
 }
 
 fn env_flag_enabled(name: &str) -> bool {

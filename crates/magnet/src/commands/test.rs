@@ -1,7 +1,8 @@
 //! Command implementation for running package tests
 
 use crate::commands::run::resolve_package;
-use crate::models::{PackageGraph, PackageGraphOptions, PackageModel};
+use crate::models::{PackageGraphOptions, PackageModel};
+use crate::resolver::project::resolve_graph;
 use crate::utils::find_furthest_manifest;
 use eyre::{Context, Result, bail};
 use glob::glob;
@@ -162,7 +163,7 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
         use_lock: true,
         write_lock: true,
     };
-    let mut graph = PackageGraph::from_path_with_options(root, &graph_options)?;
+    let mut graph = resolve_graph(root, &graph_options)?;
     graph.selected_package = Some(package.name.clone());
     fs::create_dir_all(&output_dir).with_context(|| {
         format!(

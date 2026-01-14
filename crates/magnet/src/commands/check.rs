@@ -1,7 +1,8 @@
 //! Command implementation for checking Magnet.toml for issues
 
 use crate::manager::ManifestManager;
-use crate::models::{PackageGraph, PackageGraphOptions, WorkspaceModel};
+use crate::models::{PackageGraphOptions, WorkspaceModel};
+use crate::resolver::project::resolve_graph;
 use eyre::Result;
 use std::path::Path;
 use tracing::info;
@@ -33,7 +34,7 @@ pub fn check(config_path: &Path) -> Result<()> {
         use_lock: true,
         write_lock: true,
     };
-    let _graph = PackageGraph::from_path_with_options(&workspace.root_path, &graph_options)?;
+    let _graph = resolve_graph(&workspace.root_path, &graph_options)?;
 
     info!("All package dependencies are properly resolved.");
     Ok(())

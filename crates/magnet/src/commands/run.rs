@@ -1,6 +1,7 @@
 //! Command implementation for running FerroPhase code via fp-cli
 
-use crate::models::{ManifestModel, PackageGraph, PackageGraphOptions, PackageModel};
+use crate::models::{ManifestModel, PackageGraphOptions, PackageModel};
+use crate::resolver::project::resolve_graph;
 use crate::utils::find_furthest_manifest;
 use eyre::{Context, Result, bail};
 use glob::glob;
@@ -272,7 +273,7 @@ fn write_package_graph(
     build_options: std::collections::HashMap<String, String>,
     graph_options: &PackageGraphOptions,
 ) -> Result<PathBuf> {
-    let mut graph = PackageGraph::from_path_with_options(manifest_root, graph_options)?;
+    let mut graph = resolve_graph(manifest_root, graph_options)?;
     graph.selected_package = Some(package.name.clone());
     graph.build_options = build_options;
     fs::create_dir_all(&output_dir).with_context(|| {

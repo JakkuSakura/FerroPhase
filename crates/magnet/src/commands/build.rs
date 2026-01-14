@@ -1,6 +1,7 @@
 //! Command implementation for building FerroPhase code via fp-cli
 
-use crate::models::{ManifestModel, PackageGraph, PackageGraphOptions, PackageModel};
+use crate::models::{ManifestModel, PackageGraphOptions, PackageModel};
+use crate::resolver::project::resolve_graph;
 use crate::utils::find_furthest_manifest;
 use eyre::{Result, WrapErr, bail};
 use glob::glob;
@@ -412,7 +413,7 @@ fn write_workspace_graph(
     graph_options: &PackageGraphOptions,
     profile: &str,
 ) -> Result<PathBuf> {
-    let mut graph = PackageGraph::from_path_with_options(manifest_root, graph_options)?;
+    let mut graph = resolve_graph(manifest_root, graph_options)?;
     graph.build_options = build_options;
     let output_dir = manifest_root
         .join("target")

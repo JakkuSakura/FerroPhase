@@ -1,6 +1,7 @@
 //! Command implementation for rendering package dependencies as a Graphviz graph.
 
 use crate::models::{PackageGraph, PackageGraphOptions};
+use crate::resolver::project::resolve_graph;
 use eyre::Result;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
@@ -23,7 +24,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         use_lock: true,
         write_lock: true,
     };
-    let graph = PackageGraph::from_path_with_options(config_path, &options)?;
+    let graph = resolve_graph(config_path, &options)?;
 
     let output_path = output_path
         .map(|path| path.to_path_buf())
