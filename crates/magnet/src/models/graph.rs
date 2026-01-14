@@ -126,7 +126,7 @@ impl PackageGraph {
             None
         };
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
-        let mut registry = if options.resolve_registry {
+        let registry = if options.resolve_registry {
             Some(RegistryLoader::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: cache_dir.clone(),
@@ -138,7 +138,7 @@ impl PackageGraph {
         for package in packages {
             let node = package_to_node_with_lock_loader(
                 package,
-                registry.as_mut(),
+                registry.as_ref(),
                 options,
                 lock_index.as_ref(),
                 cache_dir.as_deref(),
@@ -486,7 +486,7 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
 
 fn package_to_node_with_lock_loader(
     package: PackageModel,
-    mut registry: Option<&mut RegistryLoader>,
+    registry: Option<&RegistryLoader>,
     options: &PackageGraphOptions,
     lock_index: Option<&LockIndex>,
     cache_dir: Option<&Path>,
@@ -519,7 +519,7 @@ fn package_to_node_with_lock_loader(
         let edge = dependency_to_edge_with_lock_loader(
             name,
             dep,
-            registry.as_deref_mut(),
+            registry,
             lock_index,
             cache_dir,
         )?;
@@ -619,7 +619,7 @@ fn dependency_to_edge_with_lock(
 fn dependency_to_edge_with_lock_loader(
     name: String,
     dep: DependencyModel,
-    mut registry: Option<&mut RegistryLoader>,
+    registry: Option<&RegistryLoader>,
     lock_index: Option<&LockIndex>,
     cache_dir: Option<&Path>,
 ) -> Result<DependencyEdge> {
@@ -655,7 +655,7 @@ fn dependency_to_edge_with_lock_loader(
                 }
             }
         }
-        if let Some(registry) = registry.as_deref_mut() {
+        if let Some(registry) = registry {
             if resolved_version.is_none() {
                 let resolved = registry.resolve(resolved_name, dep.version.as_deref())?;
                 resolved_version = Some(resolved.version.clone());

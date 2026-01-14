@@ -18,9 +18,9 @@ pub fn tree(config_path: &Path) -> Result<()> {
     let manifest = load_manifest(config_path)?;
 
     let offline = env_flag_enabled("MAGNET_OFFLINE");
-    let mut registry = RegistryLoader::new(RegistryOptions {
+    let registry = RegistryLoader::new(RegistryOptions {
         offline,
-        cache_dir: Some(manifest_root(&manifest).join("target").join("magnet")),
+        cache_dir: None,
     })?;
     let lock_index = load_lock_index(&manifest_root(&manifest))?;
     let mut visited = HashSet::new();
@@ -30,7 +30,7 @@ pub fn tree(config_path: &Path) -> Result<()> {
         0,
         "",
         true,
-        &mut registry,
+        &registry,
         lock_index.as_ref(),
         &mut visited,
         &mut visited_registry,
@@ -44,7 +44,7 @@ fn print_manifest_tree(
     depth: u32,
     prefix: &str,
     is_last: bool,
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
@@ -83,7 +83,7 @@ fn print_nexus_tree(
     nexus: &NexusModel,
     depth: u32,
     prefix: &str,
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
@@ -145,7 +145,7 @@ fn print_workspace_tree(
     depth: u32,
     prefix: &str,
     is_last: bool,
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
@@ -198,7 +198,7 @@ fn print_package_tree(
     parent_indent: &str,
     prefix: &str,
     is_last: bool,
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
@@ -223,14 +223,14 @@ fn print_package_tree_with_map(
     prefix: &str,
     is_last: bool,
     package_map: &std::collections::HashMap<String, PackageModel>,
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
     // Print package name
     info!(
-        "{}{} 📦 Package: {} ({})",
+        "{}{} 📦  Package: {} ({})",
         parent_indent,
         prefix,
         package.name,
@@ -249,7 +249,7 @@ fn print_package_tree_with_map(
         let is_last_dep = idx == all_deps.len() - 1;
         let dep_prefix = if is_last_dep { "└── " } else { "├── " };
         info!(
-            "{}{} 📄[{}] {} = {}",
+            "{}{} 📄 [{}] {} = {}",
             next_indent,
             dep_prefix,
             dep.kind.label(),
@@ -304,14 +304,14 @@ fn print_registry_deps(
     parent_indent: &str,
     prefix: &str,
     resolved: &ResolvedRegistry,
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
     let indent = format!("{}{}", parent_indent, prefix);
     info!(
-        "{} 📦 {}@{} (registry)",
+        "{} 📦  {}@{} (registry)",
         indent, resolved.resolved.name, resolved.resolved.version
     );
     let next_indent = format!("{}{}", parent_indent, if prefix.trim().is_empty() { "    " } else { "│   " });
@@ -323,7 +323,7 @@ fn print_registry_deps(
         let is_last_dep = idx == all_deps.len() - 1;
         let dep_prefix = if is_last_dep { "└── " } else { "├── " };
         info!(
-            "{}{} 📄[{}] {} = {}",
+            "{}{} 📄 [{}] {} = {}",
             next_indent,
             dep_prefix,
             dep.kind.label(),
@@ -396,7 +396,7 @@ fn collect_deps(
 }
 
 fn resolve_registry_deps(
-    registry: &mut RegistryLoader,
+    registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
     name: &str,
     version_req: Option<&str>,

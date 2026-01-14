@@ -75,60 +75,62 @@ impl DependencyModel {
 }
 impl Display for DependencyModel {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let mut parts: Vec<String> = Vec::new();
         if let Some(version) = &self.version {
-            write!(f, "version = {:?}, ", version)?;
+            parts.push(format!("version = {:?}", version));
         }
         if let Some(path) = &self.path {
-            write!(f, "path = {:?}, ", path.display())?;
+            parts.push(format!("path = {:?}", path.display()));
         }
         if let Some(nexus) = &self.nexus {
-            write!(f, "nexus = {}, ", nexus)?;
+            parts.push(format!("nexus = {}", nexus));
         }
         if let Some(git) = &self.git {
-            write!(f, "git = {:?}, ", git)?;
+            parts.push(format!("git = {:?}", git));
         }
         if let Some(branch) = &self.branch {
-            write!(f, "branch = {:?}, ", branch)?;
+            parts.push(format!("branch = {:?}", branch));
         }
         if let Some(tag) = &self.tag {
-            write!(f, "tag = {:?}, ", tag)?;
+            parts.push(format!("tag = {:?}", tag));
         }
         if let Some(rev) = &self.rev {
-            write!(f, "rev = {:?}, ", rev)?;
+            parts.push(format!("rev = {:?}", rev));
         }
         if let Some(features) = &self.features {
-            write!(f, "features = {:?}, ", features)?;
+            parts.push(format!("features = {:?}", features));
         }
 
         if let Some(default_features) = &self.default_features {
-            write!(f, "default-features = {}, ", default_features)?;
+            parts.push(format!("default-features = {}", default_features));
         }
         if let Some(workspace) = &self.workspace {
-            write!(f, "workspace = {}, ", workspace)?;
+            parts.push(format!("workspace = {}", workspace));
         }
         if let Some(optional) = &self.optional {
-            write!(f, "optional = {}, ", optional)?;
+            parts.push(format!("optional = {}", optional));
         }
         if let Some(package) = &self.package {
-            write!(f, "package = {:?}, ", package)?;
+            parts.push(format!("package = {:?}", package));
         }
         if let Some(registry) = &self.registry {
-            write!(f, "registry = {:?}, ", registry)?;
+            parts.push(format!("registry = {:?}", registry));
         }
         if let Some(artifact) = &self.artifact {
-            write!(f, "artifact = {:?}, ", artifact)?;
+            parts.push(format!("artifact = {:?}", artifact));
         }
         if let Some(target) = &self.target {
-            write!(f, "target = {:?}, ", target)?;
+            parts.push(format!("target = {:?}", target));
         }
         if !self.custom.is_empty() {
-            write!(f, "custom = {{ ")?;
+            let mut custom_parts = Vec::new();
             for (key, value) in &self.custom {
-                write!(f, "{} = {:?}, ", key, value)?;
+                custom_parts.push(format!("{} = {:?}", key, value));
             }
-            write!(f, "}}, ")?;
+            parts.push(format!("custom = {{ {} }}", custom_parts.join(", ")));
         }
-        write!(f, "}}")
+
+        write!(f, "{{{}}}", parts.join(", "))
     }
 }
 

@@ -17,14 +17,10 @@ pub fn check(config_path: &Path) -> Result<()> {
         nexus_manager.resolve_package_dependencies(&mut package)?;
     }
 
-    let cache_dir = workspace
-        .root_path
-        .join("target")
-        .join("magnet");
     let offline = env_flag_enabled("MAGNET_OFFLINE");
     let graph_options = PackageGraphOptions {
         offline,
-        cache_dir: Some(cache_dir),
+        cache_dir: None,
         include_dependencies: false,
         include_dev_dependencies: false,
         include_build_dependencies: false,

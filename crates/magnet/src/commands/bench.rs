@@ -153,7 +153,7 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
     let offline = env_flag_enabled("MAGNET_OFFLINE");
     let graph_options = PackageGraphOptions {
         offline,
-        cache_dir: Some(root.join("target").join("magnet")),
+        cache_dir: None,
         include_dependencies: true,
         include_dev_dependencies: true,
         include_build_dependencies: true,

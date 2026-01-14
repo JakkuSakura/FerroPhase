@@ -14,7 +14,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
     let offline = env_flag_enabled("MAGNET_OFFLINE");
     let options = PackageGraphOptions {
         offline,
-        cache_dir: Some(root.join("target").join("magnet")),
+        cache_dir: None,
         include_dependencies: true,
         include_dev_dependencies: false,
         include_build_dependencies: false,
