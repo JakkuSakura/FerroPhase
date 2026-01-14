@@ -4,6 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 pub mod ast_inspector;
+pub mod frontend;
 pub mod normalization;
 pub mod package;
 pub mod parser;

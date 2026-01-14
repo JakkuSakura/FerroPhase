@@ -101,7 +101,10 @@ out_dir="${run_dir}/out"
 mkdir -p "$log_dir" "$out_dir"
 
 list_cmd=(rg --files -g '*.rs' "$ROOT")
-mapfile -t files < <("${list_cmd[@]}")
+files=()
+while IFS= read -r line; do
+    files+=("$line")
+done < <("${list_cmd[@]}")
 
 if [[ ${#FILTERS[@]} -gt 0 ]]; then
     filtered=()

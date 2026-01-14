@@ -2,6 +2,7 @@ use super::RustParser;
 use crate::parser::parse_path;
 use fp_core::ast::{AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute};
 use fp_core::error::Result;
+use syn::parse::Parser;
 
 impl RustParser {
     fn parse_attr_style(&self, style: syn::AttrStyle) -> AttrStyle {
@@ -13,13 +14,34 @@ impl RustParser {
 
     fn parse_attr_meta_list(&self, list: syn::MetaList) -> Result<AttrMetaList> {
         let name = parse_path(list.path.clone())?;
-        self.error(
-            format!("AttrMetaList is not implemented: {:?}", list),
-            AttrMetaList {
+        if list.tokens.is_empty() {
+            return Ok(AttrMetaList {
                 name,
                 items: Vec::new(),
-            },
-        )
+            });
+        }
+
+        let parsed = match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+            .parse2(list.tokens.clone())
+        {
+                Ok(items) => items,
+                Err(err) => {
+                    return self.error(
+                        format!("Failed to parse attribute list {:?}: {}", list, err),
+                        AttrMetaList {
+                            name,
+                            items: Vec::new(),
+                        },
+                    );
+                }
+            };
+
+        let items = parsed
+            .into_iter()
+            .map(|meta| self.parse_attr_meta(meta))
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(AttrMetaList { name, items })
     }
 
     fn parse_attr_meta_name_value(&self, nv: syn::MetaNameValue) -> Result<AttrMetaNameValue> {

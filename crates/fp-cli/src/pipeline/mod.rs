@@ -2,7 +2,7 @@ use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::languages::frontend::{
     FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, JsonSchemaFrontend,
-    LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
+    LanguageFrontend, PrqlFrontend, RustFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_bytecode;
@@ -112,6 +112,8 @@ impl Pipeline {
         };
         let ferro_frontend: Arc<dyn LanguageFrontend> = Arc::new(FerroFrontend::new());
         register(ferro_frontend);
+        let rust_frontend: Arc<dyn LanguageFrontend> = Arc::new(RustFrontend::new());
+        register(rust_frontend);
         let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
         register(wit_frontend);
         let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));

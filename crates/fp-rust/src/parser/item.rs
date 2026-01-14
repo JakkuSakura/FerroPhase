@@ -1,3 +1,4 @@
+use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::Result;
 use itertools::Itertools;
 use syn::{Fields, FnArg, ReturnType};
@@ -37,7 +38,10 @@ impl RustParser {
                 let pat = self.parse_pat(*t.pat)?;
                 let ident = match pat.as_ident() {
                     Some(id) => id.clone(),
-                    None => return self.error("Function parameter must be an identifier", None),
+                    None => match pat.kind() {
+                        PatternKind::Wildcard(_) => Ident::new("_"),
+                        _ => return self.error("Function parameter must be an identifier", None),
+                    },
                 };
                 let ty = self.parse_type(*t.ty)?;
                 Some(FunctionParam::new(ident, ty))
@@ -294,6 +298,52 @@ impl RustParser {
             }
             syn::Item::Impl(im) => ItemKind::Impl(self.parse_item_impl_internal(im)?).into(),
             syn::Item::Use(u) => ItemKind::Import(self.parse_item_use_internal(u)?).into(),
+            syn::Item::ExternCrate(c) => {
+                let visibility = parse_vis(c.vis);
+                let from = parse_ident(c.ident);
+                let tree = match c.rename {
+                    Some((_, rename)) => ItemImportTree::Rename(ItemImportRename {
+                        from,
+                        to: parse_ident(rename),
+                    }),
+                    None => ItemImportTree::Ident(from),
+                };
+                ItemKind::Import(ItemImport { visibility, tree }).into()
+            }
+            syn::Item::ForeignMod(m) => {
+                let mut items = Vec::new();
+                for item in m.items {
+                    match item {
+                        syn::ForeignItem::Fn(f) => {
+                            let sig = self.parse_fn_sig_internal(f.sig)?;
+                            let name = sig
+                                .name
+                                .clone()
+                                .ok_or_else(|| fp_core::error::Error::from("Missing function name"))?;
+                            items.push(ItemKind::DeclFunction(ItemDeclFunction {
+                                ty_annotation: None,
+                                name,
+                                sig,
+                            })
+                            .into());
+                        }
+                        other => {
+                            self.record_diagnostic(
+                                DiagnosticLevel::Warning,
+                                format!("Ignoring unsupported foreign item: {:?}", other),
+                            );
+                        }
+                    }
+                }
+
+                let module = Module {
+                    name: Ident::new("__extern"),
+                    items,
+                    visibility: Visibility::Private,
+                    is_external: false,
+                };
+                ItemKind::Module(module).into()
+            }
             syn::Item::Macro(m) => {
                 // Convert item macro into a first-class AST ItemMacro instead of AnyBox
                 let path = parse_path(m.mac.path.clone())?;
