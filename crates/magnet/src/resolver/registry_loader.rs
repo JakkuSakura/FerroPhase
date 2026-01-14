@@ -4,22 +4,36 @@ use crate::resolver::types::{
     RegistryDeps, RegistryManifestKey, RegistryReqKey, ResolvedRegistry,
 };
 use eyre::Result;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+#[derive(Clone)]
 pub struct RegistryLoader {
-    client: RegistryClient,
-    resolved: HashMap<RegistryReqKey, ResolvedCrate>,
-    manifests: HashMap<RegistryManifestKey, RegistryDeps>,
+    client: Arc<RegistryClient>,
+    cache: Arc<RegistryLoaderCache>,
+}
+
+struct RegistryLoaderCache {
+    resolved_by_req: RwLock<HashMap<RegistryReqKey, ResolvedCrate>>,
+    resolved_by_version: RwLock<HashMap<RegistryManifestKey, ResolvedCrate>>,
+    manifests: RwLock<HashMap<RegistryManifestKey, RegistryDeps>>,
+    inflight_req: RwLock<HashMap<RegistryReqKey, Arc<Mutex<()>>>>,
+    inflight_manifest: RwLock<HashMap<RegistryManifestKey, Arc<Mutex<()>>>>,
 }
 
 impl RegistryLoader {
     pub fn new(options: RegistryOptions) -> Result<Self> {
         Ok(Self {
-            client: RegistryClient::new(options)?,
-            resolved: HashMap::new(),
-            manifests: HashMap::new(),
+            client: Arc::new(RegistryClient::new(options)?),
+            cache: Arc::new(RegistryLoaderCache {
+                resolved_by_req: RwLock::new(HashMap::new()),
+                resolved_by_version: RwLock::new(HashMap::new()),
+                manifests: RwLock::new(HashMap::new()),
+                inflight_req: RwLock::new(HashMap::new()),
+                inflight_manifest: RwLock::new(HashMap::new()),
+            }),
         })
     }
 
@@ -29,11 +43,26 @@ impl RegistryLoader {
             name: name.to_string(),
             version_req: version_req.to_string(),
         };
-        if let Some(resolved) = self.resolved.get(&key) {
+        if let Some(resolved) = self.cache.resolved_by_req.read().get(&key) {
+            return Ok(resolved.clone());
+        }
+        let lock = self.inflight_req_lock(&key);
+        let _guard = lock.lock();
+        if let Some(resolved) = self.cache.resolved_by_req.read().get(&key) {
             return Ok(resolved.clone());
         }
         let resolved = self.client.resolve(name, Some(version_req))?;
-        self.resolved.insert(key, resolved.clone());
+        self.cache
+            .resolved_by_version
+            .write()
+            .insert(
+                RegistryManifestKey {
+                    name: resolved.name.clone(),
+                    version: resolved.version.clone(),
+                },
+                resolved.clone(),
+            );
+        self.cache.resolved_by_req.write().insert(key, resolved.clone());
         Ok(resolved)
     }
 
@@ -72,15 +101,23 @@ impl RegistryLoader {
         version: &str,
         checksum: Option<&str>,
     ) -> Result<ResolvedCrate> {
-        let key = RegistryReqKey {
+        let key = RegistryManifestKey {
             name: name.to_string(),
-            version_req: version.to_string(),
+            version: version.to_string(),
         };
-        if let Some(resolved) = self.resolved.get(&key) {
+        if let Some(resolved) = self.cache.resolved_by_version.read().get(&key) {
+            return Ok(resolved.clone());
+        }
+        let lock = self.inflight_manifest_lock(&key);
+        let _guard = lock.lock();
+        if let Some(resolved) = self.cache.resolved_by_version.read().get(&key) {
             return Ok(resolved.clone());
         }
         let resolved = self.client.resolve_locked(name, version, checksum)?;
-        self.resolved.insert(key, resolved.clone());
+        self.cache
+            .resolved_by_version
+            .write()
+            .insert(key, resolved.clone());
         Ok(resolved)
     }
 
@@ -94,25 +131,50 @@ impl RegistryLoader {
             name: name.to_string(),
             version: version.to_string(),
         };
-        if let Some(deps) = self.manifests.get(&key) {
+        if let Some(deps) = self.cache.manifests.read().get(&key) {
+            return Ok(deps.clone());
+        }
+        let lock = self.inflight_manifest_lock(&key);
+        let _guard = lock.lock();
+        if let Some(deps) = self.cache.manifests.read().get(&key) {
             return Ok(deps.clone());
         }
         let deps = parse_cargo_manifest(manifest_path)?;
-        self.manifests.insert(key, deps.clone());
+        self.cache.manifests.write().insert(key, deps.clone());
         Ok(deps)
+    }
+
+    fn inflight_req_lock(&self, key: &RegistryReqKey) -> Arc<Mutex<()>> {
+        if let Some(lock) = self.cache.inflight_req.read().get(key) {
+            return Arc::clone(lock);
+        }
+        let mut inflight = self.cache.inflight_req.write();
+        inflight
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
+    }
+
+    fn inflight_manifest_lock(&self, key: &RegistryManifestKey) -> Arc<Mutex<()>> {
+        if let Some(lock) = self.cache.inflight_manifest.read().get(key) {
+            return Arc::clone(lock);
+        }
+        let mut inflight = self.cache.inflight_manifest.write();
+        inflight
+            .entry(key.clone())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 }
 
 #[derive(Clone)]
 pub struct RegistryLoaderHandle {
-    inner: Arc<Mutex<RegistryLoader>>,
+    loader: RegistryLoader,
 }
 
 impl RegistryLoaderHandle {
     pub fn new(loader: RegistryLoader) -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(loader)),
-        }
+        Self { loader }
     }
 
     pub async fn resolve_async(
@@ -120,12 +182,10 @@ impl RegistryLoaderHandle {
         name: String,
         version_req: Option<String>,
     ) -> Result<ResolvedCrate> {
-        let handle = self.inner.clone();
+        let loader = self.loader.clone();
         let name_err = name.clone();
         tokio::task::spawn_blocking(move || {
-            let mut loader = handle
-                .lock()
-                .map_err(|_| eyre::eyre!("registry loader lock poisoned"))?;
+            let mut loader = loader;
             loader.resolve(&name, version_req.as_deref())
         })
         .await
@@ -138,12 +198,10 @@ impl RegistryLoaderHandle {
         version: String,
         checksum: Option<String>,
     ) -> Result<ResolvedCrate> {
-        let handle = self.inner.clone();
+        let loader = self.loader.clone();
         let name_err = name.clone();
         tokio::task::spawn_blocking(move || {
-            let mut loader = handle
-                .lock()
-                .map_err(|_| eyre::eyre!("registry loader lock poisoned"))?;
+            let mut loader = loader;
             loader.resolve_locked(&name, &version, checksum.as_deref())
         })
         .await
