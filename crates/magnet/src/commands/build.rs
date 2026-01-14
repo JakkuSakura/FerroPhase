@@ -53,6 +53,8 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         cargo_fetch: options.fetch,
         resolve_registry: true,
         allow_multiple_versions: true,
+        use_lock: true,
+        write_lock: true,
     };
     let profile = resolve_profile(options.release, options.profile.as_deref());
     info!("build: generating workspace graph");

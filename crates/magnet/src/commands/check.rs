@@ -30,6 +30,8 @@ pub fn check(config_path: &Path) -> Result<()> {
         cargo_fetch: false,
         resolve_registry: !offline,
         allow_multiple_versions: false,
+        use_lock: true,
+        write_lock: true,
     };
     let _graph = PackageGraph::from_path_with_options(&workspace.root_path, &graph_options)?;
 

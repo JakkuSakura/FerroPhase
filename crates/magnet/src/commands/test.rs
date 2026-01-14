@@ -159,6 +159,8 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
         cargo_fetch: true,
         resolve_registry: !offline,
         allow_multiple_versions: false,
+        use_lock: true,
+        write_lock: true,
     };
     let mut graph = PackageGraph::from_path_with_options(root, &graph_options)?;
     graph.selected_package = Some(package.name.clone());

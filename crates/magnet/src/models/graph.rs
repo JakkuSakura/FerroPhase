@@ -1,10 +1,13 @@
-use crate::models::{DependencyModel, ManifestModel, PackageModel, WorkspaceModel};
+use crate::models::{
+    DependencyModel, LockIndex, MagnetLock, ManifestModel, PackageModel, WorkspaceModel,
+};
 use crate::registry::{RegistryClient, RegistryOptions, ResolvedCrate};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleSource, PackageProvider};
 use fp_typescript::TypeScriptPackageProvider;
 use serde::{Deserialize, Serialize};
+use semver::VersionReq;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 use std::path::PathBuf;
@@ -14,6 +17,8 @@ use std::process::Command;
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use tracing::info;
+
+const REGISTRY_SOURCE: &str = "registry+crates.io";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageGraph {
@@ -34,6 +39,8 @@ pub struct PackageNode {
     pub manifest_path: PathBuf,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
     pub module_roots: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry: Option<PathBuf>,
@@ -81,6 +88,8 @@ pub struct PackageGraphOptions {
     pub cargo_fetch: bool,
     pub resolve_registry: bool,
     pub allow_multiple_versions: bool,
+    pub use_lock: bool,
+    pub write_lock: bool,
 }
 
 impl Default for PackageGraphOptions {
@@ -94,6 +103,8 @@ impl Default for PackageGraphOptions {
             cargo_fetch: true,
             resolve_registry: true,
             allow_multiple_versions: false,
+            use_lock: true,
+            write_lock: true,
         }
     }
 }
@@ -109,26 +120,49 @@ impl PackageGraph {
     ) -> Result<Self> {
         let root = manifest_root_path(manifest);
         let packages = manifest.list_packages()?;
+        let cache_dir = resolve_cache_dir(options);
+        let lock_path = root.join("Magnet.lock");
+        let lock = if options.use_lock {
+            MagnetLock::read_from_path(&lock_path)?
+        } else {
+            None
+        };
+        let lock_index = lock.as_ref().map(LockIndex::from_lock);
         let registry = if options.resolve_registry {
             Some(RegistryClient::new(RegistryOptions {
                 offline: options.offline,
-                cache_dir: resolve_cache_dir(options),
+                cache_dir: cache_dir.clone(),
             })?)
         } else {
             None
         };
         let packages = packages
             .into_iter()
-            .map(|package| package_to_node(package, registry.as_ref(), options))
+            .map(|package| {
+                package_to_node_with_lock(
+                    package,
+                    registry.as_ref(),
+                    options,
+                    lock_index.as_ref(),
+                    cache_dir.as_deref(),
+                )
+            })
             .collect::<Result<Vec<_>>>()?;
 
-        Ok(Self {
+        let graph = Self {
             schema_version: 1,
-            root,
+            root: root.clone(),
             packages,
             selected_package: None,
             build_options: HashMap::new(),
-        })
+        };
+
+        if options.write_lock {
+            let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref());
+            lock.write_to_path(&lock_path)?;
+        }
+
+        Ok(graph)
     }
 
     pub fn from_path(path: &Path) -> Result<Self> {
@@ -199,7 +233,7 @@ impl PackageGraph {
                 info!("graph: loading Magnet manifest from {}", path.display());
                 let root = path.parent().unwrap_or(Path::new("."));
                 let manifest = ManifestModel::from_dir(root)?;
-                let graph = Self::from_manifest(&manifest)?;
+                let graph = Self::from_manifest_with_options(&manifest, options)?;
                 info!(
                     "graph: loaded {} package(s) in {:.2?}",
                     graph.packages.len(),
@@ -239,11 +273,19 @@ impl PackageGraph {
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
             .to_path_buf();
         info!("graph: initializing Cargo workspace at {}", root.display());
+        let cache_dir = resolve_cache_dir(options);
+        let lock_path = root.join("Magnet.lock");
+        let lock = if options.use_lock {
+            MagnetLock::read_from_path(&lock_path)?
+        } else {
+            None
+        };
+        let lock_index = lock.as_ref().map(LockIndex::from_lock);
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
             Some(Arc::new(RegistryClient::new(RegistryOptions {
                 offline: options.offline,
-                cache_dir: resolve_cache_dir(options),
+                cache_dir: cache_dir.clone(),
             })?))
         } else {
             None
@@ -255,7 +297,7 @@ impl PackageGraph {
                 prefetch_cargo_dependencies(manifest_path)?;
             }
         }
-        let mut resolver = CargoResolver::new(&root, options, registry)?;
+        let mut resolver = CargoResolver::new(&root, options, registry, lock_index)?;
         resolver.load_root(manifest_path)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -263,13 +305,18 @@ impl PackageGraph {
             .map_err(|err| eyre::eyre!("failed to start async resolver: {err}"))?;
         let packages = runtime.block_on(resolver.resolve_async())?;
 
-        Ok(Self {
+        let graph = Self {
             schema_version: 1,
-            root,
+            root: root.clone(),
             packages,
             selected_package: None,
             build_options: HashMap::new(),
-        })
+        };
+        if options.write_lock {
+            let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref());
+            lock.write_to_path(&lock_path)?;
+        }
+        Ok(graph)
     }
 
     pub fn from_typescript_manifest(manifest_path: &Path) -> Result<Self> {
@@ -312,6 +359,7 @@ impl PackageGraph {
                 root: descriptor.root.to_path_buf(),
                 manifest_path: descriptor.manifest_path.to_path_buf(),
                 language: Some("typescript".to_string()),
+                checksum: None,
                 module_roots,
                 entry,
                 dependencies,
@@ -344,6 +392,7 @@ impl PackageGraph {
             root: root.clone(),
             manifest_path: manifest_path.to_path_buf(),
             language: Some("javascript".to_string()),
+            checksum: None,
             module_roots: default_module_roots(&root),
             entry: detect_entry(&root, &["js", "mjs", "cjs"]),
             dependencies,
@@ -391,6 +440,7 @@ impl PackageGraph {
             root: root.clone(),
             manifest_path: manifest_path.to_path_buf(),
             language: Some("python".to_string()),
+            checksum: None,
             module_roots: default_module_roots(&root),
             entry: detect_entry(&root, &["py"]),
             dependencies,
@@ -436,10 +486,12 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
     Some(home.join(".cache").join("magnet"))
 }
 
-fn package_to_node(
+fn package_to_node_with_lock(
     package: PackageModel,
     registry: Option<&RegistryClient>,
     options: &PackageGraphOptions,
+    lock_index: Option<&LockIndex>,
+    cache_dir: Option<&Path>,
 ) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
@@ -470,11 +522,14 @@ fn package_to_node(
         root: package.root_path.clone(),
         manifest_path: package.source_path,
         language: None,
+        checksum: None,
         module_roots: vec![module_root],
         entry,
         dependencies: dep_map
             .into_iter()
-            .map(|(name, dep)| dependency_to_edge(name, dep, registry))
+            .map(|(name, dep)| {
+                dependency_to_edge_with_lock(name, dep, registry, lock_index, cache_dir)
+            })
             .collect::<Result<Vec<_>>>()?,
     })
 }
@@ -483,10 +538,12 @@ struct CargoResolver {
     root: PathBuf,
     options: PackageGraphOptions,
     registry: Option<Arc<RegistryClient>>,
+    lock_index: Option<Arc<LockIndex>>,
     workspace: Option<WorkspaceModel>,
     roots: Vec<PathBuf>,
     seen: HashSet<String>,
     packages: Vec<PackageNode>,
+    registry_roots: HashMap<PathBuf, ResolvedCrate>,
 }
 
 impl CargoResolver {
@@ -494,15 +551,18 @@ impl CargoResolver {
         root: &Path,
         options: &PackageGraphOptions,
         registry: Option<Arc<RegistryClient>>,
+        lock_index: Option<LockIndex>,
     ) -> Result<Self> {
         Ok(Self {
             root: root.to_path_buf(),
             options: options.clone(),
             registry,
+            lock_index: lock_index.map(Arc::new),
             workspace: None,
             roots: Vec::new(),
             seen: HashSet::new(),
             packages: Vec::new(),
+            registry_roots: HashMap::new(),
         })
     }
 
@@ -543,7 +603,10 @@ impl CargoResolver {
                 let mut join_set = JoinSet::new();
                 for (name, dep) in deps.registry {
                     let registry = Arc::clone(registry);
-                    join_set.spawn(async move { resolve_registry_dependency(registry, name, dep).await });
+                    let lock_index = self.lock_index.clone();
+                    join_set.spawn(async move {
+                        resolve_registry_dependency(registry, lock_index, name, dep).await
+                    });
                 }
                 while let Some(result) = join_set.join_next().await {
                     if let Some(resolved) = result?? {
@@ -557,7 +620,16 @@ impl CargoResolver {
                 queue.push_back(path);
             }
 
-            let node = package_to_node_with_resolved(package, resolved_registry, &self.options)?;
+            for resolved in resolved_registry.values() {
+                self.registry_roots
+                    .insert(resolved.root.clone(), resolved.clone());
+            }
+            let node = package_to_node_with_resolved(
+                package,
+                resolved_registry,
+                &self.options,
+                &self.registry_roots,
+            )?;
             self.packages.push(node);
         }
         Ok(std::mem::take(&mut self.packages))
@@ -638,6 +710,7 @@ struct ResolvedRegistryDependency {
 
 async fn resolve_registry_dependency(
     registry: Arc<RegistryClient>,
+    lock_index: Option<Arc<LockIndex>>,
     name: String,
     dep: DependencyModel,
 ) -> Result<Option<ResolvedRegistryDependency>> {
@@ -650,6 +723,20 @@ async fn resolve_registry_dependency(
         return Ok(None);
     };
     let resolved_name = dep.package.as_deref().unwrap_or(&name).to_string();
+    let req = VersionReq::parse(version)
+        .map_err(|err| eyre::eyre!("invalid version requirement '{version}': {err}"))?;
+    if let Some(lock_index) = lock_index.as_ref() {
+        if let Some(locked) = lock_index.match_registry(&resolved_name, &req) {
+            info!(
+                "graph: using locked registry dependency {} {}",
+                resolved_name, locked.version
+            );
+            let resolved = registry
+                .resolve_locked_async(&resolved_name, &locked.version, locked.checksum.as_deref())
+                .await?;
+            return Ok(Some(ResolvedRegistryDependency { name, resolved }));
+        }
+    }
     info!("graph: resolving registry dependency {} {}", resolved_name, version);
     let resolved = registry.resolve_async(&resolved_name, Some(version)).await?;
     Ok(Some(ResolvedRegistryDependency { name, resolved }))
@@ -659,6 +746,7 @@ fn package_to_node_with_resolved(
     package: PackageModel,
     resolved_registry: HashMap<String, ResolvedCrate>,
     options: &PackageGraphOptions,
+    registry_roots: &HashMap<PathBuf, ResolvedCrate>,
 ) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
@@ -667,13 +755,16 @@ fn package_to_node_with_resolved(
     };
 
     let deps = collect_dependencies(&package, options);
+    let checksum = registry_roots
+        .get(&package.root_path)
+        .and_then(|resolved| resolved.checksum.clone());
     let mut edges = Vec::new();
     for (name, dep) in deps {
         let mut edge = dependency_to_edge(name.clone(), dep, None)?;
         if let Some(resolved) = resolved_registry.get(&name) {
             edge.resolved_version = Some(resolved.version.clone());
             edge.checksum = resolved.checksum.clone();
-            edge.source = Some("registry".to_string());
+            edge.source = Some(REGISTRY_SOURCE.to_string());
             edge.path = Some(resolved.root.clone());
         }
         edges.push(edge);
@@ -685,6 +776,7 @@ fn package_to_node_with_resolved(
         root: package.root_path.clone(),
         manifest_path: package.source_path,
         language: None,
+        checksum,
         module_roots: vec![module_root],
         entry,
         dependencies: edges,
@@ -788,6 +880,16 @@ fn dependency_to_edge(
     dep: DependencyModel,
     registry: Option<&RegistryClient>,
 ) -> Result<DependencyEdge> {
+    dependency_to_edge_with_lock(name, dep, registry, None, None)
+}
+
+fn dependency_to_edge_with_lock(
+    name: String,
+    dep: DependencyModel,
+    registry: Option<&RegistryClient>,
+    lock_index: Option<&LockIndex>,
+    cache_dir: Option<&Path>,
+) -> Result<DependencyEdge> {
     let mut resolved_version = None;
     let mut checksum = None;
     let mut source = None;
@@ -800,12 +902,34 @@ fn dependency_to_edge(
                 return Err(eyre::eyre!("unsupported registry '{}'", registry_name));
             }
         }
+        if let Some(lock_index) = lock_index {
+            if let Some(version_req) = dep.version.as_deref() {
+                if let Ok(req) = VersionReq::parse(version_req) {
+                    if let Some(locked) = lock_index.match_registry(resolved_name, &req) {
+                        resolved_version = Some(locked.version.clone());
+                        checksum = locked.checksum.clone();
+                        source = Some(REGISTRY_SOURCE.to_string());
+                        if let Some(cache_dir) = cache_dir {
+                            path = Some(
+                                cache_dir
+                                    .join("registry")
+                                    .join("crates")
+                                    .join(resolved_name)
+                                    .join(&locked.version),
+                            );
+                        }
+                    }
+                }
+            }
+        }
         if let Some(registry) = registry {
-            let resolved = registry.resolve(resolved_name, dep.version.as_deref())?;
-            resolved_version = Some(resolved.version.clone());
-            checksum = resolved.checksum.clone();
-            source = Some("registry".to_string());
-            path = Some(resolved.root);
+            if resolved_version.is_none() {
+                let resolved = registry.resolve(resolved_name, dep.version.as_deref())?;
+                resolved_version = Some(resolved.version.clone());
+                checksum = resolved.checksum.clone();
+                source = Some(REGISTRY_SOURCE.to_string());
+                path = Some(resolved.root);
+            }
         }
     }
 
