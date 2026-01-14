@@ -345,7 +345,14 @@ fn compute_liveness(body: &mir::Body) -> BodyLiveness {
             collect_statement_defs(stmt, &mut defs);
         }
         if let Some(term) = &block.terminator {
-            collect_terminator_uses(term, &mut uses, &defs);
+            let mut term_uses = vec![false; locals];
+            let empty_defs = vec![false; locals];
+            collect_terminator_uses(term, &mut term_uses, &empty_defs);
+            for (idx, used) in term_uses.iter().enumerate() {
+                if *used {
+                    uses[idx] = true;
+                }
+            }
         }
 
         block_uses[block_idx] = uses;
