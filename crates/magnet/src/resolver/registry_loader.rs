@@ -6,6 +6,7 @@ use crate::resolver::types::{
 use eyre::Result;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 pub struct RegistryLoader {
     client: RegistryClient,
@@ -50,6 +51,39 @@ impl RegistryLoader {
         Ok(ResolvedRegistry { resolved, deps })
     }
 
+    pub fn resolve_locked_with_deps(
+        &mut self,
+        name: &str,
+        version: &str,
+        checksum: Option<&str>,
+    ) -> Result<ResolvedRegistry> {
+        let resolved = self.resolve_locked(name, version, checksum)?;
+        let deps = self.load_manifest_deps(
+            &resolved.name,
+            &resolved.version,
+            &resolved.manifest_path,
+        )?;
+        Ok(ResolvedRegistry { resolved, deps })
+    }
+
+    pub fn resolve_locked(
+        &mut self,
+        name: &str,
+        version: &str,
+        checksum: Option<&str>,
+    ) -> Result<ResolvedCrate> {
+        let key = RegistryReqKey {
+            name: name.to_string(),
+            version_req: version.to_string(),
+        };
+        if let Some(resolved) = self.resolved.get(&key) {
+            return Ok(resolved.clone());
+        }
+        let resolved = self.client.resolve_locked(name, version, checksum)?;
+        self.resolved.insert(key, resolved.clone());
+        Ok(resolved)
+    }
+
     fn load_manifest_deps(
         &mut self,
         name: &str,
@@ -66,6 +100,54 @@ impl RegistryLoader {
         let deps = parse_cargo_manifest(manifest_path)?;
         self.manifests.insert(key, deps.clone());
         Ok(deps)
+    }
+}
+
+#[derive(Clone)]
+pub struct RegistryLoaderHandle {
+    inner: Arc<Mutex<RegistryLoader>>,
+}
+
+impl RegistryLoaderHandle {
+    pub fn new(loader: RegistryLoader) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(loader)),
+        }
+    }
+
+    pub async fn resolve_async(
+        &self,
+        name: String,
+        version_req: Option<String>,
+    ) -> Result<ResolvedCrate> {
+        let handle = self.inner.clone();
+        let name_err = name.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut loader = handle
+                .lock()
+                .map_err(|_| eyre::eyre!("registry loader lock poisoned"))?;
+            loader.resolve(&name, version_req.as_deref())
+        })
+        .await
+        .map_err(|err| eyre::eyre!("failed to resolve crate {name_err}: {err}"))?
+    }
+
+    pub async fn resolve_locked_async(
+        &self,
+        name: String,
+        version: String,
+        checksum: Option<String>,
+    ) -> Result<ResolvedCrate> {
+        let handle = self.inner.clone();
+        let name_err = name.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut loader = handle
+                .lock()
+                .map_err(|_| eyre::eyre!("registry loader lock poisoned"))?;
+            loader.resolve_locked(&name, &version, checksum.as_deref())
+        })
+        .await
+        .map_err(|err| eyre::eyre!("failed to resolve crate {name_err}: {err}"))?
     }
 }
 

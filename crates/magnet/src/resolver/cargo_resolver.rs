@@ -3,7 +3,8 @@ use crate::models::{
     dependency_to_edge, DependencyModel, LockIndex, PackageGraphOptions, PackageModel, PackageNode,
     WorkspaceModel, REGISTRY_SOURCE,
 };
-use crate::registry::{RegistryClient, ResolvedCrate};
+use crate::registry::ResolvedCrate;
+use crate::resolver::RegistryLoaderHandle;
 use eyre::Result;
 use semver::VersionReq;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -15,7 +16,7 @@ use tracing::info;
 pub struct CargoResolver {
     root: PathBuf,
     options: PackageGraphOptions,
-    registry: Option<Arc<RegistryClient>>,
+    registry: Option<RegistryLoaderHandle>,
     lock_index: Option<Arc<LockIndex>>,
     workspace: Option<WorkspaceModel>,
     roots: Vec<PathBuf>,
@@ -28,7 +29,7 @@ impl CargoResolver {
     pub fn new(
         root: &Path,
         options: &PackageGraphOptions,
-        registry: Option<Arc<RegistryClient>>,
+        registry: Option<RegistryLoaderHandle>,
         lock_index: Option<LockIndex>,
     ) -> Result<Self> {
         Ok(Self {
@@ -80,7 +81,7 @@ impl CargoResolver {
             if let Some(registry) = self.registry.as_ref() {
                 let mut join_set = JoinSet::new();
                 for (name, dep) in deps.registry {
-                    let registry = Arc::clone(registry);
+                    let registry = registry.clone();
                     let lock_index = self.lock_index.clone();
                     join_set.spawn(async move {
                         resolve_registry_dependency(registry, lock_index, name, dep).await
@@ -187,7 +188,7 @@ struct ResolvedRegistryDependency {
 }
 
 async fn resolve_registry_dependency(
-    registry: Arc<RegistryClient>,
+    registry: RegistryLoaderHandle,
     lock_index: Option<Arc<LockIndex>>,
     name: String,
     dep: DependencyModel,
@@ -210,13 +211,19 @@ async fn resolve_registry_dependency(
                 resolved_name, locked.version
             );
             let resolved = registry
-                .resolve_locked_async(&resolved_name, &locked.version, locked.checksum.as_deref())
+                .resolve_locked_async(
+                    resolved_name.clone(),
+                    locked.version.clone(),
+                    locked.checksum.clone(),
+                )
                 .await?;
             return Ok(Some(ResolvedRegistryDependency { name, resolved }));
         }
     }
     info!("graph: resolving registry dependency {} {}", resolved_name, version);
-    let resolved = registry.resolve_async(&resolved_name, Some(version)).await?;
+    let resolved = registry
+        .resolve_async(resolved_name.clone(), Some(version.to_string()))
+        .await?;
     Ok(Some(ResolvedRegistryDependency { name, resolved }))
 }
 

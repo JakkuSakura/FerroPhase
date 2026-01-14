@@ -175,6 +175,47 @@ impl RegistryClient {
             manifest_path,
         })
     }
+
+    pub fn resolve_locked(
+        &self,
+        name: &str,
+        version: &str,
+        checksum: Option<&str>,
+    ) -> Result<ResolvedCrate> {
+        let crate_root = self
+            .cache_dir
+            .join("registry")
+            .join("crates")
+            .join(name)
+            .join(version);
+        let manifest_path = crate_root.join("Cargo.toml");
+
+        if manifest_path.exists() {
+            return Ok(ResolvedCrate {
+                name: name.to_string(),
+                version: version.to_string(),
+                checksum: checksum.map(|value| value.to_string()),
+                root: crate_root,
+                manifest_path,
+            });
+        }
+
+        if self.options.offline {
+            return Err(eyre::eyre!(
+                "crate '{name}' {version} not available offline"
+            ));
+        }
+
+        download_and_unpack(name, version, checksum, &crate_root)?;
+
+        Ok(ResolvedCrate {
+            name: name.to_string(),
+            version: version.to_string(),
+            checksum: checksum.map(|value| value.to_string()),
+            root: crate_root,
+            manifest_path,
+        })
+    }
 }
 
 fn select_version(krate: &crates_index::Crate, req: &VersionReq) -> Result<(String, Option<String>)> {

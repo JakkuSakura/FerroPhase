@@ -1,6 +1,6 @@
 use crate::models::{DependencyModel, LockIndex, MagnetLock, ManifestModel, PackageModel};
 use crate::registry::{RegistryClient, RegistryOptions};
-use crate::resolver::cargo_resolver::CargoResolver;
+use crate::resolver::{cargo_resolver::CargoResolver, RegistryLoader, RegistryLoaderHandle};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleSource, PackageProvider};
@@ -126,31 +126,30 @@ impl PackageGraph {
             None
         };
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
-        let registry = if options.resolve_registry {
-            Some(RegistryClient::new(RegistryOptions {
+        let mut registry = if options.resolve_registry {
+            Some(RegistryLoader::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: cache_dir.clone(),
             })?)
         } else {
             None
         };
-        let packages = packages
-            .into_iter()
-            .map(|package| {
-                package_to_node_with_lock(
-                    package,
-                    registry.as_ref(),
-                    options,
-                    lock_index.as_ref(),
-                    cache_dir.as_deref(),
-                )
-            })
-            .collect::<Result<Vec<_>>>()?;
+        let mut resolved_packages = Vec::new();
+        for package in packages {
+            let node = package_to_node_with_lock_loader(
+                package,
+                registry.as_mut(),
+                options,
+                lock_index.as_ref(),
+                cache_dir.as_deref(),
+            )?;
+            resolved_packages.push(node);
+        }
 
         let graph = Self {
             schema_version: 1,
             root: root.clone(),
-            packages,
+            packages: resolved_packages,
             selected_package: None,
             build_options: HashMap::new(),
         };
@@ -281,10 +280,11 @@ impl PackageGraph {
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
-            Some(Arc::new(RegistryClient::new(RegistryOptions {
+            let loader = RegistryLoader::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: cache_dir.clone(),
-            })?))
+            })?;
+            Some(RegistryLoaderHandle::new(loader))
         } else {
             None
         };
@@ -484,9 +484,9 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
     Some(home.join(".cache").join("magnet"))
 }
 
-fn package_to_node_with_lock(
+fn package_to_node_with_lock_loader(
     package: PackageModel,
-    registry: Option<&RegistryClient>,
+    mut registry: Option<&mut RegistryLoader>,
     options: &PackageGraphOptions,
     lock_index: Option<&LockIndex>,
     cache_dir: Option<&Path>,
@@ -514,6 +514,18 @@ fn package_to_node_with_lock(
         }
     }
 
+    let mut edges = Vec::new();
+    for (name, dep) in dep_map {
+        let edge = dependency_to_edge_with_lock_loader(
+            name,
+            dep,
+            registry.as_deref_mut(),
+            lock_index,
+            cache_dir,
+        )?;
+        edges.push(edge);
+    }
+
     Ok(PackageNode {
         name: package.name,
         version: package.version,
@@ -523,12 +535,7 @@ fn package_to_node_with_lock(
         checksum: None,
         module_roots: vec![module_root],
         entry,
-        dependencies: dep_map
-            .into_iter()
-            .map(|(name, dep)| {
-                dependency_to_edge_with_lock(name, dep, registry, lock_index, cache_dir)
-            })
-            .collect::<Result<Vec<_>>>()?,
+        dependencies: edges,
     })
 }
 
@@ -581,6 +588,74 @@ fn dependency_to_edge_with_lock(
             }
         }
         if let Some(registry) = registry {
+            if resolved_version.is_none() {
+                let resolved = registry.resolve(resolved_name, dep.version.as_deref())?;
+                resolved_version = Some(resolved.version.clone());
+                checksum = resolved.checksum.clone();
+                source = Some(REGISTRY_SOURCE.to_string());
+                path = Some(resolved.root);
+            }
+        }
+    }
+
+    Ok(DependencyEdge {
+        name,
+        package: dep.package,
+        version: dep.version,
+        resolved_version,
+        checksum,
+        source,
+        path,
+        git: dep.git,
+        rev: dep.rev,
+        branch: dep.branch,
+        tag: dep.tag,
+        workspace: dep.workspace,
+        optional: dep.optional,
+        features: dep.features,
+    })
+}
+
+fn dependency_to_edge_with_lock_loader(
+    name: String,
+    dep: DependencyModel,
+    mut registry: Option<&mut RegistryLoader>,
+    lock_index: Option<&LockIndex>,
+    cache_dir: Option<&Path>,
+) -> Result<DependencyEdge> {
+    let mut resolved_version = None;
+    let mut checksum = None;
+    let mut source = None;
+    let mut path = dep.path.clone();
+
+    let resolved_name = dep.package.as_deref().unwrap_or(name.as_str());
+    if path.is_none() && dep.git.is_none() && dep.version.is_some() {
+        if let Some(registry_name) = dep.registry.as_deref() {
+            if registry_name != "crates-io" && registry_name != "crates.io" {
+                return Err(eyre::eyre!("unsupported registry '{}'", registry_name));
+            }
+        }
+        if let Some(lock_index) = lock_index {
+            if let Some(version_req) = dep.version.as_deref() {
+                if let Ok(req) = VersionReq::parse(version_req) {
+                    if let Some(locked) = lock_index.match_registry(resolved_name, &req) {
+                        resolved_version = Some(locked.version.clone());
+                        checksum = locked.checksum.clone();
+                        source = Some(REGISTRY_SOURCE.to_string());
+                        if let Some(cache_dir) = cache_dir {
+                            path = Some(
+                                cache_dir
+                                    .join("registry")
+                                    .join("crates")
+                                    .join(resolved_name)
+                                    .join(&locked.version),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        if let Some(registry) = registry.as_deref_mut() {
             if resolved_version.is_none() {
                 let resolved = registry.resolve(resolved_name, dep.version.as_deref())?;
                 resolved_version = Some(resolved.version.clone());
