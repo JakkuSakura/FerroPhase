@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ "${0##*/}" = "activate" ]; then
+  echo "source scripts/activate"
+  exit 1
+fi
+
+fp() {
+  cargo run --release --package fp-cli --bin fp -- "$@"
+}
+
+magnet() {
+  cargo run --release --package magnet --bin magnet -- "$@"
+}
