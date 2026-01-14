@@ -2,6 +2,7 @@
 
 // Child modules
 mod check;
+mod build;
 pub mod export; // Changed from mod to pub mod to expose ExportOptions
 pub mod generate; // Changed from mod to pub mod to expose GenerateOptions
 mod bench;
@@ -15,6 +16,7 @@ mod utils;
 
 // Re-export commands
 pub use check::check;
+pub use build::{build, BuildOptions};
 pub use export::export;
 pub use generate::generate;
 pub use bench::{bench, BenchOptions};

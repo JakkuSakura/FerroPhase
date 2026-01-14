@@ -4,7 +4,9 @@ use std::path::PathBuf;
 use tracing::{debug, info};
 
 // Use local utils module instead of common crate
-use magnet::commands::{self, BenchOptions, RunMode, RunOptions, TestOptions, generate::GenerateOptions};
+use magnet::commands::{
+    self, BenchOptions, BuildOptions, RunMode, RunOptions, TestOptions, generate::GenerateOptions,
+};
 use magnet::utils::{LogLevel, setup_logs};
 
 /// CLI entry point
@@ -110,6 +112,34 @@ fn main() -> Result<()> {
                 fetch,
             };
             commands::run(&options)
+        }
+        Some(Commands::Build {
+            path,
+            package,
+            entry,
+            resolver,
+            example,
+            release,
+            profile,
+            build_options,
+            offline,
+            cache_dir,
+            fetch,
+        }) => {
+            let options = BuildOptions {
+                path,
+                package,
+                entry,
+                resolver,
+                example,
+                release,
+                profile,
+                build_options,
+                offline,
+                cache_dir,
+                fetch,
+            };
+            commands::build(&options)
         }
         Some(Commands::Test {
             path,
@@ -290,6 +320,52 @@ enum Commands {
         resolver: String,
 
         /// Run a named example under ./examples
+        #[arg(long)]
+        example: Option<String>,
+
+        /// Use release profile output paths
+        #[arg(long)]
+        release: bool,
+
+        /// Cargo-style profile name (overrides --release)
+        #[arg(long)]
+        profile: Option<String>,
+
+        /// Build options forwarded to fp (key=value)
+        #[arg(long = "build-option")]
+        build_options: Vec<String>,
+
+        /// Run without network access (use cached crates)
+        #[arg(long)]
+        offline: bool,
+
+        /// Override the cargo registry cache directory
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
+
+        /// Skip prefetching registry dependencies
+        #[arg(long = "no-fetch", default_value_t = true, action = clap::ArgAction::SetFalse)]
+        fetch: bool,
+    },
+    /// Build a FerroPhase package via fp-cli
+    Build {
+        /// Path to a package/workspace directory or entry file
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Select a package by name (preferred over cwd/auto)
+        #[arg(long)]
+        package: Option<String>,
+
+        /// Override the entry file (default: src/main.fp)
+        #[arg(long)]
+        entry: Option<PathBuf>,
+
+        /// Module resolver strategy used by fp
+        #[arg(long, default_value = "ferrophase")]
+        resolver: String,
+
+        /// Build a named example under ./examples
         #[arg(long)]
         example: Option<String>,
 
