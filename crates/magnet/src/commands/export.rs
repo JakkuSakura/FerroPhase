@@ -593,6 +593,6 @@ impl Exporter {
 
         info!("You can build all exported crates using:");
         info!("  cd {}", self.export_dir.display());
-        info!("  cargo build");
+        info!("  magnet build");
     }
 }

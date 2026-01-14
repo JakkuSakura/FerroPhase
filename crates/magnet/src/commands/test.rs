@@ -27,71 +27,7 @@ pub fn test(options: &TestOptions) -> Result<()> {
     let (root, manifest) = find_furthest_manifest(&start_dir)?;
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
 
-    let is_cargo = package
-        .source_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name == "Cargo.toml")
-        .unwrap_or(false)
-        && !package.root_path.join("Magnet.toml").exists();
-    if is_cargo {
-        return run_cargo_test(options, &package);
-    }
-
     run_fp_tests(options, &root, &package)
-}
-
-fn run_cargo_test(options: &TestOptions, package: &PackageModel) -> Result<()> {
-    let cargo_path = package.root_path.join("Cargo.toml");
-    if !cargo_path.exists() {
-        bail!(
-            "Cargo.toml not found for package {}; magnet test currently supports Rust packages only",
-            package.name
-        );
-    }
-
-    let mut command = Command::new("cargo");
-    command.arg("test").arg("--manifest-path").arg(&cargo_path);
-    if let Some(profile) = options.profile.as_ref() {
-        command.arg("--profile").arg(profile);
-    } else if options.release {
-        command.arg("--release");
-    }
-    for test in &options.test {
-        command.arg("--test").arg(test);
-    }
-    if options.tests {
-        command.arg("--tests");
-    }
-    for example in &options.example {
-        command.arg("--example").arg(example);
-    }
-    if options.examples {
-        command.arg("--examples");
-    }
-    if !options.args.is_empty() {
-        command.arg("--");
-        command.args(&options.args);
-    }
-    command.current_dir(&package.root_path);
-    command.stdin(Stdio::inherit());
-    command.stdout(Stdio::inherit());
-    command.stderr(Stdio::inherit());
-
-    let status = command.status().with_context(|| {
-        format!(
-            "Failed to execute cargo test for {}",
-            package.root_path.display()
-        )
-    })?;
-    if !status.success() {
-        bail!(
-            "cargo test failed with status {}",
-            status.code().unwrap_or(-1)
-        );
-    }
-
-    Ok(())
 }
 
 fn run_fp_tests(options: &TestOptions, root: &Path, package: &PackageModel) -> Result<()> {

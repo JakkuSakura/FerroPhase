@@ -2,12 +2,13 @@
 
 use crate::models::{ManifestModel, PackageGraph, PackageGraphOptions, PackageModel};
 use crate::utils::find_furthest_manifest;
-use eyre::{Context, Result, bail};
+use eyre::{Result, WrapErr, bail};
 use glob::glob;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::Instant;
 use tracing::info;
 
 pub struct BuildOptions {
@@ -25,9 +26,12 @@ pub struct BuildOptions {
 }
 
 pub fn build(options: &BuildOptions) -> Result<()> {
+    let started_at = Instant::now();
     let run_path = resolve_run_path(options)?;
     let start_dir = resolve_start_dir(&run_path)?;
+    info!("build: resolved run path {}", run_path.display());
     let (root, manifest) = find_furthest_manifest(&start_dir)?;
+    info!("build: using manifest root {}", root.display());
     let single_entry = options.entry.is_some()
         || options.example.is_some()
         || run_path
@@ -37,18 +41,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
             .unwrap_or(false);
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
 
-    let fp_requested = single_entry || has_fp_sources(&package.root_path)?;
-    let is_cargo = !fp_requested
-        && package
-        .source_path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .map(|name| name == "Cargo.toml")
-        .unwrap_or(false)
-        && !package.root_path.join("Magnet.toml").exists();
-    if is_cargo {
-        return run_cargo_build(options, &package);
-    }
+    let _fp_requested = single_entry || has_fp_sources(&package.root_path)?;
 
     let build_options = parse_build_options(&options.build_options)?;
     let graph_options = PackageGraphOptions {
@@ -62,19 +55,21 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         allow_multiple_versions: true,
     };
     let profile = resolve_profile(options.release, options.profile.as_deref());
+    info!("build: generating workspace graph");
     let graph_path = write_workspace_graph(&root, build_options, &graph_options, &profile)?;
+    info!("build: graph at {}", graph_path.display());
 
     if single_entry {
         let entry = resolve_entry(&run_path, &package, options.entry.as_deref())?;
         let sources = collect_sources(&package, &entry)?;
         let output_dir = build_output_dir(&package, &profile);
+        info!("build: compiling single entry {}", entry.display());
         return compile_only(
             &package,
             &entry,
             &sources,
             &graph_path,
             &output_dir,
-            &options.resolver,
             &options.build_options,
         );
     }
@@ -89,72 +84,54 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         manifest.list_packages()?
     };
 
-    for pkg in packages {
+    let package_count = packages.len();
+    info!("build: compiling {} package(s)", package_count);
+    for (idx, pkg) in packages.into_iter().enumerate() {
+        let has_fp = has_fp_sources(&pkg.root_path)?;
+        if !has_fp {
+            info!(
+                "build: [{} / {}] skipping {} (no FP/RS sources)",
+                idx + 1,
+                package_count,
+                pkg.name
+            );
+            continue;
+        }
         let Some(entry) = resolve_package_entry(&pkg)? else {
+            info!(
+                "build: [{} / {}] skipping {} (no entry)",
+                idx + 1,
+                package_count,
+                pkg.name
+            );
             continue;
         };
         let sources = collect_sources(&pkg, &entry)?;
         let output_dir = build_output_dir(&pkg, &profile);
+        info!(
+            "build: [{} / {}] compiling {} ({})",
+            idx + 1,
+            package_count,
+            pkg.name,
+            entry.display()
+        );
         compile_only(
             &pkg,
             &entry,
             &sources,
             &graph_path,
             &output_dir,
-            &options.resolver,
             &options.build_options,
         )?;
     }
 
+    info!(
+        "build: completed in {:.2?}",
+        started_at.elapsed()
+    );
     Ok(())
 }
 
-fn run_cargo_build(options: &BuildOptions, package: &PackageModel) -> Result<()> {
-    if options.entry.is_some() {
-        bail!("--entry is not supported for cargo build");
-    }
-
-    let cargo_path = package.root_path.join("Cargo.toml");
-    if !cargo_path.exists() {
-        bail!(
-            "Cargo.toml not found for package {}; magnet build currently supports Rust packages only",
-            package.name
-        );
-    }
-
-    let mut command = Command::new("cargo");
-    command.arg("build").arg("--manifest-path").arg(&cargo_path);
-    if let Some(profile) = options.profile.as_ref() {
-        command.arg("--profile").arg(profile);
-    } else if options.release {
-        command.arg("--release");
-    }
-    if let Some(example) = options.example.as_ref() {
-        command.arg("--example").arg(example);
-    }
-    if let Some(package) = options.package.as_ref() {
-        command.arg("--package").arg(package);
-    }
-    command.current_dir(&package.root_path);
-    command.stdin(Stdio::inherit());
-    command.stdout(Stdio::inherit());
-    command.stderr(Stdio::inherit());
-
-    let status = command.status().with_context(|| {
-        format!(
-            "Failed to execute cargo build for {}",
-            package.root_path.display()
-        )
-    })?;
-    if !status.success() {
-        bail!(
-            "cargo build failed with status {}",
-            status.code().unwrap_or(-1)
-        );
-    }
-
-    Ok(())
-}
 
 fn compile_only(
     package: &PackageModel,
@@ -162,24 +139,38 @@ fn compile_only(
     sources: &[PathBuf],
     graph_path: &Path,
     output_dir: &Path,
-    resolver: &str,
     build_options: &[String],
 ) -> Result<()> {
+    let started_at = Instant::now();
     let fp_bin = resolve_fp_binary()?;
     let entry_output = output_path_for_entry(entry, output_dir);
 
-    let mut command = Command::new(&fp_bin);
-    command.arg("compile");
+    info!("build: fp binary {}", fp_bin.display());
+    info!("build: output dir {}", output_dir.display());
+    info!("build: output file {}", entry_output.display());
+    info!("build: graph {}", graph_path.display());
+    info!("build: sources ({})", sources.len());
+    log_sources(sources);
+
+    let mut args: Vec<String> = Vec::new();
+    args.push("compile".to_string());
     for source in sources {
-        command.arg(source);
+        args.push(source.display().to_string());
     }
-    command.arg("--target").arg("binary");
-    command.arg("--output").arg(output_dir);
-    command.arg("--package-graph").arg(graph_path);
-    command.arg("--resolver").arg(resolver);
+    args.push("--target".to_string());
+    args.push("binary".to_string());
+    args.push("--output".to_string());
+    args.push(output_dir.display().to_string());
+    args.push("--package-graph".to_string());
+    args.push(graph_path.display().to_string());
     for option in build_options {
-        command.arg("--build-option").arg(option);
+        args.push("--build-option".to_string());
+        args.push(option.clone());
     }
+    info!("build: fp args {:?}", args);
+
+    let mut command = Command::new(&fp_bin);
+    command.args(&args);
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
@@ -195,7 +186,11 @@ fn compile_only(
         );
     }
 
-    info!("build output: {}", entry_output.display());
+    info!(
+        "build: compiled {} in {:.2?}",
+        entry_output.display(),
+        started_at.elapsed()
+    );
     Ok(())
 }
 
@@ -278,9 +273,17 @@ fn resolve_package_entry(package: &PackageModel) -> Result<Option<PathBuf>> {
     if fp.exists() {
         return Ok(Some(fp));
     }
+    let fp_lib = package.root_path.join("src").join("lib.fp");
+    if fp_lib.exists() {
+        return Ok(Some(fp_lib));
+    }
     let rs = package.root_path.join("src").join("main.rs");
     if rs.exists() {
         return Ok(Some(rs));
+    }
+    let rs_lib = package.root_path.join("src").join("lib.rs");
+    if rs_lib.exists() {
+        return Ok(Some(rs_lib));
     }
     Ok(None)
 }
@@ -313,26 +316,43 @@ fn find_nearest_package(start_dir: &Path) -> Result<Option<PackageModel>> {
 fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Vec<PathBuf>> {
     let mut sources = BTreeSet::new();
     let src_root = package.root_path.join("src");
+    let include_rs = entry
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext == "rs")
+        .unwrap_or(false)
+        || has_fp_sources(&package.root_path)?;
     if src_root.exists() {
         let pattern = format!("{}/**/*.fp", src_root.display());
         for item in glob(&pattern)? {
             let path = item?;
             sources.insert(path);
         }
-        let pattern = format!("{}/**/*.rs", src_root.display());
-        for item in glob(&pattern)? {
-            let path = item?;
-            sources.insert(path);
+        if include_rs {
+            let pattern = format!("{}/**/*.rs", src_root.display());
+            for item in glob(&pattern)? {
+                let path = item?;
+                sources.insert(path);
+            }
         }
     }
 
     sources.insert(entry.to_path_buf());
 
     if sources.is_empty() {
-        bail!("No .fp sources found under {}", package.root_path.display());
+        bail!(
+            "No .fp/.rs sources found under {}",
+            package.root_path.display()
+        );
     }
 
     Ok(sources.into_iter().collect())
+}
+
+fn log_sources(sources: &[PathBuf]) {
+    for (idx, source) in sources.iter().enumerate() {
+        info!("build: source [{:03}] {}", idx + 1, source.display());
+    }
 }
 
 fn has_fp_sources(root: &Path) -> Result<bool> {
@@ -340,10 +360,12 @@ fn has_fp_sources(root: &Path) -> Result<bool> {
     if !src_root.exists() {
         return Ok(false);
     }
-    let pattern = format!("{}/**/*.fp", src_root.display());
-    for item in glob(&pattern)? {
-        if item.is_ok() {
-            return Ok(true);
+    for ext in ["fp", "rs"] {
+        let pattern = format!("{}/**/*.{}", src_root.display(), ext);
+        for item in glob(&pattern)? {
+            if item.is_ok() {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -363,8 +385,8 @@ fn build_output_dir(package: &PackageModel, profile: &str) -> PathBuf {
     package
         .root_path
         .join("target")
-        .join(profile)
         .join("magnet")
+        .join(profile)
         .join("build")
 }
 
@@ -392,8 +414,8 @@ fn write_workspace_graph(
     graph.build_options = build_options;
     let output_dir = manifest_root
         .join("target")
-        .join(profile)
         .join("magnet")
+        .join(profile)
         .join("build");
     fs::create_dir_all(&output_dir).with_context(|| {
         format!(
