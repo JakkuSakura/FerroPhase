@@ -10,9 +10,11 @@ use std::collections::HashMap;
 use std::ffi::OsString;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Instant;
 #[cfg(feature = "cargo-fallback")]
 use std::process::Command;
 use std::sync::Arc;
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PackageGraph {
@@ -135,6 +137,7 @@ impl PackageGraph {
     }
 
     pub fn from_path_with_options(path: &Path, options: &PackageGraphOptions) -> Result<Self> {
+        let started_at = Instant::now();
         let path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
         if path.is_dir() {
             let magnet_path = path.join("Magnet.toml");
@@ -142,16 +145,44 @@ impl PackageGraph {
             let pyproject_path = path.join("pyproject.toml");
             let ts_path = path.join("package.json");
             if magnet_path.exists() {
+                info!(
+                    "graph: loading Magnet manifest from {}",
+                    magnet_path.display()
+                );
                 let manifest = ManifestModel::from_dir(&path)?;
-                return Self::from_manifest_with_options(&manifest, options);
+                let graph = Self::from_manifest_with_options(&manifest, options)?;
+                info!(
+                    "graph: loaded {} package(s) in {:.2?}",
+                    graph.packages.len(),
+                    started_at.elapsed()
+                );
+                return Ok(graph);
             }
             if cargo_path.exists() {
-                return Self::from_cargo_manifest_with_options(&cargo_path, options);
+                info!(
+                    "graph: loading Cargo manifest from {}",
+                    cargo_path.display()
+                );
+                let graph = Self::from_cargo_manifest_with_options(&cargo_path, options)?;
+                info!(
+                    "graph: loaded {} package(s) in {:.2?}",
+                    graph.packages.len(),
+                    started_at.elapsed()
+                );
+                return Ok(graph);
             }
             if pyproject_path.exists() {
+                info!(
+                    "graph: loading Python manifest from {}",
+                    pyproject_path.display()
+                );
                 return Self::from_python_manifest(&pyproject_path);
             }
             if ts_path.exists() {
+                info!(
+                    "graph: loading package.json manifest from {}",
+                    ts_path.display()
+                );
                 return Self::from_package_json(&ts_path);
             }
             return Err(eyre::eyre!(
@@ -166,11 +197,27 @@ impl PackageGraph {
             .unwrap_or("");
         match file_name {
             "Magnet.toml" => {
+                info!("graph: loading Magnet manifest from {}", path.display());
                 let root = path.parent().unwrap_or(Path::new("."));
                 let manifest = ManifestModel::from_dir(root)?;
-                Self::from_manifest(&manifest)
+                let graph = Self::from_manifest(&manifest)?;
+                info!(
+                    "graph: loaded {} package(s) in {:.2?}",
+                    graph.packages.len(),
+                    started_at.elapsed()
+                );
+                Ok(graph)
             }
-            "Cargo.toml" => Self::from_cargo_manifest_with_options(&path, options),
+            "Cargo.toml" => {
+                info!("graph: loading Cargo manifest from {}", path.display());
+                let graph = Self::from_cargo_manifest_with_options(&path, options)?;
+                info!(
+                    "graph: loaded {} package(s) in {:.2?}",
+                    graph.packages.len(),
+                    started_at.elapsed()
+                );
+                Ok(graph)
+            }
             "pyproject.toml" => Self::from_python_manifest(&path),
             "package.json" => Self::from_package_json(&path),
             _ => Err(eyre::eyre!(
@@ -192,8 +239,10 @@ impl PackageGraph {
             .parent()
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
             .to_path_buf();
+        info!("graph: initializing Cargo workspace at {}", root.display());
         let _guard = apply_cargo_home(resolve_cache_dir(options))?;
         let registry = if options.resolve_registry {
+            info!("graph: initializing registry client");
             Some(RegistryClient::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: resolve_cache_dir(options),
@@ -202,6 +251,7 @@ impl PackageGraph {
             None
         };
         if options.allow_multiple_versions {
+            info!("graph: loading Cargo metadata (multi-version)");
             let provider = Arc::new(CargoPackageProvider::new_with_options(
                 root.clone(),
                 CargoMetadataOptions {
@@ -219,6 +269,7 @@ impl PackageGraph {
                 .list_packages()
                 .map_err(|err| eyre::eyre!("Failed to list Cargo packages: {err}"))?
             {
+                info!("graph: loading package {}", package_id);
                 let descriptor = provider
                     .load_package(&package_id)
                     .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;
@@ -283,9 +334,11 @@ impl PackageGraph {
         #[cfg(feature = "cargo-fallback")]
         {
             if options.cargo_fetch && !options.offline {
+                info!("graph: prefetching Cargo dependencies");
                 prefetch_cargo_dependencies(manifest_path)?;
             }
         }
+        info!("graph: loading Cargo metadata");
         let provider = Arc::new(CargoPackageProvider::new_with_options(
             root.clone(),
             CargoMetadataOptions {
@@ -303,6 +356,7 @@ impl PackageGraph {
             .list_packages()
             .map_err(|err| eyre::eyre!("Failed to list Cargo packages: {err}"))?
         {
+            info!("graph: loading package {}", package_id);
             let descriptor = provider
                 .load_package(&package_id)
                 .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;

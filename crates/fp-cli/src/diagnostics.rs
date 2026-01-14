@@ -9,10 +9,9 @@ use fp_core::source_map::{LineSpan, SourceFile};
 use miette::Diagnostic;
 use termwiz::caps::Capabilities;
 use termwiz::cell::{AttributeChange, CellAttributes};
-use termwiz::color::AnsiColor;
+use termwiz::color::{AnsiColor, ColorAttribute};
 use termwiz::surface::Change;
-use termwiz::terminal::buffered::BufferedTerminal;
-use termwiz::terminal::new_terminal;
+use termwiz::terminal::{new_terminal, Terminal};
 use thiserror::Error;
 
 type SourceSpan = miette::SourceSpan;
@@ -178,59 +177,112 @@ fn render_with_termwiz(
     line_span: &LineSpan,
 ) -> termwiz::Result<()> {
     let caps = Capabilities::new_from_env()?;
-    let terminal = new_terminal(caps)?;
-    let mut out = BufferedTerminal::new(terminal)?;
+    let mut terminal = new_terminal(caps)?;
 
     let (line, col) = file.line_col(diag.span.unwrap().lo);
-    let header = format!("error: {}", diag.message);
-    let location = format!("  --> {}:{}:{}", file.path.display(), line, col);
+    let plain_lines = format_rustc_plain(
+        &diag.message.to_string(),
+        &file.path.display().to_string(),
+        line,
+        col,
+        line_span,
+    );
+    let mut changes = Vec::new();
+    changes.push(Change::Text("\r".to_string()));
+    changes.push(Change::ClearToEndOfLine(ColorAttribute::Default));
+    changes.push(Change::Text("\r\n".to_string()));
 
-    out.add_change(Change::Attribute(AttributeChange::Foreground(
-        AnsiColor::Red.into(),
-    )));
-    out.add_change(header);
-    out.add_change(Change::AllAttributes(CellAttributes::default()));
-    out.add_change("\r\n");
+    if let Some(header) = plain_lines.first() {
+        changes.push(Change::Attribute(AttributeChange::Foreground(
+            AnsiColor::Red.into(),
+        )));
+        changes.push(Change::Text(header.clone()));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text("\r\n".to_string()));
+    }
 
-    out.add_change(Change::Attribute(AttributeChange::Foreground(
-        AnsiColor::Blue.into(),
-    )));
-    out.add_change(location);
-    out.add_change(Change::AllAttributes(CellAttributes::default()));
-    out.add_change("\r\n");
+    if let Some(location) = plain_lines.get(1) {
+        changes.push(Change::Attribute(AttributeChange::Foreground(
+            AnsiColor::Blue.into(),
+        )));
+        changes.push(Change::Text(location.clone()));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text("\r\n".to_string()));
+    }
 
+    for line in plain_lines.iter().skip(2).take(2) {
+        changes.push(Change::Text(line.clone()));
+        changes.push(Change::Text("\r\n".to_string()));
+    }
+
+    if let Some(caret_line) = plain_lines.get(4) {
+        let caret_start = caret_line.find('^').unwrap_or(caret_line.len());
+        let (prefix, rest) = caret_line.split_at(caret_start);
+        let carets = rest.trim_end_matches(' ');
+        let suffix = &rest[carets.len()..];
+        changes.push(Change::Text(prefix.to_string()));
+        changes.push(Change::Attribute(AttributeChange::Foreground(
+            AnsiColor::Red.into(),
+        )));
+        changes.push(Change::Text(carets.to_string()));
+        changes.push(Change::AllAttributes(CellAttributes::default()));
+        changes.push(Change::Text(suffix.to_string()));
+        changes.push(Change::Text("\r\n".to_string()));
+    }
+
+    terminal.render(&changes)?;
+    terminal.flush()?;
+    Ok(())
+}
+
+fn format_rustc_plain(
+    message: &str,
+    path: &str,
+    line: usize,
+    col: usize,
+    line_span: &LineSpan,
+) -> Vec<String> {
+    let header = format!("error: {message}");
+    let location = format!("  --> {path}:{line}:{col}");
     let line_no = line_span.line;
-    let line_no_str = line_no.to_string();
-    let gutter_width = line_no_str.len();
+    let gutter_width = line_no.to_string().len();
     let gutter = " ".repeat(gutter_width);
-
-    out.add_change(format!("{} |\r\n", gutter));
-    out.add_change(format!(
-        " {line_no:>width$} | {}\r\n",
-        line_span.text,
-        width = gutter_width
-    ));
-
+    let gutter_bar = format!("{gutter} |");
+    let source_line = format!(" {line_no:>width$} | {}", line_span.text, width = gutter_width);
     let caret_len = (line_span.col_end.saturating_sub(line_span.col_start)).max(1);
     let caret_pad = " ".repeat(line_span.col_start.saturating_sub(1));
-    let carets = "^".repeat(caret_len);
-
-    out.add_change(format!("{} | ", gutter));
-    out.add_change(caret_pad);
-    out.add_change(Change::Attribute(AttributeChange::Foreground(
-        AnsiColor::Red.into(),
-    )));
-    out.add_change(carets);
-    out.add_change(Change::AllAttributes(CellAttributes::default()));
-    out.add_change("\r\n");
-
-    out.flush()?;
-    Ok(())
+    let caret_line = format!("{gutter} | {caret_pad}{}", "^".repeat(caret_len));
+    vec![header, location, gutter_bar, source_line, caret_line]
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rustc_plain_format_has_expected_shape() {
+        let line_span = LineSpan {
+            line: 1,
+            col_start: 14,
+            col_end: 17,
+            text: "macro_rules! opt_bail {".to_string(),
+        };
+        let lines = format_rustc_plain(
+            "failed to parse items (file mode): parse error: expected symbol",
+            "/tmp/error.rs",
+            1,
+            14,
+            &line_span,
+        );
+        let rendered = lines.join("\n");
+        let expected = "\
+error: failed to parse items (file mode): parse error: expected symbol
+  --> /tmp/error.rs:1:14
+  |
+ 1 | macro_rules! opt_bail {
+  |              ^^^";
+        assert_eq!(rendered, expected);
+    }
 
     #[test]
     fn test_syntax_error_creation() {
