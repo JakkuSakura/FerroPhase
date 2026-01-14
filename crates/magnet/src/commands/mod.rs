@@ -8,6 +8,7 @@ pub mod generate; // Changed from mod to pub mod to expose GenerateOptions
 mod bench;
 mod graph;
 mod init;
+mod lock;
 mod run;
 mod submodule;
 mod test;
@@ -22,6 +23,7 @@ pub use generate::generate;
 pub use bench::{bench, BenchOptions};
 pub use graph::graph;
 pub use init::init;
+pub use lock::{lock, LockOptions};
 pub use run::{RunMode, RunOptions, run};
 pub use submodule::{
     deinit as submodule_deinit, init as submodule_init, list as submodule_list,
