@@ -1,6 +1,6 @@
 //! Domain model for a Workspace, which is a collection of packages.
 
-use crate::configs::ManifestConfig;
+use crate::configs::{CargoManifestConfig, ManifestConfig};
 use crate::models::{DependencyModel, DependencyModelMap, PackageModel, PatchMap};
 use crate::utils::glob_relative;
 use eyre::{ContextCompat, Result, bail};
@@ -50,6 +50,40 @@ impl WorkspaceModel {
                 root_path.display()
             )
         };
+        if source_path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml") {
+            let config = CargoManifestConfig::from_path(&source_path)?;
+            let workspace = config
+                .workspace
+                .clone()
+                .with_context(|| format!("No workspace found in {}", source_path.display()))?;
+            let root_path = source_path.parent().unwrap().canonicalize()?.to_owned();
+            let name = root_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+
+            let model = WorkspaceModel {
+                name,
+                description: None,
+                members: workspace.members,
+                exclude: workspace.exclude,
+                resolver: workspace.resolver,
+                custom: HashMap::new(),
+                dependencies: workspace
+                    .dependencies
+                    .clone()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.into()))
+                    .collect(),
+                patch: crate::models::parse_patch_table(config.patch),
+                source_path: source_path.to_path_buf(),
+                root_path,
+            };
+
+            return Ok(model);
+        }
+
         let config = ManifestConfig::from_file(&source_path)?;
         let config1 = config
             .workspace

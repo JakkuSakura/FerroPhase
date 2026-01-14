@@ -449,11 +449,15 @@ fn resolve_fp_binary() -> Result<PathBuf> {
         return Ok(path);
     }
 
+    if let Some(path) = command_v("fp") {
+        return Ok(path);
+    }
+
     if let Some(path) = find_in_path("fp") {
         return Ok(path);
     }
 
-    bail!("fp binary not found; set FP_BIN or add it to PATH")
+    bail!("fp binary not found; set FP_BIN or add it to PATH (command -v fp)")
 }
 
 fn locate_workspace_fp() -> Option<PathBuf> {
@@ -478,6 +482,27 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
     std::env::split_paths(&paths)
         .map(|path| path.join(&binary_name))
         .find(|path| path.exists())
+}
+
+fn command_v(binary: &str) -> Option<PathBuf> {
+    let output = Command::new("sh")
+        .arg("-lc")
+        .arg(format!("command -v {}", binary))
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    let path = PathBuf::from(raw);
+    if path.exists() {
+        Some(path)
+    } else {
+        None
+    }
 }
 
 fn binary_name() -> &'static str {

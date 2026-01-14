@@ -40,7 +40,8 @@ pub struct CargoPackageConfig {
     pub name: String,
     /// Version of the package
     pub version: String,
-    pub edition: String,
+    #[serde(default)]
+    pub edition: Option<String>,
     /// Description of the package
     #[serde(default)]
     pub description: String,

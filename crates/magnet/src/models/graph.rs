@@ -1,13 +1,11 @@
-use crate::models::{DependencyModel, ManifestModel, PackageModel};
+use crate::models::{DependencyModel, ManifestModel, PackageModel, WorkspaceModel};
 use crate::registry::{RegistryClient, RegistryOptions};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
-use fp_core::package::provider::{ModuleProvider, ModuleSource, PackageProvider};
-use fp_rust::package::{CargoMetadataOptions, CargoPackageProvider, RustModuleProvider};
+use fp_core::package::provider::{ModuleSource, PackageProvider};
 use fp_typescript::TypeScriptPackageProvider;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::ffi::OsString;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Instant;
@@ -240,7 +238,6 @@ impl PackageGraph {
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
             .to_path_buf();
         info!("graph: initializing Cargo workspace at {}", root.display());
-        let _guard = apply_cargo_home(resolve_cache_dir(options))?;
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
             Some(RegistryClient::new(RegistryOptions {
@@ -250,87 +247,6 @@ impl PackageGraph {
         } else {
             None
         };
-        if options.allow_multiple_versions {
-            info!("graph: loading Cargo metadata (multi-version)");
-            let provider = Arc::new(CargoPackageProvider::new_with_options(
-                root.clone(),
-                CargoMetadataOptions {
-                    offline: options.offline,
-                    include_dependencies: false,
-                },
-            ));
-            provider
-                .refresh()
-                .map_err(|err| eyre::eyre!("Failed to load Cargo workspace: {err}"))?;
-            let module_provider = RustModuleProvider::new(provider.clone());
-
-            let mut packages = Vec::new();
-            for package_id in provider
-                .list_packages()
-                .map_err(|err| eyre::eyre!("Failed to list Cargo packages: {err}"))?
-            {
-                info!("graph: loading package {}", package_id);
-                let descriptor = provider
-                    .load_package(&package_id)
-                    .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;
-                module_provider
-                    .modules_for_package(&package_id)
-                    .map_err(|err| eyre::eyre!("Failed to list modules for {package_id}: {err}"))?;
-                let module_roots = default_module_roots(&descriptor.root.to_path_buf());
-                let entry = detect_entry(&descriptor.root.to_path_buf(), &["rs"]);
-                let dependencies = if options.include_dependencies
-                    || options.include_dev_dependencies
-                    || options.include_build_dependencies
-                {
-                    let deps = parse_cargo_dependencies(&descriptor.manifest_path.to_path_buf())?;
-                    let mut dep_map = HashMap::new();
-                    if options.include_dependencies {
-                        for (name, dep) in deps.dependencies {
-                            dep_map.entry(name).or_insert(dep);
-                        }
-                    }
-                    if options.include_dev_dependencies {
-                        for (name, dep) in deps.dev_dependencies {
-                            dep_map.entry(name).or_insert(dep);
-                        }
-                    }
-                    if options.include_build_dependencies {
-                        for (name, dep) in deps.build_dependencies {
-                            dep_map.entry(name).or_insert(dep);
-                        }
-                    }
-                    dep_map
-                        .into_iter()
-                        .map(|(name, dep)| dependency_to_edge(name, dep, registry.as_ref()))
-                        .collect::<Result<Vec<_>>>()?
-                } else {
-                    Vec::new()
-                };
-
-                packages.push(PackageNode {
-                    name: descriptor.name.clone(),
-                    version: descriptor
-                        .version
-                        .as_ref()
-                        .map(|v| v.to_string())
-                        .unwrap_or_else(|| "0.0.0".to_string()),
-                    root: descriptor.root.to_path_buf(),
-                    manifest_path: descriptor.manifest_path.to_path_buf(),
-                    language: Some("rust".to_string()),
-                    module_roots,
-                    entry,
-                    dependencies,
-                });
-            }
-
-            return Ok(Self {
-                schema_version: 1,
-                root,
-                packages,
-                selected_package: None,
-                build_options: HashMap::new(),
-            });
-        }
         #[cfg(feature = "cargo-fallback")]
         {
             if options.cargo_fetch && !options.offline {
@@ -338,57 +254,9 @@ impl PackageGraph {
                 prefetch_cargo_dependencies(manifest_path)?;
             }
         }
-        info!("graph: loading Cargo metadata");
-        let provider = Arc::new(CargoPackageProvider::new_with_options(
-            root.clone(),
-            CargoMetadataOptions {
-                offline: options.offline,
-                include_dependencies: options.include_dependencies,
-            },
-        ));
-        provider
-            .refresh()
-            .map_err(|err| eyre::eyre!("Failed to load Cargo workspace: {err}"))?;
-        let module_provider = RustModuleProvider::new(provider.clone());
-
-        let mut packages = Vec::new();
-        for package_id in provider
-            .list_packages()
-            .map_err(|err| eyre::eyre!("Failed to list Cargo packages: {err}"))?
-        {
-            info!("graph: loading package {}", package_id);
-            let descriptor = provider
-                .load_package(&package_id)
-                .map_err(|err| eyre::eyre!("Failed to load package {package_id}: {err}"))?;
-            module_provider
-                .modules_for_package(&package_id)
-                .map_err(|err| eyre::eyre!("Failed to list modules for {package_id}: {err}"))?;
-            let module_roots = default_module_roots(&descriptor.root.to_path_buf());
-            let entry = detect_entry(&descriptor.root.to_path_buf(), &["rs"]);
-            let dependencies = descriptor
-                .metadata
-                .dependencies
-                .iter()
-                .map(dependency_descriptor_to_edge)
-                .collect();
-
-            let node = PackageNode {
-                name: descriptor.name.clone(),
-                version: descriptor
-                    .version
-                    .as_ref()
-                    .map(|v| v.to_string())
-                    .unwrap_or_else(|| "0.0.0".to_string()),
-                root: descriptor.root.to_path_buf(),
-                manifest_path: descriptor.manifest_path.to_path_buf(),
-                language: Some("rust".to_string()),
-                module_roots,
-                entry,
-                dependencies,
-            };
-
-            packages.push(node);
-        }
+        let mut resolver = CargoResolver::new(&root, options, registry)?;
+        resolver.load_root(manifest_path)?;
+        let packages = resolver.resolve()?;
 
         Ok(Self {
             schema_version: 1,
@@ -550,52 +418,6 @@ fn prefetch_cargo_dependencies(manifest_path: &Path) -> Result<()> {
     Ok(())
 }
 
-struct CargoHomeGuard {
-    previous: Option<OsString>,
-    applied: bool,
-}
-
-impl Drop for CargoHomeGuard {
-    fn drop(&mut self) {
-        if !self.applied {
-            return;
-        }
-        match &self.previous {
-            Some(value) => unsafe {
-                std::env::set_var("CARGO_HOME", value);
-            },
-            None => unsafe {
-                std::env::remove_var("CARGO_HOME");
-            },
-        }
-    }
-}
-
-fn apply_cargo_home(cache_dir: Option<PathBuf>) -> Result<CargoHomeGuard> {
-    let Some(cache_dir) = cache_dir else {
-        return Ok(CargoHomeGuard {
-            previous: None,
-            applied: false,
-        });
-    };
-
-    std::fs::create_dir_all(&cache_dir).map_err(|err| {
-        eyre::eyre!(
-            "Failed to create cargo cache directory {}: {err}",
-            cache_dir.display()
-        )
-    })?;
-    let previous = std::env::var_os("CARGO_HOME");
-    // Safe: we control the value and restore the previous setting in the guard.
-    unsafe {
-        std::env::set_var("CARGO_HOME", &cache_dir);
-    }
-    Ok(CargoHomeGuard {
-        previous,
-        applied: true,
-    })
-}
-
 fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
     if let Some(cache_dir) = options.cache_dir.clone() {
         return Some(cache_dir);
@@ -650,6 +472,232 @@ fn package_to_node(
             .map(|(name, dep)| dependency_to_edge(name, dep, registry))
             .collect::<Result<Vec<_>>>()?,
     })
+}
+
+struct CargoResolver {
+    root: PathBuf,
+    options: PackageGraphOptions,
+    registry: Option<RegistryClient>,
+    workspace: Option<WorkspaceModel>,
+    roots: Vec<PathBuf>,
+    seen: HashSet<String>,
+    packages: Vec<PackageNode>,
+}
+
+impl CargoResolver {
+    fn new(
+        root: &Path,
+        options: &PackageGraphOptions,
+        registry: Option<RegistryClient>,
+    ) -> Result<Self> {
+        Ok(Self {
+            root: root.to_path_buf(),
+            options: options.clone(),
+            registry,
+            workspace: None,
+            roots: Vec::new(),
+            seen: HashSet::new(),
+            packages: Vec::new(),
+        })
+    }
+
+    fn load_root(&mut self, manifest_path: &Path) -> Result<()> {
+        let manifest = crate::configs::CargoManifestConfig::from_path(manifest_path)?;
+        if manifest.workspace.is_some() {
+            let workspace = WorkspaceModel::from_dir(&self.root)?;
+            let mut members = workspace.list_members()?;
+            info!(
+                "graph: workspace members detected: {}",
+                members.len()
+            );
+            self.workspace = Some(workspace);
+            self.roots.append(&mut members);
+        }
+        if manifest.package.is_some() {
+            info!("graph: root package detected");
+            self.roots.push(self.root.clone());
+        }
+        if self.roots.is_empty() {
+            return Err(eyre::eyre!(
+                "Cargo.toml has neither [workspace] nor [package] sections"
+            ));
+        }
+        self.roots.sort();
+        self.roots.dedup();
+        Ok(())
+    }
+
+    fn resolve(&mut self) -> Result<Vec<PackageNode>> {
+        let roots = self.roots.clone();
+        for root in roots {
+            self.resolve_package_dir(&root)?;
+        }
+        Ok(std::mem::take(&mut self.packages))
+    }
+
+    fn resolve_package_dir(&mut self, dir: &Path) -> Result<()> {
+        info!("graph: resolving package at {}", dir.display());
+        let mut package = PackageModel::from_dir(dir)?;
+        if let Some(workspace) = &self.workspace {
+            apply_workspace_dependencies(&mut package, workspace)?;
+        }
+
+        let key = self.package_key(&package);
+        if !self.seen.insert(key) {
+            return Ok(());
+        }
+
+        let node = package_to_node(package.clone(), self.registry.as_ref(), &self.options)?;
+        self.packages.push(node);
+
+        let deps = collect_dependencies(&package, &self.options);
+        for (name, dep) in deps {
+            self.resolve_dependency(&package.root_path, &name, dep)?;
+        }
+
+        Ok(())
+    }
+
+    fn resolve_dependency(
+        &mut self,
+        package_root: &Path,
+        name: &str,
+        dep: DependencyModel,
+    ) -> Result<()> {
+        if let Some(path) = dep.path.as_ref() {
+            let base = if dep.workspace.unwrap_or(false) {
+                self.workspace
+                    .as_ref()
+                    .map(|ws| ws.root_path.as_path())
+                    .unwrap_or(package_root)
+            } else {
+                package_root
+            };
+            let path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                base.join(path)
+            };
+            info!("graph: resolving path dependency {}", path.display());
+            return self.resolve_package_dir(&path);
+        }
+
+        if dep.git.is_some() {
+            info!("graph: skipping git dependency {}", name);
+            return Ok(());
+        }
+
+        let Some(registry) = self.registry.as_ref() else {
+            return Ok(());
+        };
+        let resolved_name = dep.package.as_deref().unwrap_or(name);
+        let Some(version) = dep.version.as_deref() else {
+            return Ok(());
+        };
+        info!("graph: resolving registry dependency {} {}", resolved_name, version);
+        let resolved = registry.resolve(resolved_name, Some(version))?;
+        self.resolve_package_dir(&resolved.root)
+    }
+
+    fn package_key(&self, package: &PackageModel) -> String {
+        if self.options.allow_multiple_versions {
+            package.source_path.to_string_lossy().to_string()
+        } else {
+            package.name.clone()
+        }
+    }
+}
+
+fn collect_dependencies(
+    package: &PackageModel,
+    options: &PackageGraphOptions,
+) -> HashMap<String, DependencyModel> {
+    let mut dep_map = HashMap::new();
+    if options.include_dependencies {
+        for (name, dep) in package.dependencies.clone() {
+            dep_map.entry(name).or_insert(dep);
+        }
+    }
+    if options.include_dev_dependencies {
+        for (name, dep) in package.dev_dependencies.clone() {
+            dep_map.entry(name).or_insert(dep);
+        }
+    }
+    if options.include_build_dependencies {
+        for (name, dep) in package.build_dependencies.clone() {
+            dep_map.entry(name).or_insert(dep);
+        }
+    }
+    dep_map
+}
+
+fn apply_workspace_dependencies(
+    package: &mut PackageModel,
+    workspace: &WorkspaceModel,
+) -> Result<()> {
+    apply_workspace_dependency_map(&mut package.dependencies, workspace)?;
+    apply_workspace_dependency_map(&mut package.dev_dependencies, workspace)?;
+    apply_workspace_dependency_map(&mut package.build_dependencies, workspace)?;
+    Ok(())
+}
+
+fn apply_workspace_dependency_map(
+    deps: &mut HashMap<String, DependencyModel>,
+    workspace: &WorkspaceModel,
+) -> Result<()> {
+    for (name, dep) in deps.clone() {
+        if dep.workspace.unwrap_or(false) {
+            let Some(base) = workspace.dependencies.get(&name) else {
+                return Err(eyre::eyre!(
+                    "workspace dependency '{}' not found in workspace dependencies",
+                    name
+                ));
+            };
+            deps.insert(name, merge_dependency(base, &dep));
+        }
+    }
+    Ok(())
+}
+
+fn merge_dependency(base: &DependencyModel, overlay: &DependencyModel) -> DependencyModel {
+    let mut out = base.clone();
+    if overlay.version.is_some() {
+        out.version = overlay.version.clone();
+    }
+    if overlay.path.is_some() {
+        out.path = overlay.path.clone();
+    }
+    if overlay.git.is_some() {
+        out.git = overlay.git.clone();
+    }
+    if overlay.branch.is_some() {
+        out.branch = overlay.branch.clone();
+    }
+    if overlay.tag.is_some() {
+        out.tag = overlay.tag.clone();
+    }
+    if overlay.rev.is_some() {
+        out.rev = overlay.rev.clone();
+    }
+    if overlay.features.is_some() {
+        out.features = overlay.features.clone();
+    }
+    if overlay.default_features.is_some() {
+        out.default_features = overlay.default_features;
+    }
+    if overlay.optional.is_some() {
+        out.optional = overlay.optional;
+    }
+    if overlay.package.is_some() {
+        out.package = overlay.package.clone();
+    }
+    if overlay.registry.is_some() {
+        out.registry = overlay.registry.clone();
+    }
+    if overlay.workspace.is_some() {
+        out.workspace = overlay.workspace;
+    }
+    out
 }
 
 fn dependency_to_edge(
@@ -873,84 +921,6 @@ fn manifest_root_path(manifest: &ManifestModel) -> PathBuf {
     }
 }
 
-struct CargoDependencies {
-    dependencies: HashMap<String, DependencyModel>,
-    dev_dependencies: HashMap<String, DependencyModel>,
-    build_dependencies: HashMap<String, DependencyModel>,
-}
-
-fn parse_cargo_dependencies(manifest_path: &Path) -> Result<CargoDependencies> {
-    let content = std::fs::read_to_string(manifest_path)?;
-    let value: toml::Value = toml::from_str(&content)?;
-    Ok(CargoDependencies {
-        dependencies: parse_cargo_deps(value.get("dependencies")),
-        dev_dependencies: parse_cargo_deps(value.get("dev-dependencies")),
-        build_dependencies: parse_cargo_deps(value.get("build-dependencies")),
-    })
-}
-
-fn parse_cargo_deps(section: Option<&toml::Value>) -> HashMap<String, DependencyModel> {
-    let mut out = HashMap::new();
-    let Some(table) = section.and_then(|v| v.as_table()) else {
-        return out;
-    };
-    for (name, value) in table {
-        let mut model = DependencyModel::default();
-        match value {
-            toml::Value::String(version) => {
-                model.version = Some(version.to_string());
-            }
-            toml::Value::Table(table) => {
-                if let Some(version) = table.get("version").and_then(|v| v.as_str()) {
-                    model.version = Some(version.to_string());
-                }
-                if let Some(path) = table.get("path").and_then(|v| v.as_str()) {
-                    model.path = Some(Path::new(path).to_path_buf());
-                }
-                if let Some(git) = table.get("git").and_then(|v| v.as_str()) {
-                    model.git = Some(git.to_string());
-                }
-                if let Some(branch) = table.get("branch").and_then(|v| v.as_str()) {
-                    model.branch = Some(branch.to_string());
-                }
-                if let Some(tag) = table.get("tag").and_then(|v| v.as_str()) {
-                    model.tag = Some(tag.to_string());
-                }
-                if let Some(rev) = table.get("rev").and_then(|v| v.as_str()) {
-                    model.rev = Some(rev.to_string());
-                }
-                if let Some(features) = table.get("features").and_then(|v| v.as_array()) {
-                    let list = features
-                        .iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    if !list.is_empty() {
-                        model.features = Some(list);
-                    }
-                }
-                if let Some(default_features) = table
-                    .get("default-features")
-                    .and_then(|v| v.as_bool())
-                {
-                    model.default_features = Some(default_features);
-                }
-                if let Some(optional) = table.get("optional").and_then(|v| v.as_bool()) {
-                    model.optional = Some(optional);
-                }
-                if let Some(package) = table.get("package").and_then(|v| v.as_str()) {
-                    model.package = Some(package.to_string());
-                }
-                if let Some(registry) = table.get("registry").and_then(|v| v.as_str()) {
-                    model.registry = Some(registry.to_string());
-                }
-            }
-            _ => {}
-        }
-        out.insert(name.to_string(), model);
-    }
-    out
-}
 
 fn default_module_roots(root: &Path) -> Vec<PathBuf> {
     let src = root.join("src");

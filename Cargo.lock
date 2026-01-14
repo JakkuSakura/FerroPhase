@@ -1874,7 +1874,6 @@ dependencies = [
  "eyre",
  "flate2",
  "fp-core",
- "fp-rust",
  "fp-typescript",
  "glob",
  "hex",

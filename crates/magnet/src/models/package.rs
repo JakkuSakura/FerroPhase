@@ -1,5 +1,5 @@
-use crate::configs::ManifestConfig;
-use crate::models::{DependencyModelMap, PatchMap};
+use crate::configs::{CargoManifestConfig, ManifestConfig};
+use crate::models::{DependencyModelMap, PatchMap, parse_patch_table};
 use eyre::ContextCompat;
 use eyre::Result;
 use std::collections::HashMap;
@@ -54,6 +54,11 @@ impl PackageModel {
                 root_path.display()
             )
         };
+        if config_path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml") {
+            let config = CargoManifestConfig::from_path(&config_path)?;
+            return Self::from_cargo_config(config, &config_path, &root_path);
+        }
+
         let config = ManifestConfig::from_file(&config_path)?;
 
         let package = config
@@ -95,6 +100,48 @@ impl PackageModel {
             source_path: config_path,
         };
 
+        Ok(model)
+    }
+
+    fn from_cargo_config(
+        config: CargoManifestConfig,
+        config_path: &Path,
+        root_path: &Path,
+    ) -> Result<Self> {
+        let package = config
+            .package
+            .clone()
+            .with_context(|| format!("No package found in {}", config_path.display()))?;
+        let model = PackageModel {
+            name: package.name,
+            version: package.version,
+            edition: package.edition.unwrap_or_else(|| "2015".to_string()),
+            description: package.description,
+            authors: package.authors,
+            homepage: package.homepage,
+            repository: package.repository,
+            documentation: package.documentation,
+            license: package.license,
+            custom: HashMap::new(),
+            dependencies: config
+                .dependencies
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            dev_dependencies: config
+                .dev_dependencies
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            build_dependencies: config
+                .build_dependencies
+                .into_iter()
+                .map(|(k, v)| (k, v.into()))
+                .collect(),
+            patch: parse_patch_table(config.patch),
+            root_path: root_path.to_path_buf(),
+            source_path: config_path.to_path_buf(),
+        };
         Ok(model)
     }
 }

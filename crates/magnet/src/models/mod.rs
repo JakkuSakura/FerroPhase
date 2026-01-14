@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 #[path = "crate.rs"]
 mod crate_;
+mod cargo;
 mod dependency;
 mod graph;
 mod nexus;
@@ -12,6 +13,7 @@ mod workspace;
 
 use crate::configs::ManifestConfig;
 pub use crate_::*;
+pub use cargo::*;
 pub use dependency::*;
 pub use graph::*;
 pub use nexus::*;
@@ -45,15 +47,26 @@ impl ManifestModel {
                 root_path.display()
             );
         };
-        let config = ManifestConfig::from_file(&config_path)?;
-        if let Some(_nexus) = config.nexus {
-            NexusModel::from_dir(&root_path).map(ManifestModel::Nexus)
-        } else if let Some(_workspace) = config.workspace {
-            WorkspaceModel::from_dir(&root_path).map(ManifestModel::Workspace)
-        } else if let Some(_package) = config.package {
-            PackageModel::from_dir(&root_path).map(ManifestModel::Package)
+        if config_path.file_name().and_then(|n| n.to_str()) == Some("Cargo.toml") {
+            let cargo = crate::configs::CargoManifestConfig::from_path(&config_path)?;
+            if cargo.workspace.is_some() {
+                WorkspaceModel::from_dir(&root_path).map(ManifestModel::Workspace)
+            } else if cargo.package.is_some() {
+                PackageModel::from_dir(&root_path).map(ManifestModel::Package)
+            } else {
+                bail!("Cargo.toml has neither [workspace] nor [package] section");
+            }
         } else {
-            unreachable!()
+            let config = ManifestConfig::from_file(&config_path)?;
+            if let Some(_nexus) = config.nexus {
+                NexusModel::from_dir(&root_path).map(ManifestModel::Nexus)
+            } else if let Some(_workspace) = config.workspace {
+                WorkspaceModel::from_dir(&root_path).map(ManifestModel::Workspace)
+            } else if let Some(_package) = config.package {
+                PackageModel::from_dir(&root_path).map(ManifestModel::Package)
+            } else {
+                unreachable!()
+            }
         }
     }
     pub fn name(&self) -> String {
