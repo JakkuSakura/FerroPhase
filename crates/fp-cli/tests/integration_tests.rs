@@ -109,6 +109,7 @@ async fn compile_example_async(example_name: &str) {
         linker: "native".to_string(),
         target_linker: None,
         output: Some(output_path.clone()),
+        package_graph: None,
         opt_level: 0,
         debug: true,
         release: false,

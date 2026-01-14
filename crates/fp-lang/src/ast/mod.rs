@@ -49,6 +49,14 @@ impl FerroPhaseParser {
         self.record_diagnostic(DiagnosticLevel::Error, message);
     }
 
+    fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
+        let message = message.into();
+        let diagnostic = Diagnostic::error(message)
+            .with_span(span)
+            .with_source_context(FERRO_CONTEXT.to_string());
+        self.diagnostics.add_diagnostic(diagnostic);
+    }
+
     /// Parse a FerroPhase expression directly into an fp-core AST expression.
     pub fn parse_expr_ast(&self, source: &str) -> Result<Expr> {
         let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
@@ -57,7 +65,14 @@ impl FerroPhaseParser {
         })?;
         let (cst, idx) =
             crate::cst::parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
-                self.record_error(format!("failed to parse expression CST: {err}"));
+                if let Some(span) = err.span {
+                    self.record_error_with_span(
+                        format!("failed to parse expression CST: {err}"),
+                        span,
+                    );
+                } else {
+                    self.record_error(format!("failed to parse expression CST: {err}"));
+                }
                 eyre::eyre!(err)
             })?;
         if lexemes[idx..].iter().any(|lexeme| !lexeme.is_trivia()) {
@@ -77,7 +92,11 @@ impl FerroPhaseParser {
             eyre::eyre!(err)
         })?;
         crate::cst::parse_expr_lexemes_to_cst(&lexemes, 0).map_err(|err| {
-            self.record_error(format!("failed to parse expression CST: {err}"));
+            if let Some(span) = err.span {
+                self.record_error_with_span(format!("failed to parse expression CST: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse expression CST: {err}"));
+            }
             eyre::eyre!(err)
         })
     }
@@ -93,7 +112,11 @@ impl FerroPhaseParser {
             eyre::eyre!(err)
         })?;
         let cst = crate::cst::items::parse_items_tokens_to_cst(&tokens).map_err(|err| {
-            self.record_error(format!("failed to parse items CST: {err}"));
+            if let Some(span) = err.span() {
+                self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse items CST: {err}"));
+            }
             eyre::eyre!(err)
         })?;
         crate::ast::lower_items_from_cst(&cst).map_err(|err| {

@@ -234,12 +234,16 @@ impl DiagnosticManager {
             let message = &diagnostic.message;
 
             // Format message with suggestions if present
-            let full_message = if !diagnostic.suggestions.is_empty() {
+            let mut full_message = if !diagnostic.suggestions.is_empty() {
                 let suggestions = diagnostic.suggestions.join("; ");
                 format!("{} (hint: {})", message, suggestions)
             } else {
                 message.to_string()
             };
+
+            if let Some(span) = diagnostic.span {
+                full_message.push_str(&format!(" [span {}:{}-{}]", span.file, span.lo, span.hi));
+            }
 
             emit_tracing(&diagnostic.level, context, &full_message);
         }

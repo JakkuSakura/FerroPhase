@@ -10,6 +10,7 @@ use fp_core::span::{FileId, Span};
 #[derive(Debug, Clone)]
 pub struct ExprCstParseError {
     pub message: String,
+    pub span: Option<Span>,
 }
 
 impl std::fmt::Display for ExprCstParseError {
@@ -2079,7 +2080,12 @@ impl Parser {
         let near = self.peek_non_trivia_raw().unwrap_or("<eof>");
         ExprCstParseError {
             message: format!("{message} (near `{near}`)"),
+            span: self.peek_non_trivia_span(),
         }
+    }
+
+    fn peek_non_trivia_span(&self) -> Option<Span> {
+        self.peek_non_trivia().map(|t| t.span)
     }
 }
 

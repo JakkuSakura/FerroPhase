@@ -8,13 +8,14 @@ use crate::lexer::{Keyword, Lexeme, LexerError, Token, TokenKind};
 use crate::syntax::{
     span_for_children, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken, SyntaxTokenKind,
 };
+use fp_core::span::Span;
 
 #[derive(Debug, Error)]
 pub enum ItemParseError {
     #[error("lex error: {0}")]
     Lex(#[from] LexerError),
-    #[error("parse error: {0}")]
-    Parse(String),
+    #[error("parse error: {message}")]
+    Parse { message: String, span: Option<Span> },
 }
 
 #[derive(Debug)]
@@ -40,11 +41,20 @@ fn cut_message<T>(input: &mut &[Token], message: impl Into<String>) -> ModalResu
     )))
 }
 
-impl From<ErrMode<ContextError>> for ItemParseError {
-    fn from(err: ErrMode<ContextError>) -> Self {
-        match err {
-            ErrMode::Backtrack(ctx) | ErrMode::Cut(ctx) => ItemParseError::Parse(ctx.to_string()),
-            ErrMode::Incomplete(_) => ItemParseError::Parse("incomplete input".to_string()),
+impl ItemParseError {
+    fn from_err_with_span(err: ErrMode<ContextError>, input: &[Token]) -> Self {
+        let message = match err {
+            ErrMode::Backtrack(ctx) | ErrMode::Cut(ctx) => ctx.to_string(),
+            ErrMode::Incomplete(_) => "incomplete input".to_string(),
+        };
+        let span = input.first().map(token_span_to_core);
+        ItemParseError::Parse { message, span }
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            ItemParseError::Parse { span, .. } => *span,
+            _ => None,
         }
     }
 }
@@ -60,14 +70,24 @@ pub fn parse_items_tokens_to_cst(tokens: &[Token]) -> Result<SyntaxNode, ItemPar
         }
 
         let mut item_children = Vec::new();
-        let attrs = parse_outer_attrs_cst(&mut input)?;
+        let attrs = match parse_outer_attrs_cst(&mut input) {
+            Ok(attrs) => attrs,
+            Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+        };
         for attr in attrs {
             item_children.push(SyntaxElement::Node(Box::new(attr)));
         }
-        if let Some(vis) = parse_visibility_cst(&mut input)? {
+        let visibility = match parse_visibility_cst(&mut input) {
+            Ok(vis) => vis,
+            Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+        };
+        if let Some(vis) = visibility {
             item_children.push(SyntaxElement::Node(Box::new(vis)));
         }
-        let item = parse_item_cst(&mut input, item_children)?;
+        let item = match parse_item_cst(&mut input, item_children) {
+            Ok(item) => item,
+            Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+        };
         children.push(SyntaxElement::Node(Box::new(item)));
     }
 
@@ -80,14 +100,24 @@ pub fn parse_item_tokens_prefix_to_cst(
 ) -> Result<(SyntaxNode, usize), ItemParseError> {
     let mut input: &[Token] = tokens;
     let mut item_children: Vec<SyntaxElement> = Vec::new();
-    let attrs = parse_outer_attrs_cst(&mut input)?;
+    let attrs = match parse_outer_attrs_cst(&mut input) {
+        Ok(attrs) => attrs,
+        Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+    };
     for attr in attrs {
         item_children.push(SyntaxElement::Node(Box::new(attr)));
     }
-    if let Some(vis) = parse_visibility_cst(&mut input)? {
+    let visibility = match parse_visibility_cst(&mut input) {
+        Ok(vis) => vis,
+        Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+    };
+    if let Some(vis) = visibility {
         item_children.push(SyntaxElement::Node(Box::new(vis)));
     }
-    let item = parse_item_cst(&mut input, item_children)?;
+    let item = match parse_item_cst(&mut input, item_children) {
+        Ok(item) => item,
+        Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+    };
     Ok((item, tokens.len() - input.len()))
 }
 
@@ -1046,6 +1076,10 @@ fn syntax_token_from_token(tok: &Token) -> SyntaxToken {
         text: tok.lexeme.clone(),
         span: fp_core::span::Span::new(0, tok.span.start as u32, tok.span.end as u32),
     }
+}
+
+fn token_span_to_core(tok: &Token) -> Span {
+    Span::new(0, tok.span.start as u32, tok.span.end as u32)
 }
 
 fn match_keyword(input: &mut &[Token], keyword: Keyword) -> bool {
