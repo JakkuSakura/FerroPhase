@@ -24,6 +24,7 @@ pub mod pretty;
 pub mod printer;
 pub mod query;
 pub mod span;
+pub mod source_map;
 pub mod utils;
 pub mod vfs;
 pub mod workspace;

@@ -43,6 +43,7 @@ globset = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 miette = { version = "7.6.0", features = ["fancy"] }
+termwiz = "0.23.3"
 
 # Serialization for configuration
 serde = { version = "1.0", features = ["derive"] }

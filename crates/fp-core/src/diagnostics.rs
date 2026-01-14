@@ -142,6 +142,10 @@ where
             write!(f, " [{}]", code)?;
         }
 
+        if let Some(span) = self.span {
+            write!(f, " [span {}:{}-{}]", span.file, span.lo, span.hi)?;
+        }
+
         if !self.suggestions.is_empty() {
             let hints = self.suggestions.join("; ");
             write!(f, " (hints: {})", hints)?;

@@ -9,6 +9,8 @@ use crate::syntax::{
     span_for_children, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken, SyntaxTokenKind,
 };
 use fp_core::span::Span;
+use fp_core::span::FileId;
+use std::cell::Cell;
 
 #[derive(Debug, Error)]
 pub enum ItemParseError {
@@ -59,17 +61,67 @@ impl ItemParseError {
     }
 }
 
+#[allow(dead_code)]
 pub fn parse_items_tokens_to_cst(tokens: &[Token]) -> Result<SyntaxNode, ItemParseError> {
+    parse_items_tokens_to_cst_with_file(tokens, 0)
+}
+
+pub fn parse_items_tokens_to_cst_with_file(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<SyntaxNode, ItemParseError> {
     let mut input: &[Token] = tokens;
-    let mut children: Vec<SyntaxElement> = Vec::new();
-    while !input.is_empty() {
-        // Skip stray semicolons.
-        if matches_symbol(input.first(), ";") {
-            input = &input[1..];
-            continue;
+    with_items_file(file, || {
+        let mut children: Vec<SyntaxElement> = Vec::new();
+        while !input.is_empty() {
+            // Skip stray semicolons.
+            if matches_symbol(input.first(), ";") {
+                input = &input[1..];
+                continue;
+            }
+
+            let mut item_children = Vec::new();
+            let attrs = match parse_outer_attrs_cst(&mut input) {
+                Ok(attrs) => attrs,
+                Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+            };
+            for attr in attrs {
+                item_children.push(SyntaxElement::Node(Box::new(attr)));
+            }
+            let visibility = match parse_visibility_cst(&mut input) {
+                Ok(vis) => vis,
+                Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+            };
+            if let Some(vis) = visibility {
+                item_children.push(SyntaxElement::Node(Box::new(vis)));
+            }
+            let item = match parse_item_cst(&mut input, item_children) {
+                Ok(item) => item,
+                Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+            };
+            children.push(SyntaxElement::Node(Box::new(item)));
         }
 
-        let mut item_children = Vec::new();
+        let span =
+            span_for_children(&children).unwrap_or_else(|| fp_core::span::Span::new(file, 0, 0));
+        Ok(SyntaxNode::new(SyntaxKind::ItemList, children, span))
+    })
+}
+
+#[allow(dead_code)]
+pub fn parse_item_tokens_prefix_to_cst(
+    tokens: &[Token],
+) -> Result<(SyntaxNode, usize), ItemParseError> {
+    parse_item_tokens_prefix_to_cst_with_file(tokens, 0)
+}
+
+pub fn parse_item_tokens_prefix_to_cst_with_file(
+    tokens: &[Token],
+    file: FileId,
+) -> Result<(SyntaxNode, usize), ItemParseError> {
+    let mut input: &[Token] = tokens;
+    with_items_file(file, || {
+        let mut item_children: Vec<SyntaxElement> = Vec::new();
         let attrs = match parse_outer_attrs_cst(&mut input) {
             Ok(attrs) => attrs,
             Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
@@ -88,37 +140,8 @@ pub fn parse_items_tokens_to_cst(tokens: &[Token]) -> Result<SyntaxNode, ItemPar
             Ok(item) => item,
             Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
         };
-        children.push(SyntaxElement::Node(Box::new(item)));
-    }
-
-    let span = span_for_children(&children).unwrap_or_else(|| fp_core::span::Span::new(0, 0, 0));
-    Ok(SyntaxNode::new(SyntaxKind::ItemList, children, span))
-}
-
-pub fn parse_item_tokens_prefix_to_cst(
-    tokens: &[Token],
-) -> Result<(SyntaxNode, usize), ItemParseError> {
-    let mut input: &[Token] = tokens;
-    let mut item_children: Vec<SyntaxElement> = Vec::new();
-    let attrs = match parse_outer_attrs_cst(&mut input) {
-        Ok(attrs) => attrs,
-        Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
-    };
-    for attr in attrs {
-        item_children.push(SyntaxElement::Node(Box::new(attr)));
-    }
-    let visibility = match parse_visibility_cst(&mut input) {
-        Ok(vis) => vis,
-        Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
-    };
-    if let Some(vis) = visibility {
-        item_children.push(SyntaxElement::Node(Box::new(vis)));
-    }
-    let item = match parse_item_cst(&mut input, item_children) {
-        Ok(item) => item,
-        Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
-    };
-    Ok((item, tokens.len() - input.len()))
+        Ok((item, tokens.len() - input.len()))
+    })
 }
 
 fn parse_item_cst(
@@ -1074,12 +1097,38 @@ fn syntax_token_from_token(tok: &Token) -> SyntaxToken {
     SyntaxToken {
         kind: SyntaxTokenKind::Token,
         text: tok.lexeme.clone(),
-        span: fp_core::span::Span::new(0, tok.span.start as u32, tok.span.end as u32),
+        span: fp_core::span::Span::new(
+            current_items_file(),
+            tok.span.start as u32,
+            tok.span.end as u32,
+        ),
     }
 }
 
 fn token_span_to_core(tok: &Token) -> Span {
-    Span::new(0, tok.span.start as u32, tok.span.end as u32)
+    Span::new(
+        current_items_file(),
+        tok.span.start as u32,
+        tok.span.end as u32,
+    )
+}
+
+thread_local! {
+    static ITEMS_FILE_ID: Cell<FileId> = Cell::new(0);
+}
+
+fn with_items_file<T>(file: FileId, f: impl FnOnce() -> T) -> T {
+    ITEMS_FILE_ID.with(|cell| {
+        let prev = cell.get();
+        cell.set(file);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+fn current_items_file() -> FileId {
+    ITEMS_FILE_ID.with(|cell| cell.get())
 }
 
 fn match_keyword(input: &mut &[Token], keyword: Keyword) -> bool {

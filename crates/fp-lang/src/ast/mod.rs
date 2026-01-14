@@ -1,6 +1,7 @@
 use eyre::Result;
 use fp_core::ast::Expr;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
+use fp_core::span::FileId;
 
 const FERRO_CONTEXT: &str = "ferrophase.parser";
 
@@ -59,12 +60,16 @@ impl FerroPhaseParser {
 
     /// Parse a FerroPhase expression directly into an fp-core AST expression.
     pub fn parse_expr_ast(&self, source: &str) -> Result<Expr> {
+        self.parse_expr_ast_with_file(source, 0)
+    }
+
+    pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
         let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
             self.record_error(format!("failed to lex expression: {err}"));
             eyre::eyre!(err)
         })?;
         let (cst, idx) =
-            crate::cst::parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
+            crate::cst::parse_expr_lexemes_prefix_to_cst(&lexemes, file).map_err(|err| {
                 if let Some(span) = err.span {
                     self.record_error_with_span(
                         format!("failed to parse expression CST: {err}"),
@@ -87,11 +92,19 @@ impl FerroPhaseParser {
 
     /// Parse an expression into CST.
     pub fn parse_expr_cst(&self, source: &str) -> Result<crate::syntax::SyntaxNode> {
+        self.parse_expr_cst_with_file(source, 0)
+    }
+
+    pub fn parse_expr_cst_with_file(
+        &self,
+        source: &str,
+        file: FileId,
+    ) -> Result<crate::syntax::SyntaxNode> {
         let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
             self.record_error(format!("failed to lex expression: {err}"));
             eyre::eyre!(err)
         })?;
-        crate::cst::parse_expr_lexemes_to_cst(&lexemes, 0).map_err(|err| {
+        crate::cst::parse_expr_lexemes_to_cst(&lexemes, file).map_err(|err| {
             if let Some(span) = err.span {
                 self.record_error_with_span(format!("failed to parse expression CST: {err}"), span);
             } else {
@@ -103,6 +116,14 @@ impl FerroPhaseParser {
 
     /// Parse a sequence of items into fp-core AST items.
     pub fn parse_items_ast(&self, source: &str) -> Result<Vec<fp_core::ast::Item>> {
+        self.parse_items_ast_with_file(source, 0)
+    }
+
+    pub fn parse_items_ast_with_file(
+        &self,
+        source: &str,
+        file: FileId,
+    ) -> Result<Vec<fp_core::ast::Item>> {
         let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
             self.record_error(format!("failed to lex items: {err}"));
             eyre::eyre!(err)
@@ -111,7 +132,7 @@ impl FerroPhaseParser {
             self.record_error(format!("failed to lower tokens: {err}"));
             eyre::eyre!(err)
         })?;
-        let cst = crate::cst::items::parse_items_tokens_to_cst(&tokens).map_err(|err| {
+        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file).map_err(|err| {
             if let Some(span) = err.span() {
                 self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
             } else {

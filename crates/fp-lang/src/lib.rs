@@ -58,10 +58,14 @@ impl LanguageFrontend for FerroFrontend {
         let serializer = Arc::new(RustPrinter::new_with_rustfmt());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(FerroIntrinsicNormalizer::default());
+        let file_id = fp_core::source_map::register_source(
+            path.unwrap_or_else(|| Path::new("<expr>")),
+            &cleaned,
+        );
 
         if let Some(path) = path {
             self.ferro.clear_diagnostics();
-            match self.ferro.parse_items_ast(&cleaned) {
+            match self.ferro.parse_items_ast_with_file(&cleaned, file_id) {
                 Ok(items) => {
                     let file = fp_core::ast::File {
                         path: path.to_path_buf(),
@@ -110,7 +114,7 @@ impl LanguageFrontend for FerroFrontend {
         // Expression-only mode (no resolved file path).
 
         self.ferro.clear_diagnostics();
-        if let Ok(expr) = self.ferro.parse_expr_ast(&cleaned) {
+        if let Ok(expr) = self.ferro.parse_expr_ast_with_file(&cleaned, file_id) {
             let expr = strip_async_block(expr);
             let diagnostics = self.ferro.diagnostics();
             let last = Node::expr(expr.clone());
@@ -127,7 +131,7 @@ impl LanguageFrontend for FerroFrontend {
             });
         }
 
-        match self.ferro.parse_items_ast(&cleaned) {
+        match self.ferro.parse_items_ast_with_file(&cleaned, file_id) {
             Ok(items) => {
                 let file = fp_core::ast::File {
                     path: Path::new("<expr>").to_path_buf(),

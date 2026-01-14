@@ -460,7 +460,8 @@ impl Parser {
             idx_map.push(self.idx + rel);
         }
 
-        let (item, consumed) = crate::cst::items::parse_item_tokens_prefix_to_cst(&toks)
+            let (item, consumed) =
+                crate::cst::items::parse_item_tokens_prefix_to_cst_with_file(&toks, self.file)
             .map_err(|err| self.error(&format!("failed to parse item statement: {err}")))?;
         if consumed == 0 {
             return Err(self.error("failed to parse item statement"));

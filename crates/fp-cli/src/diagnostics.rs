@@ -2,8 +2,17 @@
 
 #![allow(unused_assignments)] // miette derive generates unused assignments in macro-expanded code.
 
-use crate::Result;
+use crate::{CliError, Result};
+use fp_core::diagnostics::Diagnostic as CoreDiagnostic;
+use fp_core::error::Error as CoreError;
+use fp_core::source_map::{LineSpan, SourceFile};
 use miette::Diagnostic;
+use termwiz::caps::Capabilities;
+use termwiz::cell::{AttributeChange, CellAttributes};
+use termwiz::color::AnsiColor;
+use termwiz::surface::Change;
+use termwiz::terminal::buffered::BufferedTerminal;
+use termwiz::terminal::new_terminal;
 use thiserror::Error;
 
 type SourceSpan = miette::SourceSpan;
@@ -126,6 +135,97 @@ pub fn config_error(message: String) -> FerroPhaseError {
 /// Pretty print diagnostics with context
 pub fn print_diagnostic(error: &dyn Diagnostic) {
     eprintln!("{:?}", error);
+}
+
+pub fn render_cli_error(error: &CliError) -> bool {
+    match error {
+        CliError::Core(core) => render_core_error(core),
+        _ => false,
+    }
+}
+
+fn render_core_error(error: &CoreError) -> bool {
+    match error {
+        CoreError::Diagnostic(diag) => render_core_diagnostic(diag),
+        CoreError::SyntaxError(span, _) => {
+            let diag = CoreDiagnostic::error("syntax error".to_string()).with_span(*span);
+            render_core_diagnostic(&diag)
+        }
+        _ => false,
+    }
+}
+
+fn render_core_diagnostic(diag: &CoreDiagnostic) -> bool {
+    let Some(span) = diag.span else {
+        return false;
+    };
+    let Some(file) = fp_core::source_map::source_map().file(span.file) else {
+        return false;
+    };
+    let Some(line_span) = file.span_on_line(span) else {
+        return false;
+    };
+    if let Err(err) = render_with_termwiz(diag, &file, &line_span) {
+        eprintln!("failed to render diagnostic: {err}");
+        return false;
+    }
+    true
+}
+
+fn render_with_termwiz(
+    diag: &CoreDiagnostic,
+    file: &SourceFile,
+    line_span: &LineSpan,
+) -> termwiz::Result<()> {
+    let caps = Capabilities::new_from_env()?;
+    let terminal = new_terminal(caps)?;
+    let mut out = BufferedTerminal::new(terminal)?;
+
+    let (line, col) = file.line_col(diag.span.unwrap().lo);
+    let header = format!("error: {}", diag.message);
+    let location = format!("  --> {}:{}:{}", file.path.display(), line, col);
+
+    out.add_change(Change::Attribute(AttributeChange::Foreground(
+        AnsiColor::Red.into(),
+    )));
+    out.add_change(header);
+    out.add_change(Change::AllAttributes(CellAttributes::default()));
+    out.add_change("\r\n");
+
+    out.add_change(Change::Attribute(AttributeChange::Foreground(
+        AnsiColor::Blue.into(),
+    )));
+    out.add_change(location);
+    out.add_change(Change::AllAttributes(CellAttributes::default()));
+    out.add_change("\r\n");
+
+    let line_no = line_span.line;
+    let line_no_str = line_no.to_string();
+    let gutter_width = line_no_str.len();
+    let gutter = " ".repeat(gutter_width);
+
+    out.add_change(format!("{} |\r\n", gutter));
+    out.add_change(format!(
+        " {line_no:>width$} | {}\r\n",
+        line_span.text,
+        width = gutter_width
+    ));
+
+    let caret_len = (line_span.col_end.saturating_sub(line_span.col_start)).max(1);
+    let caret_pad = " ".repeat(line_span.col_start.saturating_sub(1));
+    let carets = "^".repeat(caret_len);
+
+    out.add_change(format!("{} | ", gutter));
+    out.add_change(caret_pad);
+    out.add_change(Change::Attribute(AttributeChange::Foreground(
+        AnsiColor::Red.into(),
+    )));
+    out.add_change(carets);
+    out.add_change(Change::AllAttributes(CellAttributes::default()));
+    out.add_change("\r\n");
+
+    out.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]
