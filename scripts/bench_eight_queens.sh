@@ -89,9 +89,9 @@ else
 fi
 
 BIN_OUT="${OUT_DIR}/eight_queens_bin.out"
-bench_cmd "fp compile (binary)" \
-  "${FP_BIN} compile --emitter binary --release --output ${BIN_OUT} ${EXAMPLE}"
-bench_cmd "fp binary run" "${BIN_OUT}"
+bench_cmd "fp compile (native)" \
+  "${FP_BIN} compile --emitter native --release --output ${BIN_OUT} ${EXAMPLE}"
+bench_cmd "fp native run" "${BIN_OUT}"
 
 # LLVM backend compile/run
 LLVM_OUT="${OUT_DIR}/eight_queens_llvm.out"

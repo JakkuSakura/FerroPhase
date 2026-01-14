@@ -32,7 +32,7 @@ pub struct CompileArgs {
     ///
     /// This is only used for native codegen targets (like `--backend binary`).
     /// Default is `native`.
-    #[arg(long = "emitter", default_value = "native")]
+    #[arg(long = "emitter", default_value = "native", value_parser = ["native", "llvm"])]
     pub emitter: String,
 
     /// Target triple for codegen (defaults to host if omitted)
