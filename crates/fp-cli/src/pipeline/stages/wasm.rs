@@ -1,8 +1,8 @@
-use crate::pipeline::{Pipeline, STAGE_EMIT_WASM};
+use crate::pipeline::{Pipeline, PipelineOptions, STAGE_EMIT_WASM};
 use crate::CliError;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::lir;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineOptions, PipelineStage};
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::fs;
 use std::path::{Path, PathBuf};
 

@@ -9,7 +9,7 @@ use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result as CoreResult;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineOptions, PipelineStage};
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
 use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 
@@ -94,9 +94,15 @@ impl ConstEvaluationOrchestrator {
 
 pub struct ConstEvalContext {
     pub ast: Node,
-    pub options: PipelineOptions,
+    pub options: ConstEvalOptions,
     pub serializer: Option<Arc<dyn AstSerializer>>,
     pub std_modules: Vec<Node>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConstEvalOptions {
+    pub release: bool,
+    pub execute_main: bool,
 }
 
 pub struct ConstEvalStage;

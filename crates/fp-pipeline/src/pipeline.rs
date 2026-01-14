@@ -1,4 +1,3 @@
-use crate::config::PipelineOptions;
 use crate::error::{PipelineDiagnostics, PipelineError};
 use std::marker::PhantomData;
 
@@ -15,11 +14,7 @@ pub trait PipelineStage: Send + Sync {
 }
 
 pub struct Pipeline<Src, Dst> {
-    run: Box<
-        dyn Fn(Src, &mut PipelineDiagnostics, &PipelineOptions) -> Result<Dst, PipelineError>
-            + Send
-            + Sync,
-    >,
+    run: Box<dyn Fn(Src, &mut PipelineDiagnostics) -> Result<Dst, PipelineError> + Send + Sync>,
 }
 
 impl<Src, Dst> Pipeline<Src, Dst> {
@@ -27,9 +22,8 @@ impl<Src, Dst> Pipeline<Src, Dst> {
         &self,
         context: Src,
         diagnostics: &mut PipelineDiagnostics,
-        options: &PipelineOptions,
     ) -> Result<Dst, PipelineError> {
-        (self.run)(context, diagnostics, options)
+        (self.run)(context, diagnostics)
     }
 }
 
@@ -40,9 +34,7 @@ pub struct PipelineBuilder<Src, Dst> {
 
 impl<Src> PipelineBuilder<Src, Src> {
     pub fn new() -> Self {
-        let run = |context: Src,
-                   _diagnostics: &mut PipelineDiagnostics,
-                   _options: &PipelineOptions| Ok(context);
+        let run = |context: Src, _diagnostics: &mut PipelineDiagnostics| Ok(context);
         Self {
             pipeline: Pipeline { run: Box::new(run) },
             _marker: PhantomData,
@@ -60,17 +52,15 @@ impl<Src, Mid> PipelineBuilder<Src, Mid> {
     {
         let name = stage.name();
         let previous = self.pipeline.run;
-        let run = move |context: Src,
-                        diagnostics: &mut PipelineDiagnostics,
-                        options: &PipelineOptions| {
-            let mid = previous(context, diagnostics, options)?;
+        let run = move |context: Src, diagnostics: &mut PipelineDiagnostics| {
+            let mid = previous(context, diagnostics)?;
             match stage.run(mid, diagnostics) {
                 Ok(next) => {
-                    diagnostics.emit_stage(name, options);
+                    diagnostics.emit_stage(name);
                     Ok(next)
                 }
                 Err(err) => {
-                    diagnostics.emit_stage(name, options);
+                    diagnostics.emit_stage(name);
                     if err.stage == name {
                         Err(err)
                     } else {

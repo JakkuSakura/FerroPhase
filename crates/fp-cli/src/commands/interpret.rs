@@ -6,7 +6,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use clap::Args;
-use fp_pipeline::{PipelineOptions, PipelineTarget};
+use crate::pipeline::{PipelineOptions, PipelineTarget};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 

@@ -1,24 +1,34 @@
-use crate::config::PipelineOptions;
 use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticManager};
 use std::error::Error;
 use std::fmt;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Clone)]
 pub struct PipelineDiagnostics {
     pub items: Vec<Diagnostic>,
+    display_options: DiagnosticDisplayOptions,
 }
 
 impl PipelineDiagnostics {
+    pub fn new(display_options: DiagnosticDisplayOptions) -> Self {
+        Self {
+            items: Vec::new(),
+            display_options,
+        }
+    }
+
+    pub fn set_display_options(&mut self, display_options: DiagnosticDisplayOptions) {
+        self.display_options = display_options;
+    }
+
     pub fn push(&mut self, diagnostic: Diagnostic) {
         self.items.push(diagnostic);
     }
 
-    pub fn emit_stage(&mut self, stage: &'static str, options: &PipelineOptions) {
+    pub fn emit_stage(&mut self, stage: &'static str) {
         if self.items.is_empty() {
             return;
         }
-        let opts = DiagnosticDisplayOptions::new(options.debug.verbose);
-        DiagnosticManager::emit(&self.items, Some(stage), &opts);
+        DiagnosticManager::emit(&self.items, Some(stage), &self.display_options);
         self.items.clear();
     }
 
@@ -27,6 +37,12 @@ impl PipelineDiagnostics {
             return;
         }
         self.items.extend(diagnostics);
+    }
+}
+
+impl Default for PipelineDiagnostics {
+    fn default() -> Self {
+        Self::new(DiagnosticDisplayOptions::default())
     }
 }
 

@@ -7,7 +7,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
-use fp_pipeline::{
+use crate::pipeline::{
     DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
 };
 use std::io::{self, Write};

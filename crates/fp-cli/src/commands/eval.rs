@@ -5,7 +5,7 @@ use crate::{
     cli::CliConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
-use fp_pipeline::{
+use crate::pipeline::{
     DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig,
 };
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput

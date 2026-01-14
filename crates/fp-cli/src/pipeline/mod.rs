@@ -24,10 +24,7 @@ use fp_interpret::engine::{
 };
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
-use fp_pipeline::{
-    PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineOptions,
-    PipelineStage, PipelineTarget,
-};
+use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
 use std::collections::HashMap;
@@ -41,8 +38,10 @@ use tracing::{debug, info_span};
 mod artifacts;
 mod diagnostics;
 mod stages;
+mod options;
 use self::diagnostics as diag;
 use artifacts::LlvmArtifacts;
+pub use options::{DebugOptions, ErrorToleranceOptions, PipelineOptions, PipelineTarget, RuntimeConfig};
 
 const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
@@ -681,6 +680,7 @@ impl Pipeline {
         options: &PipelineOptions,
     ) -> Result<(), CliError> {
         let mut diagnostics = PipelineDiagnostics::default();
+        diagnostics.set_display_options(diag::display_options(options));
         for std_path in runtime_std_paths() {
             let source = match fs::read_to_string(&std_path) {
                 Ok(source) => source,
@@ -693,7 +693,7 @@ impl Pipeline {
                         ))
                         .with_source_context(STAGE_RUNTIME_MATERIALIZE),
                     );
-                    diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE, options);
+                    diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE);
                     return Err(Self::stage_failure(STAGE_RUNTIME_MATERIALIZE));
                 }
             };
@@ -705,12 +705,12 @@ impl Pipeline {
                 STAGE_RUNTIME_MATERIALIZE,
             )
             .map_err(|_| {
-                diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE, options);
+                diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE);
                 Self::stage_failure(STAGE_RUNTIME_MATERIALIZE)
             })?;
             *ast = merged;
         }
-        diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE, options);
+        diagnostics.emit_stage(STAGE_RUNTIME_MATERIALIZE);
         Ok(())
     }
 
@@ -863,11 +863,12 @@ impl Pipeline {
         Dst: 'static,
     {
         let mut diagnostics = PipelineDiagnostics::default();
+        diagnostics.set_display_options(diag::display_options(options));
         let pipeline = PipelineBuilder::<Src, Src>::new().add_stage(stage).build();
-        match pipeline.run(context, &mut diagnostics, options) {
+        match pipeline.run(context, &mut diagnostics) {
             Ok(output) => Ok(output),
             Err(_) => {
-                diagnostics.emit_stage(stage_label, options);
+                diagnostics.emit_stage(stage_label);
                 Err(Self::stage_failure(stage_label))
             }
         }
@@ -1077,7 +1078,7 @@ mod tests {
     use crate::pipeline::artifacts::LirArtifacts;
     use fp_core::intrinsics::IntrinsicCallKind;
     use fp_core::{ast, hir, lir};
-    use fp_pipeline::PipelineTarget;
+    use super::PipelineTarget;
     use std::fs;
     use std::collections::HashSet;
     use std::path::{Path, PathBuf};

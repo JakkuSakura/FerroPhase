@@ -38,7 +38,6 @@ pub struct PipelineOptions {
     pub release: bool,
     /// Execute `main` during const evaluation instead of running backend
     pub execute_main: bool,
-
     /// Disable specific pipeline stages by name (best-effort; mainly for debugging).
     pub disabled_stages: Vec<String>,
 }
@@ -88,14 +87,14 @@ pub struct ErrorToleranceOptions {
     pub max_errors: usize,
     /// Show all errors vs progressive disclosure
     pub show_all_errors: bool,
-    /// Continue compilation through non-fatal errors  
+    /// Continue compilation through non-fatal errors
     pub continue_on_error: bool,
 }
 
 impl Default for ErrorToleranceOptions {
     fn default() -> Self {
         Self {
-            enabled: false, // Disabled by default for backward compatibility
+            enabled: false,
             max_errors: 10,
             show_all_errors: false,
             continue_on_error: true,

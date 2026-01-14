@@ -1,7 +1,7 @@
 use super::super::*;
 use fp_core::ast::Node;
 use fp_interpret::const_eval::{
-    ConstEvalContext, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
+    ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
 };
 use std::fs;
 
@@ -12,7 +12,7 @@ impl Pipeline {
         options: &PipelineOptions,
     ) -> Result<ConstEvalOutcome, CliError> {
         let mut std_modules = Vec::new();
-        if !matches!(options.target, fp_pipeline::PipelineTarget::Interpret) {
+        if !matches!(options.target, PipelineTarget::Interpret) {
             for std_path in runtime_std_paths() {
                 let source = match fs::read_to_string(&std_path) {
                     Ok(source) => source,
@@ -32,7 +32,10 @@ impl Pipeline {
         let stage = ConstEvalStage;
         let context = ConstEvalContext {
             ast: ast.clone(),
-            options: options.clone(),
+            options: ConstEvalOptions {
+                release: options.release,
+                execute_main: options.execute_main,
+            },
             serializer: self.serializer.clone(),
             std_modules,
         };
