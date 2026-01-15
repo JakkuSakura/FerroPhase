@@ -1,5 +1,8 @@
 use crate::configs::{CargoManifestConfig, ManifestConfig};
-use crate::models::{DependencyModelMap, PatchMap, parse_patch_table};
+use crate::models::{
+    parse_cargo_dependencies, parse_patch_table, DependencyModelMap, PatchMap,
+    TargetedDependencies,
+};
 use eyre::ContextCompat;
 use eyre::Result;
 use std::collections::HashMap;
@@ -30,6 +33,7 @@ pub struct PackageModel {
     pub dependencies: DependencyModelMap,
     pub dev_dependencies: DependencyModelMap,
     pub build_dependencies: DependencyModelMap,
+    pub target_dependencies: Vec<TargetedDependencies>,
     /// Patch section for overriding dependencies
     pub patch: PatchMap,
     pub root_path: PathBuf,
@@ -95,6 +99,7 @@ impl PackageModel {
                 .into_iter()
                 .map(|(k, v)| (k, v.into()))
                 .collect(),
+            target_dependencies: Vec::new(),
             patch: config.patch,
             root_path: root_path.to_path_buf(),
             source_path: config_path,
@@ -112,6 +117,7 @@ impl PackageModel {
             .package
             .clone()
             .with_context(|| format!("No package found in {}", config_path.display()))?;
+        let deps = parse_cargo_dependencies(config_path)?;
         let model = PackageModel {
             name: package.name,
             version: package.version,
@@ -123,21 +129,10 @@ impl PackageModel {
             documentation: package.documentation,
             license: package.license,
             custom: HashMap::new(),
-            dependencies: config
-                .dependencies
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-            dev_dependencies: config
-                .dev_dependencies
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
-            build_dependencies: config
-                .build_dependencies
-                .into_iter()
-                .map(|(k, v)| (k, v.into()))
-                .collect(),
+            dependencies: deps.dependencies,
+            dev_dependencies: deps.dev_dependencies,
+            build_dependencies: deps.build_dependencies,
+            target_dependencies: deps.target_dependencies,
             patch: parse_patch_table(config.patch),
             root_path: root_path.to_path_buf(),
             source_path: config_path.to_path_buf(),

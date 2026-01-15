@@ -52,6 +52,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         allow_multiple_versions: false,
         use_lock: true,
         write_lock: true,
+        target: None,
     };
     let graph_path = write_package_graph(
         &root,

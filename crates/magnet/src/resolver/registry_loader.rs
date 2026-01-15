@@ -1,4 +1,4 @@
-use crate::models::DependencyModel;
+use crate::models::parse_cargo_dependencies;
 use crate::registry::{RegistryClient, RegistryOptions, ResolvedCrate};
 use crate::resolver::types::{
     RegistryDeps, RegistryManifestKey, RegistryReqKey, ResolvedRegistry,
@@ -304,75 +304,11 @@ impl RegistryLoaderHandle {
 }
 
 fn parse_cargo_manifest(path: &Path) -> Result<RegistryDeps> {
-    let content = std::fs::read_to_string(path)?;
-    let value: toml::Value = toml::from_str(&content)?;
-    let dependencies = parse_cargo_deps(value.get("dependencies"));
-    let dev_dependencies = parse_cargo_deps(value.get("dev-dependencies"));
-    let build_dependencies = parse_cargo_deps(value.get("build-dependencies"));
+    let deps = parse_cargo_dependencies(path)?;
     Ok(RegistryDeps {
-        dependencies,
-        dev_dependencies,
-        build_dependencies,
+        dependencies: deps.dependencies,
+        dev_dependencies: deps.dev_dependencies,
+        build_dependencies: deps.build_dependencies,
+        target_dependencies: deps.target_dependencies,
     })
-}
-
-
-fn parse_cargo_deps(section: Option<&toml::Value>) -> HashMap<String, DependencyModel> {
-    let mut out = HashMap::new();
-    let Some(table) = section.and_then(|v| v.as_table()) else {
-        return out;
-    };
-    for (name, value) in table {
-        let mut model = DependencyModel::default();
-        match value {
-            toml::Value::String(version) => {
-                model.version = Some(version.to_string());
-            }
-            toml::Value::Table(table) => {
-                if let Some(version) = table.get("version").and_then(|v| v.as_str()) {
-                    model.version = Some(version.to_string());
-                }
-                if let Some(path) = table.get("path").and_then(|v| v.as_str()) {
-                    model.path = Some(Path::new(path).to_path_buf());
-                }
-                if let Some(git) = table.get("git").and_then(|v| v.as_str()) {
-                    model.git = Some(git.to_string());
-                }
-                if let Some(branch) = table.get("branch").and_then(|v| v.as_str()) {
-                    model.branch = Some(branch.to_string());
-                }
-                if let Some(tag) = table.get("tag").and_then(|v| v.as_str()) {
-                    model.tag = Some(tag.to_string());
-                }
-                if let Some(rev) = table.get("rev").and_then(|v| v.as_str()) {
-                    model.rev = Some(rev.to_string());
-                }
-                if let Some(features) = table.get("features").and_then(|v| v.as_array()) {
-                    let list = features
-                        .iter()
-                        .filter_map(|v| v.as_str())
-                        .map(|s| s.to_string())
-                        .collect::<Vec<_>>();
-                    if !list.is_empty() {
-                        model.features = Some(list);
-                    }
-                }
-                if let Some(default_features) = table.get("default-features").and_then(|v| v.as_bool()) {
-                    model.default_features = Some(default_features);
-                }
-                if let Some(optional) = table.get("optional").and_then(|v| v.as_bool()) {
-                    model.optional = Some(optional);
-                }
-                if let Some(package) = table.get("package").and_then(|v| v.as_str()) {
-                    model.package = Some(package.to_string());
-                }
-                if let Some(registry) = table.get("registry").and_then(|v| v.as_str()) {
-                    model.registry = Some(registry.to_string());
-                }
-            }
-            _ => {}
-        }
-        out.insert(name.to_string(), model);
-    }
-    out
 }

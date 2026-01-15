@@ -105,6 +105,7 @@ fn deps_fingerprint(manifest: &ManifestModel) -> Result<String> {
         hash_package_deps(&mut hasher, "dep", &package.dependencies);
         hash_package_deps(&mut hasher, "dev", &package.dev_dependencies);
         hash_package_deps(&mut hasher, "build", &package.build_dependencies);
+        hash_targeted_deps(&mut hasher, &package.target_dependencies);
     }
     Ok(hex::encode(hasher.finalize()))
 }
@@ -124,6 +125,21 @@ fn hash_package_deps(
         let canonical = canonical_dependency(model);
         hasher.update(canonical.as_bytes());
         hasher.update(b";");
+    }
+}
+
+fn hash_targeted_deps(
+    hasher: &mut Sha256,
+    deps: &[crate::models::TargetedDependencies],
+) {
+    let mut entries = deps.to_vec();
+    entries.sort_by(|a, b| a.target.cmp(&b.target));
+    for target in entries {
+        hasher.update(b"target:");
+        hasher.update(target.target.as_bytes());
+        hash_package_deps(hasher, "dep", &target.dependencies);
+        hash_package_deps(hasher, "dev", &target.dev_dependencies);
+        hash_package_deps(hasher, "build", &target.build_dependencies);
     }
 }
 

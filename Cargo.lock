@@ -394,6 +394,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cfg-expr"
+version = "0.20.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "21be0e1ce6cdb2ee7fff840f922fb04ead349e5cfb1e750b769132d44ce04720"
+dependencies = [
+ "smallvec",
+ "target-lexicon",
+]
+
+[[package]]
 name = "cfg-if"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2008,6 +2018,7 @@ dependencies = [
 name = "magnet"
 version = "0.1.0"
 dependencies = [
+ "cfg-expr",
  "clap",
  "crates-index",
  "eyre",
@@ -2026,6 +2037,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tar",
+ "target-lexicon",
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
@@ -3479,6 +3491,12 @@ dependencies = [
  "libc",
  "xattr",
 ]
+
+[[package]]
+name = "target-lexicon"
+version = "0.13.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df7f62577c25e07834649fc3b39fafdc597c0a3527dc1c60129201ccfcbaa50c"
 
 [[package]]
 name = "tempfile"

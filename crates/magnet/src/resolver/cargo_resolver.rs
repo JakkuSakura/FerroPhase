@@ -4,7 +4,7 @@ use crate::models::{
     WorkspaceModel, REGISTRY_SOURCE,
 };
 use crate::registry::ResolvedCrate;
-use crate::resolver::RegistryLoaderHandle;
+use crate::resolver::{target::TargetContext, RegistryLoaderHandle};
 use eyre::Result;
 use semver::VersionReq;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -18,6 +18,7 @@ pub struct CargoResolver {
     options: PackageGraphOptions,
     registry: Option<RegistryLoaderHandle>,
     lock_index: Option<Arc<LockIndex>>,
+    target: TargetContext,
     workspace: Option<WorkspaceModel>,
     roots: Vec<PathBuf>,
     seen: HashSet<String>,
@@ -31,12 +32,14 @@ impl CargoResolver {
         options: &PackageGraphOptions,
         registry: Option<RegistryLoaderHandle>,
         lock_index: Option<LockIndex>,
+        target: TargetContext,
     ) -> Result<Self> {
         Ok(Self {
             root: root.to_path_buf(),
             options: options.clone(),
             registry,
             lock_index: lock_index.map(Arc::new),
+            target,
             workspace: None,
             roots: Vec::new(),
             seen: HashSet::new(),
@@ -88,9 +91,18 @@ impl CargoResolver {
                     });
                 }
                 while let Some(result) = join_set.join_next().await {
-                    if let Some(resolved) = result?? {
-                        queue.push_back(resolved.resolved.root.clone());
-                        resolved_registry.insert(resolved.name, resolved.resolved);
+                    match result {
+                        Ok(Ok(Some(resolved))) => {
+                            queue.push_back(resolved.resolved.root.clone());
+                            resolved_registry.insert(resolved.name, resolved.resolved);
+                        }
+                        Ok(Ok(None)) => {}
+                        Ok(Err(err)) => {
+                            tracing::warn!("graph: registry resolution failed: {}", err);
+                        }
+                        Err(err) => {
+                            tracing::warn!("graph: registry task failed: {}", err);
+                        }
                     }
                 }
             }
@@ -108,6 +120,7 @@ impl CargoResolver {
                 resolved_registry,
                 &self.options,
                 &self.registry_roots,
+                &self.target,
             )?;
             self.packages.push(node);
         }
@@ -126,7 +139,7 @@ impl CargoResolver {
             return Ok(None);
         }
 
-        let deps = collect_dependencies(&package, &self.options);
+        let deps = collect_dependencies(&package, &self.options, &self.target)?;
         let resolved = split_dependencies(&package, deps, &self.workspace)?;
         Ok(Some((package, resolved)))
     }
@@ -195,7 +208,8 @@ async fn resolve_registry_dependency(
 ) -> Result<Option<ResolvedRegistryDependency>> {
     if let Some(registry_name) = dep.registry.as_deref() {
         if registry_name != "crates-io" && registry_name != "crates.io" {
-            return Err(eyre::eyre!("unsupported registry '{}'", registry_name));
+            tracing::warn!("graph: skipping unsupported registry '{}'", registry_name);
+            return Ok(None);
         }
     }
     let Some(version) = dep.version.as_deref() else {
@@ -232,6 +246,7 @@ fn package_to_node_with_resolved(
     resolved_registry: HashMap<String, ResolvedCrate>,
     options: &PackageGraphOptions,
     registry_roots: &HashMap<PathBuf, ResolvedCrate>,
+    target: &TargetContext,
 ) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
@@ -239,7 +254,7 @@ fn package_to_node_with_resolved(
         if path.exists() { Some(path) } else { None }
     };
 
-    let deps = collect_dependencies(&package, options);
+    let deps = collect_dependencies(&package, options, target)?;
     let checksum = registry_roots
         .get(&package.root_path)
         .and_then(|resolved| resolved.checksum.clone());
@@ -271,24 +286,60 @@ fn package_to_node_with_resolved(
 fn collect_dependencies(
     package: &PackageModel,
     options: &PackageGraphOptions,
-) -> HashMap<String, DependencyModel> {
+    target: &TargetContext,
+) -> Result<HashMap<String, DependencyModel>> {
     let mut dep_map = HashMap::new();
     if options.include_dependencies {
         for (name, dep) in package.dependencies.clone() {
-            dep_map.entry(name).or_insert(dep);
+            if dependency_active(&dep, target)? {
+                dep_map.entry(name).or_insert(dep);
+            }
         }
     }
     if options.include_dev_dependencies {
         for (name, dep) in package.dev_dependencies.clone() {
-            dep_map.entry(name).or_insert(dep);
+            if dependency_active(&dep, target)? {
+                dep_map.entry(name).or_insert(dep);
+            }
         }
     }
     if options.include_build_dependencies {
         for (name, dep) in package.build_dependencies.clone() {
-            dep_map.entry(name).or_insert(dep);
+            if dependency_active(&dep, target)? {
+                dep_map.entry(name).or_insert(dep);
+            }
         }
     }
-    dep_map
+    if options.include_dependencies || options.include_dev_dependencies || options.include_build_dependencies {
+        for targeted in &package.target_dependencies {
+            if !target.is_active(&targeted.target)? {
+                continue;
+            }
+            if options.include_dependencies {
+                for (name, dep) in targeted.dependencies.clone() {
+                    dep_map.insert(name, dep);
+                }
+            }
+            if options.include_dev_dependencies {
+                for (name, dep) in targeted.dev_dependencies.clone() {
+                    dep_map.insert(name, dep);
+                }
+            }
+            if options.include_build_dependencies {
+                for (name, dep) in targeted.build_dependencies.clone() {
+                    dep_map.insert(name, dep);
+                }
+            }
+        }
+    }
+    Ok(dep_map)
+}
+
+fn dependency_active(dep: &DependencyModel, target: &TargetContext) -> Result<bool> {
+    match dep.target.as_deref() {
+        Some(spec) => target.is_active(spec),
+        None => Ok(true),
+    }
 }
 
 fn apply_workspace_dependencies(

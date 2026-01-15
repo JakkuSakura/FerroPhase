@@ -56,6 +56,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         allow_multiple_versions: true,
         use_lock: true,
         write_lock: true,
+        target: None,
     };
     let profile = resolve_profile(options.release, options.profile.as_deref());
     info!("build: generating workspace graph");

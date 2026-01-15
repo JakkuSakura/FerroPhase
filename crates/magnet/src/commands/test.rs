@@ -162,6 +162,7 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
         allow_multiple_versions: false,
         use_lock: true,
         write_lock: true,
+        target: None,
     };
     let mut graph = resolve_graph(root, &graph_options)?;
     graph.selected_package = Some(package.name.clone());

@@ -26,6 +26,7 @@ pub fn lock(options: &LockOptions) -> Result<()> {
         allow_multiple_versions: false,
         use_lock: true,
         write_lock: true,
+        target: None,
     };
     resolve_graph(&options.path, &graph_options)?;
     let root = resolve_root(&options.path);

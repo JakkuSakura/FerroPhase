@@ -1,4 +1,4 @@
-use crate::models::DependencyModel;
+use crate::models::{DependencyModel, TargetedDependencies};
 use crate::registry::ResolvedCrate;
 use std::collections::HashMap;
 
@@ -7,6 +7,7 @@ pub struct RegistryDeps {
     pub dependencies: HashMap<String, DependencyModel>,
     pub dev_dependencies: HashMap<String, DependencyModel>,
     pub build_dependencies: HashMap<String, DependencyModel>,
+    pub target_dependencies: Vec<TargetedDependencies>,
 }
 
 #[derive(Debug, Clone)]

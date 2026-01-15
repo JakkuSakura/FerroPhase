@@ -1,11 +1,13 @@
 //! Command implementation for displaying workspace hierarchy as a tree
 
-use crate::models::{DependencyModel, ManifestModel, NexusModel, PackageModel, WorkspaceModel};
+use crate::models::{
+    DependencyModel, ManifestModel, NexusModel, PackageModel, TargetedDependencies, WorkspaceModel,
+};
 use crate::registry::RegistryOptions;
 use crate::models::LockIndex;
 use crate::resolver::lock::match_locked_registry;
 use crate::resolver::project::{load_lock_index, load_manifest};
-use crate::resolver::{RegistryLoader, ResolvedRegistry};
+use crate::resolver::{RegistryLoader, ResolvedRegistry, target::TargetContext};
 use eyre::Result;
 use semver::VersionReq;
 use std::collections::HashSet;
@@ -23,6 +25,7 @@ pub fn tree(config_path: &Path) -> Result<()> {
         cache_dir: None,
     })?;
     let lock_index = load_lock_index(&manifest_root(&manifest))?;
+    let target_ctx = TargetContext::from_env(None)?;
     let mut visited = HashSet::new();
     let mut visited_registry = HashSet::new();
     print_manifest_tree(
@@ -32,6 +35,7 @@ pub fn tree(config_path: &Path) -> Result<()> {
         true,
         &registry,
         lock_index.as_ref(),
+        &target_ctx,
         &mut visited,
         &mut visited_registry,
     )?;
@@ -46,12 +50,22 @@ fn print_manifest_tree(
     is_last: bool,
     registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
+    target_ctx: &TargetContext,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
     match manifest {
         ManifestModel::Nexus(nexus) => {
-            print_nexus_tree(nexus, depth, prefix, registry, lock_index, visited, visited_registry)
+            print_nexus_tree(
+                nexus,
+                depth,
+                prefix,
+                registry,
+                lock_index,
+                target_ctx,
+                visited,
+                visited_registry,
+            )
         }
         ManifestModel::Workspace(workspace) => {
             print_workspace_tree(
@@ -61,6 +75,7 @@ fn print_manifest_tree(
                 is_last,
                 registry,
                 lock_index,
+                target_ctx,
                 visited,
                 visited_registry,
             )
@@ -73,6 +88,7 @@ fn print_manifest_tree(
                 is_last,
                 registry,
                 lock_index,
+                target_ctx,
                 visited,
                 visited_registry,
             )
@@ -85,6 +101,7 @@ fn print_nexus_tree(
     prefix: &str,
     registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
+    target_ctx: &TargetContext,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -113,6 +130,7 @@ fn print_nexus_tree(
             is_last_workspace,
             registry,
             lock_index,
+            target_ctx,
             visited,
             visited_registry,
         )?;
@@ -133,6 +151,7 @@ fn print_nexus_tree(
             is_last_package,
             registry,
             lock_index,
+            target_ctx,
             visited,
             visited_registry,
         )?;
@@ -147,6 +166,7 @@ fn print_workspace_tree(
     is_last: bool,
     registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
+    target_ctx: &TargetContext,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -185,6 +205,7 @@ fn print_workspace_tree(
             &package_map,
             registry,
             lock_index,
+            target_ctx,
             visited,
             visited_registry,
         )?;
@@ -200,6 +221,7 @@ fn print_package_tree(
     is_last: bool,
     registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
+    target_ctx: &TargetContext,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -212,6 +234,7 @@ fn print_package_tree(
         &package_map,
         registry,
         lock_index,
+        target_ctx,
         visited,
         visited_registry,
     )
@@ -225,6 +248,7 @@ fn print_package_tree_with_map(
     package_map: &std::collections::HashMap<String, PackageModel>,
     registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
+    target_ctx: &TargetContext,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -241,9 +265,27 @@ fn print_package_tree_with_map(
     let next_indent = format!("{}{}", parent_indent, if is_last { "    " } else { "│   " });
 
     let mut all_deps: Vec<ResolvedDep> = Vec::new();
-    collect_deps(&package.dependencies, DepKind::Normal, &mut all_deps);
-    collect_deps(&package.dev_dependencies, DepKind::Dev, &mut all_deps);
-    collect_deps(&package.build_dependencies, DepKind::Build, &mut all_deps);
+    collect_deps(
+        &package.dependencies,
+        &package.target_dependencies,
+        DepKind::Normal,
+        target_ctx,
+        &mut all_deps,
+    )?;
+    collect_deps(
+        &package.dev_dependencies,
+        &package.target_dependencies,
+        DepKind::Dev,
+        target_ctx,
+        &mut all_deps,
+    )?;
+    collect_deps(
+        &package.build_dependencies,
+        &package.target_dependencies,
+        DepKind::Build,
+        target_ctx,
+        &mut all_deps,
+    )?;
 
     for (idx, dep) in all_deps.iter().enumerate() {
         let is_last_dep = idx == all_deps.len() - 1;
@@ -272,6 +314,7 @@ fn print_package_tree_with_map(
                     package_map,
                     registry,
                     lock_index,
+                    target_ctx,
                     visited,
                     visited_registry,
                 )?;
@@ -290,6 +333,7 @@ fn print_package_tree_with_map(
                     &resolved,
                     registry,
                     lock_index,
+                    target_ctx,
                     visited,
                     visited_registry,
                 )?;
@@ -306,6 +350,7 @@ fn print_registry_deps(
     resolved: &ResolvedRegistry,
     registry: &RegistryLoader,
     lock_index: Option<&LockIndex>,
+    target_ctx: &TargetContext,
     visited: &mut HashSet<String>,
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
@@ -314,11 +359,33 @@ fn print_registry_deps(
         "{} 📦  {}@{} (registry)",
         indent, resolved.resolved.name, resolved.resolved.version
     );
-    let next_indent = format!("{}{}", parent_indent, if prefix.trim().is_empty() { "    " } else { "│   " });
+    let next_indent = format!(
+        "{}{}",
+        parent_indent,
+        if prefix.trim().is_empty() { "    " } else { "│   " }
+    );
     let mut all_deps = Vec::new();
-    collect_deps(&resolved.deps.dependencies, DepKind::Normal, &mut all_deps);
-    collect_deps(&resolved.deps.dev_dependencies, DepKind::Dev, &mut all_deps);
-    collect_deps(&resolved.deps.build_dependencies, DepKind::Build, &mut all_deps);
+    collect_deps(
+        &resolved.deps.dependencies,
+        &resolved.deps.target_dependencies,
+        DepKind::Normal,
+        target_ctx,
+        &mut all_deps,
+    )?;
+    collect_deps(
+        &resolved.deps.dev_dependencies,
+        &resolved.deps.target_dependencies,
+        DepKind::Dev,
+        target_ctx,
+        &mut all_deps,
+    )?;
+    collect_deps(
+        &resolved.deps.build_dependencies,
+        &resolved.deps.target_dependencies,
+        DepKind::Build,
+        target_ctx,
+        &mut all_deps,
+    )?;
     for (idx, dep) in all_deps.iter().enumerate() {
         let is_last_dep = idx == all_deps.len() - 1;
         let dep_prefix = if is_last_dep { "└── " } else { "├── " };
@@ -349,6 +416,7 @@ fn print_registry_deps(
                     &next_resolved,
                     registry,
                     lock_index,
+                    target_ctx,
                     visited,
                     visited_registry,
                 )?;
@@ -383,15 +451,44 @@ struct ResolvedDep {
 
 fn collect_deps(
     deps: &std::collections::HashMap<String, DependencyModel>,
+    target_deps: &[TargetedDependencies],
     kind: DepKind,
+    target_ctx: &TargetContext,
     out: &mut Vec<ResolvedDep>,
-) {
+) -> Result<()> {
     for (name, model) in deps {
-        out.push(ResolvedDep {
-            name: name.clone(),
-            model: model.clone(),
-            kind,
-        });
+        if dependency_active(model, target_ctx)? {
+            out.push(ResolvedDep {
+                name: name.clone(),
+                model: model.clone(),
+                kind,
+            });
+        }
+    }
+    for targeted in target_deps {
+        if !target_ctx.is_active(&targeted.target)? {
+            continue;
+        }
+        let bucket = match kind {
+            DepKind::Normal => &targeted.dependencies,
+            DepKind::Dev => &targeted.dev_dependencies,
+            DepKind::Build => &targeted.build_dependencies,
+        };
+        for (name, model) in bucket {
+            out.push(ResolvedDep {
+                name: name.clone(),
+                model: model.clone(),
+                kind,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn dependency_active(dep: &DependencyModel, target_ctx: &TargetContext) -> Result<bool> {
+    match dep.target.as_deref() {
+        Some(spec) => target_ctx.is_active(spec),
+        None => Ok(true),
     }
 }
 

@@ -3,6 +3,7 @@ pub mod cache;
 pub mod lock;
 pub mod project;
 pub mod registry_loader;
+pub mod target;
 pub mod types;
 
 pub use registry_loader::{RegistryLoader, RegistryLoaderHandle};

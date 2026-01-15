@@ -29,6 +29,7 @@ pub fn check(config_path: &Path) -> Result<()> {
         allow_multiple_versions: false,
         use_lock: true,
         write_lock: true,
+        target: None,
     };
     let _graph = resolve_graph(&workspace.root_path, &graph_options)?;
 

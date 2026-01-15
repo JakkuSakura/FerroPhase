@@ -7,6 +7,15 @@ pub struct CargoDependencies {
     pub dependencies: DependencyModelMap,
     pub dev_dependencies: DependencyModelMap,
     pub build_dependencies: DependencyModelMap,
+    pub target_dependencies: Vec<TargetedDependencies>,
+}
+
+#[derive(Debug, Clone)]
+pub struct TargetedDependencies {
+    pub target: String,
+    pub dependencies: DependencyModelMap,
+    pub dev_dependencies: DependencyModelMap,
+    pub build_dependencies: DependencyModelMap,
 }
 
 pub fn parse_cargo_dependencies(manifest_path: &Path) -> Result<CargoDependencies> {
@@ -16,6 +25,7 @@ pub fn parse_cargo_dependencies(manifest_path: &Path) -> Result<CargoDependencie
         dependencies: parse_cargo_deps(value.get("dependencies")),
         dev_dependencies: parse_cargo_deps(value.get("dev-dependencies")),
         build_dependencies: parse_cargo_deps(value.get("build-dependencies")),
+        target_dependencies: parse_target_dependencies(value.get("target")),
     })
 }
 
@@ -92,6 +102,40 @@ pub fn parse_cargo_deps_from_table(
     }
 }
 
+fn parse_target_dependencies(section: Option<&toml::Value>) -> Vec<TargetedDependencies> {
+    let mut out = Vec::new();
+    let Some(targets) = section.and_then(|v| v.as_table()) else {
+        return out;
+    };
+    for (target, value) in targets {
+        let Some(target_table) = value.as_table() else {
+            continue;
+        };
+        let mut dependencies = parse_cargo_deps(target_table.get("dependencies"));
+        let mut dev_dependencies = parse_cargo_deps(target_table.get("dev-dependencies"));
+        let mut build_dependencies = parse_cargo_deps(target_table.get("build-dependencies"));
+        if dependencies.is_empty() && dev_dependencies.is_empty() && build_dependencies.is_empty() {
+            continue;
+        }
+        apply_target_to_deps(target, &mut dependencies);
+        apply_target_to_deps(target, &mut dev_dependencies);
+        apply_target_to_deps(target, &mut build_dependencies);
+        out.push(TargetedDependencies {
+            target: target.to_string(),
+            dependencies,
+            dev_dependencies,
+            build_dependencies,
+        });
+    }
+    out
+}
+
+fn apply_target_to_deps(target: &str, deps: &mut DependencyModelMap) {
+    for model in deps.values_mut() {
+        model.target = Some(target.to_string());
+    }
+}
+
 pub fn parse_patch_table(patch: Option<toml::value::Table>) -> PatchMap {
     let mut out = PatchMap::new();
     let Some(table) = patch else {
@@ -105,4 +149,52 @@ pub fn parse_patch_table(patch: Option<toml::value::Table>) -> PatchMap {
         out.insert(name, deps);
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::tempdir;
+
+    #[test]
+    fn parse_target_dependencies() -> Result<()> {
+        let temp = tempdir()?;
+        let manifest = temp.path().join("Cargo.toml");
+        fs::write(
+            &manifest,
+            r#"[package]
+name = "demo"
+version = "0.1.0"
+
+[dependencies]
+serde = "1"
+
+[target.'cfg(windows)'.dependencies]
+winapi = "0.3"
+
+[target.'x86_64-unknown-linux-gnu'.build-dependencies]
+cc = "1"
+"#,
+        )?;
+
+        let deps = parse_cargo_dependencies(&manifest)?;
+        assert!(deps.dependencies.contains_key("serde"));
+        assert_eq!(deps.target_dependencies.len(), 2);
+        let windows = deps
+            .target_dependencies
+            .iter()
+            .find(|entry| entry.target == "cfg(windows)")
+            .expect("windows target deps missing");
+        assert!(windows.dependencies.contains_key("winapi"));
+        assert_eq!(
+            windows
+                .dependencies
+                .get("winapi")
+                .and_then(|dep| dep.target.clone())
+                .as_deref(),
+            Some("cfg(windows)")
+        );
+        Ok(())
+    }
 }

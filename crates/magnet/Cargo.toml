@@ -28,6 +28,8 @@ parking_lot = "0.12"
 tokio = { version = "1.36", features = ["fs", "io-util", "macros", "rt-multi-thread"] }
 reqwest = { version = "0.11", default-features = false, features = ["rustls-tls", "stream"] }
 futures-util = "0.3"
+cfg-expr = { version = "0.20", features = ["targets"] }
+target-lexicon = "0.13"
 fp-core = { path = "../fp-core" }
 fp-typescript = { path = "../fp-typescript" }
 

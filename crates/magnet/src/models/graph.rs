@@ -1,6 +1,6 @@
 use crate::models::{DependencyModel, LockIndex, MagnetLock, ManifestModel, PackageModel};
 use crate::registry::{RegistryClient, RegistryOptions};
-use crate::resolver::{cargo_resolver::CargoResolver, RegistryLoader, RegistryLoaderHandle};
+use crate::resolver::{cargo_resolver::CargoResolver, target::TargetContext, RegistryLoader, RegistryLoaderHandle};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleSource, PackageProvider};
@@ -88,6 +88,7 @@ pub struct PackageGraphOptions {
     pub allow_multiple_versions: bool,
     pub use_lock: bool,
     pub write_lock: bool,
+    pub target: Option<String>,
 }
 
 impl Default for PackageGraphOptions {
@@ -103,6 +104,7 @@ impl Default for PackageGraphOptions {
             allow_multiple_versions: false,
             use_lock: true,
             write_lock: true,
+            target: None,
         }
     }
 }
@@ -126,6 +128,7 @@ impl PackageGraph {
             None
         };
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
+        let target_ctx = TargetContext::from_env(options.target.as_deref())?;
         let registry = if options.resolve_registry {
             Some(RegistryLoader::new(RegistryOptions {
                 offline: options.offline,
@@ -142,6 +145,7 @@ impl PackageGraph {
                 options,
                 lock_index.as_ref(),
                 cache_dir.as_deref(),
+                &target_ctx,
             )?;
             resolved_packages.push(node);
         }
@@ -278,6 +282,7 @@ impl PackageGraph {
             None
         };
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
+        let target_ctx = TargetContext::from_env(options.target.as_deref())?;
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
             let loader = RegistryLoader::new(RegistryOptions {
@@ -295,7 +300,7 @@ impl PackageGraph {
                 prefetch_cargo_dependencies(manifest_path)?;
             }
         }
-        let mut resolver = CargoResolver::new(&root, options, registry, lock_index)?;
+        let mut resolver = CargoResolver::new(&root, options, registry, lock_index, target_ctx)?;
         resolver.load_root(manifest_path)?;
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -484,12 +489,20 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
     Some(home.join(".cache").join("magnet"))
 }
 
+fn dependency_active(dep: &DependencyModel, target: &TargetContext) -> Result<bool> {
+    match dep.target.as_deref() {
+        Some(spec) => target.is_active(spec),
+        None => Ok(true),
+    }
+}
+
 fn package_to_node_with_lock_loader(
     package: PackageModel,
     registry: Option<&RegistryLoader>,
     options: &PackageGraphOptions,
     lock_index: Option<&LockIndex>,
     cache_dir: Option<&Path>,
+    target_ctx: &TargetContext,
 ) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
@@ -500,17 +513,46 @@ fn package_to_node_with_lock_loader(
     let mut dep_map = std::collections::HashMap::new();
     if options.include_dependencies {
         for (name, dep) in package.dependencies {
-            dep_map.entry(name).or_insert(dep);
+            if dependency_active(&dep, target_ctx)? {
+                dep_map.entry(name).or_insert(dep);
+            }
         }
     }
     if options.include_dev_dependencies {
         for (name, dep) in package.dev_dependencies {
-            dep_map.entry(name).or_insert(dep);
+            if dependency_active(&dep, target_ctx)? {
+                dep_map.entry(name).or_insert(dep);
+            }
         }
     }
     if options.include_build_dependencies {
         for (name, dep) in package.build_dependencies {
-            dep_map.entry(name).or_insert(dep);
+            if dependency_active(&dep, target_ctx)? {
+                dep_map.entry(name).or_insert(dep);
+            }
+        }
+    }
+
+    if options.include_dependencies || options.include_dev_dependencies || options.include_build_dependencies {
+        for targeted in &package.target_dependencies {
+            if !target_ctx.is_active(&targeted.target)? {
+                continue;
+            }
+            if options.include_dependencies {
+                for (name, dep) in targeted.dependencies.clone() {
+                    dep_map.insert(name, dep);
+                }
+            }
+            if options.include_dev_dependencies {
+                for (name, dep) in targeted.dev_dependencies.clone() {
+                    dep_map.insert(name, dep);
+                }
+            }
+            if options.include_build_dependencies {
+                for (name, dep) in targeted.build_dependencies.clone() {
+                    dep_map.insert(name, dep);
+                }
+            }
         }
     }
 

@@ -23,6 +23,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         allow_multiple_versions: true,
         use_lock: true,
         write_lock: true,
+        target: None,
     };
     let graph = resolve_graph(config_path, &options)?;
 
