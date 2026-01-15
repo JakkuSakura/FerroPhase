@@ -10,6 +10,7 @@ use semver::VersionReq;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio::task::JoinSet;
 use tracing::{info, warn};
 
@@ -83,12 +84,24 @@ impl CargoResolver {
 
     pub async fn resolve_async(&mut self) -> Result<Vec<PackageNode>> {
         let mut queue: VecDeque<PathBuf> = self.roots.clone().into();
+        info!(
+            "graph: resolver queue initialized with {} root(s)",
+            queue.len()
+        );
         while let Some(dir) = queue.pop_front() {
+            let package_started = Instant::now();
             let Some((package, deps)) = self.resolve_package_dir_sync(&dir)? else {
                 continue;
             };
+            info!(
+                "graph: dependencies for {} (paths={}, registry={})",
+                package.name,
+                deps.paths.len(),
+                deps.registry.len()
+            );
             let mut resolved_registry = HashMap::new();
             if let Some(registry) = self.registry.as_ref() {
+                let registry_started = Instant::now();
                 let mut join_set = JoinSet::new();
                 for (name, dep) in deps.registry {
                     let registry = registry.clone();
@@ -112,6 +125,11 @@ impl CargoResolver {
                         }
                     }
                 }
+                info!(
+                    "graph: resolved registry deps for {} in {:.2?}",
+                    package.name,
+                    registry_started.elapsed()
+                );
             }
 
             for path in deps.paths {
@@ -130,12 +148,18 @@ impl CargoResolver {
                 &self.target,
             )?;
             self.packages.push(node);
+            info!(
+                "graph: finished package in {:.2?} (queue remaining={})",
+                package_started.elapsed(),
+                queue.len()
+            );
         }
         Ok(std::mem::take(&mut self.packages))
     }
 
     fn resolve_package_dir_sync(&mut self, dir: &Path) -> Result<Option<(PackageModel, PackageDeps)>> {
         info!("graph: resolving package at {}", dir.display());
+        let started_at = Instant::now();
         let mut package = match PackageModel::from_dir(dir) {
             Ok(package) => package,
             Err(err) => {
@@ -166,6 +190,11 @@ impl CargoResolver {
             .workspace_members
             .contains(&canonicalize_path(dir));
         let deps = collect_dependencies(&package, &self.options, &self.target, is_workspace_member)?;
+        info!(
+            "graph: collected deps for {} in {:.2?}",
+            package.name,
+            started_at.elapsed()
+        );
         let resolved = split_dependencies(&package, deps, &self.workspace)?;
         Ok(Some((package, resolved)))
     }
@@ -265,6 +294,7 @@ async fn resolve_registry_dependency(
     let resolved_name = dep.package.as_deref().unwrap_or(&name).to_string();
     let req = VersionReq::parse(version)
         .map_err(|err| eyre::eyre!("invalid version requirement '{version}': {err}"))?;
+    let started_at = Instant::now();
     if let Some(lock_index) = lock_index.as_ref() {
         if let Some(locked) = lock_index.match_registry(&resolved_name, &req) {
             info!(
@@ -278,6 +308,11 @@ async fn resolve_registry_dependency(
                     locked.checksum.clone(),
                 )
                 .await?;
+            info!(
+                "graph: resolved locked registry dependency {} in {:.2?}",
+                resolved_name,
+                started_at.elapsed()
+            );
             return Ok(Some(ResolvedRegistryDependency { name, resolved }));
         }
     }
@@ -285,6 +320,11 @@ async fn resolve_registry_dependency(
     let resolved = registry
         .resolve_async(resolved_name.clone(), Some(version.to_string()))
         .await?;
+    info!(
+        "graph: resolved registry dependency {} in {:.2?}",
+        resolved_name,
+        started_at.elapsed()
+    );
     Ok(Some(ResolvedRegistryDependency { name, resolved }))
 }
 
