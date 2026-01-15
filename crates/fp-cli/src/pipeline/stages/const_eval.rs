@@ -17,14 +17,31 @@ impl Pipeline {
                 let source = match fs::read_to_string(&std_path) {
                     Ok(source) => source,
                     Err(err) => {
-                        return Err(CliError::Compilation(format!(
-                            "failed to read std module {}: {}",
-                            std_path.display(),
-                            err
-                        )));
+                        return Err(Pipeline::emit_stage_error(
+                            STAGE_CONST_EVAL,
+                            options,
+                            format!(
+                                "failed to read std module {}: {}",
+                                std_path.display(),
+                                err
+                            ),
+                        ));
                     }
                 };
-                let std_node = self.parse_input_source(options, &source, Some(&std_path))?;
+                let std_node = match self.parse_input_source(options, &source, Some(&std_path)) {
+                    Ok(node) => node,
+                    Err(err) => {
+                        return Err(Pipeline::emit_stage_error(
+                            STAGE_CONST_EVAL,
+                            options,
+                            format!(
+                                "failed to parse std module {}: {}",
+                                std_path.display(),
+                                err
+                            ),
+                        ));
+                    }
+                };
                 std_modules.push(std_node);
             }
         }

@@ -115,6 +115,7 @@ fn normalize_block(block: &mut ExprBlock, strategy: &dyn IntrinsicNormalizer) ->
 
 fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
     loop {
+        let original_span = expr.span;
         let mut replacement: Option<Expr> = None;
 
         let strat_outcome = match expr.kind() {
@@ -138,10 +139,16 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
 
         if let Some(outcome) = strat_outcome {
             match outcome {
-                NormalizeOutcome::Ignored(expr_back) => {
+                NormalizeOutcome::Ignored(mut expr_back) => {
+                    if expr_back.span.is_none() {
+                        expr_back.span = original_span;
+                    }
                     *expr = expr_back;
                 }
-                NormalizeOutcome::Normalized(expr_new) => {
+                NormalizeOutcome::Normalized(mut expr_new) => {
+                    if expr_new.span.is_none() {
+                        expr_new.span = original_span;
+                    }
                     *expr = expr_new;
                     continue;
                 }

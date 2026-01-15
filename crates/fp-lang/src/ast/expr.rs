@@ -467,7 +467,7 @@ fn quote_pattern_kind_from_cst(
 }
 
 pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
-    match node.kind {
+    let mut expr = match node.kind {
         SyntaxKind::Root => {
             let expr = node
                 .children
@@ -1030,7 +1030,13 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             .into())
         }
         other => Err(LowerError::UnexpectedNode(other)),
+    }?;
+
+    if !matches!(node.kind, SyntaxKind::Root | SyntaxKind::ExprParen) {
+        expr = expr.with_span(node.span);
     }
+
+    Ok(expr)
 }
 
 fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr>), LowerError> {

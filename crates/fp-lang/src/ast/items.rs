@@ -43,7 +43,7 @@ pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsEr
 }
 
 pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
-    match node.kind {
+    let mut item = match node.kind {
         SyntaxKind::ItemUse => Ok(Item::from(ItemKind::Import(lower_use_item(node)?))),
         SyntaxKind::ItemExternCrate => Ok(Item::from(ItemKind::Import(lower_extern_crate(node)?))),
         SyntaxKind::ItemMod => Ok(Item::from(ItemKind::Module(lower_mod(node)?))),
@@ -64,7 +64,10 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
             Ok(Item::from(ItemKind::Expr(expr)))
         }
         other => Err(LowerItemsError::UnexpectedNode(other)),
-    }
+    }?;
+
+    item = item.with_span(node.span);
+    Ok(item)
 }
 
 fn lower_visibility(node: Option<&SyntaxNode>) -> Result<Visibility, LowerItemsError> {

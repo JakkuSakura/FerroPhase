@@ -252,9 +252,16 @@ impl Pipeline {
         input_path: Option<&PathBuf>,
     ) -> Result<Node, CliError> {
         let language = self.resolve_language(options, input_path);
-        let frontend = self.frontends.get(&language).cloned().ok_or_else(|| {
-            CliError::Compilation(format!("Unsupported source language: {}", language))
-        })?;
+        let frontend = match self.frontends.get(&language).cloned() {
+            Some(frontend) => frontend,
+            None => {
+                return Err(Self::emit_stage_error(
+                    STAGE_FRONTEND,
+                    options,
+                    format!("Unsupported source language: {}", language),
+                ));
+            }
+        };
 
         let ast =
             self.parse_with_frontend(&frontend, source, input_path.map(|p| p.as_path()), options)?;
@@ -396,7 +403,16 @@ impl Pipeline {
             intrinsic_normalizer,
             snapshot,
             diagnostics,
-        } = frontend.parse(source, input_path)?;
+        } = match frontend.parse(source, input_path) {
+            Ok(result) => result,
+            Err(err) => {
+                return Err(Self::emit_stage_error(
+                    STAGE_FRONTEND,
+                    options,
+                    format!("frontend parse failed: {}", err),
+                ));
+            }
+        };
 
         let collected_diagnostics = diagnostics.get_diagnostics();
         diag::emit(&collected_diagnostics, Some(STAGE_FRONTEND), options);
@@ -406,9 +422,7 @@ impl Pipeline {
             .any(|diag| diag.level == DiagnosticLevel::Error);
 
         if has_errors {
-            return Err(CliError::Compilation(
-                "frontend stage failed; see diagnostics for details".to_string(),
-            ));
+            return Err(Self::stage_failure(STAGE_FRONTEND));
         }
 
         register_threadlocal_serializer(serializer.clone());
@@ -913,23 +927,31 @@ impl Pipeline {
             }
             NodeKind::Expr(expr) => interpreter.evaluate_expression(expr),
             NodeKind::Item(_) => {
-                return Err(CliError::Compilation(
-                    "Standalone item interpretation is not supported".to_string(),
+                return Err(Self::emit_stage_error(
+                    STAGE_AST_INTERPRET,
+                    options,
+                    "Standalone item interpretation is not supported",
                 ));
             }
             NodeKind::Query(_) => {
-                return Err(CliError::Compilation(
-                    "Query documents cannot be interpreted".to_string(),
+                return Err(Self::emit_stage_error(
+                    STAGE_AST_INTERPRET,
+                    options,
+                    "Query documents cannot be interpreted",
                 ));
             }
             NodeKind::Schema(_) => {
-                return Err(CliError::Compilation(
-                    "Schema documents cannot be interpreted".to_string(),
+                return Err(Self::emit_stage_error(
+                    STAGE_AST_INTERPRET,
+                    options,
+                    "Schema documents cannot be interpreted",
                 ));
             }
             NodeKind::Workspace(_) => {
-                return Err(CliError::Compilation(
-                    "Workspace documents cannot be interpreted".to_string(),
+                return Err(Self::emit_stage_error(
+                    STAGE_AST_INTERPRET,
+                    options,
+                    "Workspace documents cannot be interpreted",
                 ));
             }
         };
@@ -938,8 +960,10 @@ impl Pipeline {
         diag::emit(&outcome.diagnostics, Some(STAGE_AST_INTERPRET), options);
 
         if outcome.has_errors {
-            return Err(CliError::Compilation(
-                "AST interpretation failed; see diagnostics for details".to_string(),
+            return Err(Self::emit_stage_error(
+                STAGE_AST_INTERPRET,
+                options,
+                "AST interpretation failed; see diagnostics for details",
             ));
         }
 
@@ -1022,6 +1046,16 @@ impl Pipeline {
             "{} stage failed; see diagnostics for details",
             stage
         ))
+    }
+
+    fn emit_stage_error(
+        stage: &'static str,
+        options: &PipelineOptions,
+        message: impl Into<String>,
+    ) -> CliError {
+        let diagnostic = Diagnostic::error(message.into()).with_source_context(stage);
+        diag::emit(&[diagnostic], Some(stage), options);
+        Self::stage_failure(stage)
     }
 
     // moved to pipeline::diagnostics
