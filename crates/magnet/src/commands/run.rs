@@ -1,11 +1,12 @@
 //! Command implementation for running FerroPhase code via fp-cli
 
+use crate::configs::ManifestConfig;
 use crate::models::{ManifestModel, PackageGraphOptions, PackageModel};
 use crate::resolver::project::resolve_graph;
 use crate::utils::find_furthest_manifest;
 use eyre::{Context, Result, bail};
 use glob::glob;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -40,7 +41,20 @@ pub fn run(options: &RunOptions) -> Result<()> {
     let sources = collect_sources(&package, &entry)?;
     let profile = resolve_profile(options);
     let output_dir = build_output_dir(&package, &profile);
-    let build_options = parse_build_options(&options.build_options)?;
+    let build_config = load_manifest_build_config(&root)?;
+    validate_feature_list("build.features", &build_config.features, &build_config.feature_defs)?;
+    let mut build_options = build_config.options.clone();
+    if !build_config.features.is_empty() {
+        build_options.insert("features".to_string(), build_config.features.join(","));
+    }
+    let cli_build_options = parse_build_options(&options.build_options)?;
+    validate_cli_build_options(
+        &cli_build_options,
+        &build_config.options,
+        &build_config.feature_defs,
+    )?;
+    build_options.extend(cli_build_options);
+    let build_option_args = build_options_to_args(&build_options);
     let graph_options = PackageGraphOptions {
         offline: options.offline,
         cache_dir: options.cache_dir.clone(),
@@ -51,6 +65,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         resolve_registry: true,
         allow_multiple_versions: false,
         use_lock: true,
+        refresh_index: false,
         write_lock: true,
         target: None,
     };
@@ -70,7 +85,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
             &graph_path,
             &options.resolver,
             &output_dir,
-            &options.build_options,
+            &build_option_args,
         ),
         RunMode::Interpret => run_interpret(&package, &entry),
     }
@@ -321,6 +336,94 @@ fn parse_build_options(options: &[String]) -> Result<std::collections::HashMap<S
         map.insert(key.to_string(), value.to_string());
     }
     Ok(map)
+}
+
+fn build_options_to_args(options: &HashMap<String, String>) -> Vec<String> {
+    let mut items: Vec<_> = options.iter().collect();
+    items.sort_by_key(|(key, _)| *key);
+    items
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect()
+}
+
+struct ManifestBuildConfig {
+    options: HashMap<String, String>,
+    features: Vec<String>,
+    feature_defs: HashMap<String, Vec<String>>,
+}
+
+fn load_manifest_build_config(manifest_root: &Path) -> Result<ManifestBuildConfig> {
+    let path = manifest_root.join("Magnet.toml");
+    if !path.exists() {
+        return Ok(ManifestBuildConfig {
+            options: HashMap::new(),
+            features: Vec::new(),
+            feature_defs: HashMap::new(),
+        });
+    }
+    let config = ManifestConfig::from_file(&path)?;
+    let mut options = HashMap::new();
+    let mut features = Vec::new();
+    if let Some(build) = config.build {
+        options.extend(build.options);
+        features = build.features;
+    }
+    Ok(ManifestBuildConfig {
+        options,
+        features,
+        feature_defs: config.features,
+    })
+}
+
+fn parse_feature_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
+}
+
+fn validate_feature_list(
+    label: &str,
+    features: &[String],
+    feature_defs: &HashMap<String, Vec<String>>,
+) -> Result<()> {
+    let mut missing = Vec::new();
+    for feature in features {
+        if !feature_defs.contains_key(feature) {
+            missing.push(feature.clone());
+        }
+    }
+    if !missing.is_empty() {
+        bail!(
+            "{} contains undefined feature(s): {}",
+            label,
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn validate_cli_build_options(
+    cli_options: &HashMap<String, String>,
+    allowed_options: &HashMap<String, String>,
+    feature_defs: &HashMap<String, Vec<String>>,
+) -> Result<()> {
+    for (key, value) in cli_options {
+        if key == "features" {
+            let features = parse_feature_list(value);
+            validate_feature_list("build.options.features", &features, feature_defs)?;
+            continue;
+        }
+        if !allowed_options.contains_key(key) {
+            bail!(
+                "Unknown build option '{}'; add it under [build.options] in Magnet.toml",
+                key
+            );
+        }
+    }
+    Ok(())
 }
 
 fn resolve_fp_binary() -> Result<PathBuf> {

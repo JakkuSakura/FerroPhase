@@ -44,6 +44,12 @@ impl Default for MagnetConfigType {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ManifestConfig {
+    /// Build configuration and options.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<BuildConfig>,
+    /// Feature definitions compatible with Cargo.toml.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub features: HashMap<String, Vec<String>>,
     /// Nexus configuration (for top-level nexus configs)
     #[serde(default)]
     pub nexus: Option<NexusConfig>,
@@ -74,6 +80,17 @@ pub struct ManifestConfig {
     /// Type of configuration
     #[serde(skip)]
     pub config_type: MagnetConfigType,
+}
+
+/// Build configuration (Magnet.toml [build] section)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct BuildConfig {
+    /// Build options forwarded to fp (key = value).
+    #[serde(default)]
+    pub options: HashMap<String, String>,
+    /// Enabled features (Cargo-compatible list of feature names).
+    #[serde(default)]
+    pub features: Vec<String>,
 }
 
 #[allow(dead_code)]
@@ -171,6 +188,8 @@ impl ManifestConfig {
     /// Create a new empty configuration
     pub fn new() -> Self {
         Self {
+            build: None,
+            features: HashMap::new(),
             package: None,
             workspace: None,
             nexus: None,

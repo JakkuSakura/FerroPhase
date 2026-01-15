@@ -1,11 +1,12 @@
 //! Command implementation for building FerroPhase code via fp-cli
 
+use crate::configs::ManifestConfig;
 use crate::models::{ManifestModel, PackageGraphOptions, PackageModel};
 use crate::resolver::project::resolve_graph;
 use crate::utils::find_furthest_manifest;
 use eyre::{Result, WrapErr, bail};
 use glob::glob;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -44,7 +45,20 @@ pub fn build(options: &BuildOptions) -> Result<()> {
 
     let _fp_requested = single_entry || has_fp_sources(&package.root_path)?;
 
-    let build_options = parse_build_options(&options.build_options)?;
+    let build_config = load_manifest_build_config(&root)?;
+    validate_feature_list("build.features", &build_config.features, &build_config.feature_defs)?;
+    let mut build_options = build_config.options.clone();
+    if !build_config.features.is_empty() {
+        build_options.insert("features".to_string(), build_config.features.join(","));
+    }
+    let cli_build_options = parse_build_options(&options.build_options)?;
+    validate_cli_build_options(
+        &cli_build_options,
+        &build_config.options,
+        &build_config.feature_defs,
+    )?;
+    build_options.extend(cli_build_options);
+    let build_option_args = build_options_to_args(&build_options);
     let graph_options = PackageGraphOptions {
         offline: options.offline,
         cache_dir: options.cache_dir.clone(),
@@ -55,6 +69,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         resolve_registry: true,
         allow_multiple_versions: true,
         use_lock: true,
+        refresh_index: false,
         write_lock: true,
         target: None,
     };
@@ -74,7 +89,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
             &sources,
             &graph_path,
             &output_dir,
-            &options.build_options,
+            &build_option_args,
         );
     }
 
@@ -125,7 +140,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
             &sources,
             &graph_path,
             &output_dir,
-            &options.build_options,
+            &build_option_args,
         )?;
     }
 
@@ -406,6 +421,133 @@ fn parse_build_options(options: &[String]) -> Result<std::collections::HashMap<S
         map.insert(key.to_string(), value.to_string());
     }
     Ok(map)
+}
+
+fn build_options_to_args(options: &HashMap<String, String>) -> Vec<String> {
+    let mut items: Vec<_> = options.iter().collect();
+    items.sort_by_key(|(key, _)| *key);
+    items
+        .into_iter()
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect()
+}
+
+struct ManifestBuildConfig {
+    options: HashMap<String, String>,
+    features: Vec<String>,
+    feature_defs: HashMap<String, Vec<String>>,
+}
+
+fn load_manifest_build_config(manifest_root: &Path) -> Result<ManifestBuildConfig> {
+    let path = manifest_root.join("Magnet.toml");
+    if !path.exists() {
+        return Ok(ManifestBuildConfig {
+            options: HashMap::new(),
+            features: Vec::new(),
+            feature_defs: HashMap::new(),
+        });
+    }
+    let config = ManifestConfig::from_file(&path)?;
+    let mut options = HashMap::new();
+    let mut features = Vec::new();
+    if let Some(build) = config.build {
+        options.extend(build.options);
+        features = build.features;
+    }
+    Ok(ManifestBuildConfig {
+        options,
+        features,
+        feature_defs: config.features,
+    })
+}
+
+fn parse_feature_list(raw: &str) -> Vec<String> {
+    raw.split(',')
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+        .map(|item| item.to_string())
+        .collect()
+}
+
+fn validate_feature_list(
+    label: &str,
+    features: &[String],
+    feature_defs: &HashMap<String, Vec<String>>,
+) -> Result<()> {
+    let mut missing = Vec::new();
+    for feature in features {
+        if !feature_defs.contains_key(feature) {
+            missing.push(feature.clone());
+        }
+    }
+    if !missing.is_empty() {
+        bail!(
+            "{} contains undefined feature(s): {}",
+            label,
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn validate_cli_build_options(
+    cli_options: &HashMap<String, String>,
+    allowed_options: &HashMap<String, String>,
+    feature_defs: &HashMap<String, Vec<String>>,
+) -> Result<()> {
+    for (key, value) in cli_options {
+        if key == "features" {
+            let features = parse_feature_list(value);
+            validate_feature_list("build.options.features", &features, feature_defs)?;
+            continue;
+        }
+        if !allowed_options.contains_key(key) {
+            bail!(
+                "Unknown build option '{}'; add it under [build.options] in Magnet.toml",
+                key
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_features_rejects_unknown() {
+        let mut feature_defs = HashMap::new();
+        feature_defs.insert("feature_a".to_string(), Vec::new());
+        let err = validate_feature_list(
+            "build.features",
+            &vec!["feature_a".to_string(), "missing".to_string()],
+            &feature_defs,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("missing"));
+    }
+
+    #[test]
+    fn validate_cli_build_options_rejects_unknown_option() {
+        let mut allowed = HashMap::new();
+        allowed.insert("opt_level".to_string(), "2".to_string());
+        let cli_options =
+            HashMap::from([("unknown".to_string(), "value".to_string())]);
+        let err = validate_cli_build_options(&cli_options, &allowed, &HashMap::new()).unwrap_err();
+        assert!(err.to_string().contains("Unknown build option"));
+    }
+
+    #[test]
+    fn validate_cli_build_options_rejects_unknown_feature() {
+        let mut feature_defs = HashMap::new();
+        feature_defs.insert("feature_a".to_string(), Vec::new());
+        let cli_options =
+            HashMap::from([("features".to_string(), "feature_a,missing".to_string())]);
+        let err =
+            validate_cli_build_options(&cli_options, &HashMap::new(), &feature_defs).unwrap_err();
+        assert!(err.to_string().contains("missing"));
+    }
 }
 
 fn write_workspace_graph(

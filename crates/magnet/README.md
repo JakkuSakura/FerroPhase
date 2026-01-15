@@ -81,6 +81,16 @@ tokio = { version = "1.0", features = ["full"] }
 # Development dependencies shared across the workspace
 [dev-dependencies]
 criterion = "0.5"
+
+[features]
+feature_a = []
+feature_b = ["feature_a"]
+
+[build]
+features = ["feature_a", "feature_b"]
+
+[build.options]
+opt_level = "2"
 ```
 
 ## License

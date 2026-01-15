@@ -138,3 +138,34 @@ edition = "2021"
     );
     Ok(())
 }
+
+#[test]
+fn test_build_options_with_features_parse() -> Result<()> {
+    let temp_dir = tempdir()?;
+    let config_path = temp_dir.path().join("Magnet.toml");
+    fs::write(
+        &config_path,
+        r#"[package]
+name = "build-test"
+version = "0.1.0"
+
+[features]
+feature_a = []
+feature_b = ["feature_a"]
+
+[build]
+features = ["feature_a", "feature_b"]
+
+[build.options]
+opt_level = "2"
+"#,
+    )?;
+
+    let config = ManifestConfig::from_file(&config_path)?;
+    let build = config.build.expect("build section missing");
+    assert_eq!(build.options.get("opt_level"), Some(&"2".to_string()));
+    assert_eq!(build.features, vec!["feature_a".to_string(), "feature_b".to_string()]);
+    assert!(config.features.contains_key("feature_a"));
+    assert!(config.features.contains_key("feature_b"));
+    Ok(())
+}

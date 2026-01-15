@@ -5,6 +5,24 @@ insert items or expressions into the AST during const evaluation. This document
 captures the build-block pattern using typed quotes and expression-driven
 splicing.
 
+## Magnet Build Options
+
+Magnet accepts build options from `Magnet.toml` and merges CLI overrides last.
+Features are Cargo-compatible and defined under `[features]`. Enable them via
+`[build.options]` by setting `features = "feature_a,feature_b"`.
+
+```toml
+[features]
+feature_a = []
+feature_b = ["feature_a"]
+
+[build]
+features = ["feature_a", "feature_b"]
+
+[build.options]
+opt_level = "2"
+```
+
 ## Typed Quote Tokens
 
 Use typed quote tags to declare the kind of fragment you want to produce:
