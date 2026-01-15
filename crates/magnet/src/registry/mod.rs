@@ -30,13 +30,26 @@ pub struct ResolvedCrate {
 pub struct RegistryClient {
     options: RegistryOptions,
     cache_dir: PathBuf,
+    index: std::sync::Arc<SparseIndex>,
+    agent: std::sync::Arc<ureq::Agent>,
+    http_client: Client,
+    _cargo_home: CargoHomeGuard,
 }
 
 impl RegistryClient {
     pub fn new(options: RegistryOptions) -> Result<Self> {
         let cache_dir = resolve_cache_dir(options.cache_dir.clone())?;
         fs::create_dir_all(&cache_dir)?;
-        Ok(Self { options, cache_dir })
+        let cargo_home = CargoHomeGuard::apply(&cache_dir)?;
+        let index = SparseIndex::new_cargo_default()?;
+        Ok(Self {
+            options,
+            cache_dir,
+            index: std::sync::Arc::new(index),
+            agent: std::sync::Arc::new(ureq::Agent::new()),
+            http_client: Client::new(),
+            _cargo_home: cargo_home,
+        })
     }
 
     pub fn resolve(&self, name: &str, version_req: Option<&str>) -> Result<ResolvedCrate> {
@@ -46,7 +59,8 @@ impl RegistryClient {
 
         let (version, checksum) = resolve_version_and_checksum(
             &self.options,
-            &self.cache_dir,
+            &self.index,
+            &self.agent,
             name,
             &req,
         )?;
@@ -75,7 +89,13 @@ impl RegistryClient {
             ));
         }
 
-        download_and_unpack(name, &version, checksum.as_deref(), &crate_root)?;
+        download_and_unpack(
+            &self.agent,
+            name,
+            &version,
+            checksum.as_deref(),
+            &crate_root,
+        )?;
 
         Ok(ResolvedCrate {
             name: name.to_string(),
@@ -91,11 +111,12 @@ impl RegistryClient {
         let req = VersionReq::parse(req_str)
             .map_err(|err| eyre::eyre!("invalid version requirement '{req_str}': {err}"))?;
         let options = self.options.clone();
-        let cache_dir = self.cache_dir.clone();
         let name_owned = name.to_string();
         let req_owned = req.clone();
+        let index = std::sync::Arc::clone(&self.index);
+        let agent = std::sync::Arc::clone(&self.agent);
         let (version, checksum) = tokio::task::spawn_blocking(move || {
-            resolve_version_and_checksum(&options, &cache_dir, &name_owned, &req_owned)
+            resolve_version_and_checksum(&options, &index, &agent, &name_owned, &req_owned)
         })
         .await
         .map_err(|err| eyre::eyre!("failed to resolve crate {name}: {err}"))??;
@@ -124,7 +145,14 @@ impl RegistryClient {
             ));
         }
 
-        download_and_unpack_async(name, &version, checksum.as_deref(), &crate_root).await?;
+        download_and_unpack_async(
+            &self.http_client,
+            name,
+            &version,
+            checksum.as_deref(),
+            &crate_root,
+        )
+        .await?;
 
         Ok(ResolvedCrate {
             name: name.to_string(),
@@ -165,7 +193,14 @@ impl RegistryClient {
             ));
         }
 
-        download_and_unpack_async(name, version, checksum, &crate_root).await?;
+        download_and_unpack_async(
+            &self.http_client,
+            name,
+            version,
+            checksum,
+            &crate_root,
+        )
+        .await?;
 
         Ok(ResolvedCrate {
             name: name.to_string(),
@@ -206,7 +241,7 @@ impl RegistryClient {
             ));
         }
 
-        download_and_unpack(name, version, checksum, &crate_root)?;
+        download_and_unpack(&self.agent, name, version, checksum, &crate_root)?;
 
         Ok(ResolvedCrate {
             name: name.to_string(),
@@ -247,25 +282,29 @@ fn select_version(krate: &crates_index::Crate, req: &VersionReq) -> Result<(Stri
 
 fn resolve_version_and_checksum(
     options: &RegistryOptions,
-    cache_dir: &Path,
+    index: &SparseIndex,
+    agent: &ureq::Agent,
     name: &str,
     req: &VersionReq,
 ) -> Result<(String, Option<String>)> {
-    let _guard = CargoHomeGuard::apply(cache_dir)?;
-    let index = SparseIndex::new_cargo_default()?;
     let krate = if options.offline {
         index
             .crate_from_cache(name)
             .map_err(|err| eyre::eyre!("crate '{name}' not available offline: {err}"))?
     } else {
-        fetch_sparse_crate(&index, name)?
+        fetch_sparse_crate(agent, index, name)?
     };
     select_version(&krate, req)
 }
 
-fn fetch_sparse_crate(index: &SparseIndex, name: &str) -> Result<crates_index::Crate> {
+fn fetch_sparse_crate(
+    agent: &ureq::Agent,
+    index: &SparseIndex,
+    name: &str,
+) -> Result<crates_index::Crate> {
     let request = index.make_cache_request(name)?;
-    let mut ureq_request = ureq::request(request.method().as_str(), &request.uri().to_string());
+    let mut ureq_request =
+        agent.request(request.method().as_str(), &request.uri().to_string());
     for (name, value) in request.headers() {
         ureq_request = ureq_request.set(name.as_str(), value.to_str()?);
     }
@@ -289,6 +328,7 @@ fn fetch_sparse_crate(index: &SparseIndex, name: &str) -> Result<crates_index::C
 }
 
 fn download_and_unpack(
+    agent: &ureq::Agent,
     name: &str,
     version: &str,
     checksum: Option<&str>,
@@ -306,7 +346,7 @@ fn download_and_unpack(
     fs::create_dir_all(&download_dir)?;
 
     let archive_path = download_dir.join(format!("{name}-{version}.crate"));
-    let response = ureq::get(&url).call().map_err(|err| {
+    let response = agent.get(&url).call().map_err(|err| {
         eyre::eyre!("failed to download crate {name} {version} from {url}: {err}")
     })?;
     let mut reader = response.into_reader();
@@ -343,6 +383,7 @@ fn download_and_unpack(
 }
 
 async fn download_and_unpack_async(
+    client: &Client,
     name: &str,
     version: &str,
     checksum: Option<&str>,
@@ -360,7 +401,6 @@ async fn download_and_unpack_async(
     std::fs::create_dir_all(&download_dir)?;
 
     let archive_path = download_dir.join(format!("{name}-{version}.crate"));
-    let client = Client::new();
     let response = client
         .get(&url)
         .send()
