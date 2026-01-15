@@ -2086,7 +2086,7 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     if !saw_generic_start || args.is_empty() {
-        return Ok(Ty::path(path));
+        return Ok(Ty::expr(Expr::path(path).with_span(node.span)));
     }
 
     let mut param_segments: Vec<ParameterPathSegment> = segments
@@ -2097,7 +2097,9 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
         last.args = args;
     }
     let ppath = ParameterPath::new(param_segments);
-    Ok(Ty::locator(Locator::parameter_path(ppath)))
+    Ok(Ty::expr(
+        Expr::locator(Locator::parameter_path(ppath)).with_span(node.span),
+    ))
 }
 
 fn lower_ty_ref(node: &SyntaxNode) -> Result<Ty, LowerError> {

@@ -177,6 +177,11 @@ fn expr_contains_return(expr: &Expr) -> bool {
 
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
+        let span = expr.span();
+        let previous = self.current_span;
+        let active = span.or(previous);
+        self.current_span = active;
+        let result = (|| {
         let existing_ty = expr.ty().cloned();
         let var = match expr.kind_mut() {
             ExprKind::Quote(quote) => {
@@ -559,6 +564,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = self.resolve_to_ty(var)?;
         expr.set_ty(ty);
         Ok(var)
+        })();
+        self.current_span = previous;
+        result.map_err(|err| self.error_with_span(err, active))
     }
 
     pub(crate) fn infer_binop(&mut self, binop: &mut ExprBinOp) -> Result<TypeVarId> {

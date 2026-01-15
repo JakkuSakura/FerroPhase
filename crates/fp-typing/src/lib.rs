@@ -120,6 +120,7 @@ pub struct AstTypeInferencer<'ctx> {
     loop_stack: Vec<LoopContext>,
     lossy_mode: bool,
     hashmap_args: HashMap<TypeVarId, (TypeVarId, TypeVarId)>,
+    current_span: Option<Span>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -186,6 +187,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             loop_stack: Vec::new(),
             lossy_mode: detect_lossy_mode(),
             hashmap_args: HashMap::new(),
+            current_span: None,
         }
     }
 
@@ -701,7 +703,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn infer_item(&mut self, item: &mut Item) -> Result<()> {
-        let ty = match item.kind_mut() {
+        let span = item.span();
+        let previous = self.current_span;
+        let active = span.or(previous);
+        self.current_span = active;
+        let result = (|| {
+            let ty = match item.kind_mut() {
             ItemKind::DefStruct(def) => {
                 let ty = Ty::Struct(def.value.clone());
                 let placeholder = self.symbol_var(&def.name);
@@ -998,8 +1005,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         };
 
-        item.set_ty(ty);
-        Ok(())
+            item.set_ty(ty);
+            Ok(())
+        })();
+        self.current_span = previous;
+        result.map_err(|err| self.error_with_span(err, active))
     }
 
     fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
@@ -1648,7 +1658,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn emit_error(&mut self, message: impl Into<String>) {
-        self.emit_error_with_span(None, message);
+        let span = self.current_span;
+        self.emit_error_with_span(span, message);
     }
 
     fn emit_error_with_span(&mut self, span: Option<Span>, message: impl Into<String>) {
