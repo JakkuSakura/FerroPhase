@@ -5,7 +5,7 @@ use tracing::{debug, info};
 
 // Use local utils module instead of common crate
 use magnet::commands::{
-    self, BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, generate::GenerateOptions,
+    self, BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, UpdateOptions, generate::GenerateOptions,
 };
 use magnet::utils::{LogLevel, setup_logs};
 
@@ -63,6 +63,20 @@ fn main() -> Result<()> {
                 fetch,
             };
             commands::lock(&options)
+        }
+        Some(Commands::Update {
+            path,
+            offline,
+            cache_dir,
+            fetch,
+        }) => {
+            let options = UpdateOptions {
+                path,
+                offline,
+                cache_dir,
+                fetch,
+            };
+            commands::update(&options)
         }
         Some(Commands::Export {
             package,
@@ -283,6 +297,24 @@ enum Commands {
     },
     /// Resolve dependencies and generate Magnet.lock
     Lock {
+        /// Path to a package/workspace directory or manifest file
+        #[arg(default_value = ".")]
+        path: PathBuf,
+
+        /// Run without network access (use cached crates)
+        #[arg(long)]
+        offline: bool,
+
+        /// Override the cargo registry cache directory
+        #[arg(long)]
+        cache_dir: Option<PathBuf>,
+
+        /// Skip prefetching registry dependencies
+        #[arg(long = "no-fetch", default_value_t = true, action = clap::ArgAction::SetFalse)]
+        fetch: bool,
+    },
+    /// Update Magnet.lock with the latest resolved dependencies
+    Update {
         /// Path to a package/workspace directory or manifest file
         #[arg(default_value = ".")]
         path: PathBuf,
