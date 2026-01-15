@@ -5,10 +5,10 @@ use fp_core::ast::{File, Node, NodeKind};
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, LanguageFrontend};
-use fp_core::intrinsics::IntrinsicNormalizer;
 
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
+use crate::normalization::RustIntrinsicNormalizer;
 
 const LANGUAGE_KEY: &str = "rust";
 const EXTENSIONS: &[&str] = &["rs"];
@@ -66,7 +66,7 @@ impl LanguageFrontend for RustFrontend {
             last: node.clone(),
             ast: node,
             serializer: self.serializer.clone(),
-            intrinsic_normalizer: None as Option<Arc<dyn IntrinsicNormalizer>>,
+            intrinsic_normalizer: Some(Arc::new(RustIntrinsicNormalizer)),
             snapshot: None,
             diagnostics,
         })

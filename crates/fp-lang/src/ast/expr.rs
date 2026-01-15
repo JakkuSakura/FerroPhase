@@ -213,6 +213,127 @@ fn quote_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError>
     Err(LowerError::UnexpectedNode(node.kind))
 }
 
+fn quote_block_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, LowerError> {
+    let mut tokens = Vec::new();
+    crate::syntax::collect_tokens(node, &mut tokens);
+    let tokens: Vec<&crate::syntax::SyntaxToken> =
+        tokens.into_iter().filter(|t| !t.is_trivia()).collect();
+
+    let mut idx = 0;
+    while idx < tokens.len() && tokens[idx].text != "quote" {
+        idx += 1;
+    }
+    if idx >= tokens.len() {
+        return Err(LowerError::UnexpectedNode(node.kind));
+    }
+    idx += 1;
+
+    if tokens.get(idx).is_some_and(|t| t.text == "<") {
+        idx += 1;
+        let (kind_tok, has_brackets) = if tokens.get(idx).is_some_and(|t| t.text == "[") {
+            idx += 1;
+            let kind = tokens.get(idx).ok_or(LowerError::UnexpectedNode(node.kind))?;
+            idx += 1;
+            if !tokens.get(idx).is_some_and(|t| t.text == "]") {
+                return Err(LowerError::UnexpectedNode(node.kind));
+            }
+            idx += 1;
+            (kind, true)
+        } else {
+            let kind = tokens.get(idx).ok_or(LowerError::UnexpectedNode(node.kind))?;
+            idx += 1;
+            (kind, false)
+        };
+        if !tokens.get(idx).is_some_and(|t| t.text == ">") {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        }
+        idx += 1;
+
+        let kind_text = kind_tok.text.as_str();
+        let _ = kind_text;
+        let _ = has_brackets;
+    }
+
+    while idx < tokens.len() && tokens[idx].text != "{" {
+        idx += 1;
+    }
+    if idx >= tokens.len() {
+        return Err(LowerError::UnexpectedNode(node.kind));
+    }
+    idx += 1;
+
+    let mut depth = 1;
+    let mut fn_idx = None;
+    let mut cursor = idx;
+    while cursor < tokens.len() {
+        let text = tokens[cursor].text.as_str();
+        if text == "{" {
+            depth += 1;
+        } else if text == "}" {
+            depth -= 1;
+            if depth == 0 {
+                break;
+            }
+        } else if depth == 1 && text == "fn" {
+            fn_idx = Some(cursor);
+            break;
+        }
+        cursor += 1;
+    }
+    let fn_idx = fn_idx.ok_or(LowerError::UnexpectedNode(node.kind))?;
+
+    let mut fields = Vec::new();
+    let mut name_idx = fn_idx + 1;
+    if tokens.get(name_idx).is_some_and(|t| t.text == "splice") {
+        if !tokens.get(name_idx + 1).is_some_and(|t| t.text == "(") {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        }
+        let bind_tok = tokens
+            .get(name_idx + 2)
+            .ok_or(LowerError::UnexpectedNode(node.kind))?;
+        if !tokens.get(name_idx + 3).is_some_and(|t| t.text == ")") {
+            return Err(LowerError::UnexpectedNode(node.kind));
+        }
+        let binder = Ident::new(bind_tok.text.clone());
+        fields.push(PatternStructField {
+            name: Ident::new("name"),
+            rename: Some(Box::new(Pattern::new(PatternKind::Ident(
+                PatternIdent::new(binder),
+            )))),
+        });
+        name_idx += 4;
+    } else {
+        name_idx += 1;
+    }
+
+    if !tokens.get(name_idx).is_some_and(|t| t.text == "(") {
+        return Err(LowerError::UnexpectedNode(node.kind));
+    }
+    let mut paren_depth = 0;
+    while name_idx < tokens.len() {
+        let text = tokens[name_idx].text.as_str();
+        if text == "(" {
+            paren_depth += 1;
+        } else if text == ")" {
+            paren_depth -= 1;
+            if paren_depth == 0 {
+                break;
+            }
+        }
+        name_idx += 1;
+    }
+    if paren_depth != 0 {
+        return Err(LowerError::UnexpectedNode(node.kind));
+    }
+
+    Ok(PatternQuote {
+        fragment: QuoteFragmentKind::Item,
+        item: Some(QuoteItemKind::Function),
+        fields,
+        has_rest: false,
+    })
+}
+
 fn quote_pattern_kind_from_cst(
     node: &SyntaxNode,
 ) -> Result<(QuoteFragmentKind, Option<QuoteItemKind>, bool), LowerError> {
@@ -1285,9 +1406,14 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 }
                 let name = direct_first_non_trivia_token_text(field)
                     .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::StructField))?;
+                let mut rename = None;
+                if let Some(value_expr) = node_children_exprs(field).next() {
+                    let pattern = lower_match_pattern_from_cst(value_expr)?;
+                    rename = Some(Box::new(pattern));
+                }
                 fields.push(PatternStructField {
                     name: Ident::new(name),
-                    rename: None,
+                    rename,
                 });
             }
 
@@ -1386,6 +1512,10 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 })));
             }
             Err(LowerError::UnexpectedNode(SyntaxKind::ExprBinary))
+        }
+        SyntaxKind::ExprQuote => {
+            let quote = quote_block_pattern_from_cst(node)?;
+            Ok(Pattern::new(PatternKind::Quote(quote)))
         }
         SyntaxKind::ExprQuoteToken => {
             let quote = quote_pattern_from_cst(node)?;

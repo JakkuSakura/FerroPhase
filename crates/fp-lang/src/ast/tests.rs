@@ -1,7 +1,7 @@
 use super::*;
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use crate::syntax::SyntaxPrinter;
-use fp_core::ast::{AttrMeta, BlockStmt, ExprKind, ItemKind, MacroDelimiter};
+use fp_core::ast::{AttrMeta, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind};
 use fp_core::ops::BinOpKind;
 
 #[test]
@@ -100,6 +100,33 @@ fn parse_expr_ast_supports_typed_quote_fragments() {
         ExprKind::Quote(quote) => assert_eq!(quote.kind, Some(QuoteFragmentKind::Expr)),
         other => panic!("expected quote expr, got {:?}", other),
     }
+}
+
+#[test]
+fn parse_match_quote_fn_splice_binds_name() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser
+        .parse_expr_ast(
+            "match token { quote { fn splice(name)(i: i32) } => name, _ => \"none\" }",
+        )
+        .unwrap();
+
+    let ExprKind::Match(match_expr) = expr.kind() else {
+        panic!("expected match expr, got {:?}", expr.kind());
+    };
+    let first_case = match_expr
+        .cases
+        .first()
+        .expect("match should have at least one case");
+    let pattern = first_case.pat.as_ref().expect("match case pattern");
+    let PatternKind::Quote(quote) = pattern.kind() else {
+        panic!("expected quote pattern, got {:?}", pattern.kind());
+    };
+    assert_eq!(quote.item, Some(QuoteItemKind::Function));
+    assert_eq!(quote.fields.len(), 1);
+    assert_eq!(quote.fields[0].name.as_str(), "name");
+    assert!(quote.fields[0].rename.is_some());
 }
 
 #[test]

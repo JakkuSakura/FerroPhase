@@ -544,8 +544,32 @@ fn parse_items_in_braces_to_item_list(input: &mut &[Token]) -> ModalResult<Synta
 }
 
 fn parse_fn_sig_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
-    let name = expect_ident_token(input)?;
-    let mut children = vec![SyntaxElement::Token(name)];
+    let mut children = Vec::new();
+    if matches!(
+        input.first(),
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Splice),
+            ..
+        })
+    ) {
+        let splice_tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&splice_tok)));
+        let open = expect_symbol_token(input)?;
+        if open.text != "(" {
+            return cut_message(input, "expected '(' after splice");
+        }
+        children.push(SyntaxElement::Token(open));
+        let name = expect_ident_token(input)?;
+        children.push(SyntaxElement::Token(name));
+        let close = expect_symbol_token(input)?;
+        if close.text != ")" {
+            return cut_message(input, "expected ')' after splice name");
+        }
+        children.push(SyntaxElement::Token(close));
+    } else {
+        let name = expect_ident_token(input)?;
+        children.push(SyntaxElement::Token(name));
+    }
     if matches_symbol(input.first(), "<") {
         let gen = parse_generic_params_cst(input)?;
         children.push(SyntaxElement::Node(Box::new(gen)));

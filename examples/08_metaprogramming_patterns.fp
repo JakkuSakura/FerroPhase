@@ -78,6 +78,12 @@ fn main() {
     const fn_count = fn_group.len();
     println!("quote<[item]> count => {}", fn_count);
 
+    let fn_name = match quote<item> { fn splice(name)(i: i32) } {
+        quote { fn splice(name)(i: i32) } => name,
+        _ => "<unknown>",
+    };
+    println!("quote { fn splice(name)(i: i32) } => name={}", fn_name);
+
     splice(quote<stmt> {
         let step = 7 * 3;
         println!("stmt splice => step={}", step);
