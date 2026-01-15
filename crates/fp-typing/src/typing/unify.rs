@@ -320,14 +320,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeVarKind::Unbound { .. }, TypeVarKind::Bound(term)) => {
                 if self.occurs_in_term(a_root, &term) {
-                    return Err(Error::from("occurs check failed"));
+                    return Err(self.error_with_current_span("occurs check failed"));
                 }
                 self.type_vars[a_root].kind = TypeVarKind::Bound(term);
                 Ok(())
             }
             (TypeVarKind::Bound(term), TypeVarKind::Unbound { .. }) => {
                 if self.occurs_in_term(b_root, &term) {
-                    return Err(Error::from("occurs check failed"));
+                    return Err(self.error_with_current_span("occurs check failed"));
                 }
                 self.type_vars[b_root].kind = TypeVarKind::Bound(term);
                 Ok(())
@@ -345,7 +345,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.type_vars[b_root].kind = TypeVarKind::Link(a_root);
                     Ok(())
                 } else {
-                    Err(Error::from(format!(
+                    Err(self.error_with_current_span(format!(
                         "primitive type mismatch: {} vs {}",
                         int_a, int_b
                     )))
@@ -393,7 +393,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if pa == pb {
                     Ok(())
                 } else {
-                    Err(Error::from(format!(
+                    Err(self.error_with_current_span(format!(
                         "primitive type mismatch: {} vs {}",
                         pa, pb
                     )))
@@ -407,7 +407,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if sa == sb {
                     Ok(())
                 } else {
-                    Err(Error::from(format!(
+                    Err(self.error_with_current_span(format!(
                         "struct type mismatch: {} vs {}",
                         sa.name, sb.name
                     )))
@@ -417,14 +417,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if sa == sb {
                     Ok(())
                 } else {
-                    Err(Error::from("structural type mismatch"))
+                    Err(self.error_with_current_span("structural type mismatch"))
                 }
             }
             (TypeTerm::Enum(ae), TypeTerm::Enum(be)) => {
                 if ae == be {
                     Ok(())
                 } else {
-                    Err(Error::from("enum type mismatch"))
+                    Err(self.error_with_current_span("enum type mismatch"))
                 }
             }
             (TypeTerm::Union(a_lhs, a_rhs), TypeTerm::Union(b_lhs, b_rhs)) => {
@@ -458,7 +458,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let b_elem = self.type_from_ast_ty(&b_arr.elem)?;
                     self.unify(a_elem, b_elem)
                 } else {
-                    Err(Error::from(format!("custom type mismatch: {} vs {}", a, b)))
+                    Err(self.error_with_current_span(format!(
+                        "custom type mismatch: {} vs {}",
+                        a, b
+                    )))
                 }
             }
             (TypeTerm::Custom(array_ty), TypeTerm::Slice(slice_elem))
@@ -483,7 +486,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Tuple(a_elems), TypeTerm::Tuple(b_elems)) => {
                 if a_elems.len() != b_elems.len() {
-                    return Err(Error::from("tuple length mismatch"));
+                    return Err(self.error_with_current_span("tuple length mismatch"));
                 }
                 for (a_elem, b_elem) in a_elems.into_iter().zip(b_elems.into_iter()) {
                     self.unify(a_elem, b_elem)?;
@@ -492,7 +495,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Function(a_func), TypeTerm::Function(b_func)) => {
                 if a_func.params.len() != b_func.params.len() {
-                    return Err(Error::from("function arity mismatch"));
+                    return Err(self.error_with_current_span("function arity mismatch"));
                 }
                 for (a_param, b_param) in a_func.params.into_iter().zip(b_func.params.into_iter()) {
                     self.unify(a_param, b_param)?;
@@ -527,7 +530,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Unknown, _other) | (_other, TypeTerm::Unknown) => Ok(()),
             (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
-            (left, right) => Err(Error::from(format!(
+            (left, right) => Err(self.error_with_current_span(format!(
                 "type mismatch: {:?} vs {:?}",
                 left, right
             ))),
@@ -548,7 +551,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if self.unify(rhs, other_var).is_ok() {
             return Ok(());
         }
-        Err(Error::from("union type mismatch"))
+        Err(self.error_with_current_span("union type mismatch"))
     }
 
     fn unify_union_pair(
@@ -567,7 +570,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if self.unify(a_lhs, b_rhs).is_ok() && self.unify(a_rhs, b_lhs).is_ok() {
             return Ok(());
         }
-        Err(Error::from("union type mismatch"))
+        Err(self.error_with_current_span("union type mismatch"))
     }
 
     pub(crate) fn resolve_to_ty(&mut self, var: TypeVarId) -> Result<Ty> {
@@ -1080,6 +1083,7 @@ fn locator_tail_name(locator: &Locator) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fp_core::span::Span;
 
     #[test]
     fn merges_structural_types_with_plus() {
@@ -1188,6 +1192,41 @@ mod tests {
                 assert_eq!(s.fields[0].name.as_str(), "b");
             }
             other => panic!("expected structural type, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn unify_errors_carry_active_span() {
+        let mut typer = AstTypeInferencer::new();
+        let span = Span::new(1, 10, 12);
+        typer.current_span = Some(span);
+
+        let struct_var = typer.fresh_type_var();
+        let func_var = typer.fresh_type_var();
+        typer.bind(
+            struct_var,
+            TypeTerm::Struct(TypeStruct {
+                name: Ident::new("Parser".to_string()),
+                generics_params: Vec::new(),
+                fields: Vec::new(),
+            }),
+        );
+        let ret_var = typer.unit_type_var();
+        typer.bind(
+            func_var,
+            TypeTerm::Function(FunctionTerm {
+                params: Vec::new(),
+                ret: ret_var,
+            }),
+        );
+
+        let err = typer.unify(struct_var, func_var).expect_err("expected mismatch");
+        match err {
+            Error::Diagnostic(diag) => {
+                assert_eq!(diag.span, Some(span));
+                assert!(diag.message.contains("type mismatch"));
+            }
+            other => panic!("expected diagnostic error, got {other:?}"),
         }
     }
 
