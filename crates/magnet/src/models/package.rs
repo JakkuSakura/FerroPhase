@@ -41,13 +41,13 @@ pub struct PackageModel {
 }
 impl PackageModel {
     pub fn from_dir(root_path: &Path) -> Result<Self> {
-        let root_path = root_path.canonicalize()?;
         if !root_path.exists() {
             eyre::bail!(
-                "Root path doesn't exist in the current directory: {}",
+                "Root path does not exist: {}",
                 root_path.display()
             )
         }
+        let root_path = root_path.canonicalize().unwrap_or_else(|_| root_path.to_path_buf());
         let config_path = if root_path.join("Magnet.toml").exists() {
             root_path.join("Magnet.toml")
         } else if root_path.join("Cargo.toml").exists() {

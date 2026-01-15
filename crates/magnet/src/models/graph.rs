@@ -14,7 +14,7 @@ use std::time::Instant;
 #[cfg(feature = "cargo-fallback")]
 use std::process::Command;
 use std::sync::Arc;
-use tracing::info;
+use tracing::{info, warn};
 
 pub(crate) const REGISTRY_SOURCE: &str = "registry+crates.io";
 
@@ -161,6 +161,9 @@ impl PackageGraph {
         if options.write_lock {
             let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref());
             lock.write_to_path(&lock_path)?;
+            for warning in lock.validate() {
+                warn!("lock: {}", warning);
+            }
         }
 
         Ok(graph)
@@ -558,14 +561,44 @@ fn package_to_node_with_lock_loader(
 
     let mut edges = Vec::new();
     for (name, dep) in dep_map {
-        let edge = dependency_to_edge_with_lock_loader(
-            name,
-            dep,
+        if let Some(path) = dep.path.as_ref() {
+            let check_path = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                package.root_path.join(path)
+            };
+            if !check_path.exists() {
+                warn!("graph: dependency path missing: {}", check_path.display());
+            }
+        }
+        match dependency_to_edge_with_lock_loader(
+            name.clone(),
+            dep.clone(),
             registry,
             lock_index,
             cache_dir,
-        )?;
-        edges.push(edge);
+        ) {
+            Ok(edge) => edges.push(edge),
+            Err(err) => {
+                warn!("graph: dependency resolution failed for {}: {}", name, err);
+                edges.push(DependencyEdge {
+                    name,
+                    package: dep.package,
+                    version: dep.version,
+                    resolved_version: None,
+                    checksum: None,
+                    source: None,
+                    path: dep.path,
+                    git: dep.git,
+                    rev: dep.rev,
+                    branch: dep.branch,
+                    tag: dep.tag,
+                    workspace: dep.workspace,
+                    optional: dep.optional,
+                    features: dep.features,
+                });
+            }
+        }
     }
 
     Ok(PackageNode {

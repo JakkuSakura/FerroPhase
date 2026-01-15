@@ -83,6 +83,38 @@ impl MagnetLock {
             .with_context(|| format!("Failed to write {}", path.display()))?;
         Ok(())
     }
+
+    pub fn validate(&self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        let mut known = HashMap::new();
+        for pkg in &self.packages {
+            let key = (pkg.name.as_str(), pkg.version.as_str(), pkg.source.as_deref());
+            known.insert(key, true);
+        }
+
+        for pkg in &self.packages {
+            for dep in &pkg.dependencies {
+                match parse_lock_dependency(dep) {
+                    Some((name, version, source)) => {
+                        let key = (name.as_str(), version.as_str(), source.as_deref());
+                        if !known.contains_key(&key) {
+                            warnings.push(format!(
+                                "missing package for dependency '{}' of {} {}",
+                                dep, pkg.name, pkg.version
+                            ));
+                        }
+                    }
+                    None => {
+                        warnings.push(format!(
+                            "unrecognized dependency format '{}' in {} {}",
+                            dep, pkg.name, pkg.version
+                        ));
+                    }
+                }
+            }
+        }
+        warnings
+    }
 }
 
 impl LockIndex {
@@ -172,6 +204,19 @@ fn format_dependency(dep: &DependencyEdge) -> Option<String> {
         out.push_str(&format!(" (path+{})", path.display()));
     }
     Some(out)
+}
+
+fn parse_lock_dependency(value: &str) -> Option<(String, String, Option<String>)> {
+    let (core, source) = if let Some((left, right)) = value.rsplit_once(" (") {
+        let source = right.strip_suffix(')')?.to_string();
+        (left.trim(), Some(source))
+    } else {
+        (value.trim(), None)
+    };
+    let mut parts = core.split_whitespace();
+    let name = parts.next()?.to_string();
+    let version = parts.next()?.to_string();
+    Some((name, version, source))
 }
 
 #[cfg(test)]

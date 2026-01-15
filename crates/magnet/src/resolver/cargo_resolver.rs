@@ -129,7 +129,23 @@ impl CargoResolver {
 
     fn resolve_package_dir_sync(&mut self, dir: &Path) -> Result<Option<(PackageModel, PackageDeps)>> {
         info!("graph: resolving package at {}", dir.display());
-        let mut package = PackageModel::from_dir(dir)?;
+        let mut package = match PackageModel::from_dir(dir) {
+            Ok(package) => package,
+            Err(err) => {
+                if dir == self.root.as_path() {
+                    return Err(err.wrap_err(format!(
+                        "graph: failed to resolve root package at {}",
+                        dir.display()
+                    )));
+                }
+                tracing::warn!(
+                    "graph: skipping package at {}: {}",
+                    dir.display(),
+                    err
+                );
+                return Ok(None);
+            }
+        };
         if let Some(workspace) = &self.workspace {
             apply_workspace_dependencies(&mut package, workspace)?;
         }
