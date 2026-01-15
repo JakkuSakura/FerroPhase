@@ -130,7 +130,7 @@ fn panic_macro_lowering_emits_message_and_abort() -> Result<()> {
         panic!("panic! should lower to a block expression");
     };
     assert_eq!(block.stmts.len(), 2);
-    let (_template, arg_count) = expect_println_template(&block.stmts[0], "panic! macro triggered");
+    let (template, arg_count) = expect_println_template(&block.stmts[0], "panic! macro triggered");
     assert_eq!(
         arg_count, 0,
         "panic! without message should not forward arguments"

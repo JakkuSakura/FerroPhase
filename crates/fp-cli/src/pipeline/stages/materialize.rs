@@ -118,7 +118,7 @@ fn materialize_item(
     item: ast::Item,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Item> {
-    let ast::Item { ty, kind } = item;
+    let ast::Item { ty, span, kind } = item;
     let new_kind = match kind {
         ast::ItemKind::Macro(item) => ast::ItemKind::Macro(item),
         ast::ItemKind::Module(mut module) => {
@@ -162,7 +162,11 @@ fn materialize_item(
         | ast::ItemKind::DefTrait(_)
         | ast::ItemKind::Any(_) => kind,
     };
-    Ok(ast::Item { ty, kind: new_kind })
+    Ok(ast::Item {
+        ty,
+        span,
+        kind: new_kind,
+    })
 }
 
 fn materialize_block(
@@ -206,9 +210,9 @@ fn materialize_expr(
     expr: ast::Expr,
     strategy: &dyn IntrinsicMaterializer,
 ) -> CoreResult<ast::Expr> {
-    let ast::Expr { ty, kind } = expr;
+    let ast::Expr { ty, span, kind } = expr;
     let expr_ty = ty.clone();
-    let new_expr = match kind {
+    let mut new_expr = match kind {
         ast::ExprKind::Block(block) => ast::Expr::with_ty(
             ast::ExprKind::Block(materialize_block(block, strategy)?),
             ty,
@@ -436,6 +440,7 @@ fn materialize_expr(
         }
         other => ast::Expr::with_ty(other, ty),
     };
+    new_expr.span = span;
     Ok(new_expr)
 }
 

@@ -7,6 +7,7 @@ use fp_core::diagnostics::Diagnostic as CoreDiagnostic;
 use fp_core::error::Error as CoreError;
 use fp_core::source_map::{LineSpan, SourceFile};
 use miette::Diagnostic;
+use std::io::IsTerminal;
 use termwiz::caps::Capabilities;
 use termwiz::cell::{AttributeChange, CellAttributes};
 use termwiz::color::{AnsiColor, ColorAttribute};
@@ -170,9 +171,13 @@ fn render_core_diagnostic(diag: &CoreDiagnostic) -> bool {
     let Some(line_span) = file.span_on_line(span) else {
         return false;
     };
+    if !std::io::stderr().is_terminal() {
+        render_plain(diag, &file, &line_span);
+        return true;
+    }
     if let Err(err) = render_with_termwiz(diag, &file, &line_span) {
         eprintln!("failed to render diagnostic: {err}");
-        return false;
+        render_plain(diag, &file, &line_span);
     }
     true
 }
@@ -239,6 +244,20 @@ fn render_with_termwiz(
     terminal.render(&changes)?;
     terminal.flush()?;
     Ok(())
+}
+
+fn render_plain(diag: &CoreDiagnostic, file: &SourceFile, line_span: &LineSpan) {
+    let (line, col) = file.line_col(diag.span.unwrap().lo);
+    let plain_lines = format_rustc_plain(
+        &diag.message.to_string(),
+        &file.path.display().to_string(),
+        line,
+        col,
+        line_span,
+    );
+    for line in plain_lines {
+        eprintln!("{line}");
+    }
 }
 
 fn format_rustc_plain(

@@ -1,3 +1,5 @@
+use fp_core::span::Span;
+
 #[derive(Clone, Copy)]
 pub enum TypingDiagnosticLevel {
     Error,
@@ -7,6 +9,7 @@ pub enum TypingDiagnosticLevel {
 pub struct TypingDiagnostic {
     pub level: TypingDiagnosticLevel,
     pub message: String,
+    pub span: Option<Span>,
 }
 
 impl TypingDiagnostic {
@@ -14,6 +17,15 @@ impl TypingDiagnostic {
         Self {
             level: TypingDiagnosticLevel::Error,
             message: message.into(),
+            span: None,
+        }
+    }
+
+    pub fn error_with_span(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            level: TypingDiagnosticLevel::Error,
+            message: message.into(),
+            span: Some(span),
         }
     }
 
@@ -21,6 +33,15 @@ impl TypingDiagnostic {
         Self {
             level: TypingDiagnosticLevel::Warning,
             message: message.into(),
+            span: None,
+        }
+    }
+
+    pub fn warning_with_span(message: impl Into<String>, span: Span) -> Self {
+        Self {
+            level: TypingDiagnosticLevel::Warning,
+            message: message.into(),
+            span: Some(span),
         }
     }
 }

@@ -154,30 +154,32 @@ impl RustParser {
             .with_context(|| format!("Could not find file: {}", path.display()))?;
         tracing::debug!("Parsing {}", path.display());
 
-        if let Some(crate_root) = find_crate_root(path.as_path()) {
-            match self.expand_with_cargo(crate_root.as_path(), path.as_path()) {
-                Ok((expanded_source, expanded_file)) => {
-                    self.set_current_file(path.as_path(), &expanded_source);
-                    return match self.parse_file_content(path.clone(), expanded_file) {
-                        Ok(file) => Ok(file),
-                        Err(e) => self.error(
-                            format!("Failed to parse expanded file {}: {}", path.display(), e),
-                            File {
-                                path: path.clone(),
-                                items: Vec::new(),
-                            },
-                        ),
-                    };
-                }
-                Err(err) => {
-                    self.record_diagnostic(
-                        DiagnosticLevel::Warning,
-                        format!(
-                            "Falling back to direct parse for {} (cargo expand failed: {})",
-                            path.display(),
-                            err
-                        ),
-                    );
+        if std::env::var_os("FP_USE_CARGO_EXPAND").is_some() {
+            if let Some(crate_root) = find_crate_root(path.as_path()) {
+                match self.expand_with_cargo(crate_root.as_path(), path.as_path()) {
+                    Ok((expanded_source, expanded_file)) => {
+                        self.set_current_file(path.as_path(), &expanded_source);
+                        return match self.parse_file_content(path.clone(), expanded_file) {
+                            Ok(file) => Ok(file),
+                            Err(e) => self.error(
+                                format!("Failed to parse expanded file {}: {}", path.display(), e),
+                                File {
+                                    path: path.clone(),
+                                    items: Vec::new(),
+                                },
+                            ),
+                        };
+                    }
+                    Err(err) => {
+                        self.record_diagnostic(
+                            DiagnosticLevel::Warning,
+                            format!(
+                                "Falling back to direct parse for {} (cargo expand failed: {})",
+                                path.display(),
+                                err
+                            ),
+                        );
+                    }
                 }
             }
         }
@@ -340,18 +342,23 @@ impl RustParser {
         self.lossy_mode
     }
     pub fn parse_item(&self, code: syn::Item) -> Result<Item> {
-        self.parse_item_internal(code)
+        let span = self.span_for_proc_macro(code.span());
+        let mut item = self.parse_item_internal(code)?;
+        if let Some(span) = span {
+            item = item.with_span(span);
+        }
+        Ok(item)
     }
     pub fn parse_items(&self, code: Vec<syn::Item>) -> Result<Vec<Item>> {
         code.into_iter()
-            .map(|item| self.parse_item_internal(item))
+            .map(|item| self.parse_item(item))
             .try_collect()
     }
     pub fn parse_file_content(&self, path: PathBuf, code: syn::File) -> Result<File> {
         let items = code
             .items
             .into_iter()
-            .map(|item| self.parse_item_internal(item))
+            .map(|item| self.parse_item(item))
             .try_collect()?;
         Ok(File { path, items })
     }

@@ -8,7 +8,9 @@ use crate::typing::scheme::TypeScheme;
 use fp_core::ast::*;
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
+use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
+use fp_core::span::Span;
 // intrinsic and op kinds handled in submodules
 fn typing_error(msg: impl Into<String>) -> Error {
     Error::from(msg.into())
@@ -218,13 +220,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn infer(&mut self, node: &mut Node) -> Result<TypingOutcome> {
         match node.kind_mut() {
             NodeKind::Expr(expr) => {
-                let var = self.infer_expr(expr)?;
+                let var = match self.infer_expr(expr) {
+                    Ok(var) => var,
+                    Err(err) => return Err(self.error_with_span(err, expr.span())),
+                };
                 let ty = self.resolve_to_ty(var)?;
                 node.set_ty(ty);
             }
             NodeKind::Item(item) => {
                 self.predeclare_item(item);
-                self.infer_item(item)?;
+                if let Err(err) = self.infer_item(item) {
+                    return Err(self.error_with_span(err, item.span()));
+                }
                 let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
                 node.set_ty(ty);
             }
@@ -233,7 +240,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.predeclare_item(item);
                 }
                 for item in &mut file.items {
-                    self.infer_item(item)?;
+                    if let Err(err) = self.infer_item(item) {
+                        return Err(self.error_with_span(err, item.span()));
+                    }
                 }
                 node.set_ty(Ty::Unit(TypeUnit));
             }
@@ -1639,13 +1648,39 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn emit_error(&mut self, message: impl Into<String>) {
+        self.emit_error_with_span(None, message);
+    }
+
+    fn emit_error_with_span(&mut self, span: Option<Span>, message: impl Into<String>) {
         let message = message.into();
         if self.lossy_mode {
-            self.diagnostics.push(TypingDiagnostic::warning(message));
+            if let Some(span) = span {
+                self.diagnostics
+                    .push(TypingDiagnostic::warning_with_span(message, span));
+            } else {
+                self.diagnostics.push(TypingDiagnostic::warning(message));
+            }
         } else {
             self.has_errors = true;
-            self.diagnostics.push(TypingDiagnostic::error(message));
+            if let Some(span) = span {
+                self.diagnostics
+                    .push(TypingDiagnostic::error_with_span(message, span));
+            } else {
+                self.diagnostics.push(TypingDiagnostic::error(message));
+            }
         }
+    }
+
+    fn error_with_span(&self, err: Error, span: Option<Span>) -> Error {
+        let Some(span) = span else {
+            return err;
+        };
+        if let Error::Diagnostic(ref diagnostic) = err {
+            if diagnostic.span.is_some() {
+                return err;
+            }
+        }
+        Error::diagnostic(Diagnostic::error(err.to_string()).with_span(span))
     }
 
     #[allow(dead_code)]

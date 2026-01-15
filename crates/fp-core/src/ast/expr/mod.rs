@@ -2,6 +2,7 @@ use crate::ast::{
     get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, Locator, MacroInvocation, Path,
     Ty, TySlot, Value, ValueUnit,
 };
+use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{Debug, Display, Formatter};
@@ -82,6 +83,8 @@ common_struct! {
     pub struct Expr {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty: TySlot,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub span: Option<Span>,
         #[serde(flatten)]
         pub kind: ExprKind,
     }
@@ -89,11 +92,19 @@ common_struct! {
 
 impl Expr {
     pub fn new(kind: ExprKind) -> Self {
-        Self { ty: None, kind }
+        Self {
+            ty: None,
+            span: None,
+            kind,
+        }
     }
 
     pub fn with_ty(kind: ExprKind, ty: TySlot) -> Self {
-        Self { ty, kind }
+        Self {
+            ty,
+            span: None,
+            kind,
+        }
     }
 
     pub fn ty(&self) -> Option<&Ty> {
@@ -106,6 +117,15 @@ impl Expr {
 
     pub fn set_ty(&mut self, ty: Ty) {
         self.ty = Some(ty);
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
     }
 
     pub fn kind(&self) -> &ExprKind {
@@ -121,7 +141,11 @@ impl Expr {
     }
 
     pub fn from_parts(ty: TySlot, kind: ExprKind) -> Self {
-        Self { ty, kind }
+        Self {
+            ty,
+            span: None,
+            kind,
+        }
     }
 
     pub fn with_ty_slot(mut self, ty: TySlot) -> Self {

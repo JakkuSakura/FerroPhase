@@ -32,7 +32,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, info_span};
+use tracing::{debug, info, info_span};
 
 // Begin internal submodules extracted for clarity
 mod artifacts;
@@ -543,13 +543,30 @@ impl Pipeline {
         base_path: &Path,
         input_path: Option<&Path>,
     ) -> Result<PipelineOutput, CliError> {
+        let started_at = std::time::Instant::now();
+        info!("pipeline: starting compilation target {:?}", target);
         if stage_enabled(options, STAGE_INTRINSIC_NORMALIZE) {
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_INTRINSIC_NORMALIZE);
             self.stage_normalize_intrinsics(&mut ast, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_INTRINSIC_NORMALIZE,
+                stage_started.elapsed()
+            );
         }
 
         let did_const_eval = stage_enabled(options, STAGE_CONST_EVAL);
         let outcome = if did_const_eval {
-            self.stage_const_eval(&mut ast, options)?
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_CONST_EVAL);
+            let outcome = self.stage_const_eval(&mut ast, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_CONST_EVAL,
+                stage_started.elapsed()
+            );
+            outcome
         } else {
             ConstEvalOutcome::default()
         };
@@ -560,11 +577,25 @@ impl Pipeline {
             BackendKind::Llvm | BackendKind::Binary | BackendKind::Wasm
         ) && !did_const_eval
         {
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_RUNTIME_MATERIALIZE);
             self.inject_runtime_std(&mut ast, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_RUNTIME_MATERIALIZE,
+                stage_started.elapsed()
+            );
         }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_TYPE_ENRICH);
             self.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_TYPE_ENRICH,
+                stage_started.elapsed()
+            );
         }
 
         if options.save_intermediates {
@@ -577,26 +608,66 @@ impl Pipeline {
         }
 
         if stage_enabled(options, STAGE_RUNTIME_MATERIALIZE) {
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_RUNTIME_MATERIALIZE);
             self.stage_materialize_runtime_intrinsics(&mut ast, target, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_RUNTIME_MATERIALIZE,
+                stage_started.elapsed()
+            );
         }
 
         if stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_TYPE_POST_MATERIALIZE);
             self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_TYPE_POST_MATERIALIZE,
+                stage_started.elapsed()
+            );
         }
 
         let output = if matches!(target, BackendKind::Rust) {
             let span = info_span!("pipeline.codegen", target = "rust");
             let _enter = span.enter();
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start codegen-rust");
             let code = CodeGenerator::generate_rust_code(&ast)?;
+            info!("pipeline: finished codegen-rust in {:.2?}", stage_started.elapsed());
             PipelineOutput::Code(code)
         } else {
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_AST_TO_HIR);
             let hir_program = self.stage_hir_generation(&ast, options, input_path, base_path)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_AST_TO_HIR,
+                stage_started.elapsed()
+            );
 
             match target {
                 BackendKind::Llvm => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_HIR_TO_MIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_MIR_TO_LIR);
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_MIR_TO_LIR,
+                        stage_started.elapsed()
+                    );
 
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start emit-llvm");
                     let llvm = self.generate_llvm_artifacts(
                         &lir.lir_program,
                         base_path,
@@ -604,11 +675,26 @@ impl Pipeline {
                         false,
                         options,
                     )?;
+                    info!("pipeline: finished emit-llvm in {:.2?}", stage_started.elapsed());
                     PipelineOutput::Code(llvm.ir_text)
                 }
                 BackendKind::Binary => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_HIR_TO_MIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_MIR_TO_LIR);
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_MIR_TO_LIR,
+                        stage_started.elapsed()
+                    );
 
                     let backend = options
                         .backend
@@ -617,10 +703,19 @@ impl Pipeline {
                         .to_lowercase();
 
                     if backend == "native" || backend == "fp-native" {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_LINK_BINARY);
                         let binary_path =
                             self.stage_link_binary_native(&lir.lir_program, base_path, options)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_LINK_BINARY,
+                            stage_started.elapsed()
+                        );
                         PipelineOutput::Binary(binary_path)
                     } else {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start emit-llvm");
                         let llvm = self.generate_llvm_artifacts(
                             &lir.lir_program,
                             base_path,
@@ -628,16 +723,34 @@ impl Pipeline {
                             true,
                             options,
                         )?;
+                        info!("pipeline: finished emit-llvm in {:.2?}", stage_started.elapsed());
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_LINK_BINARY);
                         let binary_path =
                             self.stage_link_binary(&llvm.ir_path, base_path, options)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_LINK_BINARY,
+                            stage_started.elapsed()
+                        );
                         PipelineOutput::Binary(binary_path)
                     }
                 }
                 BackendKind::Bytecode | BackendKind::TextBytecode => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_HIR_TO_MIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start bytecode-lower");
                     let bytecode = fp_bytecode::lower_program(&mir.mir_program).map_err(|err| {
                         CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err))
                     })?;
+                    info!("pipeline: finished bytecode-lower in {:.2?}", stage_started.elapsed());
                     let output_path = base_path.to_path_buf();
                     if let Some(parent) = output_path.parent() {
                         fs::create_dir_all(parent)?;
@@ -666,15 +779,41 @@ impl Pipeline {
                     PipelineOutput::Binary(output_path)
                 }
                 BackendKind::Wasm => {
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_HIR_TO_MIR);
                     let mir = self.stage_hir_to_mir(&hir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_HIR_TO_MIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_MIR_TO_LIR);
                     let lir = self.stage_mir_to_lir(&mir.mir_program, options, base_path)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_MIR_TO_LIR,
+                        stage_started.elapsed()
+                    );
+                    let stage_started = std::time::Instant::now();
+                    info!("pipeline: start {}", STAGE_EMIT_WASM);
                     let wasm_path = self.stage_emit_wasm(&lir.lir_program, base_path, options)?;
+                    info!(
+                        "pipeline: finished {} in {:.2?}",
+                        STAGE_EMIT_WASM,
+                        stage_started.elapsed()
+                    );
                     PipelineOutput::Binary(wasm_path)
                 }
                 BackendKind::Rust | BackendKind::Interpret => unreachable!(),
             }
         };
 
+        info!(
+            "pipeline: finished compilation target {:?} in {:.2?}",
+            target,
+            started_at.elapsed()
+        );
         Ok(output)
     }
 
@@ -1013,6 +1152,7 @@ impl<'a> FileModuleLoader<'a> {
                     };
                     resolved.push(Item {
                         ty: item.ty.clone(),
+                        span: item.span,
                         kind: ItemKind::Module(resolved_module),
                     });
                 }

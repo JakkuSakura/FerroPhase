@@ -39,7 +39,8 @@ impl<'a> ExprParser<'a> {
     }
 
     pub fn parse_expr(&self, expr: syn::Expr) -> Result<Expr> {
-        let expr = match expr {
+        let span = self.parser.span_for_proc_macro(expr.span());
+        let mut expr = match expr {
             syn::Expr::Binary(b) => self.parse_expr_binary(b)?,
             syn::Expr::Unary(u) => self.parse_unary(u)?.into(),
             syn::Expr::Block(b) if b.label.is_none() => Expr::block(self.parse_block(b.block)?),
@@ -80,6 +81,9 @@ impl<'a> ExprParser<'a> {
                 Expr::any(RawExpr { raw })
             }
         };
+        if let Some(span) = span {
+            expr = expr.with_span(span);
+        }
         Ok(expr)
     }
 

@@ -2,6 +2,7 @@ use std::fmt::Formatter;
 use std::hash::Hash;
 
 use crate::ast::{TySlot, *};
+use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 
@@ -49,6 +50,8 @@ common_struct! {
     pub struct Item {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty: TySlot,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub span: Option<Span>,
         #[serde(flatten)]
         pub kind: ItemKind,
     }
@@ -71,11 +74,19 @@ impl std::fmt::Display for Item {
 
 impl Item {
     pub fn new(kind: ItemKind) -> Self {
-        Self { ty: None, kind }
+        Self {
+            ty: None,
+            span: None,
+            kind,
+        }
     }
 
     pub fn with_ty(kind: ItemKind, ty: TySlot) -> Self {
-        Self { ty, kind }
+        Self {
+            ty,
+            span: None,
+            kind,
+        }
     }
 
     pub fn ty(&self) -> Option<&Ty> {
@@ -88,6 +99,15 @@ impl Item {
 
     pub fn set_ty(&mut self, ty: Ty) {
         self.ty = Some(ty);
+    }
+
+    pub fn span(&self) -> Option<Span> {
+        self.span
+    }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
     }
 
     pub fn kind(&self) -> &ItemKind {

@@ -28,7 +28,7 @@ impl PipelineStage for TypingStage {
             Ok(outcome) => {
                 let mut saw_error = false;
                 for message in outcome.diagnostics {
-                    let diagnostic = match message.level {
+                    let mut diagnostic = match message.level {
                         TypingDiagnosticLevel::Warning => Diagnostic::warning(message.message)
                             .with_source_context(context.stage_label),
                         TypingDiagnosticLevel::Error => {
@@ -37,6 +37,9 @@ impl PipelineStage for TypingStage {
                                 .with_source_context(context.stage_label)
                         }
                     };
+                    if let Some(span) = message.span {
+                        diagnostic = diagnostic.with_span(span);
+                    }
                     diagnostics.push(diagnostic);
                 }
 
@@ -49,10 +52,14 @@ impl PipelineStage for TypingStage {
                 Ok(ast)
             }
             Err(err) => {
-                diagnostics.push(
-                    Diagnostic::error(format!("AST typing failed: {}", err))
+                let diagnostic = match err {
+                    fp_core::error::Error::Diagnostic(diag) => {
+                        diag.with_source_context(context.stage_label)
+                    }
+                    err => Diagnostic::error(format!("AST typing failed: {}", err))
                         .with_source_context(context.stage_label),
-                );
+                };
+                diagnostics.push(diagnostic);
                 Err(PipelineError::new(context.stage_label, "AST typing failed"))
             }
         }
