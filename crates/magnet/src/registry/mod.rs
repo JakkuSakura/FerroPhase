@@ -3,13 +3,16 @@ use futures_util::StreamExt;
 use http;
 use eyre::Result;
 use flate2::read::GzDecoder;
+use parking_lot::RwLock;
 use reqwest::Client;
 use semver::{Version, VersionReq};
 use sha2::{Digest, Sha256};
+use std::collections::HashMap;
 use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 
 #[derive(Debug, Clone)]
@@ -30,8 +33,9 @@ pub struct ResolvedCrate {
 pub struct RegistryClient {
     options: RegistryOptions,
     cache_dir: PathBuf,
-    index: std::sync::Arc<SparseIndex>,
-    agent: std::sync::Arc<ureq::Agent>,
+    index: Arc<SparseIndex>,
+    agent: Arc<ureq::Agent>,
+    crate_cache: Arc<RwLock<HashMap<String, Arc<crates_index::Crate>>>>,
     http_client: Client,
     _cargo_home: CargoHomeGuard,
 }
@@ -45,8 +49,9 @@ impl RegistryClient {
         Ok(Self {
             options,
             cache_dir,
-            index: std::sync::Arc::new(index),
-            agent: std::sync::Arc::new(ureq::Agent::new()),
+            index: Arc::new(index),
+            agent: Arc::new(ureq::Agent::new()),
+            crate_cache: Arc::new(RwLock::new(HashMap::new())),
             http_client: Client::new(),
             _cargo_home: cargo_home,
         })
@@ -61,6 +66,7 @@ impl RegistryClient {
             &self.options,
             &self.index,
             &self.agent,
+            &self.crate_cache,
             name,
             &req,
         )?;
@@ -113,10 +119,18 @@ impl RegistryClient {
         let options = self.options.clone();
         let name_owned = name.to_string();
         let req_owned = req.clone();
-        let index = std::sync::Arc::clone(&self.index);
-        let agent = std::sync::Arc::clone(&self.agent);
+        let index = Arc::clone(&self.index);
+        let agent = Arc::clone(&self.agent);
+        let crate_cache = Arc::clone(&self.crate_cache);
         let (version, checksum) = tokio::task::spawn_blocking(move || {
-            resolve_version_and_checksum(&options, &index, &agent, &name_owned, &req_owned)
+            resolve_version_and_checksum(
+                &options,
+                &index,
+                &agent,
+                &crate_cache,
+                &name_owned,
+                &req_owned,
+            )
         })
         .await
         .map_err(|err| eyre::eyre!("failed to resolve crate {name}: {err}"))??;
@@ -284,9 +298,14 @@ fn resolve_version_and_checksum(
     options: &RegistryOptions,
     index: &SparseIndex,
     agent: &ureq::Agent,
+    crate_cache: &Arc<RwLock<HashMap<String, Arc<crates_index::Crate>>>>,
     name: &str,
     req: &VersionReq,
 ) -> Result<(String, Option<String>)> {
+    if let Some(krate) = crate_cache.read().get(name).cloned() {
+        return select_version(krate.as_ref(), req);
+    }
+
     let krate = if options.offline {
         index
             .crate_from_cache(name)
@@ -294,7 +313,11 @@ fn resolve_version_and_checksum(
     } else {
         fetch_sparse_crate(agent, index, name)?
     };
-    select_version(&krate, req)
+    let krate = Arc::new(krate);
+    crate_cache
+        .write()
+        .insert(name.to_string(), Arc::clone(&krate));
+    select_version(krate.as_ref(), req)
 }
 
 fn fetch_sparse_crate(
