@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinSet;
-use tracing::info;
+use tracing::{info, warn};
 
 pub struct CargoResolver {
     root: PathBuf,
@@ -196,6 +196,27 @@ fn split_dependencies(
             } else {
                 base.join(path)
             };
+            if !path.exists() {
+                warn!(
+                    "graph: skipping path dependency {}, path does not exist",
+                    path.display()
+                );
+                continue;
+            }
+            let manifest_path = if path.join("Magnet.toml").exists() {
+                Some(path.join("Magnet.toml"))
+            } else if path.join("Cargo.toml").exists() {
+                Some(path.join("Cargo.toml"))
+            } else {
+                None
+            };
+            if manifest_path.is_none() {
+                warn!(
+                    "graph: skipping path dependency {}, missing Cargo.toml or Magnet.toml",
+                    path.display()
+                );
+                continue;
+            }
             info!("graph: resolving path dependency {}", path.display());
             paths.push(path);
             continue;
