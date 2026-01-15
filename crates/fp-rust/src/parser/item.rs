@@ -1,6 +1,7 @@
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::Result;
 use itertools::Itertools;
+use syn::spanned::Spanned;
 use syn::{Fields, FnArg, ReturnType};
 
 use fp_core::ast::Locator;
@@ -353,7 +354,10 @@ impl RustParser {
                     syn::MacroDelimiter::Bracket(_) => MacroDelimiter::Bracket,
                 };
                 let tokens = m.mac.tokens.to_string();
-                let invocation = MacroInvocation::new(path, delimiter, tokens);
+                let mut invocation = MacroInvocation::new(path, delimiter, tokens);
+                if let Some(span) = self.span_for_proc_macro(m.mac.span()) {
+                    invocation = invocation.with_span(span);
+                }
                 ItemKind::Macro(ItemMacro::new(invocation)).into()
             }
             syn::Item::Struct(s) => {

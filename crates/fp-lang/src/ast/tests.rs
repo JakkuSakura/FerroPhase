@@ -149,7 +149,10 @@ fn parse_expr_ast_handles_macro_invocation() {
     parser.clear_diagnostics();
     let expr = parser.parse_expr_ast("foo!{a + b}").unwrap();
     match expr.kind() {
-        ExprKind::Macro(m) => assert_eq!(m.invocation.delimiter, MacroDelimiter::Brace),
+        ExprKind::Macro(m) => {
+            assert_eq!(m.invocation.delimiter, MacroDelimiter::Brace);
+            assert!(m.invocation.span.is_some());
+        }
         other => panic!("expected macro invocation, got {:?}", other),
     }
 }

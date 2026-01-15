@@ -13,6 +13,7 @@ use quote::{quote, ToTokens};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::parse_quote;
+use syn::spanned::Spanned;
 use syn::punctuated::Punctuated;
 use syn::LitStr;
 use syn::Token;
@@ -676,11 +677,11 @@ impl<'a> ExprParser<'a> {
             syn::MacroDelimiter::Brace(_) => MacroDelimiter::Brace,
             syn::MacroDelimiter::Bracket(_) => MacroDelimiter::Bracket,
         };
-        Ok(MacroInvocation::new(
-            path,
-            delimiter,
-            mac.tokens.to_string(),
-        ))
+        let mut invocation = MacroInvocation::new(path, delimiter, mac.tokens.to_string());
+        if let Some(span) = self.parser.span_for_proc_macro(mac.span()) {
+            invocation = invocation.with_span(span);
+        }
+        Ok(invocation)
     }
 
     pub(crate) fn lower_expr_macro(&self, m: syn::ExprMacro) -> Result<Expr> {

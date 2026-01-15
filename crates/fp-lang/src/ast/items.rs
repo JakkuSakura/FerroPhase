@@ -741,7 +741,8 @@ fn lower_item_macro(node: &SyntaxNode) -> Result<ItemMacro, LowerItemsError> {
         })
         .unwrap_or(MacroDelimiter::Brace);
     Ok(ItemMacro {
-        invocation: MacroInvocation::new(Path::from_ident(name), delimiter, String::new()),
+        invocation: MacroInvocation::new(Path::from_ident(name), delimiter, String::new())
+            .with_span(node.span),
     })
 }
 

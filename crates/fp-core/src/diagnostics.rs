@@ -227,6 +227,11 @@ impl DiagnosticManager {
             return;
         }
 
+        let renderer = GLOBAL_DIAGNOSTIC_RENDERER
+            .lock()
+            .ok()
+            .and_then(|guard| *guard);
+
         for diagnostic in diagnostics {
             // Skip info diagnostics unless verbose mode is enabled
             if matches!(diagnostic.level, DiagnosticLevel::Info) && !options.verbose_info {
@@ -235,15 +240,21 @@ impl DiagnosticManager {
 
             let context = diagnostic.source_context.as_deref().or(fallback_context);
 
-            let message = &diagnostic.message;
-
             // Format message with suggestions if present
-            let mut full_message = if !diagnostic.suggestions.is_empty() {
+            let mut full_message = diagnostic.message.to_string();
+            if !diagnostic.suggestions.is_empty() {
                 let suggestions = diagnostic.suggestions.join("; ");
-                format!("{} (hint: {})", message, suggestions)
-            } else {
-                message.to_string()
-            };
+                full_message = format!("{} (hint: {})", full_message, suggestions);
+            }
+
+            if let Some(render) = renderer {
+                let mut render_diag = diagnostic.as_string_diagnostic();
+                render_diag.message = full_message.clone();
+                render_diag.suggestions.clear();
+                if render(&render_diag) {
+                    continue;
+                }
+            }
 
             if let Some(span) = diagnostic.span {
                 full_message.push_str(&format!(" [span {}:{}-{}]", span.file, span.lo, span.hi));
@@ -251,6 +262,17 @@ impl DiagnosticManager {
 
             emit_tracing(&diagnostic.level, context, &full_message);
         }
+    }
+}
+
+type DiagnosticRenderer = fn(&Diagnostic<String>) -> bool;
+
+static GLOBAL_DIAGNOSTIC_RENDERER: Lazy<Mutex<Option<DiagnosticRenderer>>> =
+    Lazy::new(|| Mutex::new(None));
+
+pub fn set_diagnostic_renderer(renderer: DiagnosticRenderer) {
+    if let Ok(mut guard) = GLOBAL_DIAGNOSTIC_RENDERER.lock() {
+        *guard = Some(renderer);
     }
 }
 

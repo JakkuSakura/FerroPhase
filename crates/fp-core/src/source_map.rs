@@ -51,6 +51,18 @@ impl SourceFile {
             text,
         })
     }
+
+    pub fn offset_for_line_col(&self, line: usize, col: usize) -> Option<u32> {
+        if line == 0 || col == 0 {
+            return None;
+        }
+        let start = *self.line_starts.get(line - 1)?;
+        let offset = start.saturating_add(col.saturating_sub(1));
+        if offset > self.source.len() {
+            return None;
+        }
+        Some(offset as u32)
+    }
 }
 
 #[derive(Clone, Debug)]

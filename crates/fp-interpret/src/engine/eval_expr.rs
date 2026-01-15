@@ -343,7 +343,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Invoke(invoke) => self.eval_invoke_runtime_flow(invoke),
             ExprKind::Macro(macro_expr) => {
-                self.emit_error(format!(
+                self.emit_error_at(macro_expr.invocation.span, format!(
                     "macro `{}` should have been lowered before runtime evaluation",
                     macro_expr.invocation.path
                 ));
@@ -743,7 +743,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 result
             }
             ExprKind::Macro(macro_expr) => {
-                self.emit_error(format!(
+                self.emit_error_at(macro_expr.invocation.span, format!(
                     "macro `{}` should have been lowered before const evaluation",
                     macro_expr.invocation.path
                 ));

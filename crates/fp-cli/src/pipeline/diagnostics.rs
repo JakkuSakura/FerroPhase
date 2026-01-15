@@ -1,5 +1,7 @@
 use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticManager};
 
+use crate::diagnostics::render_core_diagnostic_with_source;
+
 use super::PipelineOptions;
 
 pub(crate) fn display_options(options: &PipelineOptions) -> DiagnosticDisplayOptions {
@@ -15,5 +17,13 @@ pub(crate) fn emit(
         return;
     }
     let opts = display_options(options);
-    DiagnosticManager::emit(diagnostics, stage_context, &opts);
+    let mut fallback = Vec::new();
+    for diag in diagnostics {
+        if !render_core_diagnostic_with_source(diag) {
+            fallback.push(diag.clone());
+        }
+    }
+    if !fallback.is_empty() {
+        DiagnosticManager::emit(&fallback, stage_context, &opts);
+    }
 }

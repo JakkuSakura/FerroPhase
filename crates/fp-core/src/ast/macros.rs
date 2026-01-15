@@ -1,4 +1,5 @@
 use crate::ast::Path;
+use crate::span::Span;
 use crate::common_enum;
 use crate::common_struct;
 
@@ -18,6 +19,8 @@ common_struct! {
         pub delimiter: MacroDelimiter,
         /// Raw token stream inside the macro invocation, stringified for portability.
         pub tokens: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pub span: Option<Span>,
     }
 }
 
@@ -27,7 +30,13 @@ impl MacroInvocation {
             path,
             delimiter,
             tokens: tokens.into(),
+            span: None,
         }
+    }
+
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
     }
 }
 

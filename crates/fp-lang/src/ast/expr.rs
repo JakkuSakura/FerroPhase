@@ -868,9 +868,9 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall))?;
 
             Ok(
-                ExprKind::Macro(fp_core::ast::ExprMacro::new(MacroInvocation::new(
-                    path, delimiter, tokens,
-                )))
+                ExprKind::Macro(fp_core::ast::ExprMacro::new(
+                    MacroInvocation::new(path, delimiter, tokens).with_span(node.span),
+                ))
                 .into(),
             )
         }
@@ -1718,9 +1718,9 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     let path = Path::new(segments);
-    let expr: Expr = ExprKind::Macro(fp_core::ast::ExprMacro::new(MacroInvocation::new(
-        path, delimiter, tokens,
-    )))
+    let expr: Expr = ExprKind::Macro(fp_core::ast::ExprMacro::new(
+        MacroInvocation::new(path, delimiter, tokens).with_span(node.span),
+    ))
     .into();
     Ok(Ty::expr(expr))
 }

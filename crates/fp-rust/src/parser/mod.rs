@@ -15,12 +15,16 @@ use itertools::Itertools;
 use eyre::{eyre, Context};
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
+use fp_core::span::{FileId, Span};
+use fp_core::source_map;
 use quote::ToTokens;
 use std::fs;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::sync::Mutex;
 use syn::parse_str;
+use syn::spanned::Spanned;
 
 pub fn parse_ident(i: syn::Ident) -> Ident {
     Ident::new(i.to_string())
@@ -78,6 +82,7 @@ const FRONTEND_CONTEXT: &str = "pipeline.frontend";
 pub struct RustParser {
     diagnostics: Arc<DiagnosticManager>,
     lossy_mode: bool,
+    current_file_id: Arc<Mutex<Option<FileId>>>,
 }
 
 impl RustParser {
@@ -90,6 +95,7 @@ impl RustParser {
         Self {
             diagnostics: Arc::new(DiagnosticManager::new()),
             lossy_mode,
+            current_file_id: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -99,6 +105,24 @@ impl RustParser {
 
     pub fn clear_diagnostics(&self) {
         self.diagnostics.clear();
+    }
+
+    fn set_current_file(&self, path: &FsPath, source: &str) -> FileId {
+        let file_id = source_map::register_source(path, source);
+        if let Ok(mut guard) = self.current_file_id.lock() {
+            *guard = Some(file_id);
+        }
+        file_id
+    }
+
+    pub(crate) fn span_for_proc_macro(&self, span: proc_macro2::Span) -> Option<Span> {
+        let file_id = self.current_file_id.lock().ok().and_then(|guard| *guard)?;
+        let file = source_map::source_map().file(file_id)?;
+        let start = span.start();
+        let end = span.end();
+        let start_offset = file.offset_for_line_col(start.line, start.column + 1)?;
+        let end_offset = file.offset_for_line_col(end.line, end.column + 1)?;
+        Some(Span::new(file_id, start_offset, end_offset))
     }
 
     fn record_diagnostic(&self, level: DiagnosticLevel, message: impl Into<String>) -> Diagnostic {
@@ -132,7 +156,8 @@ impl RustParser {
 
         if let Some(crate_root) = find_crate_root(path.as_path()) {
             match self.expand_with_cargo(crate_root.as_path(), path.as_path()) {
-                Ok(expanded_file) => {
+                Ok((expanded_source, expanded_file)) => {
+                    self.set_current_file(path.as_path(), &expanded_source);
                     return match self.parse_file_content(path.clone(), expanded_file) {
                         Ok(file) => Ok(file),
                         Err(e) => self.error(
@@ -159,6 +184,7 @@ impl RustParser {
 
         let source = fs::read_to_string(&path)
             .with_context(|| format!("Could not read file: {}", path.display()))?;
+        self.set_current_file(path.as_path(), &source);
         match syn::parse_file(&source) {
             Ok(syn_file) => match self.parse_file_content(path.clone(), syn_file) {
                 Ok(file) => Ok(file),
@@ -206,15 +232,22 @@ impl RustParser {
                     // Build macro invocation directly to avoid calling the private helper.
                     // Rebuild MacroInvocation inline
                     match crate::parser::parse_path(raw_mac.mac.path.clone()) {
-                        Ok(path) => Ok(Expr::macro_invocation(MacroInvocation::new(
-                            path,
-                            match &raw_mac.mac.delimiter {
+                        Ok(path) => {
+                            let delimiter = match &raw_mac.mac.delimiter {
                                 syn::MacroDelimiter::Paren(_) => MacroDelimiter::Parenthesis,
                                 syn::MacroDelimiter::Brace(_) => MacroDelimiter::Brace,
                                 syn::MacroDelimiter::Bracket(_) => MacroDelimiter::Bracket,
-                            },
-                            raw_mac.mac.tokens.to_string(),
-                        ))),
+                            };
+                            let mut invocation = MacroInvocation::new(
+                                path,
+                                delimiter,
+                                raw_mac.mac.tokens.to_string(),
+                            );
+                            if let Some(span) = self.span_for_proc_macro(raw_mac.mac.span()) {
+                                invocation = invocation.with_span(span);
+                            }
+                            Ok(Expr::macro_invocation(invocation))
+                        }
                         Err(err) => self.error(
                             format!(
                                 "failed to record macro invocation `{}`: {}",
@@ -325,6 +358,7 @@ impl RustParser {
 
     pub fn parse_file(&mut self, source: &str, path: &std::path::Path) -> Result<File> {
         self.clear_diagnostics();
+        self.set_current_file(path, source);
         let path_buf = path.to_path_buf();
         let syn_file = match syn::parse_file(source) {
             Ok(file) => file,
@@ -592,7 +626,7 @@ impl RustParser {
         &self,
         crate_root: &FsPath,
         source_path: &FsPath,
-    ) -> eyre::Result<syn::File> {
+    ) -> eyre::Result<(String, syn::File)> {
         let manifest = crate_root.join("Cargo.toml");
         let package_name = read_package_name(manifest.as_path())?.ok_or_else(|| {
             eyre!(
@@ -604,7 +638,7 @@ impl RustParser {
         let target = determine_expand_target(crate_root, source_path, &package_name);
         let expanded = run_cargo_expand(crate_root, &target)?;
         let syn_file = syn::parse_file(&expanded)?;
-        Ok(syn_file)
+        Ok((expanded, syn_file))
     }
 }
 

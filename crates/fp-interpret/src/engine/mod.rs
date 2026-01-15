@@ -18,6 +18,7 @@ use fp_core::ast::{
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
+use fp_core::span::Span;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
@@ -3765,14 +3766,21 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn emit_error(&mut self, message: impl Into<String>) {
-        let diagnostic =
-            Diagnostic::error(message.into()).with_source_context(self.diagnostic_context);
-        self.push_diagnostic(diagnostic);
+        self.emit_error_at(None, message);
     }
 
     fn emit_warning(&mut self, message: impl Into<String>) {
         let diagnostic =
             Diagnostic::warning(message.into()).with_source_context(self.diagnostic_context);
+        self.push_diagnostic(diagnostic);
+    }
+
+    fn emit_error_at(&mut self, span: Option<Span>, message: impl Into<String>) {
+        let mut diagnostic =
+            Diagnostic::error(message.into()).with_source_context(self.diagnostic_context);
+        if let Some(span) = span {
+            diagnostic = diagnostic.with_span(span);
+        }
         self.push_diagnostic(diagnostic);
     }
 

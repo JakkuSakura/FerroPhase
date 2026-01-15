@@ -10,7 +10,7 @@ fp-core = { path = "../fp-core" }
 syn-serde = { version = "0.2", features = ["json"] }
 syn = { version = "2", features = ["full", "extra-traits"] }
 quote = "1"
-proc-macro2 = "1"
+proc-macro2 = { version = "1", features = ["span-locations"] }
 serde = "1"
 pretty_assertions = "1.4.0"
 eyre = "0.6.12"

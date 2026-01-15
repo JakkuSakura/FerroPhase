@@ -20,6 +20,7 @@ pub struct CargoResolver {
     lock_index: Option<Arc<LockIndex>>,
     target: TargetContext,
     workspace: Option<WorkspaceModel>,
+    workspace_members: HashSet<PathBuf>,
     roots: Vec<PathBuf>,
     seen: HashSet<String>,
     packages: Vec<PackageNode>,
@@ -41,6 +42,7 @@ impl CargoResolver {
             lock_index: lock_index.map(Arc::new),
             target,
             workspace: None,
+            workspace_members: HashSet::new(),
             roots: Vec::new(),
             seen: HashSet::new(),
             packages: Vec::new(),
@@ -57,6 +59,11 @@ impl CargoResolver {
                 "graph: workspace members detected: {}",
                 members.len()
             );
+            let member_set = members
+                .iter()
+                .map(|path| canonicalize_path(path))
+                .collect::<HashSet<_>>();
+            self.workspace_members = member_set;
             self.workspace = Some(workspace);
             self.roots.append(&mut members);
         }
@@ -155,7 +162,10 @@ impl CargoResolver {
             return Ok(None);
         }
 
-        let deps = collect_dependencies(&package, &self.options, &self.target)?;
+        let is_workspace_member = self
+            .workspace_members
+            .contains(&canonicalize_path(dir));
+        let deps = collect_dependencies(&package, &self.options, &self.target, is_workspace_member)?;
         let resolved = split_dependencies(&package, deps, &self.workspace)?;
         Ok(Some((package, resolved)))
     }
@@ -291,7 +301,7 @@ fn package_to_node_with_resolved(
         if path.exists() { Some(path) } else { None }
     };
 
-    let deps = collect_dependencies(&package, options, target)?;
+    let deps = collect_dependencies(&package, options, target, false)?;
     let checksum = registry_roots
         .get(&package.root_path)
         .and_then(|resolved| resolved.checksum.clone());
@@ -324,25 +334,26 @@ fn collect_dependencies(
     package: &PackageModel,
     options: &PackageGraphOptions,
     target: &TargetContext,
+    is_workspace_member: bool,
 ) -> Result<HashMap<String, DependencyModel>> {
     let mut dep_map = HashMap::new();
     if options.include_dependencies {
         for (name, dep) in package.dependencies.clone() {
-            if dependency_active(&dep, target)? {
+            if dependency_active(&dep, target)? && !dep.optional() {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
-    if options.include_dev_dependencies {
+    if options.include_dev_dependencies && is_workspace_member {
         for (name, dep) in package.dev_dependencies.clone() {
-            if dependency_active(&dep, target)? {
+            if dependency_active(&dep, target)? && !dep.optional() {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
-    if options.include_build_dependencies {
+    if options.include_build_dependencies && is_workspace_member {
         for (name, dep) in package.build_dependencies.clone() {
-            if dependency_active(&dep, target)? {
+            if dependency_active(&dep, target)? && !dep.optional() {
                 dep_map.entry(name).or_insert(dep);
             }
         }
@@ -354,17 +365,23 @@ fn collect_dependencies(
             }
             if options.include_dependencies {
                 for (name, dep) in targeted.dependencies.clone() {
-                    dep_map.insert(name, dep);
+                    if !dep.optional() {
+                        dep_map.insert(name, dep);
+                    }
                 }
             }
-            if options.include_dev_dependencies {
+            if options.include_dev_dependencies && is_workspace_member {
                 for (name, dep) in targeted.dev_dependencies.clone() {
-                    dep_map.insert(name, dep);
+                    if !dep.optional() {
+                        dep_map.insert(name, dep);
+                    }
                 }
             }
-            if options.include_build_dependencies {
+            if options.include_build_dependencies && is_workspace_member {
                 for (name, dep) in targeted.build_dependencies.clone() {
-                    dep_map.insert(name, dep);
+                    if !dep.optional() {
+                        dep_map.insert(name, dep);
+                    }
                 }
             }
         }
@@ -377,6 +394,10 @@ fn dependency_active(dep: &DependencyModel, target: &TargetContext) -> Result<bo
         Some(spec) => target.is_active(spec),
         None => Ok(true),
     }
+}
+
+fn canonicalize_path(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
 }
 
 fn apply_workspace_dependencies(

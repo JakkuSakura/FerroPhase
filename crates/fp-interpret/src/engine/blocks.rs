@@ -241,7 +241,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Macro(macro_expr) => {
-                self.emit_error(format!(
+                self.emit_error_at(macro_expr.invocation.span, format!(
                     "macro `{}` should have been lowered before const evaluation",
                     macro_expr.invocation.path
                 ));

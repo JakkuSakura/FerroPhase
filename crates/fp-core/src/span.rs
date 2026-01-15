@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 pub type FileId = u64;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Span {
     pub file: FileId,
     pub lo: u32,

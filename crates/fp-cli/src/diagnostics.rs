@@ -31,6 +31,8 @@ pub fn setup_error_reporting() -> Result<()> {
     }))
     .map_err(|e| crate::CliError::Config(format!("Failed to setup error reporting: {}", e)))?;
 
+    fp_core::diagnostics::set_diagnostic_renderer(render_core_diagnostic_with_source);
+
     Ok(())
 }
 
@@ -141,6 +143,10 @@ pub fn render_cli_error(error: &CliError) -> bool {
         CliError::Core(core) => render_core_error(core),
         _ => false,
     }
+}
+
+pub fn render_core_diagnostic_with_source(diag: &CoreDiagnostic) -> bool {
+    render_core_diagnostic(diag)
 }
 
 fn render_core_error(error: &CoreError) -> bool {
@@ -281,6 +287,25 @@ error: failed to parse items (file mode): parse error: expected symbol
   |
  1 | macro_rules! opt_bail {
   |              ^^^";
+        assert_eq!(rendered, expected);
+    }
+
+    #[test]
+    fn rustc_plain_format_handles_single_char_span() {
+        let line_span = LineSpan {
+            line: 42,
+            col_start: 8,
+            col_end: 9,
+            text: "let answer = 42;".to_string(),
+        };
+        let lines = format_rustc_plain("invalid token", "/tmp/sample.fp", 42, 8, &line_span);
+        let rendered = lines.join("\n");
+        let expected = "\
+error: invalid token
+  --> /tmp/sample.fp:42:8
+   |
+ 42 | let answer = 42;
+   |        ^";
         assert_eq!(rendered, expected);
     }
 
