@@ -29,9 +29,11 @@ pub struct CargoResolver {
     registry_roots: HashMap<PathBuf, ResolvedCrate>,
     git_roots: HashMap<PathBuf, GitResolved>,
     git_by_name: HashMap<String, GitResolved>,
-    registry_requirements: HashMap<String, Vec<VersionReq>>,
-    registry_selected: HashMap<String, ResolvedCrate>,
-    registry_dependents: HashMap<String, HashSet<PathBuf>>,
+    registry_requirements: HashMap<String, HashMap<CompatKey, Vec<VersionReq>>>,
+    registry_selected: HashMap<(String, CompatKey), ResolvedCrate>,
+    registry_dependents: HashMap<(String, CompatKey), HashSet<PathBuf>>,
+    registry_conflicts: HashSet<(String, CompatKey)>,
+    registry_requests: HashMap<(String, CompatKey), Vec<RegistryRequestInfo>>,
     feature_requests: HashMap<PathBuf, FeatureRequest>,
     feature_states: HashMap<PathBuf, FeatureState>,
     package_index: HashMap<PathBuf, usize>,
@@ -61,6 +63,8 @@ impl CargoResolver {
             registry_requirements: HashMap::new(),
             registry_selected: HashMap::new(),
             registry_dependents: HashMap::new(),
+            registry_conflicts: HashSet::new(),
+            registry_requests: HashMap::new(),
             feature_requests: HashMap::new(),
             feature_states: HashMap::new(),
             package_index: HashMap::new(),
@@ -233,7 +237,6 @@ impl CargoResolver {
         &mut self,
         dir: &Path,
     ) -> Result<Option<(PackageModel, PackageDeps, FeatureState)>> {
-        info!("graph: resolving package at {}", dir.display());
         let started_at = Instant::now();
         let mut package = match PackageModel::from_dir(dir) {
             Ok(package) => package,
@@ -265,6 +268,11 @@ impl CargoResolver {
             .cloned()
             .unwrap_or_default();
         let feature_state = resolve_feature_state(&package, &requested)?;
+        info!(
+            "graph: resolving package {} at {}",
+            format_package_log(&package, &self.options, &feature_state),
+            dir.display()
+        );
         let deps = collect_dependencies(
             &package,
             &self.options,
@@ -302,11 +310,24 @@ impl CargoResolver {
         let resolved_name = dep.package.as_deref().unwrap_or(&name).to_string();
         let req = VersionReq::parse(version)
             .map_err(|err| eyre::eyre!("invalid version requirement '{version}': {err}"))?;
+        let compat_key = compatibility_key(&req);
 
         self.registry_dependents
-            .entry(resolved_name.clone())
+            .entry((resolved_name.clone(), compat_key.clone()))
             .or_default()
             .insert(package_key.to_path_buf());
+        let request_info = RegistryRequestInfo {
+            dependent: package_key.to_path_buf(),
+            version_req: version.to_string(),
+            registry: dep.registry.clone(),
+            package: dep.package.clone(),
+            features: request.features.iter().cloned().collect(),
+            default_features: request.default,
+        };
+        self.registry_requests
+            .entry((resolved_name.clone(), compat_key.clone()))
+            .or_default()
+            .push(request_info);
 
         if let Some(lock_index) = self.lock_index.as_ref() {
             if let Some(locked) = lock_index.match_registry(&resolved_name, &req) {
@@ -322,7 +343,7 @@ impl CargoResolver {
                     )
                     .await?;
                 self.registry_selected
-                    .insert(resolved_name.clone(), resolved.clone());
+                    .insert((resolved_name.clone(), compat_key.clone()), resolved.clone());
                 return Ok(Some(ResolvedRegistryDependency {
                     name,
                     resolved,
@@ -331,20 +352,54 @@ impl CargoResolver {
             }
         }
 
+        if self
+            .registry_conflicts
+            .contains(&(resolved_name.clone(), compat_key.clone()))
+        {
+            let resolved = registry
+                .resolve_async(resolved_name.clone(), Some(version.to_string()))
+                .await?;
+            return Ok(Some(ResolvedRegistryDependency {
+                name,
+                resolved,
+                request,
+            }));
+        }
+
         let reqs = self
             .registry_requirements
             .entry(resolved_name.clone())
+            .or_default()
+            .entry(compat_key.clone())
             .or_default();
         if !reqs.iter().any(|existing| existing == &req) {
             reqs.push(req.clone());
         }
         let reqs_snapshot = reqs.clone();
-        let resolved = registry
+        let resolved = match registry
             .resolve_with_reqs_async(resolved_name.clone(), reqs_snapshot)
-            .await?;
+            .await
+        {
+            Ok(resolved) => resolved,
+            Err(err) => {
+                warn!(
+                    "graph: conflicting requirements for {}; falling back to per-request resolution: {}",
+                    resolved_name, err
+                );
+                self.log_registry_conflict(&resolved_name, &compat_key);
+                self.registry_conflicts
+                    .insert((resolved_name.clone(), compat_key.clone()));
+                registry
+                    .resolve_async(resolved_name.clone(), Some(version.to_string()))
+                    .await?
+            }
+        };
 
         let mut selection_changed = false;
-        if let Some(current) = self.registry_selected.get(&resolved_name) {
+        if let Some(current) = self
+            .registry_selected
+            .get(&(resolved_name.clone(), compat_key.clone()))
+        {
             if current.version != resolved.version {
                 selection_changed = true;
             }
@@ -352,9 +407,12 @@ impl CargoResolver {
             selection_changed = true;
         }
         self.registry_selected
-            .insert(resolved_name.clone(), resolved.clone());
+            .insert((resolved_name.clone(), compat_key.clone()), resolved.clone());
         if selection_changed {
-            if let Some(dependents) = self.registry_dependents.get(&resolved_name) {
+            if let Some(dependents) = self
+                .registry_dependents
+                .get(&(resolved_name.clone(), compat_key.clone()))
+            {
                 for dependent in dependents {
                     queue.push_back(dependent.clone());
                 }
@@ -432,6 +490,55 @@ impl CargoResolver {
         })
     }
 
+    fn log_registry_conflict(&self, crate_name: &str, compat_key: &CompatKey) {
+        let Some(requests) = self
+            .registry_requests
+            .get(&(crate_name.to_string(), compat_key.clone()))
+        else {
+            warn!(
+                "graph: registry conflict on {} with no request details",
+                crate_name
+            );
+            return;
+        };
+        let mut lines = Vec::new();
+        for request in requests {
+            let registry = request
+                .registry
+                .as_deref()
+                .unwrap_or("crates.io");
+            let package = request
+                .package
+                .as_deref()
+                .map(|name| format!(" (package={})", name))
+                .unwrap_or_default();
+            let mut features = request.features.clone();
+            features.sort();
+            let features = if features.is_empty() {
+                "features=[]".to_string()
+            } else {
+                format!("features=[{}]", features.join(", "))
+            };
+            let line = format!(
+                "- {}: {}{} registry={} default_features={} {}",
+                request.dependent.display(),
+                request.version_req,
+                package,
+                registry,
+                request.default_features,
+                features
+            );
+            lines.push(line);
+        }
+        lines.sort();
+        warn!(
+            "graph: registry conflict details for {} (compat={}):\n{}",
+            crate_name,
+            format_compat_key(compat_key),
+            lines.join("\n")
+        );
+    }
+
 }
 
 struct PackageDeps {
@@ -446,6 +553,23 @@ struct GitResolved {
     rev: String,
     root: PathBuf,
     source: String,
+}
+
+#[derive(Clone, Debug)]
+struct RegistryRequestInfo {
+    dependent: PathBuf,
+    version_req: String,
+    registry: Option<String>,
+    package: Option<String>,
+    features: Vec<String>,
+    default_features: bool,
+}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+struct CompatKey {
+    major: u64,
+    minor: Option<u64>,
+    patch: Option<u64>,
 }
 
 fn split_dependencies(
@@ -897,4 +1021,95 @@ fn run_git_capture(args: &[String]) -> Result<String> {
         return Err(eyre::eyre!("git {:?} failed with {}", args, output.status));
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn format_package_log(
+    package: &PackageModel,
+    options: &PackageGraphOptions,
+    feature_state: &FeatureState,
+) -> String {
+    let registry = package_registry_label(&package.root_path, options.cache_dir.clone());
+    let mut features = feature_state
+        .enabled_features
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
+    features.sort();
+    let features = if features.is_empty() {
+        "[]".to_string()
+    } else {
+        format!("[{}]", features.join(", "))
+    };
+    format!(
+        "{}@{} registry={} features={}",
+        package.name, package.version, registry, features
+    )
+}
+
+fn package_registry_label(root: &Path, cache_dir: Option<PathBuf>) -> String {
+    let cache_dir = match resolve_cache_dir(cache_dir) {
+        Ok(dir) => dir,
+        Err(_) => return "path".to_string(),
+    };
+    let registry_root = cache_dir.join("registry").join("crates");
+    if root.starts_with(&registry_root) {
+        return "crates.io".to_string();
+    }
+    let git_root = cache_dir.join("git");
+    if root.starts_with(&git_root) {
+        return "git".to_string();
+    }
+    "path".to_string()
+}
+
+fn compatibility_key(req: &VersionReq) -> CompatKey {
+    let mut major = 0u64;
+    let mut minor = None;
+    let mut patch = None;
+    for comparator in &req.comparators {
+        if matches!(
+            comparator.op,
+            semver::Op::Caret | semver::Op::Tilde | semver::Op::Exact
+        ) {
+            major = comparator.major;
+            minor = Some(comparator.minor.unwrap_or(0));
+            patch = comparator.patch;
+            break;
+        }
+    }
+    if minor.is_none() {
+        if let Some(first) = req.comparators.first() {
+            major = first.major;
+            minor = Some(first.minor.unwrap_or(0));
+            patch = first.patch;
+        }
+    }
+    if major == 0 {
+        match minor.unwrap_or(0) {
+            0 => CompatKey {
+                major,
+                minor,
+                patch,
+            },
+            _ => CompatKey {
+                major,
+                minor,
+                patch: None,
+            },
+        }
+    } else {
+        CompatKey {
+            major,
+            minor: None,
+            patch: None,
+        }
+    }
+}
+
+fn format_compat_key(key: &CompatKey) -> String {
+    match (key.major, key.minor, key.patch) {
+        (0, Some(0), Some(patch)) => format!("0.0.{patch}"),
+        (0, Some(minor), _) => format!("0.{minor}"),
+        (major, _, _) => format!("{major}"),
+    }
 }
