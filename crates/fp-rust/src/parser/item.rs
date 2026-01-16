@@ -62,8 +62,37 @@ impl RustParser {
                         bounds,
                     });
                 }
-                other => {
-                    self.error(format!("Unsupported generic parameter: {:?}", other), ())?;
+                syn::GenericParam::Lifetime(lifetime) => {
+                    if self.lossy_mode() {
+                        self.record_diagnostic(
+                            DiagnosticLevel::Warning,
+                            format!(
+                                "Lifetime generics are not supported yet; dropping {} in lossy mode",
+                                lifetime.lifetime.ident
+                            ),
+                        );
+                    } else {
+                        self.error(
+                            format!("Unsupported generic parameter: {:?}", lifetime),
+                            (),
+                        )?;
+                    }
+                }
+                syn::GenericParam::Const(const_param) => {
+                    if self.lossy_mode() {
+                        self.record_diagnostic(
+                            DiagnosticLevel::Warning,
+                            format!(
+                                "Const generics are not supported yet; dropping {} in lossy mode",
+                                const_param.ident
+                            ),
+                        );
+                    } else {
+                        self.error(
+                            format!("Unsupported generic parameter: {:?}", const_param),
+                            (),
+                        )?;
+                    }
                 }
             }
         }
@@ -170,6 +199,19 @@ impl RustParser {
                 visibility: parse_vis(t.vis),
             })
             .into()),
+            syn::ImplItem::Const(item) => {
+                if self.lossy_mode() {
+                    self.record_diagnostic(
+                        DiagnosticLevel::Warning,
+                        "Impl const items are not fully supported yet; skipping in lossy mode",
+                    );
+                    return Ok(Item::unit());
+                }
+                self.error(
+                    format!("Does not support impl item {:?}", item),
+                    Item::unit(),
+                )
+            }
             other => self.error(
                 format!("Does not support impl item {:?}", other),
                 Item::unit(),
@@ -232,7 +274,15 @@ impl RustParser {
                 let name = parse_ident(variant.ident);
                 let ty = match variant.fields {
                     Fields::Named(_) => {
-                        self.error("Does not support named enum fields", Ty::any())?
+                        if self.lossy_mode() {
+                            self.record_diagnostic(
+                                DiagnosticLevel::Warning,
+                                "Named enum fields are not supported yet; using Any in lossy mode",
+                            );
+                            Ty::any()
+                        } else {
+                            self.error("Does not support named enum fields", Ty::any())?
+                        }
                     }
                     Fields::Unnamed(fields) => {
                         // Parse tuple variant fields

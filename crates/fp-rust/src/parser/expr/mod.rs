@@ -364,10 +364,21 @@ impl<'a> ExprParser<'a> {
             syn::Lit::Bool(b) => Value::Bool(ValueBool::new(b.value)),
             other => {
                 tracing::debug!("Literal not supported: {:?}", other.to_token_stream());
-                return self.err(
-                    format!("Lit not supported: {:?}", other.to_token_stream()),
-                    Value::Unit(ValueUnit),
-                );
+                if self.parser.lossy_mode {
+                    self.parser.record_diagnostic(
+                        DiagnosticLevel::Warning,
+                        format!(
+                            "Literal not supported yet; using unit in lossy mode: {}",
+                            other.to_token_stream()
+                        ),
+                    );
+                    Value::Unit(ValueUnit)
+                } else {
+                    return self.err(
+                        format!("Lit not supported: {:?}", other.to_token_stream()),
+                        Value::Unit(ValueUnit),
+                    );
+                }
             }
         })
     }
@@ -538,6 +549,21 @@ impl<'a> ExprParser<'a> {
             }
             syn::BinOp::DivAssign(_) => {
                 return Ok(make_assign(BinOpKind::Div, lhs_expr, rhs_expr));
+            }
+            syn::BinOp::BitAndAssign(_) => {
+                return Ok(make_assign(BinOpKind::BitAnd, lhs_expr, rhs_expr));
+            }
+            syn::BinOp::BitOrAssign(_) => {
+                return Ok(make_assign(BinOpKind::BitOr, lhs_expr, rhs_expr));
+            }
+            syn::BinOp::BitXorAssign(_) => {
+                return Ok(make_assign(BinOpKind::BitXor, lhs_expr, rhs_expr));
+            }
+            syn::BinOp::ShlAssign(_) => {
+                return Ok(make_assign(BinOpKind::Shl, lhs_expr, rhs_expr));
+            }
+            syn::BinOp::ShrAssign(_) => {
+                return Ok(make_assign(BinOpKind::Shr, lhs_expr, rhs_expr));
             }
             syn::BinOp::Add(_) => BinOpKind::Add,
             syn::BinOp::Mul(_) => BinOpKind::Mul,

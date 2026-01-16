@@ -1,4 +1,5 @@
 use eyre::Context;
+use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::Result;
 use itertools::Itertools;
 use quote::ToTokens;
@@ -8,7 +9,7 @@ use syn::{parse_quote, FieldsNamed, Token};
 use fp_core::ast::{
     DecimalType, Expr, ExprBinOp, ExprInvoke, ExprInvokeTarget, ExprKind, StructuralField, Ty,
     TypeAny, TypeArray, TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeReference, TypeSlice,
-    TypeStruct, TypeStructural, TypeVec, Value,
+    TypeStruct, TypeStructural, TypeTuple, TypeVec, Value,
 };
 use fp_core::ast::{Ident, Path};
 use fp_core::ops::BinOpKind;
@@ -70,7 +71,18 @@ impl RustParser {
                 }
             }
             syn::Type::ImplTrait(im) => Ty::ImplTraits(parse_impl_trait_with(self, im)?),
-            syn::Type::Tuple(t) if t.elems.is_empty() => Ty::unit().into(),
+            syn::Type::Tuple(t) => {
+                if t.elems.is_empty() {
+                    Ty::unit().into()
+                } else {
+                    let types = t
+                        .elems
+                        .into_iter()
+                        .map(|ty| self.parse_type_internal(ty))
+                        .try_collect()?;
+                    Ty::Tuple(TypeTuple { types })
+                }
+            }
             syn::Type::Slice(s) => self.parse_type_slice_internal(s)?,
             syn::Type::Array(a) => self.parse_type_array_internal(a)?,
             syn::Type::Macro(m) if m.mac.path == parse_quote!(ty_syn) => {
@@ -208,6 +220,23 @@ impl RustParser {
             syn::TypeParamBound::Trait(t) => {
                 let path = parse_path(t.path)?;
                 Ok(Expr::path(path))
+            }
+            syn::TypeParamBound::Lifetime(lifetime) => {
+                if self.lossy_mode {
+                    self.record_diagnostic(
+                        DiagnosticLevel::Warning,
+                        format!(
+                            "Lifetime bounds are not supported yet; dropping {} in lossy mode",
+                            lifetime.to_token_stream()
+                        ),
+                    );
+                    Ok(Expr::unit())
+                } else {
+                    self.error(
+                        format!("Does not support lifetimes {:?}", lifetime),
+                        Expr::unit(),
+                    )
+                }
             }
             other => self.error(
                 format!("Does not support lifetimes {:?}", other),
