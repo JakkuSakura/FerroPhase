@@ -25,6 +25,7 @@ pub fn update(options: &UpdateOptions) -> Result<()> {
         resolve_registry: !offline,
         allow_multiple_versions: false,
         use_lock: false,
+        refresh_index: true,
         write_lock: true,
         target: None,
     };

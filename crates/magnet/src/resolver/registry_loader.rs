@@ -5,7 +5,7 @@ use crate::resolver::types::{
 };
 use eyre::Result;
 use parking_lot::RwLock;
-use semver::Version;
+use semver::{Version, VersionReq};
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -236,6 +236,25 @@ impl RegistryLoader {
         Ok(resolved)
     }
 
+    pub async fn resolve_with_reqs_async(
+        &self,
+        name: &str,
+        reqs: &[VersionReq],
+    ) -> Result<ResolvedCrate> {
+        let resolved = self.client.resolve_with_reqs_async(name, reqs).await?;
+        self.cache
+            .resolved_by_version
+            .write()
+            .insert(
+                RegistryManifestKey {
+                    name: resolved.name.clone(),
+                    version: resolved.version.clone(),
+                },
+                resolved.clone(),
+            );
+        Ok(resolved)
+    }
+
     pub async fn resolve_locked_async(
         &self,
         name: &str,
@@ -298,6 +317,18 @@ impl RegistryLoaderHandle {
         let name_err = name.clone();
         self.loader
             .resolve_locked_async(&name, &version, checksum.as_deref())
+            .await
+            .map_err(|err| eyre::eyre!("failed to resolve crate {name_err}: {err}"))
+    }
+
+    pub async fn resolve_with_reqs_async(
+        &self,
+        name: String,
+        reqs: Vec<VersionReq>,
+    ) -> Result<ResolvedCrate> {
+        let name_err = name.clone();
+        self.loader
+            .resolve_with_reqs_async(&name, &reqs)
             .await
             .map_err(|err| eyre::eyre!("failed to resolve crate {name_err}: {err}"))
     }

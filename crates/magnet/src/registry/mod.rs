@@ -19,6 +19,7 @@ use tokio::io::AsyncWriteExt;
 pub struct RegistryOptions {
     pub offline: bool,
     pub cache_dir: Option<PathBuf>,
+    pub refresh_index: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -177,6 +178,50 @@ impl RegistryClient {
         })
     }
 
+    pub fn resolve_with_reqs(&self, name: &str, reqs: &[VersionReq]) -> Result<ResolvedCrate> {
+        if reqs.is_empty() {
+            return Err(eyre::eyre!("missing version requirements for {name}"));
+        }
+        let (version, checksum) = resolve_version_and_checksum_with_reqs(
+            &self.options,
+            &self.index,
+            &self.agent,
+            &self.crate_cache,
+            name,
+            reqs,
+        )?;
+        self.resolve_locked(name, &version, checksum.as_deref())
+    }
+
+    pub async fn resolve_with_reqs_async(
+        &self,
+        name: &str,
+        reqs: &[VersionReq],
+    ) -> Result<ResolvedCrate> {
+        if reqs.is_empty() {
+            return Err(eyre::eyre!("missing version requirements for {name}"));
+        }
+        let options = self.options.clone();
+        let name_owned = name.to_string();
+        let reqs_owned = reqs.to_vec();
+        let index = Arc::clone(&self.index);
+        let agent = Arc::clone(&self.agent);
+        let crate_cache = Arc::clone(&self.crate_cache);
+        let (version, checksum) = tokio::task::spawn_blocking(move || {
+            resolve_version_and_checksum_with_reqs(
+                &options,
+                &index,
+                &agent,
+                &crate_cache,
+                &name_owned,
+                &reqs_owned,
+            )
+        })
+        .await
+        .map_err(|err| eyre::eyre!("failed to resolve crate {name}: {err}"))??;
+        self.resolve_locked_async(name, &version, checksum.as_deref()).await
+    }
+
     pub async fn resolve_locked_async(
         &self,
         name: &str,
@@ -294,6 +339,63 @@ fn select_version(krate: &crates_index::Crate, req: &VersionReq) -> Result<(Stri
     Ok((version.to_string(), checksum.clone()))
 }
 
+fn select_version_with_reqs(
+    krate: &crates_index::Crate,
+    reqs: &[VersionReq],
+) -> Result<(String, Option<String>)> {
+    let mut candidates: Vec<(Version, Option<String>)> = krate
+        .versions()
+        .iter()
+        .filter(|v| !v.is_yanked())
+        .filter_map(|v| {
+            let parsed = Version::parse(&v.version()).ok()?;
+            if reqs.iter().all(|req| req.matches(&parsed)) {
+                Some((parsed, Some(hex::encode(v.checksum()))))
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    let Some((version, checksum)) = candidates.first() else {
+        return Err(eyre::eyre!(
+            "no versions matching requirements for crate {}",
+            krate.name()
+        ));
+    };
+
+    Ok((version.to_string(), checksum.clone()))
+}
+
+fn resolve_version_and_checksum_with_reqs(
+    options: &RegistryOptions,
+    index: &SparseIndex,
+    agent: &ureq::Agent,
+    crate_cache: &Arc<RwLock<HashMap<String, Arc<crates_index::Crate>>>>,
+    name: &str,
+    reqs: &[VersionReq],
+) -> Result<(String, Option<String>)> {
+    if !options.refresh_index {
+        if let Some(krate) = crate_cache.read().get(name).cloned() {
+            return select_version_with_reqs(krate.as_ref(), reqs);
+        }
+    }
+
+    let krate = if options.offline {
+        index
+            .crate_from_cache(name)
+            .map_err(|err| eyre::eyre!("crate '{name}' not available offline: {err}"))?
+    } else {
+        fetch_sparse_crate(agent, index, name)?
+    };
+    let krate = Arc::new(krate);
+    crate_cache
+        .write()
+        .insert(name.to_string(), Arc::clone(&krate));
+    select_version_with_reqs(krate.as_ref(), reqs)
+}
+
 fn resolve_version_and_checksum(
     options: &RegistryOptions,
     index: &SparseIndex,
@@ -302,8 +404,10 @@ fn resolve_version_and_checksum(
     name: &str,
     req: &VersionReq,
 ) -> Result<(String, Option<String>)> {
-    if let Some(krate) = crate_cache.read().get(name).cloned() {
-        return select_version(krate.as_ref(), req);
+    if !options.refresh_index {
+        if let Some(krate) = crate_cache.read().get(name).cloned() {
+            return select_version(krate.as_ref(), req);
+        }
     }
 
     let krate = if options.offline {

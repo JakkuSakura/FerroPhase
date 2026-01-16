@@ -24,7 +24,8 @@ pub fn lock(options: &LockOptions) -> Result<()> {
         cargo_fetch: options.fetch,
         resolve_registry: !offline,
         allow_multiple_versions: false,
-        use_lock: true,
+        use_lock: false,
+        refresh_index: false,
         write_lock: true,
         target: None,
     };

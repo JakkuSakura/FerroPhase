@@ -23,6 +23,7 @@ pub fn tree(config_path: &Path) -> Result<()> {
     let registry = RegistryLoader::new(RegistryOptions {
         offline,
         cache_dir: None,
+        refresh_index: false,
     })?;
     let lock_index = load_lock_index(&manifest_root(&manifest))?;
     let target_ctx = TargetContext::from_env(None)?;

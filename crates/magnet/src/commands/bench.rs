@@ -161,6 +161,7 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
         resolve_registry: !offline,
         allow_multiple_versions: false,
         use_lock: true,
+        refresh_index: false,
         write_lock: true,
         target: None,
     };

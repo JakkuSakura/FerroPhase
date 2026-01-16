@@ -2,7 +2,7 @@ use crate::models::{DependencyEdge, PackageGraph, PackageNode};
 use eyre::{Result, WrapErr};
 use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 const LOCK_VERSION: u32 = 1;
@@ -84,6 +84,57 @@ impl MagnetLock {
         Ok(())
     }
 
+    pub fn trim_to_roots(mut self) -> Self {
+        if self.packages.is_empty() {
+            return self;
+        }
+
+        let mut package_map: HashMap<(String, String, Option<String>), LockPackage> =
+            HashMap::new();
+        for pkg in &self.packages {
+            package_map.insert(
+                (pkg.name.clone(), pkg.version.clone(), pkg.source.clone()),
+                pkg.clone(),
+            );
+        }
+
+        let mut reachable: HashSet<(String, String, Option<String>)> = HashSet::new();
+        let mut queue: VecDeque<(String, String, Option<String>)> = VecDeque::new();
+
+        for pkg in &self.packages {
+            if pkg.source.is_none() {
+                let key = (pkg.name.clone(), pkg.version.clone(), pkg.source.clone());
+                if reachable.insert(key.clone()) {
+                    queue.push_back(key);
+                }
+            }
+        }
+
+        while let Some(key) = queue.pop_front() {
+            let Some(pkg) = package_map.get(&key) else {
+                continue;
+            };
+            for dep in &pkg.dependencies {
+                if let Some((name, version, source)) = parse_lock_dependency(dep) {
+                    let dep_key = (name, version, source);
+                    if package_map.contains_key(&dep_key) && reachable.insert(dep_key.clone()) {
+                        queue.push_back(dep_key);
+                    }
+                }
+            }
+        }
+
+        self.packages = self
+            .packages
+            .into_iter()
+            .filter(|pkg| {
+                let key = (pkg.name.clone(), pkg.version.clone(), pkg.source.clone());
+                reachable.contains(&key)
+            })
+            .collect();
+        self
+    }
+
     pub fn validate(&self) -> Vec<String> {
         let mut warnings = Vec::new();
         let mut known = HashMap::new();
@@ -140,6 +191,7 @@ impl LockIndex {
         Self { registry }
     }
 
+
     pub fn match_registry(&self, name: &str, req: &VersionReq) -> Option<LockedRegistryVersion> {
         let entries = self.registry.get(name)?;
         for entry in entries {
@@ -179,6 +231,9 @@ fn package_source(
     workspace_root: &Path,
     cache_dir: Option<&Path>,
 ) -> Option<String> {
+    if let Some(source) = node.source.as_ref() {
+        return Some(source.clone());
+    }
     if let Some(cache_dir) = cache_dir {
         let registry_root = cache_dir.join("registry").join("crates");
         if node.root.starts_with(&registry_root) {

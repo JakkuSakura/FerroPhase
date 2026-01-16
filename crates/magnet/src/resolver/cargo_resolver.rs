@@ -1,17 +1,19 @@
 use crate::configs::CargoManifestConfig;
 use crate::models::{
-    dependency_to_edge, DependencyModel, LockIndex, PackageGraphOptions, PackageModel, PackageNode,
-    WorkspaceModel, REGISTRY_SOURCE,
+    dependency_to_edge, parse_cargo_features, DependencyModel, LockIndex, PackageGraphOptions,
+    PackageModel, PackageNode, WorkspaceModel, REGISTRY_SOURCE,
 };
 use crate::registry::ResolvedCrate;
 use crate::resolver::{target::TargetContext, RegistryLoaderHandle};
 use eyre::Result;
 use semver::VersionReq;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 pub struct CargoResolver {
@@ -23,9 +25,16 @@ pub struct CargoResolver {
     workspace: Option<WorkspaceModel>,
     workspace_members: HashSet<PathBuf>,
     roots: Vec<PathBuf>,
-    seen: HashSet<String>,
     packages: Vec<PackageNode>,
     registry_roots: HashMap<PathBuf, ResolvedCrate>,
+    git_roots: HashMap<PathBuf, GitResolved>,
+    git_by_name: HashMap<String, GitResolved>,
+    registry_requirements: HashMap<String, Vec<VersionReq>>,
+    registry_selected: HashMap<String, ResolvedCrate>,
+    registry_dependents: HashMap<String, HashSet<PathBuf>>,
+    feature_requests: HashMap<PathBuf, FeatureRequest>,
+    feature_states: HashMap<PathBuf, FeatureState>,
+    package_index: HashMap<PathBuf, usize>,
 }
 
 impl CargoResolver {
@@ -45,9 +54,16 @@ impl CargoResolver {
             workspace: None,
             workspace_members: HashSet::new(),
             roots: Vec::new(),
-            seen: HashSet::new(),
             packages: Vec::new(),
             registry_roots: HashMap::new(),
+            git_roots: HashMap::new(),
+            git_by_name: HashMap::new(),
+            registry_requirements: HashMap::new(),
+            registry_selected: HashMap::new(),
+            registry_dependents: HashMap::new(),
+            feature_requests: HashMap::new(),
+            feature_states: HashMap::new(),
+            package_index: HashMap::new(),
         })
     }
 
@@ -83,16 +99,28 @@ impl CargoResolver {
     }
 
     pub async fn resolve_async(&mut self) -> Result<Vec<PackageNode>> {
-        let mut queue: VecDeque<PathBuf> = self.roots.clone().into();
+        let mut queue: VecDeque<PathBuf> = VecDeque::new();
+        let roots = self.roots.clone();
+        for root in roots {
+            self.add_feature_request(&root, FeatureRequest::root(), &mut queue);
+        }
         info!(
             "graph: resolver queue initialized with {} root(s)",
             queue.len()
         );
         while let Some(dir) = queue.pop_front() {
             let package_started = Instant::now();
-            let Some((package, deps)) = self.resolve_package_dir_sync(&dir)? else {
+            let Some((package, deps, feature_state)) = self.resolve_package_dir_sync(&dir)? else {
                 continue;
             };
+            let package_key = canonicalize_path(&package.root_path);
+            if let Some(existing) = self.feature_states.get(&package_key) {
+                if existing == &feature_state {
+                    continue;
+                }
+            }
+            self.feature_states
+                .insert(package_key.clone(), feature_state.clone());
             info!(
                 "graph: dependencies for {} (paths={}, registry={})",
                 package.name,
@@ -100,28 +128,31 @@ impl CargoResolver {
                 deps.registry.len()
             );
             let mut resolved_registry = HashMap::new();
-            if let Some(registry) = self.registry.as_ref() {
+            if let Some(registry) = self.registry.clone() {
                 let registry_started = Instant::now();
-                let mut join_set = JoinSet::new();
-                for (name, dep) in deps.registry {
-                    let registry = registry.clone();
-                    let lock_index = self.lock_index.clone();
-                    join_set.spawn(async move {
-                        resolve_registry_dependency(registry, lock_index, name, dep).await
-                    });
-                }
-                while let Some(result) = join_set.join_next().await {
-                    match result {
-                        Ok(Ok(Some(resolved))) => {
-                            queue.push_back(resolved.resolved.root.clone());
+                for (name, dep, request) in deps.registry {
+                    match self
+                        .resolve_registry_dep(
+                            &package_key,
+                            &registry,
+                            name,
+                            dep,
+                            request,
+                            &mut queue,
+                        )
+                        .await
+                    {
+                        Ok(Some(resolved)) => {
+                            self.add_feature_request(
+                                &resolved.resolved.root,
+                                resolved.request,
+                                &mut queue,
+                            );
                             resolved_registry.insert(resolved.name, resolved.resolved);
                         }
-                        Ok(Ok(None)) => {}
-                        Ok(Err(err)) => {
-                            tracing::warn!("graph: registry resolution failed: {}", err);
-                        }
+                        Ok(None) => {}
                         Err(err) => {
-                            tracing::warn!("graph: registry task failed: {}", err);
+                            tracing::warn!("graph: registry resolution failed: {}", err);
                         }
                     }
                 }
@@ -132,8 +163,27 @@ impl CargoResolver {
                 );
             }
 
-            for path in deps.paths {
-                queue.push_back(path);
+            for (path, request) in deps.paths {
+                self.add_feature_request(&path, request, &mut queue);
+            }
+
+            for (name, dep, request) in deps.git {
+                match self.resolve_git_dependency(&name, &dep) {
+                    Ok(resolved) => {
+                        let root = resolved.root.clone();
+                        let git_name = dep
+                            .package
+                            .as_deref()
+                            .unwrap_or(&name)
+                            .to_string();
+                        self.git_by_name.insert(git_name, resolved.clone());
+                        self.git_roots.insert(root.clone(), resolved);
+                        self.add_feature_request(&root, request, &mut queue);
+                    }
+                    Err(err) => {
+                        tracing::warn!("graph: git resolution failed for {}: {}", name, err);
+                    }
+                }
             }
 
             for resolved in resolved_registry.values() {
@@ -145,9 +195,18 @@ impl CargoResolver {
                 resolved_registry,
                 &self.options,
                 &self.registry_roots,
+                &self.git_roots,
+                &self.git_by_name,
                 &self.target,
+                &feature_state,
             )?;
-            self.packages.push(node);
+            let node_key = canonicalize_path(&node.root);
+            if let Some(index) = self.package_index.get(&node_key).copied() {
+                self.packages[index] = node;
+            } else {
+                self.package_index.insert(node_key, self.packages.len());
+                self.packages.push(node);
+            }
             info!(
                 "graph: finished package in {:.2?} (queue remaining={})",
                 package_started.elapsed(),
@@ -157,7 +216,23 @@ impl CargoResolver {
         Ok(std::mem::take(&mut self.packages))
     }
 
-    fn resolve_package_dir_sync(&mut self, dir: &Path) -> Result<Option<(PackageModel, PackageDeps)>> {
+    fn add_feature_request(
+        &mut self,
+        path: &Path,
+        request: FeatureRequest,
+        queue: &mut VecDeque<PathBuf>,
+    ) {
+        let key = canonicalize_path(path);
+        let entry = self.feature_requests.entry(key.clone()).or_default();
+        if entry.merge(request) {
+            queue.push_back(key);
+        }
+    }
+
+    fn resolve_package_dir_sync(
+        &mut self,
+        dir: &Path,
+    ) -> Result<Option<(PackageModel, PackageDeps, FeatureState)>> {
         info!("graph: resolving package at {}", dir.display());
         let started_at = Instant::now();
         let mut package = match PackageModel::from_dir(dir) {
@@ -181,45 +256,207 @@ impl CargoResolver {
             apply_workspace_dependencies(&mut package, workspace)?;
         }
 
-        let key = self.package_key(&package);
-        if !self.seen.insert(key) {
-            return Ok(None);
-        }
-
         let is_workspace_member = self
             .workspace_members
             .contains(&canonicalize_path(dir));
-        let deps = collect_dependencies(&package, &self.options, &self.target, is_workspace_member)?;
+        let requested = self
+            .feature_requests
+            .get(&canonicalize_path(dir))
+            .cloned()
+            .unwrap_or_default();
+        let feature_state = resolve_feature_state(&package, &requested)?;
+        let deps = collect_dependencies(
+            &package,
+            &self.options,
+            &self.target,
+            is_workspace_member,
+            &feature_state,
+        )?;
         info!(
             "graph: collected deps for {} in {:.2?}",
             package.name,
             started_at.elapsed()
         );
-        let resolved = split_dependencies(&package, deps, &self.workspace)?;
-        Ok(Some((package, resolved)))
+        let resolved = split_dependencies(&package, deps, &self.workspace, &feature_state)?;
+        Ok(Some((package, resolved, feature_state)))
     }
 
-    fn package_key(&self, package: &PackageModel) -> String {
-        if self.options.allow_multiple_versions {
-            package.source_path.to_string_lossy().to_string()
-        } else {
-            package.name.clone()
+    async fn resolve_registry_dep(
+        &mut self,
+        package_key: &Path,
+        registry: &RegistryLoaderHandle,
+        name: String,
+        dep: DependencyModel,
+        request: FeatureRequest,
+        queue: &mut VecDeque<PathBuf>,
+    ) -> Result<Option<ResolvedRegistryDependency>> {
+        if let Some(registry_name) = dep.registry.as_deref() {
+            if registry_name != "crates-io" && registry_name != "crates.io" {
+                tracing::warn!("graph: skipping unsupported registry '{}'", registry_name);
+                return Ok(None);
+            }
         }
+        let Some(version) = dep.version.as_deref() else {
+            return Ok(None);
+        };
+        let resolved_name = dep.package.as_deref().unwrap_or(&name).to_string();
+        let req = VersionReq::parse(version)
+            .map_err(|err| eyre::eyre!("invalid version requirement '{version}': {err}"))?;
+
+        self.registry_dependents
+            .entry(resolved_name.clone())
+            .or_default()
+            .insert(package_key.to_path_buf());
+
+        if let Some(lock_index) = self.lock_index.as_ref() {
+            if let Some(locked) = lock_index.match_registry(&resolved_name, &req) {
+                info!(
+                    "graph: using locked registry dependency {} {}",
+                    resolved_name, locked.version
+                );
+                let resolved = registry
+                    .resolve_locked_async(
+                        resolved_name.clone(),
+                        locked.version.clone(),
+                        locked.checksum.clone(),
+                    )
+                    .await?;
+                self.registry_selected
+                    .insert(resolved_name.clone(), resolved.clone());
+                return Ok(Some(ResolvedRegistryDependency {
+                    name,
+                    resolved,
+                    request,
+                }));
+            }
+        }
+
+        let reqs = self
+            .registry_requirements
+            .entry(resolved_name.clone())
+            .or_default();
+        if !reqs.iter().any(|existing| existing == &req) {
+            reqs.push(req.clone());
+        }
+        let reqs_snapshot = reqs.clone();
+        let resolved = registry
+            .resolve_with_reqs_async(resolved_name.clone(), reqs_snapshot)
+            .await?;
+
+        let mut selection_changed = false;
+        if let Some(current) = self.registry_selected.get(&resolved_name) {
+            if current.version != resolved.version {
+                selection_changed = true;
+            }
+        } else {
+            selection_changed = true;
+        }
+        self.registry_selected
+            .insert(resolved_name.clone(), resolved.clone());
+        if selection_changed {
+            if let Some(dependents) = self.registry_dependents.get(&resolved_name) {
+                for dependent in dependents {
+                    queue.push_back(dependent.clone());
+                }
+            }
+        }
+
+        Ok(Some(ResolvedRegistryDependency {
+            name,
+            resolved,
+            request,
+        }))
     }
+
+    fn resolve_git_dependency(&self, name: &str, dep: &DependencyModel) -> Result<GitResolved> {
+        let url = dep
+            .git
+            .as_deref()
+            .ok_or_else(|| eyre::eyre!("missing git url for {name}"))?;
+        let cache_dir = resolve_cache_dir(self.options.cache_dir.clone())?;
+        let repo_hash = hex::encode(Sha256::digest(url.as_bytes()));
+        let repo_root = cache_dir.join("git").join(repo_hash);
+        let checkout_ref = git_checkout_ref(dep);
+        let checkout_key = checkout_ref.replace('/', "_");
+        let checkout_dir = repo_root.join("checkouts").join(&checkout_key);
+
+        let checkout_dir_str = checkout_dir.to_string_lossy().to_string();
+        if !checkout_dir.exists() {
+            fs::create_dir_all(&repo_root)?;
+            run_git(&vec![
+                "clone".to_string(),
+                url.to_string(),
+                checkout_dir_str.clone(),
+            ])?;
+        }
+
+        if !self.options.offline && self.options.refresh_index {
+            let _ = run_git(&vec![
+                "-C".to_string(),
+                checkout_dir_str.clone(),
+                "fetch".to_string(),
+                "--all".to_string(),
+                "--tags".to_string(),
+            ]);
+        }
+
+        if checkout_ref != "HEAD" {
+            run_git(&vec![
+                "-C".to_string(),
+                checkout_dir_str.clone(),
+                "checkout".to_string(),
+                checkout_ref.clone(),
+            ])?;
+        }
+
+        let rev = run_git_capture(&vec![
+            "-C".to_string(),
+            checkout_dir_str,
+            "rev-parse".to_string(),
+            "HEAD".to_string(),
+        ])?;
+
+        let manifest_path = checkout_dir.join("Cargo.toml");
+        if !manifest_path.exists() {
+            return Err(eyre::eyre!(
+                "git dependency {name} has no Cargo.toml at {}",
+                checkout_dir.display()
+            ));
+        }
+        let source = format!("git+{}#{}", url, rev);
+        Ok(GitResolved {
+            url: url.to_string(),
+            rev,
+            root: checkout_dir,
+            source,
+        })
+    }
+
 }
 
 struct PackageDeps {
-    paths: Vec<PathBuf>,
-    registry: Vec<(String, DependencyModel)>,
+    paths: Vec<(PathBuf, FeatureRequest)>,
+    registry: Vec<(String, DependencyModel, FeatureRequest)>,
+    git: Vec<(String, DependencyModel, FeatureRequest)>,
+}
+
+#[derive(Clone, Debug)]
+struct GitResolved {
+    url: String,
+    rev: String,
+    root: PathBuf,
+    source: String,
 }
 
 fn split_dependencies(
     package: &PackageModel,
     deps: HashMap<String, DependencyModel>,
     workspace: &Option<WorkspaceModel>,
+    feature_state: &FeatureState,
 ) -> Result<PackageDeps> {
     let mut paths = Vec::new();
     let mut registry = Vec::new();
+    let mut git = Vec::new();
     for (name, dep) in deps {
         if let Some(path) = dep.path.as_ref() {
             let base = if dep.workspace.unwrap_or(false) {
@@ -257,83 +494,39 @@ fn split_dependencies(
                 continue;
             }
             info!("graph: resolving path dependency {}", path.display());
-            paths.push(path);
+            let request = request_for_dependency(&name, &dep, feature_state);
+            paths.push((path, request));
             continue;
         }
 
         if dep.git.is_some() {
-            info!("graph: skipping git dependency {}", name);
+            let request = request_for_dependency(&name, &dep, feature_state);
+            git.push((name, dep, request));
             continue;
         }
 
-        registry.push((name, dep));
+        let request = request_for_dependency(&name, &dep, feature_state);
+        registry.push((name, dep, request));
     }
-    Ok(PackageDeps { paths, registry })
+    Ok(PackageDeps { paths, registry, git })
 }
 
 struct ResolvedRegistryDependency {
     name: String,
     resolved: ResolvedCrate,
+    request: FeatureRequest,
 }
 
-async fn resolve_registry_dependency(
-    registry: RegistryLoaderHandle,
-    lock_index: Option<Arc<LockIndex>>,
-    name: String,
-    dep: DependencyModel,
-) -> Result<Option<ResolvedRegistryDependency>> {
-    if let Some(registry_name) = dep.registry.as_deref() {
-        if registry_name != "crates-io" && registry_name != "crates.io" {
-            tracing::warn!("graph: skipping unsupported registry '{}'", registry_name);
-            return Ok(None);
-        }
-    }
-    let Some(version) = dep.version.as_deref() else {
-        return Ok(None);
-    };
-    let resolved_name = dep.package.as_deref().unwrap_or(&name).to_string();
-    let req = VersionReq::parse(version)
-        .map_err(|err| eyre::eyre!("invalid version requirement '{version}': {err}"))?;
-    let started_at = Instant::now();
-    if let Some(lock_index) = lock_index.as_ref() {
-        if let Some(locked) = lock_index.match_registry(&resolved_name, &req) {
-            info!(
-                "graph: using locked registry dependency {} {}",
-                resolved_name, locked.version
-            );
-            let resolved = registry
-                .resolve_locked_async(
-                    resolved_name.clone(),
-                    locked.version.clone(),
-                    locked.checksum.clone(),
-                )
-                .await?;
-            info!(
-                "graph: resolved locked registry dependency {} in {:.2?}",
-                resolved_name,
-                started_at.elapsed()
-            );
-            return Ok(Some(ResolvedRegistryDependency { name, resolved }));
-        }
-    }
-    info!("graph: resolving registry dependency {} {}", resolved_name, version);
-    let resolved = registry
-        .resolve_async(resolved_name.clone(), Some(version.to_string()))
-        .await?;
-    info!(
-        "graph: resolved registry dependency {} in {:.2?}",
-        resolved_name,
-        started_at.elapsed()
-    );
-    Ok(Some(ResolvedRegistryDependency { name, resolved }))
-}
 
 fn package_to_node_with_resolved(
     package: PackageModel,
     resolved_registry: HashMap<String, ResolvedCrate>,
     options: &PackageGraphOptions,
     registry_roots: &HashMap<PathBuf, ResolvedCrate>,
+    git_roots: &HashMap<PathBuf, GitResolved>,
+    git_by_name: &HashMap<String, GitResolved>,
     target: &TargetContext,
+    feature_state: &FeatureState,
 ) -> Result<PackageNode> {
     let module_root = package.root_path.join("src");
     let entry = {
@@ -341,7 +534,7 @@ fn package_to_node_with_resolved(
         if path.exists() { Some(path) } else { None }
     };
 
-    let deps = collect_dependencies(&package, options, target, false)?;
+    let deps = collect_dependencies(&package, options, target, false, feature_state)?;
     let checksum = registry_roots
         .get(&package.root_path)
         .and_then(|resolved| resolved.checksum.clone());
@@ -354,8 +547,30 @@ fn package_to_node_with_resolved(
             edge.source = Some(REGISTRY_SOURCE.to_string());
             edge.path = Some(resolved.root.clone());
         }
+        if edge.source.is_none() {
+            if let Some(path) = edge.path.as_ref() {
+                if let Some(git) = git_roots.get(path) {
+                    edge.source = Some(git.source.clone());
+                    edge.git = Some(git.url.clone());
+                    edge.rev = Some(git.rev.clone());
+                }
+            }
+        }
+        if edge.path.is_none() {
+            let dep_name = edge.package.as_deref().unwrap_or(edge.name.as_str());
+            if let Some(git) = git_by_name.get(dep_name) {
+                edge.path = Some(git.root.clone());
+                edge.source = Some(git.source.clone());
+                edge.git = Some(git.url.clone());
+                edge.rev = Some(git.rev.clone());
+            }
+        }
         edges.push(edge);
     }
+
+    let source = git_roots
+        .get(&package.root_path)
+        .map(|git| git.source.clone());
 
     Ok(PackageNode {
         name: package.name,
@@ -364,6 +579,7 @@ fn package_to_node_with_resolved(
         manifest_path: package.source_path,
         language: None,
         checksum,
+        source,
         module_roots: vec![module_root],
         entry,
         dependencies: edges,
@@ -375,25 +591,26 @@ fn collect_dependencies(
     options: &PackageGraphOptions,
     target: &TargetContext,
     is_workspace_member: bool,
+    feature_state: &FeatureState,
 ) -> Result<HashMap<String, DependencyModel>> {
     let mut dep_map = HashMap::new();
     if options.include_dependencies {
         for (name, dep) in package.dependencies.clone() {
-            if dependency_active(&dep, target)? && !dep.optional() {
+            if dependency_active(&dep, target)? && dependency_enabled(&name, &dep, feature_state) {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
     if options.include_dev_dependencies && is_workspace_member {
         for (name, dep) in package.dev_dependencies.clone() {
-            if dependency_active(&dep, target)? && !dep.optional() {
+            if dependency_active(&dep, target)? && dependency_enabled(&name, &dep, feature_state) {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
-    if options.include_build_dependencies && is_workspace_member {
+    if options.include_build_dependencies {
         for (name, dep) in package.build_dependencies.clone() {
-            if dependency_active(&dep, target)? && !dep.optional() {
+            if dependency_active(&dep, target)? && dependency_enabled(&name, &dep, feature_state) {
                 dep_map.entry(name).or_insert(dep);
             }
         }
@@ -405,21 +622,21 @@ fn collect_dependencies(
             }
             if options.include_dependencies {
                 for (name, dep) in targeted.dependencies.clone() {
-                    if !dep.optional() {
+                    if dependency_enabled(&name, &dep, feature_state) {
                         dep_map.insert(name, dep);
                     }
                 }
             }
             if options.include_dev_dependencies && is_workspace_member {
                 for (name, dep) in targeted.dev_dependencies.clone() {
-                    if !dep.optional() {
+                    if dependency_enabled(&name, &dep, feature_state) {
                         dep_map.insert(name, dep);
                     }
                 }
             }
-            if options.include_build_dependencies && is_workspace_member {
+            if options.include_build_dependencies {
                 for (name, dep) in targeted.build_dependencies.clone() {
-                    if !dep.optional() {
+                    if dependency_enabled(&name, &dep, feature_state) {
                         dep_map.insert(name, dep);
                     }
                 }
@@ -438,6 +655,131 @@ fn dependency_active(dep: &DependencyModel, target: &TargetContext) -> Result<bo
 
 fn canonicalize_path(path: &Path) -> PathBuf {
     path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+#[derive(Clone, Debug, Default)]
+struct FeatureRequest {
+    default: bool,
+    features: HashSet<String>,
+}
+
+impl FeatureRequest {
+    fn root() -> Self {
+        Self {
+            default: true,
+            features: HashSet::new(),
+        }
+    }
+
+    fn from_dependency(dep: &DependencyModel) -> Self {
+        Self {
+            default: dep.default_features(),
+            features: dep.features().into_iter().collect(),
+        }
+    }
+
+    fn merge(&mut self, other: FeatureRequest) -> bool {
+        let mut changed = false;
+        if other.default && !self.default {
+            self.default = true;
+            changed = true;
+        }
+        for feature in other.features {
+            if self.features.insert(feature) {
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct FeatureState {
+    enabled_features: HashSet<String>,
+    enabled_deps: HashSet<String>,
+    dep_features: HashMap<String, HashSet<String>>,
+}
+
+fn resolve_feature_state(
+    package: &PackageModel,
+    request: &FeatureRequest,
+) -> Result<FeatureState> {
+    let mut enabled_features = HashSet::new();
+    if request.default {
+        enabled_features.insert("default".to_string());
+    }
+    enabled_features.extend(request.features.iter().cloned());
+
+    let mut enabled_deps = HashSet::new();
+    let mut dep_features: HashMap<String, HashSet<String>> = HashMap::new();
+    let feature_map = load_package_features(package)?;
+
+    let mut queue: VecDeque<String> = enabled_features.iter().cloned().collect();
+    while let Some(feature) = queue.pop_front() {
+        let Some(items) = feature_map.get(&feature) else {
+            continue;
+        };
+        for item in items {
+            if let Some(dep) = item.strip_prefix("dep:") {
+                enabled_deps.insert(dep.to_string());
+                continue;
+            }
+            if let Some((dep, feat)) = item.split_once('/') {
+                enabled_deps.insert(dep.to_string());
+                dep_features
+                    .entry(dep.to_string())
+                    .or_default()
+                    .insert(feat.to_string());
+                continue;
+            }
+            if enabled_features.insert(item.to_string()) {
+                queue.push_back(item.to_string());
+            }
+        }
+    }
+
+    Ok(FeatureState {
+        enabled_features,
+        enabled_deps,
+        dep_features,
+    })
+}
+
+fn load_package_features(package: &PackageModel) -> Result<HashMap<String, Vec<String>>> {
+    if package
+        .source_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        == Some("Cargo.toml")
+    {
+        return parse_cargo_features(&package.source_path);
+    }
+    Ok(HashMap::new())
+}
+
+fn dependency_enabled(
+    name: &str,
+    dep: &DependencyModel,
+    feature_state: &FeatureState,
+) -> bool {
+    if !dep.optional() {
+        return true;
+    }
+    feature_state.enabled_deps.contains(name) || feature_state.enabled_features.contains(name)
+}
+
+fn request_for_dependency(
+    name: &str,
+    dep: &DependencyModel,
+    feature_state: &FeatureState,
+) -> FeatureRequest {
+    let mut request = FeatureRequest::from_dependency(dep);
+    if let Some(extra) = feature_state.dep_features.get(name) {
+        for feat in extra {
+            request.features.insert(feat.clone());
+        }
+    }
+    request
 }
 
 fn apply_workspace_dependencies(
@@ -507,4 +849,52 @@ fn merge_dependency(base: &DependencyModel, overlay: &DependencyModel) -> Depend
         out.workspace = overlay.workspace;
     }
     out
+}
+
+fn resolve_cache_dir(cache_dir: Option<PathBuf>) -> Result<PathBuf> {
+    if let Some(cache_dir) = cache_dir {
+        return Ok(cache_dir);
+    }
+    if let Some(cache_dir) = std::env::var_os("MAGNET_CACHE_DIR") {
+        return Ok(PathBuf::from(cache_dir));
+    }
+    let home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .ok_or_else(|| eyre::eyre!("could not resolve home directory"))?;
+    Ok(PathBuf::from(home).join(".cache").join("magnet"))
+}
+
+fn git_checkout_ref(dep: &DependencyModel) -> String {
+    if let Some(rev) = dep.rev.as_deref() {
+        return rev.to_string();
+    }
+    if let Some(tag) = dep.tag.as_deref() {
+        return tag.to_string();
+    }
+    if let Some(branch) = dep.branch.as_deref() {
+        return branch.to_string();
+    }
+    "HEAD".to_string()
+}
+
+fn run_git(args: &[String]) -> Result<()> {
+    let status = Command::new("git")
+        .args(args)
+        .status()
+        .map_err(|err| eyre::eyre!("failed to run git {:?}: {}", args, err))?;
+    if !status.success() {
+        return Err(eyre::eyre!("git {:?} failed with {}", args, status));
+    }
+    Ok(())
+}
+
+fn run_git_capture(args: &[String]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .output()
+        .map_err(|err| eyre::eyre!("failed to run git {:?}: {}", args, err))?;
+    if !output.status.success() {
+        return Err(eyre::eyre!("git {:?} failed with {}", args, output.status));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

@@ -22,6 +22,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         resolve_registry: !offline,
         allow_multiple_versions: true,
         use_lock: true,
+        refresh_index: false,
         write_lock: true,
         target: None,
     };

@@ -39,6 +39,8 @@ pub struct PackageNode {
     pub language: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
     pub module_roots: Vec<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub entry: Option<PathBuf>,
@@ -87,6 +89,7 @@ pub struct PackageGraphOptions {
     pub resolve_registry: bool,
     pub allow_multiple_versions: bool,
     pub use_lock: bool,
+    pub refresh_index: bool,
     pub write_lock: bool,
     pub target: Option<String>,
 }
@@ -103,6 +106,7 @@ impl Default for PackageGraphOptions {
             resolve_registry: true,
             allow_multiple_versions: false,
             use_lock: true,
+            refresh_index: false,
             write_lock: true,
             target: None,
         }
@@ -133,6 +137,7 @@ impl PackageGraph {
             Some(RegistryLoader::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: cache_dir.clone(),
+                refresh_index: options.refresh_index,
             })?)
         } else {
             None
@@ -159,7 +164,7 @@ impl PackageGraph {
         };
 
         if options.write_lock {
-            let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref());
+            let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref()).trim_to_roots();
             lock.write_to_path(&lock_path)?;
             for warning in lock.validate() {
                 warn!("lock: {}", warning);
@@ -272,6 +277,7 @@ impl PackageGraph {
         manifest_path: &Path,
         options: &PackageGraphOptions,
     ) -> Result<Self> {
+        let started_at = Instant::now();
         let root = manifest_path
             .parent()
             .ok_or_else(|| eyre::eyre!("Cargo manifest has no parent directory"))?
@@ -280,20 +286,31 @@ impl PackageGraph {
         let cache_dir = resolve_cache_dir(options);
         let lock_path = root.join("Magnet.lock");
         let lock = if options.use_lock {
+            info!("graph: loading lockfile {}", lock_path.display());
             MagnetLock::read_from_path(&lock_path)?
         } else {
+            info!("graph: lockfile disabled");
             None
         };
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
+        info!(
+            "graph: target context {}",
+            options
+                .target
+                .as_deref()
+                .unwrap_or("default")
+        );
         let target_ctx = TargetContext::from_env(options.target.as_deref())?;
         let registry = if options.resolve_registry {
             info!("graph: initializing registry client");
             let loader = RegistryLoader::new(RegistryOptions {
                 offline: options.offline,
                 cache_dir: cache_dir.clone(),
+                refresh_index: options.refresh_index,
             })?;
             Some(RegistryLoaderHandle::new(loader))
         } else {
+            info!("graph: registry resolution disabled");
             None
         };
         #[cfg(feature = "cargo-fallback")]
@@ -305,11 +322,21 @@ impl PackageGraph {
         }
         let mut resolver = CargoResolver::new(&root, options, registry, lock_index, target_ctx)?;
         resolver.load_root(manifest_path)?;
+        info!(
+            "graph: starting async resolver (registry={}, offline={})",
+            options.resolve_registry,
+            options.offline
+        );
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
             .map_err(|err| eyre::eyre!("failed to start async resolver: {err}"))?;
+        let resolved_started = Instant::now();
         let packages = runtime.block_on(resolver.resolve_async())?;
+        info!(
+            "graph: async resolver finished in {:.2?}",
+            resolved_started.elapsed()
+        );
 
         let graph = Self {
             schema_version: 1,
@@ -319,9 +346,13 @@ impl PackageGraph {
             build_options: HashMap::new(),
         };
         if options.write_lock {
-            let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref());
+            let lock = MagnetLock::from_graph(&graph, &root, cache_dir.as_deref()).trim_to_roots();
             lock.write_to_path(&lock_path)?;
         }
+        info!(
+            "graph: cargo workspace resolved in {:.2?}",
+            started_at.elapsed()
+        );
         Ok(graph)
     }
 
@@ -366,6 +397,7 @@ impl PackageGraph {
                 manifest_path: descriptor.manifest_path.to_path_buf(),
                 language: Some("typescript".to_string()),
                 checksum: None,
+                source: None,
                 module_roots,
                 entry,
                 dependencies,
@@ -399,6 +431,7 @@ impl PackageGraph {
             manifest_path: manifest_path.to_path_buf(),
             language: Some("javascript".to_string()),
             checksum: None,
+            source: None,
             module_roots: default_module_roots(&root),
             entry: detect_entry(&root, &["js", "mjs", "cjs"]),
             dependencies,
@@ -447,6 +480,7 @@ impl PackageGraph {
             manifest_path: manifest_path.to_path_buf(),
             language: Some("python".to_string()),
             checksum: None,
+            source: None,
             module_roots: default_module_roots(&root),
             entry: detect_entry(&root, &["py"]),
             dependencies,
@@ -608,6 +642,7 @@ fn package_to_node_with_lock_loader(
         manifest_path: package.source_path,
         language: None,
         checksum: None,
+        source: None,
         module_roots: vec![module_root],
         entry,
         dependencies: edges,
@@ -634,6 +669,17 @@ fn dependency_to_edge_with_lock(
     let mut checksum = None;
     let mut source = None;
     let mut path = dep.path.clone();
+    if let Some(url) = dep.git.as_deref() {
+        let mut git_source = format!("git+{}", url);
+        if let Some(rev) = dep.rev.as_deref() {
+            git_source = format!("{git_source}#{rev}");
+        } else if let Some(tag) = dep.tag.as_deref() {
+            git_source = format!("{git_source}?tag={tag}");
+        } else if let Some(branch) = dep.branch.as_deref() {
+            git_source = format!("{git_source}?branch={branch}");
+        }
+        source = Some(git_source);
+    }
 
     let resolved_name = dep.package.as_deref().unwrap_or(name.as_str());
     if path.is_none() && dep.git.is_none() && dep.version.is_some() {
