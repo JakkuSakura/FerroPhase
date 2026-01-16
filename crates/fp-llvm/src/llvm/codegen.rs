@@ -616,10 +616,18 @@ impl<'a> LirCodegen<'a> {
                                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                                 casted
                             } else {
-                                self.bitcast_struct_via_alloca(src, dst_ptr.as_basic_type_enum(), &name)?
+                                self.bitcast_struct_via_alloca(
+                                    src,
+                                    dst_ptr.as_basic_type_enum(),
+                                    &name,
+                                )?
                             }
                         } else {
-                            self.bitcast_struct_via_alloca(src, dst_ptr.as_basic_type_enum(), &name)?
+                            self.bitcast_struct_via_alloca(
+                                src,
+                                dst_ptr.as_basic_type_enum(),
+                                &name,
+                            )?
                         }
                     }
                     (BasicValueEnum::StructValue(src), BasicTypeEnum::StructType(_)) => {
@@ -803,9 +811,10 @@ impl<'a> LirCodegen<'a> {
                     }
                     BasicValueEnum::StructValue(strct) => {
                         let struct_ty = strct.get_type();
-                        let field_ty = struct_ty
-                            .get_field_type_at_index(index)
-                            .ok_or_else(|| report_error_with_context(LOG_AREA, "InsertValue missing field"))?;
+                        let field_ty =
+                            struct_ty.get_field_type_at_index(index).ok_or_else(|| {
+                                report_error_with_context(LOG_AREA, "InsertValue missing field")
+                            })?;
                         self.coerce_insert_element(raw_element_value, field_ty, instr_id)?
                     }
                     _ => raw_element_value,

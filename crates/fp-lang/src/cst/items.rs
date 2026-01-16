@@ -8,8 +8,8 @@ use crate::lexer::{Keyword, Lexeme, LexerError, Token, TokenKind};
 use crate::syntax::{
     span_for_children, SyntaxElement, SyntaxKind, SyntaxNode, SyntaxToken, SyntaxTokenKind,
 };
-use fp_core::span::Span;
 use fp_core::span::FileId;
+use fp_core::span::Span;
 use std::cell::Cell;
 
 #[derive(Debug, Error)]

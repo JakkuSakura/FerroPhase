@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use cargo_metadata::{
-    Dependency, DependencyKind as CargoDepKind, Metadata, MetadataCommand, Package, Target, semver,
+    semver, Dependency, DependencyKind as CargoDepKind, Metadata, MetadataCommand, Package, Target,
 };
 
 use fp_core::module::{ModuleDescriptor, ModuleId, ModuleLanguage};

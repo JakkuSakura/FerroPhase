@@ -182,388 +182,388 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let active = span.or(previous);
         self.current_span = active;
         let result = (|| {
-        let existing_ty = expr.ty().cloned();
-        let var = match expr.kind_mut() {
-            ExprKind::Quote(quote) => {
-                let kind = match quote.kind {
-                    Some(k) => k,
-                    None => infer_quote_kind(&quote.block),
-                };
-                let inner = if matches!(kind, QuoteFragmentKind::Expr) {
-                    let block_var = self.infer_block(&mut quote.block)?;
-                    Some(self.resolve_to_ty(block_var)?)
-                } else {
-                    None
-                };
-                let ty = if matches!(kind, QuoteFragmentKind::Item) {
-                    let mut item_like = 0usize;
-                    let mut items = Vec::new();
-                    for stmt in &quote.block.stmts {
-                        match stmt {
-                            BlockStmt::Item(item) => {
-                                item_like += 1;
-                                items.push(item.as_ref());
-                            }
-                            BlockStmt::Expr(expr_stmt) => {
-                                if let ExprKind::Item(item) = expr_stmt.expr.kind() {
-                                    item_like += 1;
-                                    items.push(item.as_ref());
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                    let has_non_items = item_like != quote.block.stmts.len();
-                    if items.len() == 1 && quote.block.stmts.len() == 1 {
-                        quote_item_type_from_item(items[0])
-                            .unwrap_or_else(|| quote_ty_from_fragment(kind, inner.clone()))
-                    } else if quote.block.stmts.len() > 1 {
-                        if has_non_items {
-                            self.emit_error("quote<item> expects only item statements");
-                        }
-                        let elem_ty = quote_item_type_from_items(&items).unwrap_or_else(|| {
-                            if items.is_empty() {
-                                Ty::Quote(TypeQuote {
-                                    kind: QuoteFragmentKind::Item,
-                                    item: None,
-                                    inner: None,
-                                })
-                            } else {
-                                self.emit_error(
-                                    "quote<item> contains multiple item kinds; using item type",
-                                );
-                                Ty::Quote(TypeQuote {
-                                    kind: QuoteFragmentKind::Item,
-                                    item: None,
-                                    inner: None,
-                                })
-                            }
-                        });
-                        Ty::Slice(TypeSlice {
-                            elem: Box::new(elem_ty),
-                        })
-                    } else {
-                        if has_non_items {
-                            self.emit_error("quote<item> expects only item statements");
-                        }
-                        quote_ty_from_fragment(kind, inner)
-                    }
-                } else {
-                    quote_ty_from_fragment(kind, inner)
-                };
-                let var = self.type_from_ast_ty(&ty)?;
-                expr.set_ty(ty);
-                var
-            }
-            ExprKind::Splice(splice) => {
-                // Expression-position splice must carry an expr token
-                let token_var = self.infer_expr(splice.token.as_mut())?;
-                let token_ty = self.resolve_to_ty(token_var)?;
-                match token_ty {
-                    Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
-                        if let Some(inner) = quote.inner.clone() {
-                            let var = self.fresh_type_var();
-                            self.bind(var, TypeTerm::Custom((*inner).clone()));
-                            expr.set_ty(*inner);
-                            var
-                        } else {
-                            self.emit_warning(
-                                "splice expr token lacks inner type; defaulting to any",
-                            );
-                            let any_var = self.fresh_type_var();
-                            self.bind(any_var, TypeTerm::Any);
-                            any_var
-                        }
-                    }
-                    Ty::Quote(quote) => {
-                        self.emit_error(format!(
-                            "splice in expression position requires expr token, found {:?}",
-                            quote.kind
-                        ));
-                        self.error_type_var()
-                    }
-                    _ => {
-                        self.emit_error("splice expects a quote token expression");
-                        self.error_type_var()
-                    }
-                }
-            }
-            ExprKind::IntrinsicContainer(collection) => {
-                self.infer_intrinsic_container(collection)?
-            }
-            ExprKind::Value(value) => {
-                if let Value::List(list) = value.as_ref() {
-                    let hint_ty = if let Some(ty) = existing_ty.as_ref() {
-                        self.type_from_ast_ty(ty)
-                            .ok()
-                            .and_then(|var| self.resolve_to_ty(var).ok())
+            let existing_ty = expr.ty().cloned();
+            let var = match expr.kind_mut() {
+                ExprKind::Quote(quote) => {
+                    let kind = match quote.kind {
+                        Some(k) => k,
+                        None => infer_quote_kind(&quote.block),
+                    };
+                    let inner = if matches!(kind, QuoteFragmentKind::Expr) {
+                        let block_var = self.infer_block(&mut quote.block)?;
+                        Some(self.resolve_to_ty(block_var)?)
                     } else {
                         None
                     };
-                    if matches!(hint_ty.as_ref(), Some(Ty::Array(_))) {
-                        self.infer_value(value.as_ref())?
-                    } else if let Some(Ty::Vec(vec_ty)) = hint_ty.as_ref() {
-                        let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
-                        for value in &list.values {
-                            let value_var = self.infer_value(value)?;
-                            self.unify(value_var, elem_var)?;
+                    let ty = if matches!(kind, QuoteFragmentKind::Item) {
+                        let mut item_like = 0usize;
+                        let mut items = Vec::new();
+                        for stmt in &quote.block.stmts {
+                            match stmt {
+                                BlockStmt::Item(item) => {
+                                    item_like += 1;
+                                    items.push(item.as_ref());
+                                }
+                                BlockStmt::Expr(expr_stmt) => {
+                                    if let ExprKind::Item(item) = expr_stmt.expr.kind() {
+                                        item_like += 1;
+                                        items.push(item.as_ref());
+                                    }
+                                }
+                                _ => {}
+                            }
                         }
-                        let vec_var = self.fresh_type_var();
-                        self.bind(vec_var, TypeTerm::Vec(elem_var));
-                        vec_var
-                    } else if let Some(Ty::Slice(slice_ty)) = hint_ty.as_ref() {
-                        let elem_var = self.type_from_ast_ty(&slice_ty.elem)?;
-                        for value in &list.values {
-                            let value_var = self.infer_value(value)?;
-                            self.unify(value_var, elem_var)?;
+                        let has_non_items = item_like != quote.block.stmts.len();
+                        if items.len() == 1 && quote.block.stmts.len() == 1 {
+                            quote_item_type_from_item(items[0])
+                                .unwrap_or_else(|| quote_ty_from_fragment(kind, inner.clone()))
+                        } else if quote.block.stmts.len() > 1 {
+                            if has_non_items {
+                                self.emit_error("quote<item> expects only item statements");
+                            }
+                            let elem_ty = quote_item_type_from_items(&items).unwrap_or_else(|| {
+                                if items.is_empty() {
+                                    Ty::Quote(TypeQuote {
+                                        kind: QuoteFragmentKind::Item,
+                                        item: None,
+                                        inner: None,
+                                    })
+                                } else {
+                                    self.emit_error(
+                                        "quote<item> contains multiple item kinds; using item type",
+                                    );
+                                    Ty::Quote(TypeQuote {
+                                        kind: QuoteFragmentKind::Item,
+                                        item: None,
+                                        inner: None,
+                                    })
+                                }
+                            });
+                            Ty::Slice(TypeSlice {
+                                elem: Box::new(elem_ty),
+                            })
+                        } else {
+                            if has_non_items {
+                                self.emit_error("quote<item> expects only item statements");
+                            }
+                            quote_ty_from_fragment(kind, inner)
                         }
-                        let slice_var = self.fresh_type_var();
-                        self.bind(slice_var, TypeTerm::Slice(elem_var));
-                        slice_var
                     } else {
-                        self.infer_list_value_as_vec(list)?
-                    }
-                } else {
-                    self.infer_value(value.as_ref())?
+                        quote_ty_from_fragment(kind, inner)
+                    };
+                    let var = self.type_from_ast_ty(&ty)?;
+                    expr.set_ty(ty);
+                    var
                 }
-            }
-            ExprKind::Locator(locator) => {
-                let var = self.lookup_locator(locator)?;
-                if let Some(ty) = existing_ty.as_ref() {
-                    let annot = self.type_from_ast_ty(ty)?;
-                    self.unify(var, annot)?;
-                }
-                var
-            }
-            ExprKind::Block(block) => self.infer_block(block)?,
-            ExprKind::If(if_expr) => self.infer_if(if_expr)?,
-            ExprKind::BinOp(binop) => self.infer_binop(binop)?,
-            ExprKind::UnOp(unop) => self.infer_unop(unop)?,
-            ExprKind::Assign(assign) => {
-                let target = self.infer_expr(assign.target.as_mut())?;
-                let value = self.infer_expr(assign.value.as_mut())?;
-                self.unify(target, value)?;
-                value
-            }
-            ExprKind::Cast(cast) => {
-                let _ = self.infer_expr(cast.expr.as_mut())?;
-                self.type_from_ast_ty(&cast.ty)?
-            }
-            ExprKind::Let(expr_let) => {
-                let value = self.infer_expr(expr_let.expr.as_mut())?;
-                let pattern_info = self.infer_pattern(expr_let.pat.as_mut())?;
-                self.unify(pattern_info.var, value)?;
-                self.apply_pattern_generalization(&pattern_info)?;
-                value
-            }
-            ExprKind::Invoke(invoke) => self.infer_invoke(invoke)?,
-            ExprKind::Select(select) => {
-                let obj_var = self.infer_expr(select.obj.as_mut())?;
-                self.lookup_struct_field(obj_var, &select.field)?
-            }
-            ExprKind::Struct(struct_expr) => {
-                if let Some(ty) = existing_ty.as_ref() {
-                    if matches!(ty, Ty::Function(_)) {
-                        self.type_from_ast_ty(ty)?
-                    } else {
-                        let resolved = match ty {
-                            Ty::Enum(_) => Some(ty.clone()),
-                            _ => self
-                                .type_from_ast_ty(ty)
-                                .ok()
-                                .and_then(|var| self.resolve_to_ty(var).ok()),
-                        };
-                        if let Some(Ty::Enum(enum_ty)) = resolved.as_ref() {
-                            if let Some(var) =
-                                self.resolve_struct_literal_as_enum_variant(struct_expr, enum_ty)?
-                            {
+                ExprKind::Splice(splice) => {
+                    // Expression-position splice must carry an expr token
+                    let token_var = self.infer_expr(splice.token.as_mut())?;
+                    let token_ty = self.resolve_to_ty(token_var)?;
+                    match token_ty {
+                        Ty::Quote(quote) if quote.kind == QuoteFragmentKind::Expr => {
+                            if let Some(inner) = quote.inner.clone() {
+                                let var = self.fresh_type_var();
+                                self.bind(var, TypeTerm::Custom((*inner).clone()));
+                                expr.set_ty(*inner);
                                 var
+                            } else {
+                                self.emit_warning(
+                                    "splice expr token lacks inner type; defaulting to any",
+                                );
+                                let any_var = self.fresh_type_var();
+                                self.bind(any_var, TypeTerm::Any);
+                                any_var
+                            }
+                        }
+                        Ty::Quote(quote) => {
+                            self.emit_error(format!(
+                                "splice in expression position requires expr token, found {:?}",
+                                quote.kind
+                            ));
+                            self.error_type_var()
+                        }
+                        _ => {
+                            self.emit_error("splice expects a quote token expression");
+                            self.error_type_var()
+                        }
+                    }
+                }
+                ExprKind::IntrinsicContainer(collection) => {
+                    self.infer_intrinsic_container(collection)?
+                }
+                ExprKind::Value(value) => {
+                    if let Value::List(list) = value.as_ref() {
+                        let hint_ty = if let Some(ty) = existing_ty.as_ref() {
+                            self.type_from_ast_ty(ty)
+                                .ok()
+                                .and_then(|var| self.resolve_to_ty(var).ok())
+                        } else {
+                            None
+                        };
+                        if matches!(hint_ty.as_ref(), Some(Ty::Array(_))) {
+                            self.infer_value(value.as_ref())?
+                        } else if let Some(Ty::Vec(vec_ty)) = hint_ty.as_ref() {
+                            let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
+                            for value in &list.values {
+                                let value_var = self.infer_value(value)?;
+                                self.unify(value_var, elem_var)?;
+                            }
+                            let vec_var = self.fresh_type_var();
+                            self.bind(vec_var, TypeTerm::Vec(elem_var));
+                            vec_var
+                        } else if let Some(Ty::Slice(slice_ty)) = hint_ty.as_ref() {
+                            let elem_var = self.type_from_ast_ty(&slice_ty.elem)?;
+                            for value in &list.values {
+                                let value_var = self.infer_value(value)?;
+                                self.unify(value_var, elem_var)?;
+                            }
+                            let slice_var = self.fresh_type_var();
+                            self.bind(slice_var, TypeTerm::Slice(elem_var));
+                            slice_var
+                        } else {
+                            self.infer_list_value_as_vec(list)?
+                        }
+                    } else {
+                        self.infer_value(value.as_ref())?
+                    }
+                }
+                ExprKind::Locator(locator) => {
+                    let var = self.lookup_locator(locator)?;
+                    if let Some(ty) = existing_ty.as_ref() {
+                        let annot = self.type_from_ast_ty(ty)?;
+                        self.unify(var, annot)?;
+                    }
+                    var
+                }
+                ExprKind::Block(block) => self.infer_block(block)?,
+                ExprKind::If(if_expr) => self.infer_if(if_expr)?,
+                ExprKind::BinOp(binop) => self.infer_binop(binop)?,
+                ExprKind::UnOp(unop) => self.infer_unop(unop)?,
+                ExprKind::Assign(assign) => {
+                    let target = self.infer_expr(assign.target.as_mut())?;
+                    let value = self.infer_expr(assign.value.as_mut())?;
+                    self.unify(target, value)?;
+                    value
+                }
+                ExprKind::Cast(cast) => {
+                    let _ = self.infer_expr(cast.expr.as_mut())?;
+                    self.type_from_ast_ty(&cast.ty)?
+                }
+                ExprKind::Let(expr_let) => {
+                    let value = self.infer_expr(expr_let.expr.as_mut())?;
+                    let pattern_info = self.infer_pattern(expr_let.pat.as_mut())?;
+                    self.unify(pattern_info.var, value)?;
+                    self.apply_pattern_generalization(&pattern_info)?;
+                    value
+                }
+                ExprKind::Invoke(invoke) => self.infer_invoke(invoke)?,
+                ExprKind::Select(select) => {
+                    let obj_var = self.infer_expr(select.obj.as_mut())?;
+                    self.lookup_struct_field(obj_var, &select.field)?
+                }
+                ExprKind::Struct(struct_expr) => {
+                    if let Some(ty) = existing_ty.as_ref() {
+                        if matches!(ty, Ty::Function(_)) {
+                            self.type_from_ast_ty(ty)?
+                        } else {
+                            let resolved = match ty {
+                                Ty::Enum(_) => Some(ty.clone()),
+                                _ => self
+                                    .type_from_ast_ty(ty)
+                                    .ok()
+                                    .and_then(|var| self.resolve_to_ty(var).ok()),
+                            };
+                            if let Some(Ty::Enum(enum_ty)) = resolved.as_ref() {
+                                if let Some(var) = self
+                                    .resolve_struct_literal_as_enum_variant(struct_expr, enum_ty)?
+                                {
+                                    var
+                                } else {
+                                    self.resolve_struct_literal(struct_expr)?
+                                }
                             } else {
                                 self.resolve_struct_literal(struct_expr)?
                             }
-                        } else {
-                            self.resolve_struct_literal(struct_expr)?
                         }
-                    }
-                } else {
-                    self.resolve_struct_literal(struct_expr)?
-                }
-            }
-            ExprKind::Tuple(tuple) => {
-                let mut element_vars = Vec::new();
-                for expr in &mut tuple.values {
-                    element_vars.push(self.infer_expr(expr)?);
-                }
-                let tuple_var = self.fresh_type_var();
-                self.bind(tuple_var, TypeTerm::Tuple(element_vars));
-                tuple_var
-            }
-            ExprKind::Array(array) => {
-                if let Some(Ty::Vec(vec_ty)) = existing_ty.as_ref() {
-                    let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
-                    for value in &mut array.values {
-                        let next = self.infer_expr(value)?;
-                        self.unify(elem_var, next)?;
-                    }
-                    let vec_var = self.fresh_type_var();
-                    self.bind(vec_var, TypeTerm::Vec(elem_var));
-                    let vec_ty = self.resolve_to_ty(vec_var)?;
-                    expr.set_ty(vec_ty);
-                    vec_var
-                } else {
-                    let mut iter = array.values.iter_mut();
-                    let elem_var = if let Some(first) = iter.next() {
-                        let first_var = self.infer_expr(first)?;
-                        for value in iter {
-                            let next = self.infer_expr(value)?;
-                            self.unify(first_var, next)?;
-                        }
-                        first_var
                     } else {
-                        self.fresh_type_var()
-                    };
-                    let len_expr = Expr::value(Value::int(array.values.len() as i64)).into();
-                    let array_var = self.fresh_type_var();
-                    self.bind(array_var, TypeTerm::Array(elem_var, Some(len_expr)));
-                    let array_ty = self.resolve_to_ty(array_var)?;
-                    expr.set_ty(array_ty);
-                    array_var
+                        self.resolve_struct_literal(struct_expr)?
+                    }
                 }
-            }
-            ExprKind::ArrayRepeat(array_repeat) => {
-                if let Some(Ty::Vec(vec_ty)) = existing_ty.as_ref() {
-                    let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
-                    let value_var = self.infer_expr(array_repeat.elem.as_mut())?;
-                    self.unify(elem_var, value_var)?;
-                    let vec_var = self.fresh_type_var();
-                    self.bind(vec_var, TypeTerm::Vec(elem_var));
-                    let vec_ty = self.resolve_to_ty(vec_var)?;
-                    expr.set_ty(vec_ty);
-                    vec_var
-                } else {
-                    let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
-                    let len_var = self.infer_expr(array_repeat.len.as_mut())?;
-                    let expected_len = self.fresh_type_var();
-                    self.bind(
-                        expected_len,
-                        TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
-                    );
-                    self.unify(len_var, expected_len)?;
+                ExprKind::Tuple(tuple) => {
+                    let mut element_vars = Vec::new();
+                    for expr in &mut tuple.values {
+                        element_vars.push(self.infer_expr(expr)?);
+                    }
+                    let tuple_var = self.fresh_type_var();
+                    self.bind(tuple_var, TypeTerm::Tuple(element_vars));
+                    tuple_var
+                }
+                ExprKind::Array(array) => {
+                    if let Some(Ty::Vec(vec_ty)) = existing_ty.as_ref() {
+                        let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
+                        for value in &mut array.values {
+                            let next = self.infer_expr(value)?;
+                            self.unify(elem_var, next)?;
+                        }
+                        let vec_var = self.fresh_type_var();
+                        self.bind(vec_var, TypeTerm::Vec(elem_var));
+                        let vec_ty = self.resolve_to_ty(vec_var)?;
+                        expr.set_ty(vec_ty);
+                        vec_var
+                    } else {
+                        let mut iter = array.values.iter_mut();
+                        let elem_var = if let Some(first) = iter.next() {
+                            let first_var = self.infer_expr(first)?;
+                            for value in iter {
+                                let next = self.infer_expr(value)?;
+                                self.unify(first_var, next)?;
+                            }
+                            first_var
+                        } else {
+                            self.fresh_type_var()
+                        };
+                        let len_expr = Expr::value(Value::int(array.values.len() as i64)).into();
+                        let array_var = self.fresh_type_var();
+                        self.bind(array_var, TypeTerm::Array(elem_var, Some(len_expr)));
+                        let array_ty = self.resolve_to_ty(array_var)?;
+                        expr.set_ty(array_ty);
+                        array_var
+                    }
+                }
+                ExprKind::ArrayRepeat(array_repeat) => {
+                    if let Some(Ty::Vec(vec_ty)) = existing_ty.as_ref() {
+                        let elem_var = self.type_from_ast_ty(&vec_ty.ty)?;
+                        let value_var = self.infer_expr(array_repeat.elem.as_mut())?;
+                        self.unify(elem_var, value_var)?;
+                        let vec_var = self.fresh_type_var();
+                        self.bind(vec_var, TypeTerm::Vec(elem_var));
+                        let vec_ty = self.resolve_to_ty(vec_var)?;
+                        expr.set_ty(vec_ty);
+                        vec_var
+                    } else {
+                        let elem_var = self.infer_expr(array_repeat.elem.as_mut())?;
+                        let len_var = self.infer_expr(array_repeat.len.as_mut())?;
+                        let expected_len = self.fresh_type_var();
+                        self.bind(
+                            expected_len,
+                            TypeTerm::Primitive(TypePrimitive::Int(TypeInt::U64)),
+                        );
+                        self.unify(len_var, expected_len)?;
 
-                    let length_expr = array_repeat.len.as_ref().get();
-                    let array_var = self.fresh_type_var();
-                    self.bind(
-                        array_var,
-                        TypeTerm::Array(elem_var, Some(length_expr.into())),
-                    );
-                    let array_ty = self.resolve_to_ty(array_var)?;
-                    expr.set_ty(array_ty);
-                    array_var
+                        let length_expr = array_repeat.len.as_ref().get();
+                        let array_var = self.fresh_type_var();
+                        self.bind(
+                            array_var,
+                            TypeTerm::Array(elem_var, Some(length_expr.into())),
+                        );
+                        let array_ty = self.resolve_to_ty(array_var)?;
+                        expr.set_ty(array_ty);
+                        array_var
+                    }
                 }
-            }
-            ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
-            ExprKind::FormatString(_) => {
-                let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Primitive(TypePrimitive::String));
-                var
-            }
-            ExprKind::Match(match_expr) => self.infer_match(match_expr)?,
-            ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
-            ExprKind::Return(ret) => {
-                if let Some(value) = ret.value.as_mut() {
-                    self.infer_expr(value)?;
+                ExprKind::Paren(paren) => self.infer_expr(paren.expr.as_mut())?,
+                ExprKind::FormatString(_) => {
+                    let var = self.fresh_type_var();
+                    self.bind(var, TypeTerm::Primitive(TypePrimitive::String));
+                    var
                 }
-                // Diverging expression.
-                self.nothing_type_var()
-            }
-            ExprKind::Break(brk) => {
-                let value_var = if let Some(value) = brk.value.as_mut() {
-                    self.infer_expr(value)?
-                } else {
-                    self.unit_type_var()
-                };
-                let loop_var = if let Some(context) = self.loop_stack.last_mut() {
-                    context.saw_break = true;
-                    Some(context.result_var)
-                } else {
-                    None
-                };
-                if let Some(result_var) = loop_var {
-                    self.unify(result_var, value_var)?;
-                    result_var
-                } else {
-                    self.emit_error("`break` used outside of a loop");
-                    self.error_type_var()
-                }
-            }
-            ExprKind::Continue(_) => {
-                if self.loop_stack.is_empty() {
-                    self.emit_error("`continue` used outside of a loop");
-                    self.error_type_var()
-                } else {
+                ExprKind::Match(match_expr) => self.infer_match(match_expr)?,
+                ExprKind::Loop(loop_expr) => self.infer_loop(loop_expr)?,
+                ExprKind::Return(ret) => {
+                    if let Some(value) = ret.value.as_mut() {
+                        self.infer_expr(value)?;
+                    }
+                    // Diverging expression.
                     self.nothing_type_var()
                 }
-            }
-            ExprKind::ConstBlock(const_block) => self.infer_expr(const_block.expr.as_mut())?,
-            ExprKind::For(for_expr) => {
-                let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
-                let iter_var = self.infer_expr(for_expr.iter.as_mut())?;
-                if let Ok(iter_ty) = self.resolve_to_ty(iter_var) {
-                    if let Some(elem_var) = self.iter_element_var_from_ty(&iter_ty) {
-                        self.unify(pat_info.var, elem_var)?;
+                ExprKind::Break(brk) => {
+                    let value_var = if let Some(value) = brk.value.as_mut() {
+                        self.infer_expr(value)?
+                    } else {
+                        self.unit_type_var()
+                    };
+                    let loop_var = if let Some(context) = self.loop_stack.last_mut() {
+                        context.saw_break = true;
+                        Some(context.result_var)
+                    } else {
+                        None
+                    };
+                    if let Some(result_var) = loop_var {
+                        self.unify(result_var, value_var)?;
+                        result_var
+                    } else {
+                        self.emit_error("`break` used outside of a loop");
+                        self.error_type_var()
                     }
                 }
-                // For now, treat `for` as producing unit.
-                let unit_var = self.fresh_type_var();
-                self.bind(unit_var, TypeTerm::Unit);
-                self.infer_expr(for_expr.body.as_mut())?;
-                unit_var
-            }
-            ExprKind::While(while_expr) => self.infer_while(while_expr)?,
-            ExprKind::Try(try_expr) => self.infer_expr(try_expr.expr.as_mut())?,
-            ExprKind::Reference(reference) => self.infer_reference(reference)?,
-            ExprKind::Dereference(dereference) => self.infer_dereference(dereference)?,
-            ExprKind::Index(index) => self.infer_index(index)?,
-            ExprKind::Closure(closure) => self.infer_closure(closure)?,
-            ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
-            ExprKind::Range(range) => self.infer_range(range)?,
-            ExprKind::Await(await_expr) => self.infer_expr(await_expr.base.as_mut())?,
-            ExprKind::Async(async_expr) => self.infer_expr(async_expr.expr.as_mut())?,
-            ExprKind::Splat(splat) => self.infer_splat(splat)?,
-            ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
-            ExprKind::Macro(macro_expr) => {
-                self.emit_error(format!(
-                    "macro `{}` was not lowered before type checking",
-                    macro_expr.invocation.path
-                ));
-                self.error_type_var()
-            }
-            ExprKind::Any(_any) => {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                any_var
-            }
-            ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
-                let any_var = self.fresh_type_var();
-                self.bind(any_var, TypeTerm::Any);
-                any_var
-            }
-            ExprKind::Id(_) => {
-                self.emit_error("detached expression identifiers are not supported");
-                self.error_type_var()
-            }
-        };
+                ExprKind::Continue(_) => {
+                    if self.loop_stack.is_empty() {
+                        self.emit_error("`continue` used outside of a loop");
+                        self.error_type_var()
+                    } else {
+                        self.nothing_type_var()
+                    }
+                }
+                ExprKind::ConstBlock(const_block) => self.infer_expr(const_block.expr.as_mut())?,
+                ExprKind::For(for_expr) => {
+                    let pat_info = self.infer_pattern(for_expr.pat.as_mut())?;
+                    let iter_var = self.infer_expr(for_expr.iter.as_mut())?;
+                    if let Ok(iter_ty) = self.resolve_to_ty(iter_var) {
+                        if let Some(elem_var) = self.iter_element_var_from_ty(&iter_ty) {
+                            self.unify(pat_info.var, elem_var)?;
+                        }
+                    }
+                    // For now, treat `for` as producing unit.
+                    let unit_var = self.fresh_type_var();
+                    self.bind(unit_var, TypeTerm::Unit);
+                    self.infer_expr(for_expr.body.as_mut())?;
+                    unit_var
+                }
+                ExprKind::While(while_expr) => self.infer_while(while_expr)?,
+                ExprKind::Try(try_expr) => self.infer_expr(try_expr.expr.as_mut())?,
+                ExprKind::Reference(reference) => self.infer_reference(reference)?,
+                ExprKind::Dereference(dereference) => self.infer_dereference(dereference)?,
+                ExprKind::Index(index) => self.infer_index(index)?,
+                ExprKind::Closure(closure) => self.infer_closure(closure)?,
+                ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
+                ExprKind::Range(range) => self.infer_range(range)?,
+                ExprKind::Await(await_expr) => self.infer_expr(await_expr.base.as_mut())?,
+                ExprKind::Async(async_expr) => self.infer_expr(async_expr.expr.as_mut())?,
+                ExprKind::Splat(splat) => self.infer_splat(splat)?,
+                ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
+                ExprKind::Macro(macro_expr) => {
+                    self.emit_error(format!(
+                        "macro `{}` was not lowered before type checking",
+                        macro_expr.invocation.path
+                    ));
+                    self.error_type_var()
+                }
+                ExprKind::Any(_any) => {
+                    let any_var = self.fresh_type_var();
+                    self.bind(any_var, TypeTerm::Any);
+                    any_var
+                }
+                ExprKind::Item(_) | ExprKind::Closured(_) | ExprKind::Structural(_) => {
+                    let any_var = self.fresh_type_var();
+                    self.bind(any_var, TypeTerm::Any);
+                    any_var
+                }
+                ExprKind::Id(_) => {
+                    self.emit_error("detached expression identifiers are not supported");
+                    self.error_type_var()
+                }
+            };
 
-        if let Some(existing_ty) = existing_ty {
-            if !matches!(existing_ty, Ty::Unknown(_)) {
-                let existing_var = self.type_from_ast_ty(&existing_ty)?;
-                self.unify(var, existing_var)?;
+            if let Some(existing_ty) = existing_ty {
+                if !matches!(existing_ty, Ty::Unknown(_)) {
+                    let existing_var = self.type_from_ast_ty(&existing_ty)?;
+                    self.unify(var, existing_var)?;
+                }
             }
-        }
 
-        let ty = self.resolve_to_ty(var)?;
-        expr.set_ty(ty);
-        Ok(var)
+            let ty = self.resolve_to_ty(var)?;
+            expr.set_ty(ty);
+            Ok(var)
         })();
         self.current_span = previous;
         result.map_err(|err| self.error_with_span(err, active))
@@ -1034,7 +1034,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
             ExprInvokeTarget::Closure(_) => {
                 let fn_ty = match &invoke.target {
-                    ExprInvokeTarget::Closure(func) => self.ty_from_function_signature(&func.sig)?,
+                    ExprInvokeTarget::Closure(func) => {
+                        self.ty_from_function_signature(&func.sig)?
+                    }
                     _ => Ty::Unknown(TypeUnknown),
                 };
                 self.type_from_ast_ty(&fn_ty)?

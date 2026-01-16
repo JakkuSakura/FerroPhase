@@ -5,13 +5,13 @@ mod x86_64;
 use crate::link;
 use fp_core::error::{Error, Result};
 use fp_core::lir::{
-    CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator,
-    LirType, Linkage, Name,
+    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
+    LirTerminator, LirType, Name,
 };
+use std::collections::HashMap;
 use std::fmt::Write;
 use std::fs;
 use std::path::Path;
-use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetFormat {
@@ -38,7 +38,11 @@ pub fn detect_target(triple: Option<&str>) -> Result<(TargetFormat, TargetArch)>
         {
             TargetFormat::MachO
         }
-        Some(triple) if triple.contains("windows") || triple.contains("msvc") || triple.contains("mingw") => {
+        Some(triple)
+            if triple.contains("windows")
+                || triple.contains("msvc")
+                || triple.contains("mingw") =>
+        {
             TargetFormat::Coff
         }
         Some(_) => TargetFormat::Elf,
@@ -55,7 +59,9 @@ pub fn detect_target(triple: Option<&str>) -> Result<(TargetFormat, TargetArch)>
 
     let arch = match triple.as_deref() {
         Some(triple) if triple.contains("x86_64") || triple.contains("amd64") => TargetArch::X86_64,
-        Some(triple) if triple.contains("aarch64") || triple.contains("arm64") => TargetArch::Aarch64,
+        Some(triple) if triple.contains("aarch64") || triple.contains("arm64") => {
+            TargetArch::Aarch64
+        }
         _ => {
             if cfg!(target_arch = "x86_64") {
                 TargetArch::X86_64
@@ -244,8 +250,7 @@ fn set_executable_permissions(path: &Path) -> Result<()> {
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?
             .permissions();
         perms.set_mode(0o755);
-        fs::set_permissions(path, perms)
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        fs::set_permissions(path, perms).map_err(|e| fp_core::error::Error::from(e.to_string()))?;
     }
     #[cfg(not(unix))]
     {

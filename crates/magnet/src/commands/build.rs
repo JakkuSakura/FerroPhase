@@ -46,7 +46,11 @@ pub fn build(options: &BuildOptions) -> Result<()> {
     let _fp_requested = single_entry || has_fp_sources(&package.root_path)?;
 
     let build_config = load_manifest_build_config(&root)?;
-    validate_feature_list("build.features", &build_config.features, &build_config.feature_defs)?;
+    validate_feature_list(
+        "build.features",
+        &build_config.features,
+        &build_config.feature_defs,
+    )?;
     let mut build_options = build_config.options.clone();
     if !build_config.features.is_empty() {
         build_options.insert("features".to_string(), build_config.features.join(","));
@@ -65,6 +69,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         include_dependencies: true,
         include_dev_dependencies: true,
         include_build_dependencies: true,
+        include_all_targets: false,
         cargo_fetch: options.fetch,
         resolve_registry: true,
         allow_multiple_versions: true,
@@ -94,11 +99,13 @@ pub fn build(options: &BuildOptions) -> Result<()> {
     }
 
     let packages = if let Some(name) = options.package.as_deref() {
-        vec![manifest
-            .list_packages()?
-            .into_iter()
-            .find(|pkg| pkg.name == name)
-            .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?]
+        vec![
+            manifest
+                .list_packages()?
+                .into_iter()
+                .find(|pkg| pkg.name == name)
+                .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?,
+        ]
     } else {
         manifest.list_packages()?
     };
@@ -144,13 +151,9 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         )?;
     }
 
-    info!(
-        "build: completed in {:.2?}",
-        started_at.elapsed()
-    );
+    info!("build: completed in {:.2?}", started_at.elapsed());
     Ok(())
 }
-
 
 fn compile_only(
     package: &PackageModel,
@@ -532,8 +535,7 @@ mod tests {
     fn validate_cli_build_options_rejects_unknown_option() {
         let mut allowed = HashMap::new();
         allowed.insert("opt_level".to_string(), "2".to_string());
-        let cli_options =
-            HashMap::from([("unknown".to_string(), "value".to_string())]);
+        let cli_options = HashMap::from([("unknown".to_string(), "value".to_string())]);
         let err = validate_cli_build_options(&cli_options, &allowed, &HashMap::new()).unwrap_err();
         assert!(err.to_string().contains("Unknown build option"));
     }
@@ -644,17 +646,9 @@ fn command_v(binary: &str) -> Option<PathBuf> {
         return None;
     }
     let path = PathBuf::from(raw);
-    if path.exists() {
-        Some(path)
-    } else {
-        None
-    }
+    if path.exists() { Some(path) } else { None }
 }
 
 fn binary_name() -> &'static str {
-    if cfg!(windows) {
-        "fp.exe"
-    } else {
-        "fp"
-    }
+    if cfg!(windows) { "fp.exe" } else { "fp" }
 }

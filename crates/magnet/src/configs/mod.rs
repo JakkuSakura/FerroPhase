@@ -3,14 +3,14 @@
 //! This module provides structures and functionality for parsing,
 //! validating, and managing Magnet.toml configuration files.
 
-mod dependency;
 mod cargo;
+mod dependency;
 mod nexus;
 mod package;
 mod workspace;
 
-pub use dependency::*;
 pub use cargo::*;
+pub use dependency::*;
 pub use nexus::*;
 pub use package::*;
 pub use workspace::*;

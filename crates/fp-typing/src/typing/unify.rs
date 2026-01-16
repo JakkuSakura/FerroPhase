@@ -458,10 +458,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     let b_elem = self.type_from_ast_ty(&b_arr.elem)?;
                     self.unify(a_elem, b_elem)
                 } else {
-                    Err(self.error_with_current_span(format!(
-                        "custom type mismatch: {} vs {}",
-                        a, b
-                    )))
+                    Err(self
+                        .error_with_current_span(format!("custom type mismatch: {} vs {}", a, b)))
                 }
             }
             (TypeTerm::Custom(array_ty), TypeTerm::Slice(slice_elem))
@@ -530,10 +528,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Unknown, _other) | (_other, TypeTerm::Unknown) => Ok(()),
             (TypeTerm::Any, _other) | (_other, TypeTerm::Any) => Ok(()),
-            (left, right) => Err(self.error_with_current_span(format!(
-                "type mismatch: {:?} vs {:?}",
-                left, right
-            ))),
+            (left, right) => {
+                Err(self
+                    .error_with_current_span(format!("type mismatch: {:?} vs {:?}", left, right)))
+            }
         }
     }
 
@@ -1220,7 +1218,9 @@ mod tests {
             }),
         );
 
-        let err = typer.unify(struct_var, func_var).expect_err("expected mismatch");
+        let err = typer
+            .unify(struct_var, func_var)
+            .expect_err("expected mismatch");
         match err {
             Error::Diagnostic(diag) => {
                 assert_eq!(diag.span, Some(span));

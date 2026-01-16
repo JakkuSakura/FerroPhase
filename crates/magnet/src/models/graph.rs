@@ -1,19 +1,21 @@
 use crate::models::{DependencyModel, LockIndex, MagnetLock, ManifestModel, PackageModel};
 use crate::registry::{RegistryClient, RegistryOptions};
-use crate::resolver::{cargo_resolver::CargoResolver, target::TargetContext, RegistryLoader, RegistryLoaderHandle};
+use crate::resolver::{
+    RegistryLoader, RegistryLoaderHandle, cargo_resolver::CargoResolver, target::TargetContext,
+};
 use eyre::Result;
 use fp_core::package::DependencyDescriptor;
 use fp_core::package::provider::{ModuleSource, PackageProvider};
 use fp_typescript::TypeScriptPackageProvider;
-use serde::{Deserialize, Serialize};
 use semver::VersionReq;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
-use std::time::Instant;
 #[cfg(feature = "cargo-fallback")]
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 use tracing::{info, warn};
 
 pub(crate) const REGISTRY_SOURCE: &str = "registry+crates.io";
@@ -85,6 +87,7 @@ pub struct PackageGraphOptions {
     pub include_dependencies: bool,
     pub include_dev_dependencies: bool,
     pub include_build_dependencies: bool,
+    pub include_all_targets: bool,
     pub cargo_fetch: bool,
     pub resolve_registry: bool,
     pub allow_multiple_versions: bool,
@@ -102,6 +105,7 @@ impl Default for PackageGraphOptions {
             include_dependencies: true,
             include_dev_dependencies: false,
             include_build_dependencies: false,
+            include_all_targets: false,
             cargo_fetch: true,
             resolve_registry: true,
             allow_multiple_versions: false,
@@ -295,10 +299,7 @@ impl PackageGraph {
         let lock_index = lock.as_ref().map(LockIndex::from_lock);
         info!(
             "graph: target context {}",
-            options
-                .target
-                .as_deref()
-                .unwrap_or("default")
+            options.target.as_deref().unwrap_or("default")
         );
         let target_ctx = TargetContext::from_env(options.target.as_deref())?;
         let registry = if options.resolve_registry {
@@ -324,8 +325,7 @@ impl PackageGraph {
         resolver.load_root(manifest_path)?;
         info!(
             "graph: starting async resolver (registry={}, offline={})",
-            options.resolve_registry,
-            options.offline
+            options.resolve_registry, options.offline
         );
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
@@ -526,7 +526,14 @@ fn resolve_cache_dir(options: &PackageGraphOptions) -> Option<PathBuf> {
     Some(home.join(".cache").join("magnet"))
 }
 
-fn dependency_active(dep: &DependencyModel, target: &TargetContext) -> Result<bool> {
+fn dependency_active(
+    dep: &DependencyModel,
+    target: &TargetContext,
+    include_all_targets: bool,
+) -> Result<bool> {
+    if include_all_targets {
+        return Ok(true);
+    }
     match dep.target.as_deref() {
         Some(spec) => target.is_active(spec),
         None => Ok(true),
@@ -550,29 +557,32 @@ fn package_to_node_with_lock_loader(
     let mut dep_map = std::collections::HashMap::new();
     if options.include_dependencies {
         for (name, dep) in package.dependencies {
-            if dependency_active(&dep, target_ctx)? {
+            if dependency_active(&dep, target_ctx, options.include_all_targets)? {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
     if options.include_dev_dependencies {
         for (name, dep) in package.dev_dependencies {
-            if dependency_active(&dep, target_ctx)? {
+            if dependency_active(&dep, target_ctx, options.include_all_targets)? {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
     if options.include_build_dependencies {
         for (name, dep) in package.build_dependencies {
-            if dependency_active(&dep, target_ctx)? {
+            if dependency_active(&dep, target_ctx, options.include_all_targets)? {
                 dep_map.entry(name).or_insert(dep);
             }
         }
     }
 
-    if options.include_dependencies || options.include_dev_dependencies || options.include_build_dependencies {
+    if options.include_dependencies
+        || options.include_dev_dependencies
+        || options.include_build_dependencies
+    {
         for targeted in &package.target_dependencies {
-            if !target_ctx.is_active(&targeted.target)? {
+            if !options.include_all_targets && !target_ctx.is_active(&targeted.target)? {
                 continue;
             }
             if options.include_dependencies {
@@ -648,7 +658,6 @@ fn package_to_node_with_lock_loader(
         dependencies: edges,
     })
 }
-
 
 pub(crate) fn dependency_to_edge(
     name: String,
@@ -981,7 +990,6 @@ fn manifest_root_path(manifest: &ManifestModel) -> PathBuf {
         ManifestModel::Package(package) => package.root_path.clone(),
     }
 }
-
 
 fn default_module_roots(root: &Path) -> Vec<PathBuf> {
     let src = root.join("src");

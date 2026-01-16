@@ -37,7 +37,9 @@ impl SourceFile {
             .get(idx + 1)
             .copied()
             .unwrap_or_else(|| self.source.len());
-        self.source.get(start..end).map(|s| s.trim_end_matches('\n'))
+        self.source
+            .get(start..end)
+            .map(|s| s.trim_end_matches('\n'))
     }
 
     pub fn span_on_line(&self, span: Span) -> Option<LineSpan> {
@@ -111,7 +113,10 @@ impl SourceMap {
     }
 
     pub fn file(&self, id: FileId) -> Option<SourceFile> {
-        self.files.read().ok().and_then(|files| files.get(&id).cloned())
+        self.files
+            .read()
+            .ok()
+            .and_then(|files| files.get(&id).cloned())
     }
 }
 

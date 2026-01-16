@@ -160,11 +160,7 @@ fn emit_br_reg(out: &mut Vec<u8>, rn: u32) {
     out.extend_from_slice(&instr.to_le_bytes());
 }
 
-pub fn emit_executable_elf64(
-    path: &Path,
-    arch: TargetArch,
-    plan: &EmitPlan,
-) -> Result<()> {
+pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
     const ELFCLASS64: u8 = 2;
     const ELFDATA2LSB: u8 = 1;
@@ -202,7 +198,10 @@ pub fn emit_executable_elf64(
         TargetArch::Aarch64 => b"/lib/ld-linux-aarch64.so.1\0".as_slice(),
     };
 
-    let needs_plt = plan.relocs.iter().any(|reloc| reloc.kind == RelocKind::CallRel32);
+    let needs_plt = plan
+        .relocs
+        .iter()
+        .any(|reloc| reloc.kind == RelocKind::CallRel32);
     let plt_stub_size = if needs_plt {
         match arch {
             TargetArch::X86_64 => 6,
@@ -231,8 +230,7 @@ pub fn emit_executable_elf64(
 
     let data_offset = align_up(rx_end, 0x1000);
     let dynsym_offset = align_up(
-        data_offset
-            + dynamic_table_size(externs.len(), externs.len() + relative_relocs_count),
+        data_offset + dynamic_table_size(externs.len(), externs.len() + relative_relocs_count),
         8,
     );
     let dynsym_size = 24usize * (externs.len() + 1);
@@ -402,7 +400,8 @@ pub fn emit_executable_elf64(
         let name_offset = dynstr_offsets
             .get(&sym.name)
             .copied()
-            .ok_or_else(|| Error::from("missing symbol in dynstr"))? as u32;
+            .ok_or_else(|| Error::from("missing symbol in dynstr"))?
+            as u32;
         put_u32(&mut out, name_offset);
         out.push(0x12); // STB_GLOBAL | STT_FUNC
         out.push(0);
@@ -526,11 +525,7 @@ pub fn emit_executable_elf64(
     Ok(())
 }
 
-pub fn emit_object_elf64(
-    path: &Path,
-    arch: TargetArch,
-    plan: &EmitPlan,
-) -> Result<()> {
+pub fn emit_object_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     const ELF_MAGIC: [u8; 4] = [0x7F, b'E', b'L', b'F'];
     const ELFCLASS64: u8 = 2;
     const ELFDATA2LSB: u8 = 1;

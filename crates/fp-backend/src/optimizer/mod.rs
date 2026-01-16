@@ -97,11 +97,7 @@ pub struct OptimizationReport {
 
 pub trait MirPass {
     fn name(&self) -> MirPassName;
-    fn run(
-        &self,
-        program: &mut mir::Program,
-        engine: &mut MirQueryEngine,
-    ) -> Result<usize, Error>;
+    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error>;
 }
 
 #[derive(Default)]
@@ -137,7 +133,10 @@ impl MirOptimizer {
 
         for pass_name in &plan.passes {
             let pass = self.registry.get(pass_name).ok_or_else(|| {
-                optimization_error(format!("unknown MIR optimization pass: {}", pass_name.as_str()))
+                optimization_error(format!(
+                    "unknown MIR optimization pass: {}",
+                    pass_name.as_str()
+                ))
             })?;
             let mut engine = MirQueryEngine::new();
             let changes = pass.run(program, &mut engine)?;
@@ -187,16 +186,14 @@ impl MirQueryEngine {
         body_id: mir::BodyId,
     ) -> Result<&BodyPropagation, Error> {
         if !self.propagation.contains_key(&body_id) {
-            let body = program.bodies.get(&body_id).ok_or_else(|| {
-                optimization_error(format!("missing MIR body for {body_id:?}"))
-            })?;
+            let body = program
+                .bodies
+                .get(&body_id)
+                .ok_or_else(|| optimization_error(format!("missing MIR body for {body_id:?}")))?;
             let analysis = compute_propagation(body);
             self.propagation.insert(body_id, analysis);
         }
-        Ok(self
-            .propagation
-            .get(&body_id)
-            .expect("propagation cached"))
+        Ok(self.propagation.get(&body_id).expect("propagation cached"))
     }
 
     pub(crate) fn liveness(
@@ -205,9 +202,10 @@ impl MirQueryEngine {
         body_id: mir::BodyId,
     ) -> Result<&BodyLiveness, Error> {
         if !self.liveness.contains_key(&body_id) {
-            let body = program.bodies.get(&body_id).ok_or_else(|| {
-                optimization_error(format!("missing MIR body for {body_id:?}"))
-            })?;
+            let body = program
+                .bodies
+                .get(&body_id)
+                .ok_or_else(|| optimization_error(format!("missing MIR body for {body_id:?}")))?;
             let analysis = compute_liveness(body);
             self.liveness.insert(body_id, analysis);
         }
@@ -270,9 +268,8 @@ fn parse_pass_list(raw: &str, passes: &mut Vec<MirPassName>) -> Result<(), Error
         if ident.is_empty() || ident == "*" {
             continue;
         }
-        let pass = MirPassName::from_ident(ident).ok_or_else(|| {
-            optimization_error(format!("unknown MIR optimization pass: {ident}"))
-        })?;
+        let pass = MirPassName::from_ident(ident)
+            .ok_or_else(|| optimization_error(format!("unknown MIR optimization pass: {ident}")))?;
         passes.push(pass);
     }
     Ok(())
@@ -409,12 +406,18 @@ fn compute_predecessors(body: &mir::Body) -> Vec<Vec<mir::BasicBlockId>> {
         }
         match &term.kind {
             mir::TerminatorKind::Call { cleanup, .. }
-            | mir::TerminatorKind::Drop { unwind: cleanup, .. }
-            | mir::TerminatorKind::DropAndReplace { unwind: cleanup, .. }
+            | mir::TerminatorKind::Drop {
+                unwind: cleanup, ..
+            }
+            | mir::TerminatorKind::DropAndReplace {
+                unwind: cleanup, ..
+            }
             | mir::TerminatorKind::Assert { cleanup, .. }
             | mir::TerminatorKind::Yield { drop: cleanup, .. }
             | mir::TerminatorKind::InlineAsm { cleanup, .. }
-            | mir::TerminatorKind::FalseUnwind { unwind: cleanup, .. } => {
+            | mir::TerminatorKind::FalseUnwind {
+                unwind: cleanup, ..
+            } => {
                 if let Some(cleanup) = cleanup {
                     preds[*cleanup as usize].push(idx as mir::BasicBlockId);
                 }
@@ -559,8 +562,12 @@ fn collect_rvalue_uses(rvalue: &mir::Rvalue, uses: &mut [bool], defs: &[bool]) {
         mir::Rvalue::UnaryOp(_, operand)
         | mir::Rvalue::Repeat(operand, _)
         | mir::Rvalue::Cast(_, operand, _)
-        | mir::Rvalue::ContainerLen { container: operand, .. }
-        | mir::Rvalue::ContainerGet { container: operand, .. }
+        | mir::Rvalue::ContainerLen {
+            container: operand, ..
+        }
+        | mir::Rvalue::ContainerGet {
+            container: operand, ..
+        }
         | mir::Rvalue::ShallowInitBox(operand, _) => {
             collect_operand_uses(operand, uses, defs);
         }
@@ -683,11 +690,7 @@ impl MirPass for ConstPropagatePass {
         MirPassName::ConstPropagate
     }
 
-    fn run(
-        &self,
-        program: &mut mir::Program,
-        engine: &mut MirQueryEngine,
-    ) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -700,19 +703,13 @@ impl MirPass for ConstPropagatePass {
             for (block_idx, block) in body.basic_blocks.iter_mut().enumerate() {
                 let mut state = analysis.in_states[block_idx].clone();
                 for stmt in &mut block.statements {
-                    changes += rewrite_statement_operands(
-                        stmt,
-                        &state,
-                        ReplacementPolicy::ConstOnly,
-                    );
+                    changes +=
+                        rewrite_statement_operands(stmt, &state, ReplacementPolicy::ConstOnly);
                     transfer_statement(&mut state, stmt);
                 }
                 if let Some(term) = &mut block.terminator {
-                    changes += rewrite_terminator_operands(
-                        term,
-                        &state,
-                        ReplacementPolicy::ConstOnly,
-                    );
+                    changes +=
+                        rewrite_terminator_operands(term, &state, ReplacementPolicy::ConstOnly);
                     transfer_terminator(&mut state, term);
                 }
             }
@@ -729,11 +726,7 @@ impl MirPass for CopyPropagatePass {
         MirPassName::CopyPropagate
     }
 
-    fn run(
-        &self,
-        program: &mut mir::Program,
-        engine: &mut MirQueryEngine,
-    ) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -746,19 +739,13 @@ impl MirPass for CopyPropagatePass {
             for (block_idx, block) in body.basic_blocks.iter_mut().enumerate() {
                 let mut state = analysis.in_states[block_idx].clone();
                 for stmt in &mut block.statements {
-                    changes += rewrite_statement_operands(
-                        stmt,
-                        &state,
-                        ReplacementPolicy::AliasCopy,
-                    );
+                    changes +=
+                        rewrite_statement_operands(stmt, &state, ReplacementPolicy::AliasCopy);
                     transfer_statement(&mut state, stmt);
                 }
                 if let Some(term) = &mut block.terminator {
-                    changes += rewrite_terminator_operands(
-                        term,
-                        &state,
-                        ReplacementPolicy::AliasCopy,
-                    );
+                    changes +=
+                        rewrite_terminator_operands(term, &state, ReplacementPolicy::AliasCopy);
                     transfer_terminator(&mut state, term);
                 }
             }
@@ -775,11 +762,7 @@ impl MirPass for SimplifyBranchesPass {
         MirPassName::SimplifyBranches
     }
 
-    fn run(
-        &self,
-        program: &mut mir::Program,
-        engine: &mut MirQueryEngine,
-    ) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -843,11 +826,7 @@ impl MirPass for DeadStorePass {
         MirPassName::DeadStore
     }
 
-    fn run(
-        &self,
-        program: &mut mir::Program,
-        engine: &mut MirQueryEngine,
-    ) -> Result<usize, Error> {
+    fn run(&self, program: &mut mir::Program, engine: &mut MirQueryEngine) -> Result<usize, Error> {
         let mut changes = 0;
 
         let body_ids: Vec<_> = program.bodies.keys().copied().collect();
@@ -984,7 +963,9 @@ fn rewrite_statement_operands(
 ) -> usize {
     let span = stmt.source_info;
     match &mut stmt.kind {
-        mir::StatementKind::Assign(_, rvalue) => rewrite_rvalue_operands(rvalue, state, policy, span),
+        mir::StatementKind::Assign(_, rvalue) => {
+            rewrite_rvalue_operands(rvalue, state, policy, span)
+        }
         mir::StatementKind::IntrinsicCall { args, .. } => {
             rewrite_operand_list(args, state, policy, span)
         }
@@ -1025,16 +1006,19 @@ fn rewrite_rvalue_operands(
 ) -> usize {
     match rvalue {
         mir::Rvalue::Use(operand) => rewrite_operand(operand, state, policy, span).unwrap_or(0),
-        mir::Rvalue::BinaryOp(_, lhs, rhs)
-        | mir::Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+        mir::Rvalue::BinaryOp(_, lhs, rhs) | mir::Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
             rewrite_operand(lhs, state, policy, span).unwrap_or(0)
                 + rewrite_operand(rhs, state, policy, span).unwrap_or(0)
         }
         mir::Rvalue::UnaryOp(_, operand)
         | mir::Rvalue::Repeat(operand, _)
         | mir::Rvalue::Cast(_, operand, _)
-        | mir::Rvalue::ContainerLen { container: operand, .. }
-        | mir::Rvalue::ContainerGet { container: operand, .. }
+        | mir::Rvalue::ContainerLen {
+            container: operand, ..
+        }
+        | mir::Rvalue::ContainerGet {
+            container: operand, ..
+        }
         | mir::Rvalue::ShallowInitBox(operand, _) => {
             rewrite_operand(operand, state, policy, span).unwrap_or(0)
         }
@@ -1050,9 +1034,7 @@ fn rewrite_rvalue_operands(
             }
             changes
         }
-        mir::Rvalue::IntrinsicCall { args, .. } => {
-            rewrite_operand_list(args, state, policy, span)
-        }
+        mir::Rvalue::IntrinsicCall { args, .. } => rewrite_operand_list(args, state, policy, span),
         _ => 0,
     }
 }
@@ -1114,10 +1096,7 @@ fn rewrite_place_operand(
     }
 }
 
-fn operand_to_constant(
-    operand: &mir::Operand,
-    state: &[ValueState],
-) -> Option<mir::ConstantKind> {
+fn operand_to_constant(operand: &mir::Operand, state: &[ValueState]) -> Option<mir::ConstantKind> {
     match operand {
         mir::Operand::Constant(constant) => Some(constant.literal.clone()),
         mir::Operand::Copy(place) | mir::Operand::Move(place) if place.projection.is_empty() => {
@@ -1205,18 +1184,10 @@ fn eval_binary_op(
     rhs: &mir::ConstantKind,
 ) -> Option<mir::ConstantKind> {
     match (lhs, rhs) {
-        (mir::ConstantKind::Int(a), mir::ConstantKind::Int(b)) => {
-            eval_binary_i64(op, *a, *b)
-        }
-        (mir::ConstantKind::UInt(a), mir::ConstantKind::UInt(b)) => {
-            eval_binary_u64(op, *a, *b)
-        }
-        (mir::ConstantKind::Bool(a), mir::ConstantKind::Bool(b)) => {
-            eval_binary_bool(op, *a, *b)
-        }
-        (mir::ConstantKind::Float(a), mir::ConstantKind::Float(b)) => {
-            eval_binary_f64(op, *a, *b)
-        }
+        (mir::ConstantKind::Int(a), mir::ConstantKind::Int(b)) => eval_binary_i64(op, *a, *b),
+        (mir::ConstantKind::UInt(a), mir::ConstantKind::UInt(b)) => eval_binary_u64(op, *a, *b),
+        (mir::ConstantKind::Bool(a), mir::ConstantKind::Bool(b)) => eval_binary_bool(op, *a, *b),
+        (mir::ConstantKind::Float(a), mir::ConstantKind::Float(b)) => eval_binary_f64(op, *a, *b),
         _ => None,
     }
 }

@@ -18,13 +18,13 @@ use fp_core::ast::{
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
-use fp_core::span::Span;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::package::graph::PackageGraph;
+use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
 mod blocks;
@@ -513,7 +513,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             return true;
         }
 
-        let has_applicable = attrs.iter().any(|attr| matches!(attr.meta, AttrMeta::Path(_)));
+        let has_applicable = attrs
+            .iter()
+            .any(|attr| matches!(attr.meta, AttrMeta::Path(_)));
         if !has_applicable {
             return false;
         }

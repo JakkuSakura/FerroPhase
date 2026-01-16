@@ -1,6 +1,6 @@
 use fp_core::lir::{
-    CallingConvention, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator,
-    LirType, Linkage, Name,
+    CallingConvention, Linkage, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram,
+    LirTerminator, LirType, Name,
 };
 
 #[test]

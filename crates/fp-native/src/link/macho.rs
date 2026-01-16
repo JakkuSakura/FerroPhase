@@ -163,7 +163,14 @@ fn build_strtab(externs: &[ExternSymbol]) -> (Vec<u8>, HashMap<String, u32>) {
 fn emit_x86_stub(buf: &mut [u8], stub_addr: u64, ptr_addr: u64) -> Result<()> {
     let disp = ptr_addr as i64 - (stub_addr as i64 + 6);
     let disp32 = i32::try_from(disp).map_err(|_| Error::from("stub target out of range"))?;
-    buf.copy_from_slice(&[0xFF, 0x25, disp32.to_le_bytes()[0], disp32.to_le_bytes()[1], disp32.to_le_bytes()[2], disp32.to_le_bytes()[3]]);
+    buf.copy_from_slice(&[
+        0xFF,
+        0x25,
+        disp32.to_le_bytes()[0],
+        disp32.to_le_bytes()[1],
+        disp32.to_le_bytes()[2],
+        disp32.to_le_bytes()[3],
+    ]);
     Ok(())
 }
 
@@ -193,11 +200,7 @@ fn emit_arm64_stub(buf: &mut [u8], stub_addr: u64, ptr_addr: u64) -> Result<()> 
 ///
 /// This intentionally avoids the system linker. It does not support dynamic
 /// libraries, relocations, or any calls into libc yet.
-pub fn emit_executable_macho(
-    path: &Path,
-    arch: TargetArch,
-    plan: &EmitPlan,
-) -> Result<()> {
+pub fn emit_executable_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
     const MH_EXECUTE: u32 = 0x2;
@@ -297,7 +300,11 @@ pub fn emit_executable_macho(
     let text_offset = file_start_of_text;
     let text_size = plan.text.len() as u64;
     let stubs_offset = align_up(text_offset + text_size, 16);
-    let stubs_size = if has_stubs { stub_size * externs.len() as u64 } else { 0 };
+    let stubs_size = if has_stubs {
+        stub_size * externs.len() as u64
+    } else {
+        0
+    };
     let rodata_offset = align_up(stubs_offset + stubs_size, 16);
     let rodata_size = plan.rodata.len() as u64;
     let text_filesize = align_up(rodata_offset + rodata_size, page);
@@ -305,7 +312,11 @@ pub fn emit_executable_macho(
 
     let data_fileoff = align_up(text_fileoff + text_filesize, page);
     let la_ptr_offset = data_fileoff;
-    let la_ptr_size = if has_stubs { 8u64 * externs.len() as u64 } else { 0 };
+    let la_ptr_size = if has_stubs {
+        8u64 * externs.len() as u64
+    } else {
+        0
+    };
     let data_filesize = align_up(la_ptr_size, page);
     let data_vmsize = data_filesize;
     vmaddr_data = vmaddr_text + (data_fileoff - text_fileoff);
@@ -761,8 +772,8 @@ pub fn emit_executable_macho(
                 match arch {
                     TargetArch::X86_64 => {
                         let rel = stub_addr as i64 - (call_addr as i64 + 4);
-                        let rel32 =
-                            i32::try_from(rel).map_err(|_| Error::from("call target out of range"))?;
+                        let rel32 = i32::try_from(rel)
+                            .map_err(|_| Error::from("call target out of range"))?;
                         out[offset..offset + 4].copy_from_slice(&rel32.to_le_bytes());
                     }
                     TargetArch::Aarch64 => {
@@ -815,11 +826,7 @@ fn codesign_if_needed(path: &Path) -> Result<()> {
 /// Limitations:
 /// - no debug info, relocations, or external calls
 /// - ignores input LIR
-pub fn emit_object_macho(
-    path: &Path,
-    arch: TargetArch,
-    plan: &EmitPlan,
-) -> Result<()> {
+pub fn emit_object_macho(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Result<()> {
     // Constants from mach-o/loader.h
     const MH_MAGIC_64: u32 = 0xfeedfacf;
     const MH_OBJECT: u32 = 0x1;
@@ -988,7 +995,9 @@ pub fn emit_object_macho(
         if out.len() < symoff {
             out.resize(symoff, 0);
         } else {
-            return Err(Error::from("internal Mach-O layout error (symoff mismatch)"));
+            return Err(Error::from(
+                "internal Mach-O layout error (symoff mismatch)",
+            ));
         }
     }
 

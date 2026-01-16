@@ -1,9 +1,9 @@
 use eyre::{Result, bail};
 use std::path::{Path, PathBuf};
 
+mod cargo;
 #[path = "crate.rs"]
 mod crate_;
-mod cargo;
 mod dependency;
 mod graph;
 mod lock;
@@ -13,8 +13,8 @@ mod patch;
 mod workspace;
 
 use crate::configs::ManifestConfig;
-pub use crate_::*;
 pub use cargo::*;
+pub use crate_::*;
 pub use dependency::*;
 pub use graph::*;
 pub use lock::*;

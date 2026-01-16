@@ -1,3 +1,4 @@
+use fp_backend::transformations::MirLowering;
 use fp_core::ast::{TypeInt, TypePrimitive};
 use fp_core::hir::{
     self, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Lit, Pat, PatKind, Path,
@@ -9,7 +10,6 @@ use fp_core::mir::{
     ConstantKind, ItemKind as MirItemKind, Operand, Rvalue, StatementKind, TerminatorKind,
 };
 use fp_core::span::Span;
-use fp_backend::transformations::MirLowering;
 
 fn span() -> Span {
     Span::new(0, 0, 0)

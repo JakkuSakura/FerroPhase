@@ -1,7 +1,7 @@
 use crate::ast::Path;
-use crate::span::Span;
 use crate::common_enum;
 use crate::common_struct;
+use crate::span::Span;
 
 common_enum! {
     /// Delimiter used for a macro invocation.

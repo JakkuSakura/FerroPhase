@@ -13,8 +13,8 @@ use quote::{quote, ToTokens};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use syn::parse::{Parse, ParseStream, Parser};
 use syn::parse_quote;
-use syn::spanned::Spanned;
 use syn::punctuated::Punctuated;
+use syn::spanned::Spanned;
 use syn::LitStr;
 use syn::Token;
 

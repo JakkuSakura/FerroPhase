@@ -1,11 +1,9 @@
 use crate::models::parse_cargo_dependencies;
 use crate::registry::{RegistryClient, RegistryOptions, ResolvedCrate};
-use crate::resolver::types::{
-    RegistryDeps, RegistryManifestKey, RegistryReqKey, ResolvedRegistry,
-};
+use crate::resolver::types::{RegistryDeps, RegistryManifestKey, RegistryReqKey, ResolvedRegistry};
 use eyre::Result;
 use parking_lot::RwLock;
-use semver::{Version, VersionReq};
+use semver::VersionReq;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
@@ -48,39 +46,23 @@ impl RegistryLoader {
         if let Some(resolved) = self.cache.resolved_by_req.read().get(&key) {
             return Ok(resolved.clone());
         }
-        if let Ok(version) = Version::parse(version_req) {
-            let resolved = self.resolve_locked(name, &version.to_string(), None)?;
-            self.cache
-                .resolved_by_version
-                .write()
-                .insert(
-                    RegistryManifestKey {
-                        name: resolved.name.clone(),
-                        version: resolved.version.clone(),
-                    },
-                    resolved.clone(),
-                );
-            self.cache.resolved_by_req.write().insert(key.clone(), resolved.clone());
-            self.cache.inflight_req.write().remove(&key);
-            return Ok(resolved);
-        }
         let lock = self.inflight_req_lock(&key);
         let _guard = lock.blocking_lock();
         if let Some(resolved) = self.cache.resolved_by_req.read().get(&key) {
             return Ok(resolved.clone());
         }
         let resolved = self.client.resolve(name, Some(version_req))?;
+        self.cache.resolved_by_version.write().insert(
+            RegistryManifestKey {
+                name: resolved.name.clone(),
+                version: resolved.version.clone(),
+            },
+            resolved.clone(),
+        );
         self.cache
-            .resolved_by_version
+            .resolved_by_req
             .write()
-            .insert(
-                RegistryManifestKey {
-                    name: resolved.name.clone(),
-                    version: resolved.version.clone(),
-                },
-                resolved.clone(),
-            );
-        self.cache.resolved_by_req.write().insert(key.clone(), resolved.clone());
+            .insert(key.clone(), resolved.clone());
         self.cache.inflight_req.write().remove(&key);
         Ok(resolved)
     }
@@ -91,11 +73,8 @@ impl RegistryLoader {
         version_req: Option<&str>,
     ) -> Result<ResolvedRegistry> {
         let resolved = self.resolve(name, version_req)?;
-        let deps = self.load_manifest_deps(
-            &resolved.name,
-            &resolved.version,
-            &resolved.manifest_path,
-        )?;
+        let deps =
+            self.load_manifest_deps(&resolved.name, &resolved.version, &resolved.manifest_path)?;
         Ok(ResolvedRegistry { resolved, deps })
     }
 
@@ -106,11 +85,8 @@ impl RegistryLoader {
         checksum: Option<&str>,
     ) -> Result<ResolvedRegistry> {
         let resolved = self.resolve_locked(name, version, checksum)?;
-        let deps = self.load_manifest_deps(
-            &resolved.name,
-            &resolved.version,
-            &resolved.manifest_path,
-        )?;
+        let deps =
+            self.load_manifest_deps(&resolved.name, &resolved.version, &resolved.manifest_path)?;
         Ok(ResolvedRegistry { resolved, deps })
     }
 
@@ -199,39 +175,23 @@ impl RegistryLoader {
         if let Some(resolved) = self.cache.resolved_by_req.read().get(&key) {
             return Ok(resolved.clone());
         }
-        if let Ok(version) = Version::parse(version_req) {
-            let resolved = self.resolve_locked_async(name, &version.to_string(), None).await?;
-            self.cache
-                .resolved_by_version
-                .write()
-                .insert(
-                    RegistryManifestKey {
-                        name: resolved.name.clone(),
-                        version: resolved.version.clone(),
-                    },
-                    resolved.clone(),
-                );
-            self.cache.resolved_by_req.write().insert(key.clone(), resolved.clone());
-            self.cache.inflight_req.write().remove(&key);
-            return Ok(resolved);
-        }
         let lock = self.inflight_req_lock(&key);
         let _guard = lock.lock().await;
         if let Some(resolved) = self.cache.resolved_by_req.read().get(&key) {
             return Ok(resolved.clone());
         }
         let resolved = self.client.resolve_async(name, Some(version_req)).await?;
+        self.cache.resolved_by_version.write().insert(
+            RegistryManifestKey {
+                name: resolved.name.clone(),
+                version: resolved.version.clone(),
+            },
+            resolved.clone(),
+        );
         self.cache
-            .resolved_by_version
+            .resolved_by_req
             .write()
-            .insert(
-                RegistryManifestKey {
-                    name: resolved.name.clone(),
-                    version: resolved.version.clone(),
-                },
-                resolved.clone(),
-            );
-        self.cache.resolved_by_req.write().insert(key.clone(), resolved.clone());
+            .insert(key.clone(), resolved.clone());
         self.cache.inflight_req.write().remove(&key);
         Ok(resolved)
     }
@@ -242,16 +202,13 @@ impl RegistryLoader {
         reqs: &[VersionReq],
     ) -> Result<ResolvedCrate> {
         let resolved = self.client.resolve_with_reqs_async(name, reqs).await?;
-        self.cache
-            .resolved_by_version
-            .write()
-            .insert(
-                RegistryManifestKey {
-                    name: resolved.name.clone(),
-                    version: resolved.version.clone(),
-                },
-                resolved.clone(),
-            );
+        self.cache.resolved_by_version.write().insert(
+            RegistryManifestKey {
+                name: resolved.name.clone(),
+                version: resolved.version.clone(),
+            },
+            resolved.clone(),
+        );
         Ok(resolved)
     }
 

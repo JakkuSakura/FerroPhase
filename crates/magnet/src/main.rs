@@ -5,7 +5,8 @@ use tracing::{debug, info};
 
 // Use local utils module instead of common crate
 use magnet::commands::{
-    self, BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, UpdateOptions, generate::GenerateOptions,
+    self, BenchOptions, BuildOptions, LockOptions, RunMode, RunOptions, TestOptions, UpdateOptions,
+    generate::GenerateOptions,
 };
 use magnet::utils::{LogLevel, setup_logs};
 

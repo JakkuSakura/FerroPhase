@@ -1,5 +1,5 @@
-pub mod cargo_resolver;
 pub mod cache;
+pub mod cargo_resolver;
 pub mod lock;
 pub mod project;
 pub mod registry_loader;

@@ -1,7 +1,7 @@
 use fp_core::lir::{
-    CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature, LirInstruction,
-    LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirType, LirValue, Linkage,
-    Name,
+    CallingConvention, Linkage, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
+    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirType,
+    LirValue, Name,
 };
 use fp_native::emit::{self, RelocKind, TargetArch, TargetFormat};
 use fp_native::link::dump::dump_macho;
@@ -253,18 +253,15 @@ fn program_with_shifts_and_casts() -> LirProgram {
     };
     let ptr_to_int = LirInstruction {
         id: 5,
-        kind: LirInstructionKind::PtrToInt(LirValue::Constant(LirConstant::Null(
-            LirType::Ptr(Box::new(LirType::I8)),
-        ))),
+        kind: LirInstructionKind::PtrToInt(LirValue::Constant(LirConstant::Null(LirType::Ptr(
+            Box::new(LirType::I8),
+        )))),
         type_hint: Some(LirType::I64),
         debug_info: None,
     };
     let int_to_ptr = LirInstruction {
         id: 6,
-        kind: LirInstructionKind::IntToPtr(LirValue::Constant(LirConstant::UInt(
-            8,
-            LirType::I64,
-        ))),
+        kind: LirInstructionKind::IntToPtr(LirValue::Constant(LirConstant::UInt(8, LirType::I64))),
         type_hint: Some(LirType::Ptr(Box::new(LirType::I8))),
         debug_info: None,
     };
@@ -554,14 +551,16 @@ fn pe_executable_has_magic() {
 fn elf_executable_supports_printf() {
     let arch = host_arch();
     let plan = emit::emit_plan(&program_with_print(), TargetFormat::Elf, arch).unwrap();
-    assert!(plan
-        .relocs
-        .iter()
-        .any(|reloc| reloc.kind == RelocKind::CallRel32 && reloc.symbol == "printf"));
-    assert!(plan
-        .relocs
-        .iter()
-        .any(|reloc| reloc.kind == RelocKind::Abs64 && reloc.symbol == ".rodata"));
+    assert!(
+        plan.relocs
+            .iter()
+            .any(|reloc| reloc.kind == RelocKind::CallRel32 && reloc.symbol == "printf")
+    );
+    assert!(
+        plan.relocs
+            .iter()
+            .any(|reloc| reloc.kind == RelocKind::Abs64 && reloc.symbol == ".rodata")
+    );
 
     let out_dir = tempfile::tempdir().unwrap();
     let exe = out_dir.path().join("printf.elf");
@@ -610,7 +609,12 @@ fn macho_dump_offsets_stay_in_file() {
     if let Some(info) = dump.dyld_info {
         assert_range_in_file("rebase", info.rebase_off, info.rebase_size, bytes.len());
         assert_range_in_file("bind", info.bind_off, info.bind_size, bytes.len());
-        assert_range_in_file("lazy_bind", info.lazy_bind_off, info.lazy_bind_size, bytes.len());
+        assert_range_in_file(
+            "lazy_bind",
+            info.lazy_bind_off,
+            info.lazy_bind_size,
+            bytes.len(),
+        );
         assert_range_in_file("export", info.export_off, info.export_size, bytes.len());
     }
     if let Some(symtab) = dump.symtab {

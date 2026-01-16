@@ -241,10 +241,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Macro(macro_expr) => {
-                self.emit_error_at(macro_expr.invocation.span, format!(
-                    "macro `{}` should have been lowered before const evaluation",
-                    macro_expr.invocation.path
-                ));
+                self.emit_error_at(
+                    macro_expr.invocation.span,
+                    format!(
+                        "macro `{}` should have been lowered before const evaluation",
+                        macro_expr.invocation.path
+                    ),
+                );
             }
             ExprKind::ConstBlock(const_block) => {
                 let mut value_expr = const_block.expr.as_ref().clone();

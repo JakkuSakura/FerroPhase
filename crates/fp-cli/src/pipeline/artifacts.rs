@@ -18,6 +18,5 @@ pub(crate) struct LlvmArtifacts {
     pub(crate) ir_path: std::path::PathBuf,
 }
 
-
 #[allow(dead_code)]
 pub(crate) fn _unused_error(_e: CliError) {}

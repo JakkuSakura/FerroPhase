@@ -27,12 +27,15 @@ pub struct CargoManifestConfig {
 impl CargoManifestConfig {
     pub fn from_path(path: &Path) -> Result<Self> {
         let path = path.canonicalize().with_context(|| {
-            format!("Failed to canonicalize path for Cargo.toml: {}", path.display())
+            format!(
+                "Failed to canonicalize path for Cargo.toml: {}",
+                path.display()
+            )
         })?;
         let content = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read Cargo.toml from {}", path.display()))?;
-        let mut config: Self =
-            toml::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))?;
+        let mut config: Self = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
         config.source_path = Some(path);
         Ok(config)
     }

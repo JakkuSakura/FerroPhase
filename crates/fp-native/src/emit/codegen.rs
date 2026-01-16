@@ -1,8 +1,10 @@
 use fp_core::error::{Error, Result};
 use fp_core::lir::layout::align_of;
-use fp_core::lir::{LirConstant, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue};
+use fp_core::lir::{
+    LirConstant, LirInstruction, LirInstructionKind, LirProgram, LirTerminator, LirType, LirValue,
+};
 
-use crate::emit::{aarch64, x86_64, CodegenOutput, TargetArch, TargetFormat};
+use crate::emit::{CodegenOutput, TargetArch, TargetFormat, aarch64, x86_64};
 
 pub fn emit_text_from_lir(
     lir_program: &LirProgram,
@@ -129,17 +131,20 @@ fn lower_phi_in_function(func: &mut fp_core::lir::LirFunction) -> Result<()> {
                     return Err(Error::from("phi predecessor block not found"));
                 };
                 max_id += 1;
-                stores.push((pred_idx, LirInstruction {
-                    id: max_id,
-                    kind: LirInstructionKind::Store {
-                        value,
-                        address: LirValue::Register(alloca_id),
-                        alignment: Some(align),
-                        volatile: false,
+                stores.push((
+                    pred_idx,
+                    LirInstruction {
+                        id: max_id,
+                        kind: LirInstructionKind::Store {
+                            value,
+                            address: LirValue::Register(alloca_id),
+                            alignment: Some(align),
+                            volatile: false,
+                        },
+                        type_hint: None,
+                        debug_info: None,
                     },
-                    type_hint: None,
-                    debug_info: None,
-                }));
+                ));
             }
 
             replacements.push((
@@ -172,7 +177,8 @@ fn lower_phi_in_function(func: &mut fp_core::lir::LirFunction) -> Result<()> {
 
     if !entry_allocas.is_empty() {
         if let Some(entry_block) = func.basic_blocks.first_mut() {
-            let mut new_insts = Vec::with_capacity(entry_allocas.len() + entry_block.instructions.len());
+            let mut new_insts =
+                Vec::with_capacity(entry_allocas.len() + entry_block.instructions.len());
             new_insts.extend(entry_allocas);
             new_insts.extend(entry_block.instructions.drain(..));
             entry_block.instructions = new_insts;

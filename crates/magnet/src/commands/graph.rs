@@ -18,6 +18,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
         include_dependencies: true,
         include_dev_dependencies: false,
         include_build_dependencies: false,
+        include_all_targets: false,
         cargo_fetch: true,
         resolve_registry: !offline,
         allow_multiple_versions: true,
@@ -44,7 +45,7 @@ pub fn graph(config_path: &Path, output_path: Option<&Path>) -> Result<()> {
 fn write_dot(graph: &PackageGraph, out: &mut dyn Write) -> Result<()> {
     writeln!(out, "digraph magnet {{")?;
     writeln!(out, "    rankdir=LR;")?;
-    writeln!(out, "    node [shape=box, fontname=\"Helvetica\"];" )?;
+    writeln!(out, "    node [shape=box, fontname=\"Helvetica\"];")?;
 
     let mut package_nodes = HashMap::new();
     for package in &graph.packages {

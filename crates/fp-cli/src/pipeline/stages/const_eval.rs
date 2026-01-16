@@ -20,11 +20,7 @@ impl Pipeline {
                         return Err(Pipeline::emit_stage_error(
                             STAGE_CONST_EVAL,
                             options,
-                            format!(
-                                "failed to read std module {}: {}",
-                                std_path.display(),
-                                err
-                            ),
+                            format!("failed to read std module {}: {}", std_path.display(), err),
                         ));
                     }
                 };
@@ -34,11 +30,7 @@ impl Pipeline {
                         return Err(Pipeline::emit_stage_error(
                             STAGE_CONST_EVAL,
                             options,
-                            format!(
-                                "failed to parse std module {}: {}",
-                                std_path.display(),
-                                err
-                            ),
+                            format!("failed to parse std module {}: {}", std_path.display(), err),
                         ));
                     }
                 };

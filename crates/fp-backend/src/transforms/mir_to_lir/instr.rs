@@ -5,10 +5,10 @@
 // BEGIN ORIGINAL CONTENT
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::lir::layout;
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
-use fp_core::lir::layout;
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -873,11 +873,10 @@ impl LirGenerator {
                                 kind
                             ),
                         );
-                        let fallback_ty =
-                            destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
-                        result_value = Some(lir::LirValue::Constant(
-                            lir::LirConstant::Undef(fallback_ty),
-                        ));
+                        let fallback_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
+                        result_value = Some(lir::LirValue::Constant(lir::LirConstant::Undef(
+                            fallback_ty,
+                        )));
                         return Ok(instructions);
                     }
                 };
@@ -1042,9 +1041,9 @@ impl LirGenerator {
                             let wrapper_ty = destination_lir_ty
                                 .clone()
                                 .expect("wrapper LIR type must be available");
-                            let wrapper_value = lir::LirValue::Constant(
-                                lir::LirConstant::Undef(wrapper_ty.clone()),
-                            );
+                            let wrapper_value = lir::LirValue::Constant(lir::LirConstant::Undef(
+                                wrapper_ty.clone(),
+                            ));
                             let insert_id = self.next_id();
                             instructions.push(lir::LirInstruction {
                                 id: insert_id,
@@ -1761,7 +1760,10 @@ impl LirGenerator {
             other => {
                 fp_core::diagnostics::report_warning_with_context(
                     "mir→lir",
-                    format!("unhandled MIR terminator lowered to unreachable: {:?}", other),
+                    format!(
+                        "unhandled MIR terminator lowered to unreachable: {:?}",
+                        other
+                    ),
                 );
                 Ok(lir::LirTerminator::Unreachable)
             }
@@ -1983,10 +1985,8 @@ impl LirGenerator {
             let alignment = Self::alignment_for_lir_type(&alloca_elem_ty);
             if alignment > 0 {
                 let pointer_type = lir::LirType::Ptr(Box::new(alloca_elem_ty.clone()));
-                let size_value = lir::LirValue::Constant(lir::LirConstant::Int(
-                    alloca_count,
-                    lir::LirType::I32,
-                ));
+                let size_value =
+                    lir::LirValue::Constant(lir::LirConstant::Int(alloca_count, lir::LirType::I32));
                 let alloca_id = self.next_id();
                 self.queued_instructions.push(lir::LirInstruction {
                     id: alloca_id,
@@ -2097,9 +2097,7 @@ impl LirGenerator {
                 self.apply_index_projection(&base_place, base_access, index_local)
             }
             mir::PlaceElem::ConstantIndex {
-                offset,
-                from_end,
-                ..
+                offset, from_end, ..
             } => {
                 if from_end {
                     return Err(crate::error::optimization_error(
@@ -2112,11 +2110,7 @@ impl LirGenerator {
                 ));
                 self.apply_index_projection_value(&base_place, base_access, index_value)
             }
-            mir::PlaceElem::Subslice {
-                from,
-                to,
-                from_end,
-            } => {
+            mir::PlaceElem::Subslice { from, to, from_end } => {
                 let base_ty = self.lookup_place_type(&base_place).ok_or_else(|| {
                     crate::error::optimization_error("MIR→LIR: missing type for subslice")
                 })?;
@@ -2130,10 +2124,8 @@ impl LirGenerator {
                     }
                 };
 
-                let start_value = lir::LirValue::Constant(lir::LirConstant::Int(
-                    from as i64,
-                    lir::LirType::I64,
-                ));
+                let start_value =
+                    lir::LirValue::Constant(lir::LirConstant::Int(from as i64, lir::LirType::I64));
                 let base_access_for_len = base_access.clone();
                 let slice_ptr_access =
                     self.apply_index_projection_value(&base_place, base_access, start_value)?;
@@ -2158,8 +2150,12 @@ impl LirGenerator {
                         };
                         let slice_len = end.saturating_sub(from);
                         let mut instructions = Vec::new();
-                        let slice_value =
-                            self.build_slice_value(slice_ptr, slice_len, &elem_lir_ty, &mut instructions);
+                        let slice_value = self.build_slice_value(
+                            slice_ptr,
+                            slice_len,
+                            &elem_lir_ty,
+                            &mut instructions,
+                        );
                         self.queued_instructions.extend(instructions);
                         Ok(PlaceAccess::Value {
                             value: slice_value,
@@ -2186,8 +2182,12 @@ impl LirGenerator {
                             }
                             PlaceAccess::Value { value, .. } => value,
                         };
-                        let mut len_value =
-                            self.extract_slice_field(slice_value, 1, lir::LirType::I64, &mut instructions);
+                        let mut len_value = self.extract_slice_field(
+                            slice_value,
+                            1,
+                            lir::LirType::I64,
+                            &mut instructions,
+                        );
                         len_value = self.ensure_i64_value(len_value, &mut instructions);
 
                         let end_value = if from_end {
@@ -2245,7 +2245,7 @@ impl LirGenerator {
                     )),
                 }
             }
-            | mir::PlaceElem::Downcast(_, _) => {
+            mir::PlaceElem::Downcast(_, _) => {
                 fp_core::diagnostics::report_warning_with_context(
                     "mir→lir",
                     "ignoring downcast place projection during lowering",
@@ -3197,8 +3197,7 @@ impl LirGenerator {
             return lir::LirValue::Constant(lir::LirConstant::Struct(adjusted, target_ty));
         }
 
-        let mut current =
-            lir::LirValue::Constant(lir::LirConstant::Undef(target_ty.clone()));
+        let mut current = lir::LirValue::Constant(lir::LirConstant::Undef(target_ty.clone()));
         for (index, target_field) in target_fields.iter().enumerate() {
             let element = if let Some(source_field) = from_fields.get(index) {
                 let extract_id = self.next_id();
@@ -4685,9 +4684,7 @@ impl LirGenerator {
             | lir::LirType::I32
             | lir::LirType::I64
             | lir::LirType::I128 => Some(lir::LirConstant::Int(0, ty.clone())),
-            lir::LirType::F32 | lir::LirType::F64 => {
-                Some(lir::LirConstant::Float(0.0, ty.clone()))
-            }
+            lir::LirType::F32 | lir::LirType::F64 => Some(lir::LirConstant::Float(0.0, ty.clone())),
             lir::LirType::Ptr(_) => Some(lir::LirConstant::Null(ty.clone())),
             _ => None,
         }

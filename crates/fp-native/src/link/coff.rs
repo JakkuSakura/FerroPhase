@@ -215,9 +215,7 @@ struct StringTable {
 
 impl StringTable {
     fn new() -> Self {
-        Self {
-            data: vec![0u8; 4],
-        }
+        Self { data: vec![0u8; 4] }
     }
 
     fn insert(&mut self, name: &str) -> u32 {
@@ -254,8 +252,7 @@ fn build_base_relocs(text_rva: u32, relocs: &[Relocation], extra_rvas: &[u32]) -
     let mut entries: Vec<u32> = relocs
         .iter()
         .filter(|reloc| {
-            reloc.kind == RelocKind::Abs64
-                && reloc.section == crate::emit::RelocSection::Text
+            reloc.kind == RelocKind::Abs64 && reloc.section == crate::emit::RelocSection::Text
         })
         .filter_map(|reloc| u32::try_from(reloc.offset).ok())
         .map(|offset| text_rva + offset)
@@ -294,8 +291,7 @@ fn collect_rdata_base_relocs(rdata_rva: u32, relocs: &[Relocation]) -> Vec<u32> 
     relocs
         .iter()
         .filter(|reloc| {
-            reloc.kind == RelocKind::Abs64
-                && reloc.section == crate::emit::RelocSection::Rdata
+            reloc.kind == RelocKind::Abs64 && reloc.section == crate::emit::RelocSection::Rdata
         })
         .filter_map(|reloc| u32::try_from(reloc.offset).ok())
         .map(|offset| rdata_rva + offset)
@@ -428,7 +424,9 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
                 });
             }
             (_, RelocKind::Aarch64AdrpAdd) => {
-                return Err(Error::from("AArch64 relocations are not supported for x86_64 COFF"));
+                return Err(Error::from(
+                    "AArch64 relocations are not supported for x86_64 COFF",
+                ));
             }
         }
     }
@@ -456,7 +454,10 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
     put_u32(&mut out, 0);
     put_u16(&mut out, reloc_count);
     put_u16(&mut out, 0);
-    put_u32(&mut out, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+    put_u32(
+        &mut out,
+        IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ,
+    );
 
     if has_rdata {
         put_bytes_fixed::<8>(&mut out, ".rdata");
@@ -468,7 +469,10 @@ pub fn emit_object_coff(path: &Path, arch: TargetArch, plan: &EmitPlan) -> Resul
         put_u32(&mut out, 0);
         put_u16(&mut out, 0);
         put_u16(&mut out, 0);
-        put_u32(&mut out, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ);
+        put_u32(
+            &mut out,
+            IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ,
+        );
     }
 
     out.extend_from_slice(&plan.text);
@@ -588,17 +592,23 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         let base = if has_rdata {
             rdata_rva + align_up(rdata_len, section_alignment)
         } else {
-            align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment)
+            align_up(
+                text_rva + align_up(text.len() as u32, section_alignment),
+                section_alignment,
+            )
         };
         base
     } else {
         0
     };
 
-    let section_count =
-        1u32 + u32::from(has_rdata) + u32::from(has_reloc);
+    let section_count = 1u32 + u32::from(has_rdata) + u32::from(has_reloc);
     let headers_size = align_up(
-        pe_offset + 4 + coff_header_size + optional_header_size + section_header_size * section_count,
+        pe_offset
+            + 4
+            + coff_header_size
+            + optional_header_size
+            + section_header_size * section_count,
         file_alignment,
     );
 
@@ -624,7 +634,10 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
             section_alignment,
         )
     } else {
-        align_up(text_rva + align_up(text.len() as u32, section_alignment), section_alignment)
+        align_up(
+            text_rva + align_up(text.len() as u32, section_alignment),
+            section_alignment,
+        )
     };
     if has_reloc {
         size_of_image = align_up(
@@ -797,7 +810,10 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
     put_u32(&mut out, 0);
     put_u16(&mut out, 0);
     put_u16(&mut out, 0);
-    put_u32(&mut out, IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ);
+    put_u32(
+        &mut out,
+        IMAGE_SCN_CNT_CODE | IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ,
+    );
 
     if has_rdata {
         put_bytes_fixed::<8>(&mut out, ".rdata");
@@ -809,7 +825,10 @@ pub fn emit_executable_pe64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> R
         put_u32(&mut out, 0);
         put_u16(&mut out, 0);
         put_u16(&mut out, 0);
-        put_u32(&mut out, IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ);
+        put_u32(
+            &mut out,
+            IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ,
+        );
     }
 
     if has_reloc {

@@ -1,10 +1,10 @@
 //! Command implementation for displaying workspace hierarchy as a tree
 
+use crate::models::LockIndex;
 use crate::models::{
     DependencyModel, ManifestModel, NexusModel, PackageModel, TargetedDependencies, WorkspaceModel,
 };
 use crate::registry::RegistryOptions;
-use crate::models::LockIndex;
 use crate::resolver::lock::match_locked_registry;
 use crate::resolver::project::{load_lock_index, load_manifest};
 use crate::resolver::{RegistryLoader, ResolvedRegistry, target::TargetContext};
@@ -56,44 +56,38 @@ fn print_manifest_tree(
     visited_registry: &mut HashSet<String>,
 ) -> Result<()> {
     match manifest {
-        ManifestModel::Nexus(nexus) => {
-            print_nexus_tree(
-                nexus,
-                depth,
-                prefix,
-                registry,
-                lock_index,
-                target_ctx,
-                visited,
-                visited_registry,
-            )
-        }
-        ManifestModel::Workspace(workspace) => {
-            print_workspace_tree(
-                workspace,
-                depth,
-                prefix,
-                is_last,
-                registry,
-                lock_index,
-                target_ctx,
-                visited,
-                visited_registry,
-            )
-        }
-        ManifestModel::Package(package) => {
-            print_package_tree(
-                package,
-                prefix,
-                prefix,
-                is_last,
-                registry,
-                lock_index,
-                target_ctx,
-                visited,
-                visited_registry,
-            )
-        }
+        ManifestModel::Nexus(nexus) => print_nexus_tree(
+            nexus,
+            depth,
+            prefix,
+            registry,
+            lock_index,
+            target_ctx,
+            visited,
+            visited_registry,
+        ),
+        ManifestModel::Workspace(workspace) => print_workspace_tree(
+            workspace,
+            depth,
+            prefix,
+            is_last,
+            registry,
+            lock_index,
+            target_ctx,
+            visited,
+            visited_registry,
+        ),
+        ManifestModel::Package(package) => print_package_tree(
+            package,
+            prefix,
+            prefix,
+            is_last,
+            registry,
+            lock_index,
+            target_ctx,
+            visited,
+            visited_registry,
+        ),
     }
 }
 fn print_nexus_tree(
@@ -290,7 +284,11 @@ fn print_package_tree_with_map(
 
     for (idx, dep) in all_deps.iter().enumerate() {
         let is_last_dep = idx == all_deps.len() - 1;
-        let dep_prefix = if is_last_dep { "└── " } else { "├── " };
+        let dep_prefix = if is_last_dep {
+            "└── "
+        } else {
+            "├── "
+        };
         info!(
             "{}{} 📄 [{}] {} = {}",
             next_indent,
@@ -299,11 +297,7 @@ fn print_package_tree_with_map(
             dep.name,
             dep.model
         );
-        let resolved_name = dep
-            .model
-            .package
-            .as_deref()
-            .unwrap_or(dep.name.as_str());
+        let resolved_name = dep.model.package.as_deref().unwrap_or(dep.name.as_str());
         if let Some(child) = package_map.get(resolved_name) {
             let key = format!("workspace:{}", child.name);
             if visited.insert(key) {
@@ -320,9 +314,12 @@ fn print_package_tree_with_map(
                     visited_registry,
                 )?;
             }
-        } else if let Some(resolved) =
-            resolve_registry_deps(registry, lock_index, resolved_name, dep.model.version.as_deref())?
-        {
+        } else if let Some(resolved) = resolve_registry_deps(
+            registry,
+            lock_index,
+            resolved_name,
+            dep.model.version.as_deref(),
+        )? {
             let key = format!(
                 "registry:{}@{}",
                 resolved.resolved.name, resolved.resolved.version
@@ -363,7 +360,11 @@ fn print_registry_deps(
     let next_indent = format!(
         "{}{}",
         parent_indent,
-        if prefix.trim().is_empty() { "    " } else { "│   " }
+        if prefix.trim().is_empty() {
+            "    "
+        } else {
+            "│   "
+        }
     );
     let mut all_deps = Vec::new();
     collect_deps(
@@ -389,7 +390,11 @@ fn print_registry_deps(
     )?;
     for (idx, dep) in all_deps.iter().enumerate() {
         let is_last_dep = idx == all_deps.len() - 1;
-        let dep_prefix = if is_last_dep { "└── " } else { "├── " };
+        let dep_prefix = if is_last_dep {
+            "└── "
+        } else {
+            "├── "
+        };
         info!(
             "{}{} 📄 [{}] {} = {}",
             next_indent,
@@ -398,14 +403,13 @@ fn print_registry_deps(
             dep.name,
             dep.model
         );
-        let resolved_name = dep
-            .model
-            .package
-            .as_deref()
-            .unwrap_or(dep.name.as_str());
-        if let Some(next_resolved) =
-            resolve_registry_deps(registry, lock_index, resolved_name, dep.model.version.as_deref())?
-        {
+        let resolved_name = dep.model.package.as_deref().unwrap_or(dep.name.as_str());
+        if let Some(next_resolved) = resolve_registry_deps(
+            registry,
+            lock_index,
+            resolved_name,
+            dep.model.version.as_deref(),
+        )? {
             let key = format!(
                 "registry:{}@{}",
                 next_resolved.resolved.name, next_resolved.resolved.version
@@ -510,7 +514,8 @@ fn resolve_registry_deps(
             locked_version = Some(locked.version);
         }
     }
-    let resolved = match registry.resolve_with_deps(name, locked_version.as_deref().or(version_req)) {
+    let resolved = match registry.resolve_with_deps(name, locked_version.as_deref().or(version_req))
+    {
         Ok(resolved) => resolved,
         Err(err) => {
             tracing::warn!("registry resolution for {} failed: {}", name, err);

@@ -132,14 +132,16 @@ impl FerroPhaseParser {
             self.record_error(format!("failed to lower tokens: {err}"));
             eyre::eyre!(err)
         })?;
-        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file).map_err(|err| {
-            if let Some(span) = err.span() {
-                self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
-            } else {
-                self.record_error(format!("failed to parse items CST: {err}"));
-            }
-            eyre::eyre!(err)
-        })?;
+        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file).map_err(
+            |err| {
+                if let Some(span) = err.span() {
+                    self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
+                } else {
+                    self.record_error(format!("failed to parse items CST: {err}"));
+                }
+                eyre::eyre!(err)
+            },
+        )?;
         crate::ast::lower_items_from_cst(&cst).map_err(|err| {
             self.record_error(format!("failed to lower items CST: {err}"));
             eyre::eyre!(err)

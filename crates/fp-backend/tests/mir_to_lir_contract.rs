@@ -1,8 +1,8 @@
+use fp_backend::transformations::LirGenerator;
 use fp_core::lir::{LirConstant, LirInstructionKind, LirTerminator, LirType, LirValue};
 use fp_core::mir::ty::{IntTy, Ty, TyKind};
 use fp_core::mir::{self, FunctionSig, Item, ItemKind, Mutability, Operand};
 use fp_core::span::Span;
-use fp_backend::transformations::LirGenerator;
 use std::collections::HashMap;
 
 mod support;
@@ -135,12 +135,7 @@ fn lowers_single_case_switchint_as_equality_compare() {
     let bb0 = mir::BasicBlockData::new(Some(terminator));
     let bb1 = support::mir::return_block();
     let bb2 = support::mir::return_block();
-    let body = mir::Body::new(
-        vec![bb0, bb1, bb2],
-        Vec::new(),
-        0,
-        Span::new(0, 0, 0),
-    );
+    let body = mir::Body::new(vec![bb0, bb1, bb2], Vec::new(), 0, Span::new(0, 0, 0));
 
     let body_id = mir::BodyId(0);
     let function = mir::Function {

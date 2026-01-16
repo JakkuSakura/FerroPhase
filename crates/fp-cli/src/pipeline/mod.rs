@@ -5,6 +5,7 @@ use crate::languages::frontend::{
     LanguageFrontend, PrqlFrontend, RustFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
+use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_bytecode;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{
@@ -23,7 +24,6 @@ use fp_interpret::engine::{
     AstInterpreter, InterpreterMode, InterpreterOptions, InterpreterOutcome,
 };
 use fp_llvm::{LlvmCompiler, LlvmConfig, linking::LinkerConfig};
-use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_pipeline::{PipelineBuilder, PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_typescript::frontend::TsParseMode;
 use fp_typing::TypingDiagnosticLevel;
@@ -37,11 +37,13 @@ use tracing::{debug, info, info_span};
 // Begin internal submodules extracted for clarity
 mod artifacts;
 mod diagnostics;
-mod stages;
 mod options;
+mod stages;
 use self::diagnostics as diag;
 use artifacts::LlvmArtifacts;
-pub use options::{BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig};
+pub use options::{
+    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
+};
 
 const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
@@ -649,7 +651,10 @@ impl Pipeline {
             let stage_started = std::time::Instant::now();
             info!("pipeline: start codegen-rust");
             let code = CodeGenerator::generate_rust_code(&ast)?;
-            info!("pipeline: finished codegen-rust in {:.2?}", stage_started.elapsed());
+            info!(
+                "pipeline: finished codegen-rust in {:.2?}",
+                stage_started.elapsed()
+            );
             PipelineOutput::Code(code)
         } else {
             let stage_started = std::time::Instant::now();
@@ -689,7 +694,10 @@ impl Pipeline {
                         false,
                         options,
                     )?;
-                    info!("pipeline: finished emit-llvm in {:.2?}", stage_started.elapsed());
+                    info!(
+                        "pipeline: finished emit-llvm in {:.2?}",
+                        stage_started.elapsed()
+                    );
                     PipelineOutput::Code(llvm.ir_text)
                 }
                 BackendKind::Binary => {
@@ -737,7 +745,10 @@ impl Pipeline {
                             true,
                             options,
                         )?;
-                        info!("pipeline: finished emit-llvm in {:.2?}", stage_started.elapsed());
+                        info!(
+                            "pipeline: finished emit-llvm in {:.2?}",
+                            stage_started.elapsed()
+                        );
                         let stage_started = std::time::Instant::now();
                         info!("pipeline: start {}", STAGE_LINK_BINARY);
                         let binary_path =
@@ -764,7 +775,10 @@ impl Pipeline {
                     let bytecode = fp_bytecode::lower_program(&mir.mir_program).map_err(|err| {
                         CliError::Compilation(format!("MIR→Bytecode lowering failed: {}", err))
                     })?;
-                    info!("pipeline: finished bytecode-lower in {:.2?}", stage_started.elapsed());
+                    info!(
+                        "pipeline: finished bytecode-lower in {:.2?}",
+                        stage_started.elapsed()
+                    );
                     let output_path = base_path.to_path_buf();
                     if let Some(parent) = output_path.parent() {
                         fs::create_dir_all(parent)?;
@@ -1063,9 +1077,7 @@ impl Pipeline {
 
 fn runtime_std_paths() -> Vec<PathBuf> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    vec![
-        root.join("../../src/std/mod.fp"),
-    ]
+    vec![root.join("../../src/std/mod.fp")]
 }
 
 fn merge_std_module(
@@ -1252,13 +1264,13 @@ fn resolve_module_file(base_dir: &Path, module_name: &str) -> Result<PathBuf, Cl
 
 #[cfg(test)]
 mod tests {
+    use super::BackendKind;
     use super::*;
     use crate::pipeline::artifacts::LirArtifacts;
     use fp_core::intrinsics::IntrinsicCallKind;
     use fp_core::{ast, hir, lir};
-    use super::BackendKind;
-    use std::fs;
     use std::collections::HashSet;
+    use std::fs;
     use std::path::{Path, PathBuf};
     use tempfile::TempDir;
 
@@ -1410,11 +1422,7 @@ fn main() {
         let main_path = root.join("main.fp");
         let module_path = root.join("foo.fp");
 
-        fs::write(
-            &main_path,
-            "mod foo;\n\nfn main() { foo::bar(); }\n",
-        )
-        .expect("write main");
+        fs::write(&main_path, "mod foo;\n\nfn main() { foo::bar(); }\n").expect("write main");
         fs::write(&module_path, "fn bar() {}\n").expect("write module");
 
         let mut pipeline = Pipeline::new();
@@ -1436,7 +1444,12 @@ fn main() {
             panic!("expected module foo");
         };
         assert!(!module.items.is_empty(), "expected foo to be populated");
-        assert!(module.items.iter().any(|item| matches!(item.kind(), ast::ItemKind::DefFunction(_))));
+        assert!(
+            module
+                .items
+                .iter()
+                .any(|item| matches!(item.kind(), ast::ItemKind::DefFunction(_)))
+        );
     }
 
     fn find_intrinsic_calls(ast: &ast::Node) -> Vec<ast::ExprIntrinsicCall> {
@@ -2203,5 +2216,5 @@ fn main() {
             .stage_const_eval(&mut ast, &options)
             .expect("array indexing should now be supported during const eval");
         assert_stdout_contains(&outcome, "3");
-     }
+    }
 }

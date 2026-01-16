@@ -1,6 +1,6 @@
 use super::super::*;
-use tracing::warn;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use tracing::warn;
 
 pub(crate) struct FrontendContext {
     pub ast: Node,

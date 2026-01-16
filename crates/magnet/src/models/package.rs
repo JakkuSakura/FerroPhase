@@ -1,7 +1,6 @@
 use crate::configs::{CargoManifestConfig, ManifestConfig};
 use crate::models::{
-    parse_cargo_dependencies, parse_patch_table, DependencyModelMap, PatchMap,
-    TargetedDependencies,
+    DependencyModelMap, PatchMap, TargetedDependencies, parse_cargo_dependencies, parse_patch_table,
 };
 use eyre::ContextCompat;
 use eyre::Result;
@@ -42,12 +41,11 @@ pub struct PackageModel {
 impl PackageModel {
     pub fn from_dir(root_path: &Path) -> Result<Self> {
         if !root_path.exists() {
-            eyre::bail!(
-                "Root path does not exist: {}",
-                root_path.display()
-            )
+            eyre::bail!("Root path does not exist: {}", root_path.display())
         }
-        let root_path = root_path.canonicalize().unwrap_or_else(|_| root_path.to_path_buf());
+        let root_path = root_path
+            .canonicalize()
+            .unwrap_or_else(|_| root_path.to_path_buf());
         let config_path = if root_path.join("Magnet.toml").exists() {
             root_path.join("Magnet.toml")
         } else if root_path.join("Cargo.toml").exists() {

@@ -42,7 +42,11 @@ pub fn run(options: &RunOptions) -> Result<()> {
     let profile = resolve_profile(options);
     let output_dir = build_output_dir(&package, &profile);
     let build_config = load_manifest_build_config(&root)?;
-    validate_feature_list("build.features", &build_config.features, &build_config.feature_defs)?;
+    validate_feature_list(
+        "build.features",
+        &build_config.features,
+        &build_config.feature_defs,
+    )?;
     let mut build_options = build_config.options.clone();
     if !build_config.features.is_empty() {
         build_options.insert("features".to_string(), build_config.features.join(","));
@@ -61,6 +65,7 @@ pub fn run(options: &RunOptions) -> Result<()> {
         include_dependencies: true,
         include_dev_dependencies: false,
         include_build_dependencies: false,
+        include_all_targets: false,
         cargo_fetch: options.fetch,
         resolve_registry: true,
         allow_multiple_versions: false,
@@ -69,13 +74,8 @@ pub fn run(options: &RunOptions) -> Result<()> {
         write_lock: true,
         target: None,
     };
-    let graph_path = write_package_graph(
-        &root,
-        &package,
-        &output_dir,
-        build_options,
-        &graph_options,
-    )?;
+    let graph_path =
+        write_package_graph(&root, &package, &output_dir, build_options, &graph_options)?;
 
     match options.mode {
         RunMode::Compile => run_compile(

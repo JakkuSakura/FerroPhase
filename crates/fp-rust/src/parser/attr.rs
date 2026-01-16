@@ -21,9 +21,10 @@ impl RustParser {
             });
         }
 
-        let parsed = match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
-            .parse2(list.tokens.clone())
-        {
+        let parsed =
+            match syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
+                .parse2(list.tokens.clone())
+            {
                 Ok(items) => items,
                 Err(err) => {
                     return self.error(

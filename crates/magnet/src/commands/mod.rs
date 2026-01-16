@@ -1,11 +1,11 @@
 //! Command implementations for the magnet CLI
 
 // Child modules
-mod check;
+mod bench;
 mod build;
+mod check;
 pub mod export; // Changed from mod to pub mod to expose ExportOptions
 pub mod generate; // Changed from mod to pub mod to expose GenerateOptions
-mod bench;
 mod graph;
 mod init;
 mod lock;
@@ -13,19 +13,18 @@ mod run;
 mod submodule;
 mod test;
 mod tree;
-mod utils;
 mod update;
+mod utils;
 
 // Re-export commands
+pub use bench::{BenchOptions, bench};
+pub use build::{BuildOptions, build};
 pub use check::check;
-pub use build::{build, BuildOptions};
 pub use export::export;
 pub use generate::generate;
-pub use bench::{bench, BenchOptions};
 pub use graph::graph;
 pub use init::init;
-pub use lock::{lock, LockOptions};
-pub use update::{update, UpdateOptions};
+pub use lock::{LockOptions, lock};
 pub use run::{RunMode, RunOptions, run};
 pub use submodule::{
     deinit as submodule_deinit, init as submodule_init, list as submodule_list,
@@ -33,5 +32,6 @@ pub use submodule::{
 };
 pub use test::{TestOptions, test};
 pub use tree::tree;
+pub use update::{UpdateOptions, update};
 #[allow(unused_imports)]
 pub use utils::*;

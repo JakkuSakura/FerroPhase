@@ -24,6 +24,7 @@ pub fn check(config_path: &Path) -> Result<()> {
         include_dependencies: false,
         include_dev_dependencies: false,
         include_build_dependencies: false,
+        include_all_targets: false,
         cargo_fetch: false,
         resolve_registry: !offline,
         allow_multiple_versions: false,

@@ -1,7 +1,9 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::{AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Locator, Node, Path, Value};
+use crate::ast::{
+    AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Locator, Node, Path, Value,
+};
 use crate::intrinsics::IntrinsicCallKind;
 
 #[derive(Clone, Default)]
@@ -41,7 +43,11 @@ pub fn collect_lang_items(node: &Node) -> LangItemRegistry {
             collect_lang_items_from_items(&file.items, &mut module_path, &mut registry);
         }
         crate::ast::NodeKind::Item(item) => {
-            collect_lang_items_from_items(std::slice::from_ref(item), &mut module_path, &mut registry);
+            collect_lang_items_from_items(
+                std::slice::from_ref(item),
+                &mut module_path,
+                &mut registry,
+            );
         }
         crate::ast::NodeKind::Expr(_)
         | crate::ast::NodeKind::Query(_)

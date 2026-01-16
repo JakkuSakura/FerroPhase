@@ -709,301 +709,303 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.current_span = active;
         let result = (|| {
             let ty = match item.kind_mut() {
-            ItemKind::DefStruct(def) => {
-                let ty = Ty::Struct(def.value.clone());
-                let placeholder = self.symbol_var(&def.name);
-                let var = self.type_from_ast_ty(&ty)?;
-                self.unify(placeholder, var)?;
-                self.generalize_symbol(def.name.as_str(), placeholder)?;
-                ty
-            }
-            ItemKind::DefStructural(def) => {
-                let ty = Ty::Struct(TypeStruct {
-                    name: def.name.clone(),
-                    generics_params: Vec::new(),
-                    fields: def.value.fields.clone(),
-                });
-                let placeholder = self.symbol_var(&def.name);
-                let var = self.type_from_ast_ty(&ty)?;
-                self.unify(placeholder, var)?;
-                self.generalize_symbol(def.name.as_str(), placeholder)?;
-                ty
-            }
-            ItemKind::DefType(def) => {
-                // Resolve the RHS to a concrete type; if it is structural, materialize it as a
-                // named struct so that later term-level syntax like `Foo { ... }` can type-check.
-                let placeholder = self.symbol_var(&def.name);
-                let value_var = self.type_from_ast_ty(&def.value)?;
-                let resolved = self.resolve_to_ty(value_var)?;
-
-                let normalized = match resolved {
-                    Ty::Structural(structural) => {
-                        let struct_ty = TypeStruct {
-                            name: def.name.clone(),
-                            generics_params: Vec::new(),
-                            fields: structural.fields.clone(),
-                        };
-                        self.struct_defs
-                            .insert(def.name.as_str().to_string(), struct_ty.clone());
-                        Ty::Struct(struct_ty)
-                    }
-                    Ty::Struct(struct_ty) => {
-                        self.struct_defs
-                            .insert(def.name.as_str().to_string(), struct_ty.clone());
-                        Ty::Struct(struct_ty)
-                    }
-                    Ty::Enum(enum_ty) => {
-                        self.enum_defs
-                            .insert(def.name.as_str().to_string(), enum_ty.clone());
-                        Ty::Enum(enum_ty)
-                    }
-                    other => other,
-                };
-
-                let var = self.type_from_ast_ty(&normalized)?;
-                self.unify(placeholder, var)?;
-                self.generalize_symbol(def.name.as_str(), placeholder)?;
-                normalized
-            }
-            ItemKind::DefEnum(def) => {
-                self.enter_scope();
-                if !def.value.generics_params.is_empty() {
-                    for param in &def.value.generics_params {
-                        let var = self.register_generic_param(param.name.as_str());
-                        let bounds = Self::extract_trait_bounds(&param.bounds);
-                        if !bounds.is_empty() {
-                            self.generic_trait_bounds.insert(var, bounds);
-                        }
-                    }
+                ItemKind::DefStruct(def) => {
+                    let ty = Ty::Struct(def.value.clone());
+                    let placeholder = self.symbol_var(&def.name);
+                    let var = self.type_from_ast_ty(&ty)?;
+                    self.unify(placeholder, var)?;
+                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    ty
                 }
+                ItemKind::DefStructural(def) => {
+                    let ty = Ty::Struct(TypeStruct {
+                        name: def.name.clone(),
+                        generics_params: Vec::new(),
+                        fields: def.value.fields.clone(),
+                    });
+                    let placeholder = self.symbol_var(&def.name);
+                    let var = self.type_from_ast_ty(&ty)?;
+                    self.unify(placeholder, var)?;
+                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    ty
+                }
+                ItemKind::DefType(def) => {
+                    // Resolve the RHS to a concrete type; if it is structural, materialize it as a
+                    // named struct so that later term-level syntax like `Foo { ... }` can type-check.
+                    let placeholder = self.symbol_var(&def.name);
+                    let value_var = self.type_from_ast_ty(&def.value)?;
+                    let resolved = self.resolve_to_ty(value_var)?;
 
-                let ty = Ty::Enum(def.value.clone());
-                let placeholder = self.symbol_var(&def.name);
-                let var = self.type_from_ast_ty(&ty)?;
-                self.unify(placeholder, var)?;
-                self.generalize_symbol(def.name.as_str(), placeholder)?;
-
-                let enum_name = def.name.as_str().to_string();
-                if let Some(variant_keys) = self.enum_variants.get(&enum_name).cloned() {
-                    let enum_var = placeholder;
-                    for (variant, qualified) in
-                        def.value.variants.iter().zip(variant_keys.into_iter())
-                    {
-                        if let Some(variant_var) = self.lookup_env_var(qualified.as_str()) {
-                            let variant_type_var = if matches!(variant.value, Ty::Unit(_)) {
-                                enum_var
-                            } else if let Ty::Tuple(tuple) = &variant.value {
-                                let mut param_vars = Vec::new();
-                                for elem in &tuple.types {
-                                    param_vars.push(self.type_from_ast_ty(elem)?);
-                                }
-                                let fn_var = self.fresh_type_var();
-                                self.bind(
-                                    fn_var,
-                                    TypeTerm::Function(FunctionTerm {
-                                        params: param_vars,
-                                        ret: enum_var,
-                                    }),
-                                );
-                                fn_var
-                            } else {
-                                let payload_var = self.type_from_ast_ty(&variant.value)?;
-                                let fn_var = self.fresh_type_var();
-                                self.bind(
-                                    fn_var,
-                                    TypeTerm::Function(FunctionTerm {
-                                        params: vec![payload_var],
-                                        ret: enum_var,
-                                    }),
-                                );
-                                fn_var
+                    let normalized = match resolved {
+                        Ty::Structural(structural) => {
+                            let struct_ty = TypeStruct {
+                                name: def.name.clone(),
+                                generics_params: Vec::new(),
+                                fields: structural.fields.clone(),
                             };
-                            let _ = self.unify(variant_var, variant_type_var);
-                            let _ = self.generalize_symbol(qualified.as_str(), variant_var);
+                            self.struct_defs
+                                .insert(def.name.as_str().to_string(), struct_ty.clone());
+                            Ty::Struct(struct_ty)
                         }
-                    }
-                }
-
-                self.exit_scope();
-
-                ty
-            }
-            ItemKind::DefConst(def) => {
-                let placeholder = self.symbol_var(&def.name);
-                if let Some(annot) = def.ty.as_ref() {
-                    def.value.set_ty(annot.clone());
-                }
-                let expr_var = {
-                    let mut value = def.value.as_mut();
-                    self.infer_expr(&mut value)?
-                };
-
-                if let Some(annot) = &def.ty {
-                    let annot_var = self.type_from_ast_ty(annot)?;
-                    self.unify(expr_var, annot_var)?;
-                }
-
-                self.unify(placeholder, expr_var)?;
-                let ty = self.resolve_to_ty(expr_var)?;
-                def.ty_annotation = Some(ty.clone());
-                def.ty.get_or_insert(ty.clone());
-                self.generalize_symbol(def.name.as_str(), placeholder)?;
-                ty
-            }
-            ItemKind::DefStatic(def) => {
-                let placeholder = self.symbol_var(&def.name);
-                let expr_var = {
-                    let mut value = def.value.as_mut();
-                    self.infer_expr(&mut value)?
-                };
-                let ty_var = self.type_from_ast_ty(&def.ty)?;
-                self.unify(expr_var, ty_var)?;
-                self.unify(placeholder, expr_var)?;
-                let ty = self.resolve_to_ty(expr_var)?;
-                def.ty_annotation = Some(ty.clone());
-                self.generalize_symbol(def.name.as_str(), placeholder)?;
-                ty
-            }
-            ItemKind::DefFunction(func) => self.infer_function(func)?,
-            ItemKind::DeclConst(decl) => {
-                let ty = decl.ty.clone();
-                decl.ty_annotation = Some(ty.clone());
-                ty
-            }
-            ItemKind::DeclStatic(decl) => {
-                let ty = decl.ty.clone();
-                decl.ty_annotation = Some(ty.clone());
-                ty
-            }
-            ItemKind::DeclType(decl) => {
-                let ty = Ty::TypeBounds(decl.bounds.clone());
-                decl.ty_annotation = Some(ty.clone());
-                ty
-            }
-            ItemKind::DeclFunction(decl) => {
-                let ty = self.ty_from_function_signature(&decl.sig)?;
-                decl.ty_annotation = Some(ty.clone());
-                ty
-            }
-            ItemKind::Module(module) => {
-                self.enter_scope();
-                for child in &module.items {
-                    self.predeclare_item(child);
-                }
-                for child in &mut module.items {
-                    self.infer_item(child)?;
-                }
-                self.exit_scope();
-                Ty::Unit(TypeUnit)
-            }
-            ItemKind::Import(import) => {
-                self.register_import_aliases(import);
-                Ty::Unit(TypeUnit)
-            }
-            ItemKind::DefTrait(trait_def) => {
-                let trait_name = trait_def.name.as_str().to_string();
-                self.enter_scope();
-
-                // Provide `Self` inside trait methods as a generic parameter
-                // bounded by the trait itself.
-                let self_var = self.register_generic_param("Self");
-                self.generic_trait_bounds
-                    .insert(self_var, vec![trait_name.clone()]);
-
-                for member in &mut trait_def.items {
-                    match member.kind_mut() {
-                        ItemKind::DeclFunction(decl) => {
-                            let ty = self.ty_from_function_signature(&decl.sig)?;
-                            decl.ty_annotation = Some(ty);
+                        Ty::Struct(struct_ty) => {
+                            self.struct_defs
+                                .insert(def.name.as_str().to_string(), struct_ty.clone());
+                            Ty::Struct(struct_ty)
                         }
-                        ItemKind::DefFunction(func) => {
-                            self.infer_trait_method(func)?;
+                        Ty::Enum(enum_ty) => {
+                            self.enum_defs
+                                .insert(def.name.as_str().to_string(), enum_ty.clone());
+                            Ty::Enum(enum_ty)
                         }
-                        _ => {}
-                    }
+                        other => other,
+                    };
+
+                    let var = self.type_from_ast_ty(&normalized)?;
+                    self.unify(placeholder, var)?;
+                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    normalized
                 }
-
-                self.exit_scope();
-                Ty::Unit(TypeUnit)
-            }
-            ItemKind::Impl(impl_block) => {
-                let ctx = self.resolve_impl_context(&impl_block.self_ty);
-
-                if let (Some(ctx), Some(trait_ty)) = (ctx.as_ref(), impl_block.trait_ty.as_ref()) {
-                    let trait_name = trait_ty.to_string();
-                    self.impl_traits
-                        .entry(ctx.struct_name.clone())
-                        .or_default()
-                        .insert(trait_name.clone());
-
-                    if let Some(methods) = self.trait_method_sigs.get(&trait_name).cloned() {
-                        for (method_name, sig) in methods {
-                            if sig.receiver.is_none() {
-                                continue;
+                ItemKind::DefEnum(def) => {
+                    self.enter_scope();
+                    if !def.value.generics_params.is_empty() {
+                        for param in &def.value.generics_params {
+                            let var = self.register_generic_param(param.name.as_str());
+                            let bounds = Self::extract_trait_bounds(&param.bounds);
+                            if !bounds.is_empty() {
+                                self.generic_trait_bounds.insert(var, bounds);
                             }
-                            // Ensure default trait methods are callable as inherent methods
-                            // on this concrete receiver type.
-                            let scheme = self.scheme_from_method_signature(&sig)?;
-                            let receiver_ty = sig
-                                .receiver
-                                .as_ref()
-                                .map(|receiver| self.ty_for_receiver(ctx, receiver));
-                            let entry = self
-                                .struct_methods
-                                .entry(ctx.struct_name.clone())
-                                .or_default();
-                            if entry.contains_key(&method_name) {
-                                continue;
-                            }
-                            entry.insert(
-                                method_name,
-                                MethodRecord {
-                                    receiver_ty,
-                                    scheme: Some(scheme),
-                                },
-                            );
                         }
                     }
-                }
 
-                self.impl_stack.push(ctx.clone());
-                self.enter_scope();
-                for child in &impl_block.items {
-                    self.predeclare_item(child);
-                }
-                for child in &mut impl_block.items {
-                    self.infer_item(child)?;
-                }
-                self.exit_scope();
-                self.impl_stack.pop();
-                Ty::Unit(TypeUnit)
-            }
-            ItemKind::Expr(expr) => {
-                if let ExprKind::Splice(splice) = expr.kind_mut() {
-                    let token_var = self.infer_expr(splice.token.as_mut())?;
-                    let token_ty = self.resolve_to_ty(token_var)?;
-                    if !self.is_item_quote(&token_ty) {
-                        match token_ty {
-                            Ty::Quote(quote) => {
-                                self.emit_error(format!(
-                                    "splice in item position requires item token, found {:?}",
-                                    quote.kind
-                                ));
+                    let ty = Ty::Enum(def.value.clone());
+                    let placeholder = self.symbol_var(&def.name);
+                    let var = self.type_from_ast_ty(&ty)?;
+                    self.unify(placeholder, var)?;
+                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+
+                    let enum_name = def.name.as_str().to_string();
+                    if let Some(variant_keys) = self.enum_variants.get(&enum_name).cloned() {
+                        let enum_var = placeholder;
+                        for (variant, qualified) in
+                            def.value.variants.iter().zip(variant_keys.into_iter())
+                        {
+                            if let Some(variant_var) = self.lookup_env_var(qualified.as_str()) {
+                                let variant_type_var = if matches!(variant.value, Ty::Unit(_)) {
+                                    enum_var
+                                } else if let Ty::Tuple(tuple) = &variant.value {
+                                    let mut param_vars = Vec::new();
+                                    for elem in &tuple.types {
+                                        param_vars.push(self.type_from_ast_ty(elem)?);
+                                    }
+                                    let fn_var = self.fresh_type_var();
+                                    self.bind(
+                                        fn_var,
+                                        TypeTerm::Function(FunctionTerm {
+                                            params: param_vars,
+                                            ret: enum_var,
+                                        }),
+                                    );
+                                    fn_var
+                                } else {
+                                    let payload_var = self.type_from_ast_ty(&variant.value)?;
+                                    let fn_var = self.fresh_type_var();
+                                    self.bind(
+                                        fn_var,
+                                        TypeTerm::Function(FunctionTerm {
+                                            params: vec![payload_var],
+                                            ret: enum_var,
+                                        }),
+                                    );
+                                    fn_var
+                                };
+                                let _ = self.unify(variant_var, variant_type_var);
+                                let _ = self.generalize_symbol(qualified.as_str(), variant_var);
                             }
-                            _ => self.emit_error("splice expects a quote token expression"),
                         }
                     }
+
+                    self.exit_scope();
+
+                    ty
+                }
+                ItemKind::DefConst(def) => {
+                    let placeholder = self.symbol_var(&def.name);
+                    if let Some(annot) = def.ty.as_ref() {
+                        def.value.set_ty(annot.clone());
+                    }
+                    let expr_var = {
+                        let mut value = def.value.as_mut();
+                        self.infer_expr(&mut value)?
+                    };
+
+                    if let Some(annot) = &def.ty {
+                        let annot_var = self.type_from_ast_ty(annot)?;
+                        self.unify(expr_var, annot_var)?;
+                    }
+
+                    self.unify(placeholder, expr_var)?;
+                    let ty = self.resolve_to_ty(expr_var)?;
+                    def.ty_annotation = Some(ty.clone());
+                    def.ty.get_or_insert(ty.clone());
+                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    ty
+                }
+                ItemKind::DefStatic(def) => {
+                    let placeholder = self.symbol_var(&def.name);
+                    let expr_var = {
+                        let mut value = def.value.as_mut();
+                        self.infer_expr(&mut value)?
+                    };
+                    let ty_var = self.type_from_ast_ty(&def.ty)?;
+                    self.unify(expr_var, ty_var)?;
+                    self.unify(placeholder, expr_var)?;
+                    let ty = self.resolve_to_ty(expr_var)?;
+                    def.ty_annotation = Some(ty.clone());
+                    self.generalize_symbol(def.name.as_str(), placeholder)?;
+                    ty
+                }
+                ItemKind::DefFunction(func) => self.infer_function(func)?,
+                ItemKind::DeclConst(decl) => {
+                    let ty = decl.ty.clone();
+                    decl.ty_annotation = Some(ty.clone());
+                    ty
+                }
+                ItemKind::DeclStatic(decl) => {
+                    let ty = decl.ty.clone();
+                    decl.ty_annotation = Some(ty.clone());
+                    ty
+                }
+                ItemKind::DeclType(decl) => {
+                    let ty = Ty::TypeBounds(decl.bounds.clone());
+                    decl.ty_annotation = Some(ty.clone());
+                    ty
+                }
+                ItemKind::DeclFunction(decl) => {
+                    let ty = self.ty_from_function_signature(&decl.sig)?;
+                    decl.ty_annotation = Some(ty.clone());
+                    ty
+                }
+                ItemKind::Module(module) => {
+                    self.enter_scope();
+                    for child in &module.items {
+                        self.predeclare_item(child);
+                    }
+                    for child in &mut module.items {
+                        self.infer_item(child)?;
+                    }
+                    self.exit_scope();
                     Ty::Unit(TypeUnit)
-                } else {
-                    let var = self.infer_expr(expr)?;
-                    self.resolve_to_ty(var)?
                 }
-            }
-            _ => {
-                self.emit_error("type inference for item not implemented");
-                Ty::Unknown(TypeUnknown)
-            }
-        };
+                ItemKind::Import(import) => {
+                    self.register_import_aliases(import);
+                    Ty::Unit(TypeUnit)
+                }
+                ItemKind::DefTrait(trait_def) => {
+                    let trait_name = trait_def.name.as_str().to_string();
+                    self.enter_scope();
+
+                    // Provide `Self` inside trait methods as a generic parameter
+                    // bounded by the trait itself.
+                    let self_var = self.register_generic_param("Self");
+                    self.generic_trait_bounds
+                        .insert(self_var, vec![trait_name.clone()]);
+
+                    for member in &mut trait_def.items {
+                        match member.kind_mut() {
+                            ItemKind::DeclFunction(decl) => {
+                                let ty = self.ty_from_function_signature(&decl.sig)?;
+                                decl.ty_annotation = Some(ty);
+                            }
+                            ItemKind::DefFunction(func) => {
+                                self.infer_trait_method(func)?;
+                            }
+                            _ => {}
+                        }
+                    }
+
+                    self.exit_scope();
+                    Ty::Unit(TypeUnit)
+                }
+                ItemKind::Impl(impl_block) => {
+                    let ctx = self.resolve_impl_context(&impl_block.self_ty);
+
+                    if let (Some(ctx), Some(trait_ty)) =
+                        (ctx.as_ref(), impl_block.trait_ty.as_ref())
+                    {
+                        let trait_name = trait_ty.to_string();
+                        self.impl_traits
+                            .entry(ctx.struct_name.clone())
+                            .or_default()
+                            .insert(trait_name.clone());
+
+                        if let Some(methods) = self.trait_method_sigs.get(&trait_name).cloned() {
+                            for (method_name, sig) in methods {
+                                if sig.receiver.is_none() {
+                                    continue;
+                                }
+                                // Ensure default trait methods are callable as inherent methods
+                                // on this concrete receiver type.
+                                let scheme = self.scheme_from_method_signature(&sig)?;
+                                let receiver_ty = sig
+                                    .receiver
+                                    .as_ref()
+                                    .map(|receiver| self.ty_for_receiver(ctx, receiver));
+                                let entry = self
+                                    .struct_methods
+                                    .entry(ctx.struct_name.clone())
+                                    .or_default();
+                                if entry.contains_key(&method_name) {
+                                    continue;
+                                }
+                                entry.insert(
+                                    method_name,
+                                    MethodRecord {
+                                        receiver_ty,
+                                        scheme: Some(scheme),
+                                    },
+                                );
+                            }
+                        }
+                    }
+
+                    self.impl_stack.push(ctx.clone());
+                    self.enter_scope();
+                    for child in &impl_block.items {
+                        self.predeclare_item(child);
+                    }
+                    for child in &mut impl_block.items {
+                        self.infer_item(child)?;
+                    }
+                    self.exit_scope();
+                    self.impl_stack.pop();
+                    Ty::Unit(TypeUnit)
+                }
+                ItemKind::Expr(expr) => {
+                    if let ExprKind::Splice(splice) = expr.kind_mut() {
+                        let token_var = self.infer_expr(splice.token.as_mut())?;
+                        let token_ty = self.resolve_to_ty(token_var)?;
+                        if !self.is_item_quote(&token_ty) {
+                            match token_ty {
+                                Ty::Quote(quote) => {
+                                    self.emit_error(format!(
+                                        "splice in item position requires item token, found {:?}",
+                                        quote.kind
+                                    ));
+                                }
+                                _ => self.emit_error("splice expects a quote token expression"),
+                            }
+                        }
+                        Ty::Unit(TypeUnit)
+                    } else {
+                        let var = self.infer_expr(expr)?;
+                        self.resolve_to_ty(var)?
+                    }
+                }
+                _ => {
+                    self.emit_error("type inference for item not implemented");
+                    Ty::Unknown(TypeUnknown)
+                }
+            };
 
             item.set_ty(ty);
             Ok(())
@@ -1692,6 +1694,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
         Error::diagnostic(Diagnostic::error(err.to_string()).with_span(span))
+    }
+
+    fn error_with_current_span(&self, message: impl Into<String>) -> Error {
+        let message = message.into();
+        if let Some(span) = self.current_span {
+            Error::diagnostic(Diagnostic::error(message).with_span(span))
+        } else {
+            Error::from(message)
+        }
     }
 
     #[allow(dead_code)]

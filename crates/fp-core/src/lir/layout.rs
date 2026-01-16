@@ -111,17 +111,10 @@ fn debug_validate_struct_layout(ty: &LirType, layout: &StructLayout) {
     }
 
     for (idx, field) in fields.iter().enumerate() {
-        let offset = *layout
-            .field_offsets
-            .get(idx)
-            .expect("field offset missing");
+        let offset = *layout.field_offsets.get(idx).expect("field offset missing");
         let field_align = if *packed { 1 } else { align_of(field).max(1) };
         if !*packed {
-            debug_assert_eq!(
-                offset % (field_align as u64),
-                0,
-                "field offset not aligned"
-            );
+            debug_assert_eq!(offset % (field_align as u64), 0, "field offset not aligned");
         }
         let field_size = size_of(field);
         debug_assert!(

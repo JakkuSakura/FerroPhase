@@ -2003,10 +2003,7 @@ impl MirLowering {
                     kind: TyKind::Float(FloatTy::F64),
                 },
                 DecimalType::BigDecimal | DecimalType::Decimal { .. } => {
-                    self.emit_warning(
-                        span,
-                        "lowering arbitrary precision decimal to f64 in MIR",
-                    );
+                    self.emit_warning(span, "lowering arbitrary precision decimal to f64 in MIR");
                     Ty {
                         kind: TyKind::Float(FloatTy::F64),
                     }
@@ -4820,7 +4817,9 @@ impl<'a> BodyBuilder<'a> {
     fn pattern_always_matches(&self, pat: &hir::Pat) -> bool {
         match &pat.kind {
             hir::PatKind::Wild | hir::PatKind::Binding { .. } => true,
-            hir::PatKind::Tuple(items) => items.iter().all(|item| self.pattern_always_matches(item)),
+            hir::PatKind::Tuple(items) => {
+                items.iter().all(|item| self.pattern_always_matches(item))
+            }
             hir::PatKind::Struct(_, fields, _) => fields
                 .iter()
                 .all(|field| self.pattern_always_matches(&field.pat)),
@@ -4877,10 +4876,9 @@ impl<'a> BodyBuilder<'a> {
                     hir::PatKind::Lit(lit) => {
                         let (literal, _) = self.lower_literal(lit, None);
                         let mut field_place = tuple_place.clone();
-                        field_place.projection.push(mir::PlaceElem::Field(
-                            index,
-                            (*elem_tys[index]).clone(),
-                        ));
+                        field_place
+                            .projection
+                            .push(mir::PlaceElem::Field(index, (*elem_tys[index]).clone()));
                         let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                         let eq_place = mir::Place::from_local(eq_temp);
                         self.push_statement(mir::Statement {
@@ -4902,8 +4900,7 @@ impl<'a> BodyBuilder<'a> {
                         combined = Some(match combined {
                             None => eq_operand,
                             Some(existing) => {
-                                let and_temp =
-                                    self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                                let and_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                                 let and_place = mir::Place::from_local(and_temp);
                                 self.push_statement(mir::Statement {
                                     source_info: span,
@@ -4992,10 +4989,9 @@ impl<'a> BodyBuilder<'a> {
                                 let (literal, _) = self.lower_literal(lit, None);
                                 let field_ty = payload_tys[idx].clone();
                                 let mut field_place = base_place.clone();
-                                field_place.projection.push(mir::PlaceElem::Field(
-                                    idx + 1,
-                                    field_ty.clone(),
-                                ));
+                                field_place
+                                    .projection
+                                    .push(mir::PlaceElem::Field(idx + 1, field_ty.clone()));
                                 let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                                 let eq_place = mir::Place::from_local(eq_temp);
                                 self.push_statement(mir::Statement {
@@ -5013,8 +5009,7 @@ impl<'a> BodyBuilder<'a> {
                                         ),
                                     ),
                                 });
-                                let and_temp =
-                                    self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                                let and_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                                 let and_place = mir::Place::from_local(and_temp);
                                 self.push_statement(mir::Statement {
                                     source_info: span,
@@ -5058,10 +5053,12 @@ impl<'a> BodyBuilder<'a> {
                 for field in fields {
                     match &field.pat.kind {
                         hir::PatKind::Lit(lit) => {
-                            let Some((field_index, field_info)) = self
-                                .lowering
-                                .struct_field(struct_def, &base_ty, field.name.as_str(), span)
-                            else {
+                            let Some((field_index, field_info)) = self.lowering.struct_field(
+                                struct_def,
+                                &base_ty,
+                                field.name.as_str(),
+                                span,
+                            ) else {
                                 self.lowering.emit_warning(
                                     span,
                                     format!(
@@ -5077,10 +5074,9 @@ impl<'a> BodyBuilder<'a> {
                             };
                             let (literal, _) = self.lower_literal(lit, None);
                             let mut field_place = base_place.clone();
-                            field_place.projection.push(mir::PlaceElem::Field(
-                                field_index,
-                                field_info.ty.clone(),
-                            ));
+                            field_place
+                                .projection
+                                .push(mir::PlaceElem::Field(field_index, field_info.ty.clone()));
                             let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                             let eq_place = mir::Place::from_local(eq_temp);
                             self.push_statement(mir::Statement {
@@ -5194,10 +5190,9 @@ impl<'a> BodyBuilder<'a> {
                                 let (literal, _) = self.lower_literal(lit, None);
                                 let field_ty = payload_tys[idx].clone();
                                 let mut field_place = base_place.clone();
-                                field_place.projection.push(mir::PlaceElem::Field(
-                                    idx + 1,
-                                    field_ty.clone(),
-                                ));
+                                field_place
+                                    .projection
+                                    .push(mir::PlaceElem::Field(idx + 1, field_ty.clone()));
                                 let eq_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                                 let eq_place = mir::Place::from_local(eq_temp);
                                 self.push_statement(mir::Statement {
@@ -5215,8 +5210,7 @@ impl<'a> BodyBuilder<'a> {
                                         ),
                                     ),
                                 });
-                                let and_temp =
-                                    self.allocate_temp(Ty { kind: TyKind::Bool }, span);
+                                let and_temp = self.allocate_temp(Ty { kind: TyKind::Bool }, span);
                                 let and_place = mir::Place::from_local(and_temp);
                                 self.push_statement(mir::Statement {
                                     source_info: span,
@@ -5379,23 +5373,17 @@ impl<'a> BodyBuilder<'a> {
                 }
                 if let Some(def_id) = self.struct_def_from_ty(&base_ty) {
                     for field in fields {
-                        let Some((field_index, field_info)) = self
-                            .lowering
-                            .struct_field(def_id, &base_ty, field.name.as_str(), span)
+                        let Some((field_index, field_info)) =
+                            self.lowering
+                                .struct_field(def_id, &base_ty, field.name.as_str(), span)
                         else {
                             continue;
                         };
                         let mut field_place = base_place.clone();
-                        field_place.projection.push(mir::PlaceElem::Field(
-                            field_index,
-                            field_info.ty.clone(),
-                        ));
-                        self.bind_match_pattern(
-                            &field.pat,
-                            &field_place,
-                            &field_info.ty,
-                            span,
-                        );
+                        field_place
+                            .projection
+                            .push(mir::PlaceElem::Field(field_index, field_info.ty.clone()));
+                        self.bind_match_pattern(&field.pat, &field_place, &field_info.ty, span);
                     }
                     return;
                 }
@@ -7329,9 +7317,7 @@ impl<'a> BodyBuilder<'a> {
     fn param_names_for_def_id(&self, def_id: hir::DefId) -> Option<Vec<hir::Symbol>> {
         let item = self.program.def_map.get(&def_id)?;
         match &item.kind {
-            hir::ItemKind::Function(function) => {
-                self.param_names_from_params(&function.sig.inputs)
-            }
+            hir::ItemKind::Function(function) => self.param_names_from_params(&function.sig.inputs),
             _ => None,
         }
     }
@@ -7406,7 +7392,8 @@ impl<'a> BodyBuilder<'a> {
         let mut flattened = Vec::with_capacity(reordered.len());
         for arg in reordered {
             let Some(value) = arg else {
-                self.lowering.emit_error(span, "missing named argument in call");
+                self.lowering
+                    .emit_error(span, "missing named argument in call");
                 return Ok(args.to_vec());
             };
             flattened.push(value);
@@ -7786,13 +7773,15 @@ impl<'a> BodyBuilder<'a> {
                         if let Some(function) =
                             self.lowering.generic_function_defs.get(def_id).cloned()
                         {
-                            let info = self.lowering.ensure_function_specialization_from_explicit_args(
-                                self.program,
-                                *def_id,
-                                &function,
-                                &explicit_args,
-                                expr.span,
-                            )?;
+                            let info = self
+                                .lowering
+                                .ensure_function_specialization_from_explicit_args(
+                                    self.program,
+                                    *def_id,
+                                    &function,
+                                    &explicit_args,
+                                    expr.span,
+                                )?;
                             return Ok(OperandInfo {
                                 operand: mir::Operand::Constant(mir::Constant {
                                     span: expr.span,
@@ -7979,12 +7968,14 @@ impl<'a> BodyBuilder<'a> {
                         method_def = self.lowering.method_defs.get(&tail).cloned();
                     }
                     if let Some(def) = method_def {
-                        let info = self.lowering.ensure_method_specialization_from_explicit_args(
-                            self.program,
-                            &def,
-                            &explicit_args,
-                            expr.span,
-                        )?;
+                        let info = self
+                            .lowering
+                            .ensure_method_specialization_from_explicit_args(
+                                self.program,
+                                &def,
+                                &explicit_args,
+                                expr.span,
+                            )?;
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,
@@ -8906,13 +8897,12 @@ impl<'a> BodyBuilder<'a> {
 
         let mut prepared_named = Vec::with_capacity(named_args.len());
         for arg in named_args {
-            let lowered = if let Some(formatted) =
-                self.try_format_const_expr_for_printf(&arg.value, span)
-            {
-                formatted
-            } else {
-                self.lower_operand(&arg.value, None)?
-            };
+            let lowered =
+                if let Some(formatted) = self.try_format_const_expr_for_printf(&arg.value, span) {
+                    formatted
+                } else {
+                    self.lower_operand(&arg.value, None)?
+                };
             prepared_named.push(self.prepare_printf_arg(lowered, span)?);
         }
 
@@ -8936,20 +8926,20 @@ impl<'a> BodyBuilder<'a> {
                                 ),
                             )
                         }
-                        hir::FormatArgRef::Positional(index) => {
-                            (
-                                prepared_positional.get(*index).and_then(Option::as_ref),
-                                format!(
-                                    "format placeholder references missing argument at index {}",
-                                    index
-                                ),
-                            )
-                        }
+                        hir::FormatArgRef::Positional(index) => (
+                            prepared_positional.get(*index).and_then(Option::as_ref),
+                            format!(
+                                "format placeholder references missing argument at index {}",
+                                index
+                            ),
+                        ),
                         hir::FormatArgRef::Named(name) => {
                             let Some(index) = name_map.get(name) else {
                                 self.lowering.emit_error(
                                     span,
-                                    format!("format placeholder references missing argument `{name}`"),
+                                    format!(
+                                        "format placeholder references missing argument `{name}`"
+                                    ),
                                 );
                                 return Ok(());
                             };
@@ -9029,13 +9019,12 @@ impl<'a> BodyBuilder<'a> {
 
         let mut prepared_named = Vec::with_capacity(named_args.len());
         for arg in named_args {
-            let lowered = if let Some(formatted) =
-                self.try_format_const_expr_for_printf(&arg.value, span)
-            {
-                formatted
-            } else {
-                self.lower_operand(&arg.value, None)?
-            };
+            let lowered =
+                if let Some(formatted) = self.try_format_const_expr_for_printf(&arg.value, span) {
+                    formatted
+                } else {
+                    self.lower_operand(&arg.value, None)?
+                };
             prepared_named.push(self.prepare_printf_arg(lowered, span)?);
         }
 
@@ -9070,7 +9059,9 @@ impl<'a> BodyBuilder<'a> {
                             let Some(index) = name_map.get(name) else {
                                 self.lowering.emit_error(
                                     span,
-                                    format!("format placeholder references missing argument `{name}`"),
+                                    format!(
+                                        "format placeholder references missing argument `{name}`"
+                                    ),
                                 );
                                 return Ok((String::new(), Vec::new()));
                             };
@@ -9241,7 +9232,10 @@ impl<'a> BodyBuilder<'a> {
                                 kind: mir::TerminatorKind::Call {
                                     func,
                                     args,
-                                    destination: Some((mir::Place::from_local(result_local), after_block)),
+                                    destination: Some((
+                                        mir::Place::from_local(result_local),
+                                        after_block,
+                                    )),
                                     cleanup: None,
                                     from_hir_call: true,
                                     fn_span: span,
@@ -9792,10 +9786,8 @@ impl<'a> BodyBuilder<'a> {
                 if self.is_c_string_ptr(type_and_mut.ty.as_ref()) {
                     "%s"
                 } else {
-                    self.lowering.emit_warning(
-                        span,
-                        "printf using %p for non-string raw pointer argument",
-                    );
+                    self.lowering
+                        .emit_warning(span, "printf using %p for non-string raw pointer argument");
                     "%p"
                 }
             }
@@ -10296,10 +10288,7 @@ impl<'a> BodyBuilder<'a> {
         };
         let statement = mir::Statement {
             source_info: expr.span,
-            kind: mir::StatementKind::Assign(
-                place.clone(),
-                mir::Rvalue::Use(value.operand),
-            ),
+            kind: mir::StatementKind::Assign(place.clone(), mir::Rvalue::Use(value.operand)),
         };
         self.push_statement(statement);
         self.locals[local_id as usize].ty = value.ty.clone();

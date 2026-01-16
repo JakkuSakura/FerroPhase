@@ -72,23 +72,23 @@ impl HirGenerator {
 
         if resolved.is_none() {
             if let Some(first) = segments.first() {
-            let alias = match scope {
-                PathResolutionScope::Value => self.resolve_value_symbol(&first.name),
-                PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
-            };
-            if let Some(hir::Res::Module(module_path)) = alias {
-                let mut canonical = module_path;
-                canonical.extend(
-                    segments
-                        .iter()
-                        .skip(1)
-                        .map(|seg| seg.name.as_str().to_string()),
-                );
-                resolved = self.lookup_global_res(&canonical, scope);
-                if resolved.is_none() && segments.len() == 1 {
-                    resolved = Some(hir::Res::Module(canonical));
+                let alias = match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(&first.name),
+                    PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
+                };
+                if let Some(hir::Res::Module(module_path)) = alias {
+                    let mut canonical = module_path;
+                    canonical.extend(
+                        segments
+                            .iter()
+                            .skip(1)
+                            .map(|seg| seg.name.as_str().to_string()),
+                    );
+                    resolved = self.lookup_global_res(&canonical, scope);
+                    if resolved.is_none() && segments.len() == 1 {
+                        resolved = Some(hir::Res::Module(canonical));
+                    }
                 }
-            }
             }
         }
 

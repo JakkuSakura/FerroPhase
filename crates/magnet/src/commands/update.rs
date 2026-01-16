@@ -21,6 +21,7 @@ pub fn update(options: &UpdateOptions) -> Result<()> {
         include_dependencies: true,
         include_dev_dependencies: true,
         include_build_dependencies: true,
+        include_all_targets: true,
         cargo_fetch: options.fetch,
         resolve_registry: !offline,
         allow_multiple_versions: false,

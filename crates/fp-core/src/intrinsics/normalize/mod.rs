@@ -491,5 +491,4 @@ mod tests {
             _ => panic!("expected literal"),
         }
     }
-
 }

@@ -164,7 +164,10 @@ opt_level = "2"
     let config = ManifestConfig::from_file(&config_path)?;
     let build = config.build.expect("build section missing");
     assert_eq!(build.options.get("opt_level"), Some(&"2".to_string()));
-    assert_eq!(build.features, vec!["feature_a".to_string(), "feature_b".to_string()]);
+    assert_eq!(
+        build.features,
+        vec!["feature_a".to_string(), "feature_b".to_string()]
+    );
     assert!(config.features.contains_key("feature_a"));
     assert!(config.features.contains_key("feature_b"));
     Ok(())

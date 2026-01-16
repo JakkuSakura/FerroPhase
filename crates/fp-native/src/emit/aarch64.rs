@@ -165,7 +165,8 @@ fn build_frame_layout(
                 let bytes = elem_size
                     .checked_mul(count)
                     .ok_or_else(|| Error::from("alloca size overflow"))?;
-                let bytes = i32::try_from(bytes).map_err(|_| Error::from("alloca size too large"))?;
+                let bytes =
+                    i32::try_from(bytes).map_err(|_| Error::from("alloca size too large"))?;
                 let align = (*alignment).max(1) as i32;
                 alloca_info.push((inst.id, bytes, align));
             }
@@ -295,11 +296,7 @@ fn call_arg_units(
     local_types: &HashMap<u32, LirType>,
 ) -> usize {
     let ty = value_type(arg, reg_types, local_types).unwrap_or(LirType::I64);
-    if matches!(ty, LirType::I128) {
-        2
-    } else {
-        1
-    }
+    if matches!(ty, LirType::I128) { 2 } else { 1 }
 }
 
 fn vreg_slot_spec(id: u32, reg_types: &HashMap<u32, LirType>) -> (i32, i32) {
@@ -676,7 +673,15 @@ fn emit_not(
 ) -> Result<()> {
     let ty = value_type(value, reg_types, local_types)?;
     if matches!(ty, LirType::I128) {
-        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        load_i128_value(
+            asm,
+            layout,
+            value,
+            Reg::X16,
+            Reg::X17,
+            reg_types,
+            local_types,
+        )?;
         emit_mov_imm16(asm, Reg::X9, 0);
         emit_sub_imm12(asm, Reg::X9, Reg::X9, 1);
         emit_sub_reg(asm, Reg::X16, Reg::X9, Reg::X16);
@@ -744,7 +749,15 @@ fn emit_trunc(
     let dst_bits = int_bits(dst_ty)?;
     let src_ty = value_type(value, reg_types, local_types)?;
     if matches!(src_ty, LirType::I128) {
-        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        load_i128_value(
+            asm,
+            layout,
+            value,
+            Reg::X16,
+            Reg::X17,
+            reg_types,
+            local_types,
+        )?;
     } else {
         load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
     }
@@ -850,7 +863,15 @@ fn emit_int_to_ptr(
     let src_ty = value_type(value, reg_types, local_types)?;
     let src_bits = int_bits(&src_ty)?;
     if matches!(src_ty, LirType::I128) {
-        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        load_i128_value(
+            asm,
+            layout,
+            value,
+            Reg::X16,
+            Reg::X17,
+            reg_types,
+            local_types,
+        )?;
     } else {
         load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
     }
@@ -878,7 +899,15 @@ fn emit_freeze(
         return Ok(());
     }
     if matches!(ty, LirType::I128) {
-        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        load_i128_value(
+            asm,
+            layout,
+            value,
+            Reg::X16,
+            Reg::X17,
+            reg_types,
+            local_types,
+        )?;
         store_i128_value(asm, layout, dst_id, Reg::X16, Reg::X17)?;
         return Ok(());
     }
@@ -1016,7 +1045,7 @@ fn load_value(
                     return Err(Error::from(format!(
                         "unsupported value type for aarch64 load: {:?}",
                         ty
-                    )))
+                    )));
                 }
             }
             Ok(())
@@ -1047,7 +1076,7 @@ fn load_value(
                     return Err(Error::from(format!(
                         "unsupported value type for aarch64 load: {:?}",
                         ty
-                    )))
+                    )));
                 }
             }
             Ok(())
@@ -1082,7 +1111,10 @@ fn load_value(
         }
         _ => {
             let ty = value_type(value, reg_types, local_types)?;
-            Err(Error::from(format!("unsupported value for aarch64: {:?}", ty)))
+            Err(Error::from(format!(
+                "unsupported value for aarch64: {:?}",
+                ty
+            )))
         }
     }
 }
@@ -1265,24 +1297,66 @@ fn emit_i128_libcall(
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     let arg_regs = [
-        Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+        Reg::X0,
+        Reg::X1,
+        Reg::X2,
+        Reg::X3,
+        Reg::X4,
+        Reg::X5,
+        Reg::X6,
+        Reg::X7,
     ];
     let mut int_idx = 0usize;
     let mut stack_idx = 0usize;
 
     load_i128_value(asm, layout, lhs, Reg::X16, Reg::X17, reg_types, local_types)?;
-    push_int_arg(asm, layout, Reg::X16, &mut int_idx, &mut stack_idx, &arg_regs)?;
-    push_int_arg(asm, layout, Reg::X17, &mut int_idx, &mut stack_idx, &arg_regs)?;
+    push_int_arg(
+        asm,
+        layout,
+        Reg::X16,
+        &mut int_idx,
+        &mut stack_idx,
+        &arg_regs,
+    )?;
+    push_int_arg(
+        asm,
+        layout,
+        Reg::X17,
+        &mut int_idx,
+        &mut stack_idx,
+        &arg_regs,
+    )?;
 
     if let Some(rhs) = rhs {
         load_i128_value(asm, layout, rhs, Reg::X9, Reg::X10, reg_types, local_types)?;
-        push_int_arg(asm, layout, Reg::X9, &mut int_idx, &mut stack_idx, &arg_regs)?;
-        push_int_arg(asm, layout, Reg::X10, &mut int_idx, &mut stack_idx, &arg_regs)?;
+        push_int_arg(
+            asm,
+            layout,
+            Reg::X9,
+            &mut int_idx,
+            &mut stack_idx,
+            &arg_regs,
+        )?;
+        push_int_arg(
+            asm,
+            layout,
+            Reg::X10,
+            &mut int_idx,
+            &mut stack_idx,
+            &arg_regs,
+        )?;
     }
 
     if let Some(shift) = shift {
         load_value(asm, layout, shift, Reg::X9, reg_types, local_types)?;
-        push_int_arg(asm, layout, Reg::X9, &mut int_idx, &mut stack_idx, &arg_regs)?;
+        push_int_arg(
+            asm,
+            layout,
+            Reg::X9,
+            &mut int_idx,
+            &mut stack_idx,
+            &arg_regs,
+        )?;
     }
 
     asm.emit_bl_external(symbol);
@@ -1460,7 +1534,7 @@ fn emit_load(
                         return Err(Error::from(format!(
                             "unsupported load type for aarch64: {:?}",
                             ty
-                        )))
+                        )));
                     }
                 }
                 store_vreg(asm, layout, dst_id, Reg::X16)?;
@@ -1489,7 +1563,7 @@ fn emit_load(
                         return Err(Error::from(format!(
                             "unsupported load type for aarch64: {:?}",
                             ty
-                        )))
+                        )));
                     }
                 }
                 store_vreg(asm, layout, dst_id, Reg::X17)?;
@@ -1518,7 +1592,7 @@ fn emit_load(
                         return Err(Error::from(format!(
                             "unsupported load type for aarch64: {:?}",
                             ty
-                        )))
+                        )));
                     }
                 }
                 store_vreg(asm, layout, dst_id, Reg::X17)?;
@@ -1573,7 +1647,9 @@ fn emit_store(
         };
         let elem_size = size_of(elem_ty) as i32;
         if elem_size != 8 {
-            return Err(Error::from("unsupported array element size in constant store"));
+            return Err(Error::from(
+                "unsupported array element size in constant store",
+            ));
         }
         match address {
             LirValue::StackSlot(id) => {
@@ -1648,7 +1724,15 @@ fn emit_store(
     }
     let value_ty = value_type(value, reg_types, local_types)?;
     if matches!(value_ty, LirType::I128) {
-        load_i128_value(asm, layout, value, Reg::X16, Reg::X17, reg_types, local_types)?;
+        load_i128_value(
+            asm,
+            layout,
+            value,
+            Reg::X16,
+            Reg::X17,
+            reg_types,
+            local_types,
+        )?;
         match address {
             LirValue::StackSlot(id) => {
                 let dst_offset = stack_slot_offset(layout, *id)?;
@@ -1680,8 +1764,10 @@ fn emit_store(
         return Ok(());
     }
     if let LirValue::Constant(constant) = value {
-        if matches!(constant, LirConstant::Struct(_, _) | LirConstant::Array(_, _))
-            && size_of(&value_ty) <= 8
+        if matches!(
+            constant,
+            LirConstant::Struct(_, _) | LirConstant::Array(_, _)
+        ) && size_of(&value_ty) <= 8
         {
             let bits = pack_small_aggregate(constant, &value_ty)?;
             emit_mov_imm64(asm, Reg::X16, bits);
@@ -1748,7 +1834,7 @@ fn emit_store(
                             _ => {
                                 return Err(Error::from(
                                     "unsupported aggregate field size in constant store",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1788,7 +1874,7 @@ fn emit_store(
                             _ => {
                                 return Err(Error::from(
                                     "unsupported aggregate field size in constant store",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1828,7 +1914,7 @@ fn emit_store(
                             _ => {
                                 return Err(Error::from(
                                     "unsupported aggregate field size in constant store",
-                                ))
+                                ));
                             }
                         }
                     }
@@ -1864,7 +1950,7 @@ fn emit_store(
                 return Err(Error::from(format!(
                     "unsupported aggregate store value: {:?}",
                     value
-                )))
+                )));
             }
         };
         match address {
@@ -1895,7 +1981,15 @@ fn emit_store(
         LirValue::StackSlot(id) => {
             let offset = stack_slot_offset(layout, *id)?;
             if is_float_type(&value_ty) {
-                load_value_float(asm, layout, value, FReg::V0, &value_ty, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    value,
+                    FReg::V0,
+                    &value_ty,
+                    reg_types,
+                    local_types,
+                )?;
                 emit_store_float_to_sp(asm, FReg::V0, offset, &value_ty);
             } else {
                 load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
@@ -1913,7 +2007,7 @@ fn emit_store(
                         return Err(Error::from(format!(
                             "unsupported store type for aarch64: {:?}",
                             value_ty
-                        )))
+                        )));
                     }
                 }
             }
@@ -1935,7 +2029,15 @@ fn emit_store(
             let addr_offset = vreg_offset(layout, *id)?;
             emit_load_from_sp(asm, Reg::X17, addr_offset);
             if is_float_type(&value_ty) {
-                load_value_float(asm, layout, value, FReg::V0, &value_ty, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    value,
+                    FReg::V0,
+                    &value_ty,
+                    reg_types,
+                    local_types,
+                )?;
                 emit_store_float_to_reg(asm, FReg::V0, Reg::X17, &value_ty);
             } else {
                 load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
@@ -1953,7 +2055,7 @@ fn emit_store(
                         return Err(Error::from(format!(
                             "unsupported store type for aarch64: {:?}",
                             value_ty
-                        )))
+                        )));
                     }
                 }
             }
@@ -1973,7 +2075,15 @@ fn emit_store(
             asm.log_stack_write(addr_offset, store_size, "store-via-local");
             emit_load_from_sp(asm, Reg::X17, addr_offset);
             if is_float_type(&value_ty) {
-                load_value_float(asm, layout, value, FReg::V0, &value_ty, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    value,
+                    FReg::V0,
+                    &value_ty,
+                    reg_types,
+                    local_types,
+                )?;
                 emit_store_float_to_reg(asm, FReg::V0, Reg::X17, &value_ty);
             } else {
                 load_value(asm, layout, value, Reg::X16, reg_types, local_types)?;
@@ -1991,7 +2101,7 @@ fn emit_store(
                         return Err(Error::from(format!(
                             "unsupported store type for aarch64: {:?}",
                             value_ty
-                        )))
+                        )));
                     }
                 }
             }
@@ -2032,7 +2142,16 @@ fn emit_divrem(
         return Ok(());
     }
     if matches!(lhs_ty, LirType::I128) {
-        return emit_i128_divrem(asm, layout, dst_id, lhs, rhs, want_rem, reg_types, local_types);
+        return emit_i128_divrem(
+            asm,
+            layout,
+            dst_id,
+            lhs,
+            rhs,
+            want_rem,
+            reg_types,
+            local_types,
+        );
     }
 
     load_value(asm, layout, lhs, Reg::X16, reg_types, local_types)?;
@@ -2074,10 +2193,24 @@ fn emit_call(
     };
 
     let arg_regs = [
-        Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+        Reg::X0,
+        Reg::X1,
+        Reg::X2,
+        Reg::X3,
+        Reg::X4,
+        Reg::X5,
+        Reg::X6,
+        Reg::X7,
     ];
     let float_regs = [
-        FReg::V0, FReg::V1, FReg::V2, FReg::V3, FReg::V4, FReg::V5, FReg::V6, FReg::V7,
+        FReg::V0,
+        FReg::V1,
+        FReg::V2,
+        FReg::V3,
+        FReg::V4,
+        FReg::V5,
+        FReg::V6,
+        FReg::V7,
     ];
 
     let needs_sret = returns_aggregate(ret_ty);
@@ -2114,7 +2247,9 @@ fn emit_call(
 
     if is_printf_varargs {
         if args.is_empty() {
-            return Err(Error::from("printf call expects at least a format argument"));
+            return Err(Error::from(
+                "printf call expects at least a format argument",
+            ));
         }
         let format_arg = &args[0];
         if let LirValue::Constant(LirConstant::String(text)) = format_arg {
@@ -2224,8 +2359,22 @@ fn emit_call(
             let arg_ty = value_type(arg, reg_types, local_types)?;
             if matches!(arg_ty, LirType::I128) {
                 load_i128_value(asm, layout, arg, Reg::X16, Reg::X17, reg_types, local_types)?;
-                push_int_arg(asm, layout, Reg::X16, &mut int_idx, &mut stack_idx, &arg_regs)?;
-                push_int_arg(asm, layout, Reg::X17, &mut int_idx, &mut stack_idx, &arg_regs)?;
+                push_int_arg(
+                    asm,
+                    layout,
+                    Reg::X16,
+                    &mut int_idx,
+                    &mut stack_idx,
+                    &arg_regs,
+                )?;
+                push_int_arg(
+                    asm,
+                    layout,
+                    Reg::X17,
+                    &mut int_idx,
+                    &mut stack_idx,
+                    &arg_regs,
+                )?;
                 if abi_debug_enabled() {
                     abi_log("  arg i128 -> pair");
                 }
@@ -2351,10 +2500,24 @@ fn emit_intrinsic_call(
             }
             let format_offset = intern_cstring(rodata, rodata_pool, format);
             let arg_regs = [
-                Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+                Reg::X0,
+                Reg::X1,
+                Reg::X2,
+                Reg::X3,
+                Reg::X4,
+                Reg::X5,
+                Reg::X6,
+                Reg::X7,
             ];
             let float_regs = [
-                FReg::V0, FReg::V1, FReg::V2, FReg::V3, FReg::V4, FReg::V5, FReg::V6, FReg::V7,
+                FReg::V0,
+                FReg::V1,
+                FReg::V2,
+                FReg::V3,
+                FReg::V4,
+                FReg::V5,
+                FReg::V6,
+                FReg::V7,
             ];
 
             emit_mov_imm16(asm, Reg::X0, 0);
@@ -2521,10 +2684,24 @@ fn emit_intrinsic_call(
     }
 
     let arg_regs = [
-        Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+        Reg::X0,
+        Reg::X1,
+        Reg::X2,
+        Reg::X3,
+        Reg::X4,
+        Reg::X5,
+        Reg::X6,
+        Reg::X7,
     ];
     let float_regs = [
-        FReg::V0, FReg::V1, FReg::V2, FReg::V3, FReg::V4, FReg::V5, FReg::V6, FReg::V7,
+        FReg::V0,
+        FReg::V1,
+        FReg::V2,
+        FReg::V3,
+        FReg::V4,
+        FReg::V5,
+        FReg::V6,
+        FReg::V7,
     ];
 
     let mut int_idx = 1usize;
@@ -2655,7 +2832,15 @@ fn emit_float_to_int(
     if !is_float_type(&src_ty) {
         return Err(Error::from("float to int expects float source"));
     }
-    load_value_float(asm, layout, value, FReg::V0, &src_ty, reg_types, local_types)?;
+    load_value_float(
+        asm,
+        layout,
+        value,
+        FReg::V0,
+        &src_ty,
+        reg_types,
+        local_types,
+    )?;
     emit_fcvtzs(asm, Reg::X16, FReg::V0, &src_ty, signed);
     store_vreg(asm, layout, dst_id, Reg::X16)?;
     Ok(())
@@ -2674,7 +2859,15 @@ fn emit_fp_trunc(
     if !matches!((&src_ty, dst_ty), (LirType::F64, LirType::F32)) {
         return Err(Error::from("unsupported FPTrunc on aarch64"));
     }
-    load_value_float(asm, layout, value, FReg::V0, &src_ty, reg_types, local_types)?;
+    load_value_float(
+        asm,
+        layout,
+        value,
+        FReg::V0,
+        &src_ty,
+        reg_types,
+        local_types,
+    )?;
     emit_fcvt_sd(asm, FReg::V0, FReg::V0);
     store_vreg_float(asm, layout, dst_id, FReg::V0, dst_ty)?;
     Ok(())
@@ -2693,7 +2886,15 @@ fn emit_fp_ext(
     if !matches!((&src_ty, dst_ty), (LirType::F32, LirType::F64)) {
         return Err(Error::from("unsupported FPExt on aarch64"));
     }
-    load_value_float(asm, layout, value, FReg::V0, &src_ty, reg_types, local_types)?;
+    load_value_float(
+        asm,
+        layout,
+        value,
+        FReg::V0,
+        &src_ty,
+        reg_types,
+        local_types,
+    )?;
     emit_fcvt_ds(asm, FReg::V0, FReg::V0);
     store_vreg_float(asm, layout, dst_id, FReg::V0, dst_ty)?;
     Ok(())
@@ -2726,7 +2927,8 @@ fn emit_gep(
                 let idx = match index {
                     LirValue::Constant(constant) => {
                         let raw = constant_to_i64(constant)?;
-                        usize::try_from(raw).map_err(|_| Error::from("GEP struct index out of range"))?
+                        usize::try_from(raw)
+                            .map_err(|_| Error::from("GEP struct index out of range"))?
                     }
                     _ => return Err(Error::from("GEP struct index must be constant")),
                 };
@@ -2811,8 +3013,8 @@ fn emit_scaled_index(
     if elem_size != 1 {
         let imm = u16::try_from(elem_size)
             .map_err(|_| Error::from("GEP element size too large for aarch64"))?;
-                        emit_mov_imm16(asm, Reg::X9, imm);
-                        emit_mul_reg(asm, Reg::X17, Reg::X17, Reg::X9);
+        emit_mov_imm16(asm, Reg::X9, imm);
+        emit_mul_reg(asm, Reg::X17, Reg::X17, Reg::X9);
     }
     emit_add_reg(asm, Reg::X16, Reg::X16, Reg::X17);
     Ok(())
@@ -3033,7 +3235,9 @@ fn emit_insert_value(
             return Err(Error::from("unsupported InsertValue for small aggregate"));
         }
         if is_float_type(&field_ty) {
-            return Err(Error::from("unsupported float InsertValue for small aggregate"));
+            return Err(Error::from(
+                "unsupported float InsertValue for small aggregate",
+            ));
         }
         load_value(asm, layout, element, Reg::X16, reg_types, local_types)?;
         store_vreg(asm, layout, dst_id, Reg::X16)?;
@@ -3110,7 +3314,7 @@ fn emit_insert_value(
                         _ => {
                             return Err(Error::from(
                                 "unsupported aggregate field size in InsertValue",
-                            ))
+                            ));
                         }
                     }
                 }
@@ -3126,7 +3330,15 @@ fn emit_insert_value(
         return Ok(());
     }
     if is_float_type(&field_ty) {
-        load_value_float(asm, layout, element, FReg::V0, &field_ty, reg_types, local_types)?;
+        load_value_float(
+            asm,
+            layout,
+            element,
+            FReg::V0,
+            &field_ty,
+            reg_types,
+            local_types,
+        )?;
         emit_store_float_to_sp(asm, FReg::V0, store_offset, &field_ty);
     } else {
         if let LirValue::Constant(LirConstant::String(text)) = element {
@@ -3146,7 +3358,7 @@ fn emit_insert_value(
                     return Err(Error::from(format!(
                         "unsupported InsertValue element type for aarch64: {:?}",
                         field_ty
-                    )))
+                    )));
                 }
             }
         } else {
@@ -3165,7 +3377,7 @@ fn emit_insert_value(
                     return Err(Error::from(format!(
                         "unsupported InsertValue element type for aarch64: {:?}",
                         field_ty
-                    )))
+                    )));
                 }
             }
         }
@@ -3240,7 +3452,7 @@ fn emit_extract_value(
                 return Err(Error::from(format!(
                     "unsupported ExtractValue element type for aarch64: {:?}",
                     result_ty
-                )))
+                )));
             }
         }
         store_vreg(asm, layout, dst_id, Reg::X16)?;
@@ -3271,11 +3483,7 @@ fn emit_landingpad(
     Ok(())
 }
 
-fn intern_cstring(
-    rodata: &mut Vec<u8>,
-    pool: &mut HashMap<String, u64>,
-    text: &str,
-) -> u64 {
+fn intern_cstring(rodata: &mut Vec<u8>, pool: &mut HashMap<String, u64>, text: &str) -> u64 {
     if let Some(offset) = pool.get(text) {
         return *offset;
     }
@@ -3329,12 +3537,7 @@ fn emit_load_rodata_addr(asm: &mut Assembler, dst: Reg, addend: i64) -> Result<(
     Ok(())
 }
 
-fn emit_load_symbol_addr(
-    asm: &mut Assembler,
-    dst: Reg,
-    symbol: &str,
-    addend: i64,
-) -> Result<()> {
+fn emit_load_symbol_addr(asm: &mut Assembler, dst: Reg, symbol: &str, addend: i64) -> Result<()> {
     if matches!(asm.target_format, TargetFormat::MachO) {
         let adrp = 0x9000_0000u32 | dst.id();
         let add = 0x9100_0000u32 | (dst.id() << 5) | dst.id();
@@ -3541,7 +3744,10 @@ fn is_float_type(ty: &LirType) -> bool {
 }
 
 fn is_aggregate_type(ty: &LirType) -> bool {
-    matches!(ty, LirType::Struct { .. } | LirType::Array(_, _) | LirType::Vector(_, _))
+    matches!(
+        ty,
+        LirType::Struct { .. } | LirType::Array(_, _) | LirType::Vector(_, _)
+    )
 }
 
 fn is_large_aggregate(ty: &LirType) -> bool {
@@ -3555,12 +3761,7 @@ fn returns_aggregate(ty: &LirType) -> bool {
 fn is_integer_type(ty: &LirType) -> bool {
     matches!(
         ty,
-        LirType::I1
-            | LirType::I8
-            | LirType::I16
-            | LirType::I32
-            | LirType::I64
-            | LirType::I128
+        LirType::I1 | LirType::I8 | LirType::I16 | LirType::I32 | LirType::I64 | LirType::I128
     )
 }
 
@@ -3633,10 +3834,24 @@ fn spill_arguments(
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     let arg_regs = [
-        Reg::X0, Reg::X1, Reg::X2, Reg::X3, Reg::X4, Reg::X5, Reg::X6, Reg::X7,
+        Reg::X0,
+        Reg::X1,
+        Reg::X2,
+        Reg::X3,
+        Reg::X4,
+        Reg::X5,
+        Reg::X6,
+        Reg::X7,
     ];
     let float_regs = [
-        FReg::V0, FReg::V1, FReg::V2, FReg::V3, FReg::V4, FReg::V5, FReg::V6, FReg::V7,
+        FReg::V0,
+        FReg::V1,
+        FReg::V2,
+        FReg::V3,
+        FReg::V4,
+        FReg::V5,
+        FReg::V6,
+        FReg::V7,
     ];
 
     let mut int_idx = 0usize;
@@ -3868,11 +4083,8 @@ fn emit_sdiv(asm: &mut Assembler, dst: Reg, lhs: Reg, rhs: Reg) {
 }
 
 fn emit_msub(asm: &mut Assembler, dst: Reg, mul_lhs: Reg, mul_rhs: Reg, add: Reg) {
-    let instr = 0x9B00_8000u32
-        | (mul_rhs.id() << 16)
-        | (mul_lhs.id() << 5)
-        | dst.id()
-        | (add.id() << 10);
+    let instr =
+        0x9B00_8000u32 | (mul_rhs.id() << 16) | (mul_lhs.id() << 5) | dst.id() | (add.id() << 10);
     asm.extend(&instr.to_le_bytes());
 }
 fn emit_load_from_sp(asm: &mut Assembler, dst: Reg, offset: i32) {
@@ -4334,8 +4546,10 @@ fn emit_block(
                     .as_ref()
                     .ok_or_else(|| Error::from("missing type for add"))?;
                 if matches!(ty, LirType::Ptr(_)) {
-                    if let (LirValue::Constant(LirConstant::String(lhs_text)),
-                        LirValue::Constant(LirConstant::String(rhs_text))) = (lhs, rhs)
+                    if let (
+                        LirValue::Constant(LirConstant::String(lhs_text)),
+                        LirValue::Constant(LirConstant::String(rhs_text)),
+                    ) = (lhs, rhs)
                     {
                         let mut combined = String::with_capacity(lhs_text.len() + rhs_text.len());
                         combined.push_str(lhs_text);
@@ -4346,58 +4560,172 @@ fn emit_block(
                         continue;
                     }
                 }
-                emit_binop(asm, layout, inst.id, lhs, rhs, BinOp::Add, ty, reg_types, local_types)?
+                emit_binop(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    BinOp::Add,
+                    ty,
+                    reg_types,
+                    local_types,
+                )?
             }
             LirInstructionKind::Sub(lhs, rhs) => {
                 let ty = inst
                     .type_hint
                     .as_ref()
                     .ok_or_else(|| Error::from("missing type for sub"))?;
-                emit_binop(asm, layout, inst.id, lhs, rhs, BinOp::Sub, ty, reg_types, local_types)?
+                emit_binop(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    BinOp::Sub,
+                    ty,
+                    reg_types,
+                    local_types,
+                )?
             }
             LirInstructionKind::Mul(lhs, rhs) => {
                 let ty = inst
                     .type_hint
                     .as_ref()
                     .ok_or_else(|| Error::from("missing type for mul"))?;
-                emit_binop(asm, layout, inst.id, lhs, rhs, BinOp::Mul, ty, reg_types, local_types)?
+                emit_binop(
+                    asm,
+                    layout,
+                    inst.id,
+                    lhs,
+                    rhs,
+                    BinOp::Mul,
+                    ty,
+                    reg_types,
+                    local_types,
+                )?
             }
-            LirInstructionKind::And(lhs, rhs) => {
-                emit_bitwise_binop(asm, layout, inst.id, lhs, rhs, BitOp::And, reg_types, local_types)?
-            }
-            LirInstructionKind::Or(lhs, rhs) => {
-                emit_bitwise_binop(asm, layout, inst.id, lhs, rhs, BitOp::Or, reg_types, local_types)?
-            }
-            LirInstructionKind::Xor(lhs, rhs) => {
-                emit_bitwise_binop(asm, layout, inst.id, lhs, rhs, BitOp::Xor, reg_types, local_types)?
-            }
-            LirInstructionKind::Shl(lhs, rhs) => {
-                emit_shift(asm, layout, inst.id, lhs, rhs, ShiftKind::Left, reg_types, local_types)?
-            }
-            LirInstructionKind::Shr(lhs, rhs) => {
-                emit_shift(asm, layout, inst.id, lhs, rhs, ShiftKind::Right, reg_types, local_types)?
-            }
-            LirInstructionKind::Eq(lhs, rhs) => {
-                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Eq, reg_types, local_types)?
-            }
-            LirInstructionKind::Ne(lhs, rhs) => {
-                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Ne, reg_types, local_types)?
-            }
-            LirInstructionKind::Lt(lhs, rhs) => {
-                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Lt, reg_types, local_types)?
-            }
-            LirInstructionKind::Le(lhs, rhs) => {
-                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Le, reg_types, local_types)?
-            }
-            LirInstructionKind::Gt(lhs, rhs) => {
-                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Gt, reg_types, local_types)?
-            }
-            LirInstructionKind::Ge(lhs, rhs) => {
-                emit_cmp(asm, layout, inst.id, lhs, rhs, CmpKind::Ge, reg_types, local_types)?
-            }
-            LirInstructionKind::Div(lhs, rhs) => {
-                emit_divrem(asm, layout, inst.id, lhs, rhs, false, reg_types, local_types)?
-            }
+            LirInstructionKind::And(lhs, rhs) => emit_bitwise_binop(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                BitOp::And,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Or(lhs, rhs) => emit_bitwise_binop(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                BitOp::Or,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Xor(lhs, rhs) => emit_bitwise_binop(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                BitOp::Xor,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Shl(lhs, rhs) => emit_shift(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                ShiftKind::Left,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Shr(lhs, rhs) => emit_shift(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                ShiftKind::Right,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Eq(lhs, rhs) => emit_cmp(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                CmpKind::Eq,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Ne(lhs, rhs) => emit_cmp(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                CmpKind::Ne,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Lt(lhs, rhs) => emit_cmp(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                CmpKind::Lt,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Le(lhs, rhs) => emit_cmp(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                CmpKind::Le,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Gt(lhs, rhs) => emit_cmp(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                CmpKind::Gt,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Ge(lhs, rhs) => emit_cmp(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                CmpKind::Ge,
+                reg_types,
+                local_types,
+            )?,
+            LirInstructionKind::Div(lhs, rhs) => emit_divrem(
+                asm,
+                layout,
+                inst.id,
+                lhs,
+                rhs,
+                false,
+                reg_types,
+                local_types,
+            )?,
             LirInstructionKind::Rem(lhs, rhs) => {
                 emit_divrem(asm, layout, inst.id, lhs, rhs, true, reg_types, local_types)?
             }
@@ -4434,11 +4762,7 @@ fn emit_block(
                 emit_gep(asm, layout, inst.id, ptr, indices, reg_types, local_types)?;
             }
             LirInstructionKind::Call { function, args, .. } => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or(LirType::Void);
+                let ty = inst.type_hint.as_ref().cloned().unwrap_or(LirType::Void);
                 emit_call(
                     asm,
                     layout,
@@ -4454,12 +4778,12 @@ fn emit_block(
                     rodata_pool,
                 )?;
             }
-            LirInstructionKind::IntrinsicCall { kind, format: format_str, args } => {
-                let ty = inst
-                    .type_hint
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or(LirType::Void);
+            LirInstructionKind::IntrinsicCall {
+                kind,
+                format: format_str,
+                args,
+            } => {
+                let ty = inst.type_hint.as_ref().cloned().unwrap_or(LirType::Void);
                 emit_intrinsic_call(
                     asm,
                     layout,
@@ -4476,10 +4800,28 @@ fn emit_block(
                 )?;
             }
             LirInstructionKind::SIToFP(value, ty) => {
-                emit_int_to_float(asm, layout, inst.id, value, ty, reg_types, local_types, true)?;
+                emit_int_to_float(
+                    asm,
+                    layout,
+                    inst.id,
+                    value,
+                    ty,
+                    reg_types,
+                    local_types,
+                    true,
+                )?;
             }
             LirInstructionKind::UIToFP(value, ty) => {
-                emit_int_to_float(asm, layout, inst.id, value, ty, reg_types, local_types, false)?;
+                emit_int_to_float(
+                    asm,
+                    layout,
+                    inst.id,
+                    value,
+                    ty,
+                    reg_types,
+                    local_types,
+                    false,
+                )?;
             }
             LirInstructionKind::Trunc(value, ty) => {
                 emit_trunc(asm, layout, inst.id, value, ty, reg_types, local_types)?;
@@ -4488,10 +4830,28 @@ fn emit_block(
                 emit_zext(asm, layout, inst.id, value, ty, reg_types, local_types)?;
             }
             LirInstructionKind::FPToSI(value, ty) => {
-                emit_float_to_int(asm, layout, inst.id, value, ty, reg_types, local_types, true)?;
+                emit_float_to_int(
+                    asm,
+                    layout,
+                    inst.id,
+                    value,
+                    ty,
+                    reg_types,
+                    local_types,
+                    true,
+                )?;
             }
             LirInstructionKind::FPToUI(value, ty) => {
-                emit_float_to_int(asm, layout, inst.id, value, ty, reg_types, local_types, false)?;
+                emit_float_to_int(
+                    asm,
+                    layout,
+                    inst.id,
+                    value,
+                    ty,
+                    reg_types,
+                    local_types,
+                    false,
+                )?;
             }
             LirInstructionKind::FPTrunc(value, ty) => {
                 emit_fp_trunc(asm, layout, inst.id, value, ty, reg_types, local_types)?;
@@ -4514,7 +4874,11 @@ fn emit_block(
             LirInstructionKind::IntToPtr(value) => {
                 emit_int_to_ptr(asm, layout, inst.id, value, reg_types, local_types)?;
             }
-            LirInstructionKind::InsertValue { aggregate, element, indices } => {
+            LirInstructionKind::InsertValue {
+                aggregate,
+                element,
+                indices,
+            } => {
                 emit_insert_value(
                     asm,
                     layout,
@@ -4609,7 +4973,15 @@ fn emit_block(
                 load_i128_value(asm, layout, value, Reg::X0, Reg::X1, reg_types, local_types)?;
                 exit_reg = Some(Reg::X0);
             } else if is_float_type(return_ty) {
-                load_value_float(asm, layout, value, FReg::V0, return_ty, reg_types, local_types)?;
+                load_value_float(
+                    asm,
+                    layout,
+                    value,
+                    FReg::V0,
+                    return_ty,
+                    reg_types,
+                    local_types,
+                )?;
             } else {
                 load_value(asm, layout, value, Reg::X0, reg_types, local_types)?;
                 exit_reg = Some(Reg::X0);
@@ -4665,16 +5037,12 @@ fn emit_block(
             )?;
             asm.emit_b(Label::Block(asm.current_function, *normal_dest));
         }
-        LirTerminator::Switch { value, default, cases } => {
-            emit_switch(
-                asm,
-                layout,
-                value,
-                *default,
-                cases,
-                reg_types,
-                local_types,
-            )?;
+        LirTerminator::Switch {
+            value,
+            default,
+            cases,
+        } => {
+            emit_switch(asm, layout, value, *default, cases, reg_types, local_types)?;
         }
         LirTerminator::Unreachable => {
             emit_trap(asm);
@@ -4824,12 +5192,15 @@ fn emit_select(
     reg_types: &HashMap<u32, LirType>,
     local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
-    let result_ty = reg_types
-        .get(&dst_id)
-        .cloned()
-        .unwrap_or(value_type(if_true, reg_types, local_types)?);
+    let result_ty =
+        reg_types
+            .get(&dst_id)
+            .cloned()
+            .unwrap_or(value_type(if_true, reg_types, local_types)?);
     if is_float_type(&result_ty) {
-        return Err(Error::from("Select does not support float values on aarch64"));
+        return Err(Error::from(
+            "Select does not support float values on aarch64",
+        ));
     }
 
     load_value(asm, layout, condition, Reg::X16, reg_types, local_types)?;
@@ -5105,7 +5476,8 @@ impl Assembler {
             let imm = delta / 4;
             match fixup.kind {
                 FixupKind::B => {
-                    let imm26 = i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
+                    let imm26 =
+                        i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
                     if imm26 < -(1 << 25) || imm26 > (1 << 25) - 1 {
                         return Err(Error::from("branch out of range"));
                     }
@@ -5113,17 +5485,17 @@ impl Assembler {
                     self.patch_u32(origin, encoded);
                 }
                 FixupKind::BCond(cond) => {
-                    let imm19 = i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
+                    let imm19 =
+                        i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
                     if imm19 < -(1 << 18) || imm19 > (1 << 18) - 1 {
                         return Err(Error::from("conditional branch out of range"));
                     }
-                    let encoded = 0x5400_0000u32
-                        | (((imm19 as u32) & 0x7FFFF) << 5)
-                        | (cond & 0xF);
+                    let encoded = 0x5400_0000u32 | (((imm19 as u32) & 0x7FFFF) << 5) | (cond & 0xF);
                     self.patch_u32(origin, encoded);
                 }
                 FixupKind::Bl => {
-                    let imm26 = i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
+                    let imm26 =
+                        i32::try_from(imm).map_err(|_| Error::from("branch out of range"))?;
                     if imm26 < -(1 << 25) || imm26 > (1 << 25) - 1 {
                         return Err(Error::from("call target out of range"));
                     }

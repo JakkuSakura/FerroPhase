@@ -29,6 +29,27 @@ pub fn parse_cargo_dependencies(manifest_path: &Path) -> Result<CargoDependencie
     })
 }
 
+pub fn parse_cargo_features(manifest_path: &Path) -> Result<HashMap<String, Vec<String>>> {
+    let content = std::fs::read_to_string(manifest_path)?;
+    let value: toml::Value = toml::from_str(&content)?;
+    let mut out = HashMap::new();
+    let Some(table) = value.get("features").and_then(|v| v.as_table()) else {
+        return Ok(out);
+    };
+    for (name, value) in table {
+        let Some(items) = value.as_array() else {
+            continue;
+        };
+        let list = items
+            .iter()
+            .filter_map(|v| v.as_str())
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        out.insert(name.to_string(), list);
+    }
+    Ok(out)
+}
+
 pub fn parse_cargo_deps(section: Option<&toml::Value>) -> DependencyModelMap {
     let mut out = HashMap::new();
     let Some(table) = section.and_then(|v| v.as_table()) else {
@@ -38,10 +59,7 @@ pub fn parse_cargo_deps(section: Option<&toml::Value>) -> DependencyModelMap {
     out
 }
 
-pub fn parse_cargo_deps_from_table(
-    table: &toml::value::Table,
-    out: &mut DependencyModelMap,
-) {
+pub fn parse_cargo_deps_from_table(table: &toml::value::Table, out: &mut DependencyModelMap) {
     for (name, value) in table {
         let mut model = DependencyModel::default();
         match value {
@@ -77,9 +95,8 @@ pub fn parse_cargo_deps_from_table(
                         model.features = Some(list);
                     }
                 }
-                if let Some(default_features) = table
-                    .get("default-features")
-                    .and_then(|v| v.as_bool())
+                if let Some(default_features) =
+                    table.get("default-features").and_then(|v| v.as_bool())
                 {
                     model.default_features = Some(default_features);
                 }

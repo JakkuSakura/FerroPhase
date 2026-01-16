@@ -1,5 +1,5 @@
+use cfg_expr::targets::{Family, TargetInfo, get_builtin_target_by_triple};
 use cfg_expr::{Expression, Predicate};
-use cfg_expr::targets::{get_builtin_target_by_triple, Family, TargetInfo};
 use eyre::Result;
 use target_lexicon::HOST;
 

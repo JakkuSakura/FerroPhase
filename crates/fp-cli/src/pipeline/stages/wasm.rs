@@ -1,5 +1,5 @@
-use crate::pipeline::{Pipeline, PipelineOptions, STAGE_EMIT_WASM};
 use crate::CliError;
+use crate::pipeline::{Pipeline, PipelineOptions, STAGE_EMIT_WASM};
 use fp_core::diagnostics::Diagnostic;
 use fp_core::lir;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};

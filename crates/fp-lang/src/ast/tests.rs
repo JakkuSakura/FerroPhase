@@ -1,7 +1,9 @@
 use super::*;
-use fp_core::ast::{QuoteFragmentKind, Ty};
 use crate::syntax::SyntaxPrinter;
-use fp_core::ast::{AttrMeta, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind};
+use fp_core::ast::{
+    AttrMeta, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind,
+};
+use fp_core::ast::{QuoteFragmentKind, Ty};
 use fp_core::ops::BinOpKind;
 
 #[test]
@@ -107,9 +109,7 @@ fn parse_match_quote_fn_splice_binds_name() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser
-        .parse_expr_ast(
-            "match token { quote { fn splice(name)(i: i32) } => name, _ => \"none\" }",
-        )
+        .parse_expr_ast("match token { quote { fn splice(name)(i: i32) } => name, _ => \"none\" }")
         .unwrap();
 
     let ExprKind::Match(match_expr) = expr.kind() else {

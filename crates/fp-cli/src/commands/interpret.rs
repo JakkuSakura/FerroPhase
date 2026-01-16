@@ -1,12 +1,12 @@
 //! Interpret FerroPhase source or bytecode files.
 
+use crate::pipeline::{BackendKind, PipelineOptions};
 use crate::{
     CliError, Result,
     cli::CliConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use clap::Args;
-use crate::pipeline::{BackendKind, PipelineOptions};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 

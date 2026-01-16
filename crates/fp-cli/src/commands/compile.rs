@@ -1,15 +1,15 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
+use crate::pipeline::{
+    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
+};
 use crate::{
     CliError, Result,
     cli::CliConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
-use crate::pipeline::{
-    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
-};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
@@ -131,7 +131,10 @@ impl EmitterKind {
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
-    info!("Starting compilation with backend: {}", args.backend.as_str());
+    info!(
+        "Starting compilation with backend: {}",
+        args.backend.as_str()
+    );
 
     // Validate inputs
     validate_inputs(&args)?;

@@ -12,7 +12,7 @@ use termwiz::caps::Capabilities;
 use termwiz::cell::{AttributeChange, CellAttributes};
 use termwiz::color::{AnsiColor, ColorAttribute};
 use termwiz::surface::Change;
-use termwiz::terminal::{new_terminal, Terminal};
+use termwiz::terminal::{Terminal, new_terminal};
 use thiserror::Error;
 
 type SourceSpan = miette::SourceSpan;
@@ -273,7 +273,11 @@ fn format_rustc_plain(
     let gutter_width = line_no.to_string().len();
     let gutter = " ".repeat(gutter_width);
     let gutter_bar = format!("{gutter} |");
-    let source_line = format!(" {line_no:>width$} | {}", line_span.text, width = gutter_width);
+    let source_line = format!(
+        " {line_no:>width$} | {}",
+        line_span.text,
+        width = gutter_width
+    );
     let caret_len = (line_span.col_end.saturating_sub(line_span.col_start)).max(1);
     let caret_pad = " ".repeat(line_span.col_start.saturating_sub(1));
     let caret_line = format!("{gutter} | {caret_pad}{}", "^".repeat(caret_len));

@@ -6,9 +6,9 @@ use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, LanguageFrontend};
 
+use crate::normalization::RustIntrinsicNormalizer;
 use crate::parser::RustParser;
 use crate::printer::RustPrinter;
-use crate::normalization::RustIntrinsicNormalizer;
 
 const LANGUAGE_KEY: &str = "rust";
 const EXTENSIONS: &[&str] = &["rs"];

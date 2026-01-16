@@ -232,7 +232,9 @@ fn quote_block_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, Lower
         idx += 1;
         let (kind_tok, has_brackets) = if tokens.get(idx).is_some_and(|t| t.text == "[") {
             idx += 1;
-            let kind = tokens.get(idx).ok_or(LowerError::UnexpectedNode(node.kind))?;
+            let kind = tokens
+                .get(idx)
+                .ok_or(LowerError::UnexpectedNode(node.kind))?;
             idx += 1;
             if !tokens.get(idx).is_some_and(|t| t.text == "]") {
                 return Err(LowerError::UnexpectedNode(node.kind));
@@ -240,7 +242,9 @@ fn quote_block_pattern_from_cst(node: &SyntaxNode) -> Result<PatternQuote, Lower
             idx += 1;
             (kind, true)
         } else {
-            let kind = tokens.get(idx).ok_or(LowerError::UnexpectedNode(node.kind))?;
+            let kind = tokens
+                .get(idx)
+                .ok_or(LowerError::UnexpectedNode(node.kind))?;
             idx += 1;
             (kind, false)
         };
@@ -988,12 +992,10 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let (delimiter, tokens) = macro_group_delimiter_and_tokens(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall))?;
 
-            Ok(
-                ExprKind::Macro(fp_core::ast::ExprMacro::new(
-                    MacroInvocation::new(path, delimiter, tokens).with_span(node.span),
-                ))
-                .into(),
-            )
+            Ok(ExprKind::Macro(fp_core::ast::ExprMacro::new(
+                MacroInvocation::new(path, delimiter, tokens).with_span(node.span),
+            ))
+            .into())
         }
         SyntaxKind::ExprCast => {
             let expr = node

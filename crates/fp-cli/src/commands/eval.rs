@@ -1,12 +1,12 @@
 //! Expression evaluation command implementation
 
+use crate::pipeline::{
+    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
+};
 use crate::{
     CliError, Result,
     cli::CliConfig,
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
-};
-use crate::pipeline::{
-    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
 };
 // remove unused imports; printing uses fully-qualified console::style and value matching via PipelineOutput
 use crate::commands::{format_value_brief, print_runtime_result};

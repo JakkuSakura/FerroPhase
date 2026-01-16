@@ -77,8 +77,10 @@ impl<'a> WasmEmitter<'a> {
 
         self.func_index.clear();
         for (idx, func) in self.program.functions.iter().enumerate() {
-            self.func_index
-                .insert(func.name.as_str().to_string(), import_func_count + idx as u32);
+            self.func_index.insert(
+                func.name.as_str().to_string(),
+                import_func_count + idx as u32,
+            );
         }
 
         self.collect_external_functions();
@@ -164,25 +166,22 @@ impl<'a> WasmEmitter<'a> {
                         let LirValue::Function(name) = function else {
                             continue;
                         };
-                        if self.func_index.contains_key(name) || self.extern_funcs.contains_key(name)
+                        if self.func_index.contains_key(name)
+                            || self.extern_funcs.contains_key(name)
                         {
                             continue;
                         }
                         let params = args
                             .iter()
-                            .map(|arg| {
-                                lower_val_type(&value_type_for(func, &reg_types, arg))
-                            })
+                            .map(|arg| lower_val_type(&value_type_for(func, &reg_types, arg)))
                             .collect::<Vec<_>>();
                         let results = instr
                             .type_hint
                             .clone()
                             .map(|ty| vec![lower_val_type(&ty)])
                             .unwrap_or_default();
-                        self.extern_funcs.insert(
-                            name.clone(),
-                            SignatureKey { params, results },
-                        );
+                        self.extern_funcs
+                            .insert(name.clone(), SignatureKey { params, results });
                     }
                 }
             }
@@ -245,8 +244,9 @@ impl<'a> WasmEmitter<'a> {
         let align = global.alignment.unwrap_or(8) as u64;
         let offset = align_to(self.data_bytes.len() as u64, align);
         if offset > self.data_bytes.len() as u64 {
-            self.data_bytes
-                .extend(std::iter::repeat(0).take((offset - self.data_bytes.len() as u64) as usize));
+            self.data_bytes.extend(
+                std::iter::repeat(0).take((offset - self.data_bytes.len() as u64) as usize),
+            );
         }
 
         if let Some(init) = global.initializer.clone() {
@@ -314,15 +314,9 @@ impl<'a> WasmEmitter<'a> {
                 Ok(out)
             }
             LirConstant::GlobalRef(name, ty, indices) => {
-                let base = self
-                    .global_addr
-                    .get(name.as_str())
-                    .copied()
-                    .unwrap_or(0);
-                let offset = offset_for_indices(
-                    ty,
-                    &indices.iter().map(|v| *v as u32).collect::<Vec<_>>(),
-                );
+                let base = self.global_addr.get(name.as_str()).copied().unwrap_or(0);
+                let offset =
+                    offset_for_indices(ty, &indices.iter().map(|v| *v as u32).collect::<Vec<_>>());
                 Ok(int_to_bytes((base + offset) as u128, ty))
             }
             LirConstant::FunctionRef(_, ty) => Ok(int_to_bytes(0, ty)),
@@ -390,11 +384,7 @@ struct FunctionEmitter<'a, 'b> {
 }
 
 impl<'a, 'b> FunctionEmitter<'a, 'b> {
-    fn new(
-        emitter: &'a mut WasmEmitter<'b>,
-        func: &'a LirFunction,
-        stack_ptr_global: u32,
-    ) -> Self {
+    fn new(emitter: &'a mut WasmEmitter<'b>, func: &'a LirFunction, stack_ptr_global: u32) -> Self {
         Self {
             emitter,
             func,
@@ -542,14 +532,12 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             for instr in &block.instructions {
                 if let LirInstructionKind::Load { address, .. } = &instr.kind {
                     if let Some(LirType::Struct { .. }) = &instr.type_hint {
-                        self.struct_load_sources
-                            .insert(instr.id, address.clone());
+                        self.struct_load_sources.insert(instr.id, address.clone());
                     }
                 }
             }
         }
     }
-
 
     fn emit_stack_slots(&mut self, func: &mut Function) -> Result<()> {
         func.instruction(&Instruction::GlobalGet(self.stack_ptr_global));
@@ -610,11 +598,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         block_id: BasicBlockId,
         block_ids: &[BasicBlockId],
     ) -> Result<()> {
-        let phi_nodes = self
-            .phi_nodes
-            .get(&block_id)
-            .cloned()
-            .unwrap_or_default();
+        let phi_nodes = self.phi_nodes.get(&block_id).cloned().unwrap_or_default();
         for instr in &block.instructions {
             if matches!(instr.kind, LirInstructionKind::Phi { .. }) {
                 continue;
@@ -663,27 +647,13 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
                 self.emit_binop(func, lhs, rhs, instr, BinOp::Shr)?
             }
             LirInstructionKind::Not(value) => self.emit_not(func, value, instr)?,
-            LirInstructionKind::Eq(lhs, rhs) => {
-                self.emit_cmp(func, lhs, rhs, instr, CmpOp::Eq)?
-            }
-            LirInstructionKind::Ne(lhs, rhs) => {
-                self.emit_cmp(func, lhs, rhs, instr, CmpOp::Ne)?
-            }
-            LirInstructionKind::Lt(lhs, rhs) => {
-                self.emit_cmp(func, lhs, rhs, instr, CmpOp::Lt)?
-            }
-            LirInstructionKind::Le(lhs, rhs) => {
-                self.emit_cmp(func, lhs, rhs, instr, CmpOp::Le)?
-            }
-            LirInstructionKind::Gt(lhs, rhs) => {
-                self.emit_cmp(func, lhs, rhs, instr, CmpOp::Gt)?
-            }
-            LirInstructionKind::Ge(lhs, rhs) => {
-                self.emit_cmp(func, lhs, rhs, instr, CmpOp::Ge)?
-            }
-            LirInstructionKind::Load { address, .. } => {
-                self.emit_load(func, address, instr)?
-            }
+            LirInstructionKind::Eq(lhs, rhs) => self.emit_cmp(func, lhs, rhs, instr, CmpOp::Eq)?,
+            LirInstructionKind::Ne(lhs, rhs) => self.emit_cmp(func, lhs, rhs, instr, CmpOp::Ne)?,
+            LirInstructionKind::Lt(lhs, rhs) => self.emit_cmp(func, lhs, rhs, instr, CmpOp::Lt)?,
+            LirInstructionKind::Le(lhs, rhs) => self.emit_cmp(func, lhs, rhs, instr, CmpOp::Le)?,
+            LirInstructionKind::Gt(lhs, rhs) => self.emit_cmp(func, lhs, rhs, instr, CmpOp::Gt)?,
+            LirInstructionKind::Ge(lhs, rhs) => self.emit_cmp(func, lhs, rhs, instr, CmpOp::Ge)?,
+            LirInstructionKind::Load { address, .. } => self.emit_load(func, address, instr)?,
             LirInstructionKind::Store { value, address, .. } => {
                 self.emit_store(func, value, address)?
             }
@@ -729,8 +699,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             LirInstructionKind::Unreachable | LirInstructionKind::Freeze(_) => {
                 func.instruction(&Instruction::Unreachable);
             }
-            LirInstructionKind::InlineAsm { .. }
-            | LirInstructionKind::LandingPad { .. } => {
+            LirInstructionKind::InlineAsm { .. } | LirInstructionKind::LandingPad { .. } => {
                 func.instruction(&Instruction::Unreachable);
             }
         }
@@ -840,11 +809,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit_condition_as_i32(
-        &mut self,
-        func: &mut Function,
-        condition: &LirValue,
-    ) -> Result<()> {
+    fn emit_condition_as_i32(&mut self, func: &mut Function, condition: &LirValue) -> Result<()> {
         let ty = self.value_type(condition);
         self.emit_value(func, condition)?;
         match ty {
@@ -868,12 +833,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit_switch_case_eq(
-        &mut self,
-        func: &mut Function,
-        ty: &LirType,
-        value: u64,
-    ) {
+    fn emit_switch_case_eq(&mut self, func: &mut Function, ty: &LirType, value: u64) {
         match ty {
             LirType::I1 | LirType::I8 | LirType::I16 | LirType::I32 => {
                 func.instruction(&Instruction::I32Const(value as i32));
@@ -939,7 +899,12 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit_not(&mut self, func: &mut Function, value: &LirValue, instr: &LirInstruction) -> Result<()> {
+    fn emit_not(
+        &mut self,
+        func: &mut Function,
+        value: &LirValue,
+        instr: &LirInstruction,
+    ) -> Result<()> {
         let ty = instr.type_hint.clone().unwrap_or(LirType::I1);
         self.emit_value(func, value)?;
         match lower_val_type(&ty) {
@@ -988,7 +953,12 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit_load(&mut self, func: &mut Function, address: &LirValue, instr: &LirInstruction) -> Result<()> {
+    fn emit_load(
+        &mut self,
+        func: &mut Function,
+        address: &LirValue,
+        instr: &LirInstruction,
+    ) -> Result<()> {
         let ty = instr.type_hint.clone().unwrap_or(LirType::I64);
         self.emit_value(func, address)?;
         func.instruction(&Instruction::I32WrapI64);
@@ -997,7 +967,12 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit_store(&mut self, func: &mut Function, value: &LirValue, address: &LirValue) -> Result<()> {
+    fn emit_store(
+        &mut self,
+        func: &mut Function,
+        value: &LirValue,
+        address: &LirValue,
+    ) -> Result<()> {
         let ty = self.value_type(value);
         self.emit_value(func, address)?;
         func.instruction(&Instruction::I32WrapI64);
@@ -1038,7 +1013,10 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         indices: &[LirValue],
         instr: &LirInstruction,
     ) -> Result<()> {
-        let ty = instr.type_hint.clone().unwrap_or(LirType::Ptr(Box::new(LirType::I8)));
+        let ty = instr
+            .type_hint
+            .clone()
+            .unwrap_or(LirType::Ptr(Box::new(LirType::I8)));
         let LirType::Ptr(inner) = ty.clone() else {
             return Err(Error::from("gep expects pointer type hint"));
         };
@@ -1056,7 +1034,12 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
         Ok(())
     }
 
-    fn emit_cast(&mut self, func: &mut Function, value: &LirValue, instr: &LirInstruction) -> Result<()> {
+    fn emit_cast(
+        &mut self,
+        func: &mut Function,
+        value: &LirValue,
+        instr: &LirInstruction,
+    ) -> Result<()> {
         let target = instr.type_hint.clone().unwrap_or(LirType::I64);
         let source = self.value_type(value);
         self.emit_value(func, value)?;
@@ -1157,12 +1140,7 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             LirValue::Function(name) => name.clone(),
             _ => "".to_string(),
         };
-        let idx = self
-            .emitter
-            .func_index
-            .get(&name)
-            .copied()
-            .unwrap_or(0);
+        let idx = self.emitter.func_index.get(&name).copied().unwrap_or(0);
         func.instruction(&Instruction::Call(idx));
 
         if let Some(ty) = instr.type_hint.clone() {
@@ -1627,21 +1605,11 @@ impl<'a, 'b> FunctionEmitter<'a, 'b> {
             }
             LirValue::Constant(constant) => self.emit_constant(func, constant)?,
             LirValue::Global(name, _) => {
-                let addr = self
-                    .emitter
-                    .global_addr
-                    .get(name)
-                    .copied()
-                    .unwrap_or(0);
+                let addr = self.emitter.global_addr.get(name).copied().unwrap_or(0);
                 func.instruction(&Instruction::I64Const(addr as i64));
             }
             LirValue::Function(name) => {
-                let idx = self
-                    .emitter
-                    .func_index
-                    .get(name)
-                    .copied()
-                    .unwrap_or(0);
+                let idx = self.emitter.func_index.get(name).copied().unwrap_or(0);
                 func.instruction(&Instruction::I64Const(idx as i64));
             }
             LirValue::Local(id) => {
@@ -1902,7 +1870,7 @@ fn parse_printf_format(format: &str) -> Result<Vec<PrintPart>> {
             _ => {
                 return Err(Error::from(format!(
                     "unsupported printf format specifier: %{spec_char}"
-                )))
+                )));
             }
         };
 
@@ -2103,7 +2071,6 @@ fn constant_type(constant: &LirConstant) -> LirType {
         LirConstant::Null(ty) | LirConstant::Undef(ty) => ty.clone(),
     }
 }
-
 
 fn value_type_for(
     func: &LirFunction,

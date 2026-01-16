@@ -1,8 +1,8 @@
 use crates_index::SparseIndex;
-use futures_util::StreamExt;
-use http;
 use eyre::Result;
 use flate2::read::GzDecoder;
+use futures_util::StreamExt;
+use http;
 use parking_lot::RwLock;
 use reqwest::Client;
 use semver::{Version, VersionReq};
@@ -113,7 +113,11 @@ impl RegistryClient {
         })
     }
 
-    pub async fn resolve_async(&self, name: &str, version_req: Option<&str>) -> Result<ResolvedCrate> {
+    pub async fn resolve_async(
+        &self,
+        name: &str,
+        version_req: Option<&str>,
+    ) -> Result<ResolvedCrate> {
         let req_str = version_req.ok_or_else(|| eyre::eyre!("missing version for {name}"))?;
         let req = VersionReq::parse(req_str)
             .map_err(|err| eyre::eyre!("invalid version requirement '{req_str}': {err}"))?;
@@ -219,7 +223,8 @@ impl RegistryClient {
         })
         .await
         .map_err(|err| eyre::eyre!("failed to resolve crate {name}: {err}"))??;
-        self.resolve_locked_async(name, &version, checksum.as_deref()).await
+        self.resolve_locked_async(name, &version, checksum.as_deref())
+            .await
     }
 
     pub async fn resolve_locked_async(
@@ -252,14 +257,7 @@ impl RegistryClient {
             ));
         }
 
-        download_and_unpack_async(
-            &self.http_client,
-            name,
-            version,
-            checksum,
-            &crate_root,
-        )
-        .await?;
+        download_and_unpack_async(&self.http_client, name, version, checksum, &crate_root).await?;
 
         Ok(ResolvedCrate {
             name: name.to_string(),
@@ -312,7 +310,10 @@ impl RegistryClient {
     }
 }
 
-fn select_version(krate: &crates_index::Crate, req: &VersionReq) -> Result<(String, Option<String>)> {
+fn select_version(
+    krate: &crates_index::Crate,
+    req: &VersionReq,
+) -> Result<(String, Option<String>)> {
     let mut candidates: Vec<(Version, Option<String>)> = krate
         .versions()
         .iter()
@@ -430,8 +431,7 @@ fn fetch_sparse_crate(
     name: &str,
 ) -> Result<crates_index::Crate> {
     let request = index.make_cache_request(name)?;
-    let mut ureq_request =
-        agent.request(request.method().as_str(), &request.uri().to_string());
+    let mut ureq_request = agent.request(request.method().as_str(), &request.uri().to_string());
     for (name, value) in request.headers() {
         ureq_request = ureq_request.set(name.as_str(), value.to_str()?);
     }
@@ -668,8 +668,8 @@ fn resolve_cache_dir(cache_dir: Option<PathBuf>) -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use flate2::write::GzEncoder;
     use flate2::Compression;
+    use flate2::write::GzEncoder;
     use tempfile::tempdir;
 
     #[test]

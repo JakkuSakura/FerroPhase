@@ -461,9 +461,10 @@ fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
         let name_tokens = &inner_tokens[..eq_pos];
         let value_tokens = &inner_tokens[eq_pos + 1..];
         let name_segments = parse_attr_path_segments(name_tokens);
-        if let (Some(name_path), Some(value_expr)) =
-            (name_segments.map(Path::new), parse_attr_value_expr(value_tokens))
-        {
+        if let (Some(name_path), Some(value_expr)) = (
+            name_segments.map(Path::new),
+            parse_attr_value_expr(value_tokens),
+        ) {
             return Some(Attribute {
                 style: AttrStyle::Outer,
                 meta: AttrMeta::NameValue(AttrMetaNameValue {

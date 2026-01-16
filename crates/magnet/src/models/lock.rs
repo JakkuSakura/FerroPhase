@@ -68,8 +68,8 @@ impl MagnetLock {
         }
         let content = std::fs::read_to_string(path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
-        let lock: Self =
-            toml::from_str(&content).with_context(|| format!("Failed to parse {}", path.display()))?;
+        let lock: Self = toml::from_str(&content)
+            .with_context(|| format!("Failed to parse {}", path.display()))?;
         Ok(Some(lock))
     }
 
@@ -139,7 +139,11 @@ impl MagnetLock {
         let mut warnings = Vec::new();
         let mut known = HashMap::new();
         for pkg in &self.packages {
-            let key = (pkg.name.as_str(), pkg.version.as_str(), pkg.source.as_deref());
+            let key = (
+                pkg.name.as_str(),
+                pkg.version.as_str(),
+                pkg.source.as_deref(),
+            );
             known.insert(key, true);
         }
 
@@ -190,7 +194,6 @@ impl LockIndex {
         }
         Self { registry }
     }
-
 
     pub fn match_registry(&self, name: &str, req: &VersionReq) -> Option<LockedRegistryVersion> {
         let entries = self.registry.get(name)?;
@@ -248,10 +251,7 @@ fn package_source(
 
 fn format_dependency(dep: &DependencyEdge) -> Option<String> {
     let name = dep.package.as_deref().unwrap_or(&dep.name);
-    let version = dep
-        .resolved_version
-        .as_ref()
-        .or(dep.version.as_ref())?;
+    let version = dep.resolved_version.as_ref().or(dep.version.as_ref())?;
     let mut out = format!("{} {}", name, version);
     if let Some(source) = dep.source.as_deref() {
         out.push_str(&format!(" ({})", source));

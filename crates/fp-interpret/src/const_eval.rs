@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, Module, Node, Ty,
-    Value, Visibility,
+    register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, Module, Node, Ty, Value,
+    Visibility,
 };
-use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result as CoreResult;
+use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
 use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};

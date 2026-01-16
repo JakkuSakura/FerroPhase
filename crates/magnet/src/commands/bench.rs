@@ -157,6 +157,7 @@ fn write_package_graph(root: &Path, package: &PackageModel, output_dir: &Path) -
         include_dependencies: true,
         include_dev_dependencies: true,
         include_build_dependencies: true,
+        include_all_targets: false,
         cargo_fetch: true,
         resolve_registry: !offline,
         allow_multiple_versions: false,
@@ -279,11 +280,7 @@ fn find_in_path(binary: &str) -> Option<PathBuf> {
 }
 
 fn binary_name() -> &'static str {
-    if cfg!(windows) {
-        "fp.exe"
-    } else {
-        "fp"
-    }
+    if cfg!(windows) { "fp.exe" } else { "fp" }
 }
 
 fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf {

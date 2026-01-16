@@ -98,12 +98,15 @@ impl LanguageFrontend for FerroFrontend {
                     });
                 }
                 Err(err) => {
-                    let mut diagnostic = Diagnostic::error(format!(
-                        "failed to parse items (file mode): {err}"
-                    ));
-                    if let Some(span) = self.ferro.diagnostics().get_diagnostics().iter().find_map(
-                        |diag| diag.span,
-                    ) {
+                    let mut diagnostic =
+                        Diagnostic::error(format!("failed to parse items (file mode): {err}"));
+                    if let Some(span) = self
+                        .ferro
+                        .diagnostics()
+                        .get_diagnostics()
+                        .iter()
+                        .find_map(|diag| diag.span)
+                    {
                         diagnostic = diagnostic.with_span(span);
                     }
                     return Err(fp_core::error::Error::diagnostic(diagnostic));
@@ -158,9 +161,13 @@ impl LanguageFrontend for FerroFrontend {
                 let mut diagnostic = Diagnostic::error(format!(
                     "failed to parse source as expression or items: {err}"
                 ));
-                if let Some(span) = self.ferro.diagnostics().get_diagnostics().iter().find_map(
-                    |diag| diag.span,
-                ) {
+                if let Some(span) = self
+                    .ferro
+                    .diagnostics()
+                    .get_diagnostics()
+                    .iter()
+                    .find_map(|diag| diag.span)
+                {
                     diagnostic = diagnostic.with_span(span);
                 }
                 Err(fp_core::error::Error::diagnostic(diagnostic))

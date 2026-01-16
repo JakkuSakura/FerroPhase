@@ -317,16 +317,17 @@ impl RustParser {
                     match item {
                         syn::ForeignItem::Fn(f) => {
                             let sig = self.parse_fn_sig_internal(f.sig)?;
-                            let name = sig
-                                .name
-                                .clone()
-                                .ok_or_else(|| fp_core::error::Error::from("Missing function name"))?;
-                            items.push(ItemKind::DeclFunction(ItemDeclFunction {
-                                ty_annotation: None,
-                                name,
-                                sig,
-                            })
-                            .into());
+                            let name = sig.name.clone().ok_or_else(|| {
+                                fp_core::error::Error::from("Missing function name")
+                            })?;
+                            items.push(
+                                ItemKind::DeclFunction(ItemDeclFunction {
+                                    ty_annotation: None,
+                                    name,
+                                    sig,
+                                })
+                                .into(),
+                            );
                         }
                         other => {
                             self.record_diagnostic(
