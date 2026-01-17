@@ -102,8 +102,7 @@ pub fn parse_items_tokens_to_cst_with_file(
             children.push(SyntaxElement::Node(Box::new(item)));
         }
 
-        let span =
-            span_for_children(&children).unwrap_or_else(|| fp_core::span::Span::new(file, 0, 0));
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ItemList, children, span))
     })
 }
@@ -310,8 +309,7 @@ fn parse_item_cst(
                             }
                         }
                     }
-                    let span = span_for_children(&types)
-                        .unwrap_or_else(|| fp_core::span::Span::new(0, 0, 0));
+                    let span = span_for_children(&types);
                     var_children.push(SyntaxElement::Node(Box::new(SyntaxNode::new(
                         SyntaxKind::TyTuple,
                         types,
@@ -340,8 +338,7 @@ fn parse_item_cst(
                         break;
                     }
                     expect_symbol(input, "}")?;
-                    let span = span_for_children(&fields)
-                        .unwrap_or_else(|| fp_core::span::Span::new(0, 0, 0));
+                    let span = span_for_children(&fields);
                     var_children.push(SyntaxElement::Node(Box::new(SyntaxNode::new(
                         SyntaxKind::TyStructural,
                         fields,
@@ -500,7 +497,10 @@ fn parse_item_cst(
             let open = expect_symbol_token(input)?;
             let open_text = open.text.clone();
             children.push(SyntaxElement::Token(open));
-            consume_balanced_group_tokens(input, open_text.as_str())?;
+            let group_tokens = consume_balanced_group_tokens(input, open_text.as_str())?;
+            for tok in group_tokens {
+                children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+            }
             if match_symbol(input, ";") {
                 // optional
             }
@@ -612,14 +612,14 @@ fn parse_param_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         children.push(SyntaxElement::Token(SyntaxToken {
             kind: SyntaxTokenKind::Token,
             text: "const".to_string(),
-            span: fp_core::span::Span::new(0, 0, 0),
+            span: fp_core::span::Span::null(),
         }));
     }
     if match_keyword(input, Keyword::Mut) {
         children.push(SyntaxElement::Token(SyntaxToken {
             kind: SyntaxTokenKind::Token,
             text: "mut".to_string(),
-            span: fp_core::span::Span::new(0, 0, 0),
+            span: fp_core::span::Span::null(),
         }));
     }
     let name = expect_ident_token(input)?;
@@ -636,20 +636,20 @@ fn parse_receiver_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         children.push(SyntaxElement::Token(SyntaxToken {
             kind: SyntaxTokenKind::Token,
             text: "&".to_string(),
-            span: fp_core::span::Span::new(0, 0, 0),
+            span: fp_core::span::Span::null(),
         }));
         if match_keyword(input, Keyword::Mut) {
             children.push(SyntaxElement::Token(SyntaxToken {
                 kind: SyntaxTokenKind::Token,
                 text: "mut".to_string(),
-                span: fp_core::span::Span::new(0, 0, 0),
+                span: fp_core::span::Span::null(),
             }));
         }
     } else if match_keyword(input, Keyword::Mut) {
         children.push(SyntaxElement::Token(SyntaxToken {
             kind: SyntaxTokenKind::Token,
             text: "mut".to_string(),
-            span: fp_core::span::Span::new(0, 0, 0),
+            span: fp_core::span::Span::null(),
         }));
     }
 
@@ -992,7 +992,7 @@ fn consume_where_clause(input: &mut &[Token]) {
     }
 }
 
-fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalResult<()> {
+fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalResult<Vec<Token>> {
     let closer = match opener {
         "(" => ")",
         "[" => "]",
@@ -1000,6 +1000,7 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
         _ => return Err(ErrMode::Cut(ContextError::new())),
     };
     let mut depth = 1i32;
+    let mut out = Vec::new();
     while depth > 0 {
         let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
         if tok.kind == TokenKind::Symbol {
@@ -1009,8 +1010,9 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
                 depth -= 1;
             }
         }
+        out.push(tok);
     }
-    Ok(())
+    Ok(out)
 }
 
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
@@ -1105,7 +1107,7 @@ fn is_receiver(input: &[Token]) -> bool {
 }
 
 fn node(kind: SyntaxKind, children: Vec<SyntaxElement>) -> SyntaxNode {
-    let span = span_for_children(&children).unwrap_or_else(|| fp_core::span::Span::new(0, 0, 0));
+    let span = span_for_children(&children);
     SyntaxNode::new(kind, children, span)
 }
 
@@ -1113,7 +1115,7 @@ fn token_text(text: &str) -> SyntaxToken {
     SyntaxToken {
         kind: SyntaxTokenKind::Token,
         text: text.to_string(),
-        span: fp_core::span::Span::new(0, 0, 0),
+        span: fp_core::span::Span::null(),
     }
 }
 

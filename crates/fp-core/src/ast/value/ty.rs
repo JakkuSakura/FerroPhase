@@ -1,6 +1,7 @@
 use crate::ast::*;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
+use crate::span::Span;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
@@ -149,6 +150,27 @@ impl Ty {
         match self {
             Ty::Reference(r) => &r.ty,
             _ => self,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Ty::Struct(ty) => ty.span(),
+            Ty::Structural(ty) => ty.span(),
+            Ty::Enum(ty) => ty.span(),
+            Ty::Function(ty) => ty.span(),
+            Ty::ImplTraits(ty) => ty.span(),
+            Ty::TypeBounds(ty) => ty.span(),
+            Ty::Value(ty) => ty.span(),
+            Ty::Tuple(ty) => ty.span(),
+            Ty::Vec(ty) => ty.span(),
+            Ty::Array(ty) => ty.span(),
+            Ty::Reference(ty) => ty.span(),
+            Ty::Slice(ty) => ty.span(),
+            Ty::Expr(expr) => expr.span(),
+            Ty::Quote(ty) => ty.span(),
+            Ty::TypeBinaryOp(op) => op.span(),
+            _ => Span::null(),
         }
     }
 }
@@ -338,6 +360,10 @@ impl TypeBounds {
     pub fn new(expr: Expr) -> Self {
         TypeBounds { bounds: vec![expr] }
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(self.bounds.iter().map(Expr::span))
+    }
 }
 macro_rules! plain_type {
     ($name: ident) => {
@@ -357,6 +383,11 @@ common_struct! {
         pub ty: BType,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
+    }
+}
+impl TypeReference {
+    pub fn span(&self) -> Span {
+        self.ty.span()
     }
 }
 impl Display for TypeReference {
@@ -379,6 +410,10 @@ impl TypeValue {
             value: value.into(),
         }
     }
+
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
 }
 impl Display for TypeValue {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -389,5 +424,94 @@ impl Display for TypeValue {
 common_struct! {
     pub struct TypeSlice {
         pub elem: BType,
+    }
+}
+impl TypeSlice {
+    pub fn span(&self) -> Span {
+        self.elem.span()
+    }
+}
+
+impl TypeBinaryOp {
+    pub fn span(&self) -> Span {
+        Span::union([self.lhs.span(), self.rhs.span()])
+    }
+}
+
+impl TypeVec {
+    pub fn span(&self) -> Span {
+        self.ty.span()
+    }
+}
+
+impl TypeArray {
+    pub fn span(&self) -> Span {
+        Span::union([self.elem.span(), self.len.span()])
+    }
+}
+
+impl TypeTuple {
+    pub fn span(&self) -> Span {
+        Span::union(self.types.iter().map(Ty::span))
+    }
+}
+
+impl StructuralField {
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
+}
+
+impl TypeStruct {
+    pub fn span(&self) -> Span {
+        Span::union(self.fields.iter().map(StructuralField::span))
+    }
+}
+
+impl EnumTypeVariant {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                Some(self.value.span()),
+                self.discriminant.as_ref().map(|expr| expr.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
+}
+
+impl TypeEnum {
+    pub fn span(&self) -> Span {
+        Span::union(self.variants.iter().map(EnumTypeVariant::span))
+    }
+}
+
+impl TypeStructural {
+    pub fn span(&self) -> Span {
+        Span::union(self.fields.iter().map(StructuralField::span))
+    }
+}
+
+impl TypeFunction {
+    pub fn span(&self) -> Span {
+        Span::union(
+            self.params
+                .iter()
+                .map(Ty::span)
+                .chain(self.ret_ty.as_ref().map(|ty| ty.span())),
+        )
+    }
+}
+
+impl TypeQuote {
+    pub fn span(&self) -> Span {
+        Span::union(self.inner.as_ref().map(|ty| ty.span()))
+    }
+}
+
+impl ImplTraits {
+    pub fn span(&self) -> Span {
+        self.bounds.span()
     }
 }

@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
 mod normalization;
+mod serializer;
 use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::ast::{Expr, ExprKind, Node};
+pub use serializer::PrettyAstSerializer;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::Result as CoreResult;
-use fp_rust::printer::RustPrinter;
 
 /// Canonical identifier for the FerroPhase source language.
 pub const FERROPHASE: &str = "ferrophase";
@@ -55,7 +56,7 @@ impl LanguageFrontend for FerroFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let cleaned = self.clean_source(source);
-        let serializer = Arc::new(RustPrinter::new_with_rustfmt());
+        let serializer = Arc::new(PrettyAstSerializer::new());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(FerroIntrinsicNormalizer::default());
         let file_id = fp_core::source_map::register_source(

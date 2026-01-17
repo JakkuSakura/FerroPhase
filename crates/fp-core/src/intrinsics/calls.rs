@@ -9,6 +9,8 @@ pub enum IntrinsicCallKind {
     Format,
     /// Length query for collections/strings.
     Len,
+    /// Build a slice from a base, start, and end (exclusive) index.
+    Slice,
     /// Debug assertions state (mapped from build profile).
     DebugAssertions,
     /// Input prompt/read intrinsic.

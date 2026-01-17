@@ -4,6 +4,7 @@ use crate::ast::{
     ValueFunction, Visibility,
 };
 use crate::common_struct;
+use crate::span::Span;
 
 common_struct! {
     pub struct ItemDefStruct {
@@ -24,6 +25,10 @@ impl ItemDefStruct {
             name,
         }
     }
+
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
 }
 
 common_struct! {
@@ -33,6 +38,11 @@ common_struct! {
         pub value: TypeStructural,
     }
 }
+impl ItemDefStructural {
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
+}
 common_struct! {
     pub struct ItemDefEnum {
         pub visibility: Visibility,
@@ -40,11 +50,21 @@ common_struct! {
         pub value: TypeEnum,
     }
 }
+impl ItemDefEnum {
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
+}
 common_struct! {
     pub struct ItemDefType {
         pub visibility: Visibility,
         pub name: Ident,
         pub value: Ty,
+    }
+}
+impl ItemDefType {
+    pub fn span(&self) -> Span {
+        self.value.span()
     }
 }
 common_struct! {
@@ -71,6 +91,18 @@ impl ItemDefConst {
     pub fn set_ty_annotation(&mut self, ty: Ty) {
         self.ty_annotation = Some(ty);
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                self.ty.as_ref().map(Ty::span),
+                Some(self.value.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
 }
 common_struct! {
     pub struct ItemDefStatic {
@@ -93,6 +125,18 @@ impl ItemDefStatic {
 
     pub fn set_ty_annotation(&mut self, ty: Ty) {
         self.ty_annotation = Some(ty);
+    }
+
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                Some(self.ty.span()),
+                Some(self.value.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
     }
 }
 common_struct! {
@@ -154,6 +198,19 @@ impl ItemDefFunction {
     pub fn set_ty_annotation(&mut self, ty: Ty) {
         self.ty_annotation = Some(ty);
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                self.ty.as_ref().map(TypeFunction::span),
+                Some(self.sig.span()),
+                Some(self.body.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
 }
 common_struct! {
     pub struct ItemDefTrait {
@@ -161,5 +218,17 @@ common_struct! {
         pub bounds: TypeBounds,
         pub items: ItemChunk,
         pub visibility: Visibility,
+    }
+}
+impl ItemDefTrait {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                Some(self.bounds.span()),
+                Some(Span::union(self.items.iter().map(crate::ast::Item::span))),
+            ]
+            .into_iter()
+            .flatten(),
+        )
     }
 }

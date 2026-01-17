@@ -1,8 +1,15 @@
 use super::super::*;
+use fp_core::config;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::process::Command;
 
 pub(crate) struct LinkNativeContext {
+    pub base_path: PathBuf,
+    pub options: PipelineOptions,
+    pub lir_program: fp_core::lir::LirProgram,
+}
+
+pub(crate) struct LinkCraneliftContext {
     pub base_path: PathBuf,
     pub options: PipelineOptions,
     pub lir_program: fp_core::lir::LirProgram,
@@ -15,6 +22,7 @@ pub(crate) struct LinkLlvmContext {
 }
 
 pub(crate) struct LinkNativeStage;
+pub(crate) struct LinkCraneliftStage;
 pub(crate) struct LinkLlvmStage;
 
 impl PipelineStage for LinkNativeStage {
@@ -32,6 +40,28 @@ impl PipelineStage for LinkNativeStage {
     ) -> Result<PathBuf, PipelineError> {
         let binary_path = binary_output_path(&context.base_path, &context.options);
         ensure_output_dir(&binary_path, diagnostics)?;
+        if (context.options.error_tolerance.enabled || config::lossy_mode())
+            && context.lir_program.functions.is_empty()
+        {
+            diagnostics.push(
+                Diagnostic::warning(
+                    "error tolerance: skipping native link because the LIR program has no functions"
+                        .to_string(),
+                )
+                .with_source_context(STAGE_LINK_BINARY),
+            );
+            if let Err(err) = fs::write(&binary_path, "") {
+                diagnostics.push(
+                    Diagnostic::error(format!("Failed to create placeholder binary: {}", err))
+                        .with_source_context(STAGE_LINK_BINARY),
+                );
+                return Err(PipelineError::new(
+                    STAGE_LINK_BINARY,
+                    "Failed to create placeholder binary",
+                ));
+            }
+            return Ok(binary_path);
+        }
 
         let mut cfg = fp_native::config::NativeConfig::executable(&binary_path)
             .with_target_triple(context.options.target_triple.clone())
@@ -190,11 +220,80 @@ impl PipelineStage for LinkLlvmStage {
     }
 }
 
+impl PipelineStage for LinkCraneliftStage {
+    type SrcCtx = LinkCraneliftContext;
+    type DstCtx = PathBuf;
+
+    fn name(&self) -> &'static str {
+        STAGE_LINK_BINARY
+    }
+
+    fn run(
+        &self,
+        context: LinkCraneliftContext,
+        diagnostics: &mut PipelineDiagnostics,
+    ) -> Result<PathBuf, PipelineError> {
+        let binary_path = binary_output_path(&context.base_path, &context.options);
+        ensure_output_dir(&binary_path, diagnostics)?;
+
+        let object_path = object_output_path(&context.base_path, &context.options);
+        let mut cfg = fp_cranelift::config::CraneliftConfig::object(&object_path)
+            .with_target_triple(context.options.target_triple.clone())
+            .with_target_cpu(context.options.target_cpu.clone())
+            .with_target_features(context.options.target_features.clone())
+            .with_sysroot(context.options.target_sysroot.clone())
+            .with_linker_driver(context.options.linker.clone())
+            .with_fuse_ld(context.options.target_linker.clone())
+            .with_release(context.options.release)
+            .with_keep_object(context.options.save_intermediates);
+        if context.options.save_intermediates {
+            let dump_path = context.base_path.with_extension("clif");
+            cfg = cfg.with_asm_dump(Some(dump_path));
+        }
+
+        let emitter = fp_cranelift::CraneliftEmitter::new(cfg);
+        emitter.emit(context.lir_program, None).map_err(|e| {
+            diagnostics.push(
+                Diagnostic::error(format!("fp-cranelift failed: {}", e))
+                    .with_source_context(STAGE_LINK_BINARY),
+            );
+            PipelineError::new(STAGE_LINK_BINARY, "fp-cranelift failed")
+        })?;
+
+        link_object_with_clang(
+            &object_path,
+            &binary_path,
+            &context.options,
+            diagnostics,
+        )?;
+
+        if !context.options.save_intermediates {
+            if let Err(err) = fs::remove_file(&object_path) {
+                debug!(
+                    error = %err,
+                    path = %object_path.display(),
+                    "failed to remove intermediate Cranelift object file after linking"
+                );
+            }
+        }
+
+        Ok(binary_path)
+    }
+}
+
 fn binary_output_path(base_path: &Path, options: &PipelineOptions) -> PathBuf {
     base_path.with_extension(if is_windows_target(options.target_triple.as_deref()) {
         "exe"
     } else {
         "out"
+    })
+}
+
+fn object_output_path(base_path: &Path, options: &PipelineOptions) -> PathBuf {
+    base_path.with_extension(if is_windows_target(options.target_triple.as_deref()) {
+        "obj"
+    } else {
+        "o"
     })
 }
 
@@ -214,6 +313,66 @@ fn ensure_output_dir(
             ));
         }
     }
+    Ok(())
+}
+
+fn link_object_with_clang(
+    object_path: &Path,
+    binary_path: &Path,
+    options: &PipelineOptions,
+    diagnostics: &mut PipelineDiagnostics,
+) -> Result<(), PipelineError> {
+    let linker = options
+        .linker
+        .as_deref()
+        .unwrap_or("clang");
+    let mut cmd = Command::new(linker);
+    cmd.arg(object_path);
+    if let Some(target_triple) = options.target_triple.as_deref() {
+        cmd.arg("--target").arg(target_triple);
+    }
+    if let Some(sysroot) = options.target_sysroot.as_ref() {
+        cmd.arg("--sysroot").arg(sysroot);
+    }
+    if let Some(linker_path) = options.target_linker.as_ref() {
+        cmd.arg(format!("-fuse-ld={}", linker_path.display()));
+    }
+    cmd.arg("-o").arg(binary_path);
+    if options.release {
+        cmd.arg("-O2");
+    }
+
+    let output = match cmd.output() {
+        Ok(output) => output,
+        Err(err) => {
+            diagnostics.push(
+                Diagnostic::error(format!("Failed to invoke clang: {}", err))
+                    .with_source_context(STAGE_LINK_BINARY),
+            );
+            return Err(PipelineError::new(
+                STAGE_LINK_BINARY,
+                "Failed to invoke clang",
+            ));
+        }
+    };
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut message = stderr.trim().to_string();
+        if message.is_empty() {
+            message = stdout.trim().to_string();
+        }
+        if message.is_empty() {
+            message = "clang failed without diagnostics".to_string();
+        }
+        diagnostics.push(
+            Diagnostic::error(format!("clang failed: {}", message))
+                .with_source_context(STAGE_LINK_BINARY),
+        );
+        return Err(PipelineError::new(STAGE_LINK_BINARY, "clang failed"));
+    }
+
     Ok(())
 }
 
@@ -257,6 +416,21 @@ impl Pipeline {
     ) -> Result<PathBuf, CliError> {
         let stage = LinkNativeStage;
         let context = LinkNativeContext {
+            base_path: base_path.to_path_buf(),
+            options: options.clone(),
+            lir_program: lir_program.clone(),
+        };
+        self.run_pipeline_stage(STAGE_LINK_BINARY, stage, context, options)
+    }
+
+    pub(crate) fn stage_link_binary_cranelift(
+        &self,
+        lir_program: &fp_core::lir::LirProgram,
+        base_path: &Path,
+        options: &PipelineOptions,
+    ) -> Result<PathBuf, CliError> {
+        let stage = LinkCraneliftStage;
+        let context = LinkCraneliftContext {
             base_path: base_path.to_path_buf(),
             options: options.clone(),
             lir_program: lir_program.clone(),

@@ -60,7 +60,6 @@ cargo test -p fp-backend -- --nocapture
 
 ## Development Notes
 
-- Tests use `shll_parse_expr!` and `shll_parse_value!` macros for convenient AST construction
-- `register_threadlocal_serializer` must be called in each test for proper serialization
+- Tests use `FerroPhaseParser` helpers for convenient AST construction
 - Context management through `SharedScopedContext` for scoped variable resolution
 - Current interpreter handles basic expressions well, const evaluation intrinsics need implementation

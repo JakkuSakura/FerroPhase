@@ -251,8 +251,26 @@ fn parse_sql_statement(statement: &str, passes: &mut Vec<MirPassName>) -> Result
     let select_len = "select".len();
     let from_idx = lower.find(" from ");
     let selection = match from_idx {
-        Some(idx) => &trimmed[select_len..idx],
-        None => &trimmed[select_len..],
+        Some(idx) => {
+            if idx < select_len {
+                return Err(optimization_error(format!(
+                    "invalid MIR optimization query: {trimmed}"
+                )));
+            }
+            let (_, tail) = trimmed.split_at(select_len);
+            let offset = idx - select_len;
+            if offset > tail.len() || !tail.is_char_boundary(offset) {
+                return Err(optimization_error(format!(
+                    "invalid MIR optimization query: {trimmed}"
+                )));
+            }
+            let (selection, _) = tail.split_at(offset);
+            selection
+        }
+        None => {
+            let (_, tail) = trimmed.split_at(select_len);
+            tail
+        }
     };
 
     parse_pass_list(selection, passes)

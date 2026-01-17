@@ -8,6 +8,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::span::Span;
+
 /// A simple identifier - a single name like `foo` or `MyStruct`
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq, Ord, PartialOrd)]
 pub struct Ident {
@@ -29,6 +31,10 @@ impl Ident {
 
     pub fn root() -> Self {
         Self::new("__root__")
+    }
+
+    pub fn span(&self) -> Span {
+        Span::null()
     }
 }
 
@@ -128,6 +134,10 @@ impl Path {
         segments.push(ident);
         Self::new(segments)
     }
+
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
 }
 
 impl std::fmt::Display for Path {
@@ -220,6 +230,10 @@ impl ParameterPath {
     pub fn last(&self) -> Option<&ParameterPathSegment> {
         self.segments.last()
     }
+
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
 }
 
 /// A locator can be an identifier, a path, or a parameterized path
@@ -271,6 +285,14 @@ impl Locator {
         match self {
             Locator::Ident(ident) => Some(ident),
             _ => None,
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Locator::Ident(ident) => ident.span(),
+            Locator::Path(path) => path.span(),
+            Locator::ParameterPath(path) => path.span(),
         }
     }
 }

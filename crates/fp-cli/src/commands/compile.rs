@@ -10,6 +10,7 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
+use fp_core::config;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
@@ -28,7 +29,7 @@ pub struct CompileArgs {
     #[arg(short = 'b', long = "backend", default_value = "binary")]
     pub backend: BackendKind,
 
-    /// Codegen emitter engine (e.g. "llvm" or "native").
+    /// Codegen emitter engine (e.g. "llvm", "native", "cranelift").
     ///
     /// This is only used for native codegen targets (like `--backend binary`).
     /// Default is `native`.
@@ -118,6 +119,7 @@ pub struct CompileArgs {
 pub enum EmitterKind {
     Native,
     Llvm,
+    Cranelift,
 }
 
 impl EmitterKind {
@@ -125,6 +127,7 @@ impl EmitterKind {
         match self {
             EmitterKind::Native => "native",
             EmitterKind::Llvm => "llvm",
+            EmitterKind::Cranelift => "cranelift",
         }
     }
 }
@@ -257,6 +260,7 @@ async fn compile_file(
         disabled_stages.push("ast→typed(post-closure)".to_string());
     }
 
+    let lossy_mode = config::lossy_mode();
     let pipeline_options = PipelineOptions {
         target,
         backend: Some(args.emitter.as_str().to_string()),
@@ -280,7 +284,7 @@ async fn compile_file(
             verbose: args.debug,
         },
         error_tolerance: ErrorToleranceOptions {
-            enabled: args.error_tolerance,
+            enabled: args.error_tolerance || lossy_mode,
             max_errors: if args.max_errors == 0 {
                 50
             } else {

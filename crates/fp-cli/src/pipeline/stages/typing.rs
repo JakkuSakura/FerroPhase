@@ -1,5 +1,6 @@
 use super::super::*;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use fp_core::config;
 
 pub(crate) struct TypingContext {
     pub ast: Node,
@@ -78,9 +79,25 @@ impl Pipeline {
             ast: ast.clone(),
             stage_label,
         };
-        let next_ast = self.run_pipeline_stage(stage_label, stage, context, options)?;
-        *ast = next_ast;
-        Ok(())
+        match self.run_pipeline_stage(stage_label, stage, context, options) {
+            Ok(next_ast) => {
+                *ast = next_ast;
+                Ok(())
+            }
+            Err(err) => {
+                if options.error_tolerance.enabled || config::lossy_mode() {
+                    let diagnostic = Diagnostic::warning(format!(
+                        "AST typing failed; continuing due to error tolerance (language={})",
+                        self.source_language.as_deref().unwrap_or("unknown")
+                    ))
+                    .with_source_context(stage_label);
+                    diag::emit(&[diagnostic], Some(stage_label), options);
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 
     #[cfg(test)]

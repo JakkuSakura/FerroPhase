@@ -2,7 +2,6 @@
 //! Type arithmetic examples: combining and relating types with operators.
 //! These operators are type-level, not value-level.
 
-use fp_rust::t;
 use std::fmt::Display;
 
 type Int = i64;

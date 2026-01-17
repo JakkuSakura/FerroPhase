@@ -224,7 +224,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Expr(expr) => {
                 let var = match self.infer_expr(expr) {
                     Ok(var) => var,
-                    Err(err) => return Err(self.error_with_span(err, expr.span())),
+                    Err(err) => {
+                        return Err(self.error_with_span(err, self.span_option(expr.span())))
+                    }
                 };
                 let ty = self.resolve_to_ty(var)?;
                 node.set_ty(ty);
@@ -232,7 +234,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Item(item) => {
                 self.predeclare_item(item);
                 if let Err(err) = self.infer_item(item) {
-                    return Err(self.error_with_span(err, item.span()));
+                    return Err(self.error_with_span(err, self.span_option(item.span())));
                 }
                 let ty = item.ty().cloned().unwrap_or_else(|| Ty::Unit(TypeUnit));
                 node.set_ty(ty);
@@ -243,7 +245,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 for item in &mut file.items {
                     if let Err(err) = self.infer_item(item) {
-                        return Err(self.error_with_span(err, item.span()));
+                        return Err(self.error_with_span(err, self.span_option(item.span())));
                     }
                 }
                 node.set_ty(Ty::Unit(TypeUnit));
@@ -290,17 +292,59 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn struct_name_variants(&self, name: &str) -> Vec<String> {
+        let mut names = Vec::new();
+        let mut seen = HashSet::new();
+        let push = |value: String, names: &mut Vec<String>, seen: &mut HashSet<String>| {
+            if seen.insert(value.clone()) {
+                names.push(value);
+            }
+        };
+
+        push(name.to_string(), &mut names, &mut seen);
+
+        let short = name.rsplit("::").next().unwrap_or(name);
+        if short != name {
+            push(short.to_string(), &mut names, &mut seen);
+        }
+
+        if !self.module_path.is_empty() && !name.contains("::") {
+            let mut qualified = self.module_path.clone();
+            qualified.push(name.to_string());
+            push(qualified.join("::"), &mut names, &mut seen);
+        }
+
+        names
+    }
+
     fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
         match self.struct_name_from_expr(self_ty) {
             Some(name) => {
-                if let Some(def) = self.struct_defs.get(&name).cloned() {
+                let mut struct_def = None;
+                let mut enum_def = None;
+                let mut resolved = None;
+
+                for candidate in self.struct_name_variants(&name) {
+                    if let Some(def) = self.struct_defs.get(&candidate).cloned() {
+                        struct_def = Some(def);
+                        resolved = Some(candidate);
+                        break;
+                    }
+                    if let Some(def) = self.enum_defs.get(&candidate).cloned() {
+                        enum_def = Some(def);
+                        resolved = Some(candidate);
+                        break;
+                    }
+                }
+
+                if let (Some(def), Some(resolved)) = (struct_def, resolved.clone()) {
                     Some(ImplContext {
-                        struct_name: name,
+                        struct_name: resolved,
                         self_ty: Ty::Struct(def),
                     })
-                } else if let Some(def) = self.enum_defs.get(&name).cloned() {
+                } else if let (Some(def), Some(resolved)) = (enum_def, resolved) {
                     Some(ImplContext {
-                        struct_name: name,
+                        struct_name: resolved,
                         self_ty: Ty::Enum(def),
                     })
                 } else {
@@ -348,16 +392,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .receiver
             .as_ref()
             .map(|receiver| self.ty_for_receiver(ctx, receiver));
-        let entry = self
-            .struct_methods
-            .entry(ctx.struct_name.clone())
-            .or_default();
-        entry
-            .entry(func.name.as_str().to_string())
-            .or_insert(MethodRecord {
-                receiver_ty,
-                scheme: None,
-            });
+        for candidate in self.struct_name_variants(&ctx.struct_name) {
+            let entry = self.struct_methods.entry(candidate).or_default();
+            entry
+                .entry(func.name.as_str().to_string())
+                .or_insert(MethodRecord {
+                    receiver_ty: receiver_ty.clone(),
+                    scheme: None,
+                });
+        }
     }
 
     fn peel_reference(mut ty: Ty) -> Ty {
@@ -373,10 +416,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn predeclare_item(&mut self, item: &Item) {
         match item.kind() {
+            ItemKind::Macro(mac) => {
+                self.predeclare_macro_item(mac);
+            }
             ItemKind::DefStruct(def) => {
                 self.struct_defs
                     .insert(def.name.as_str().to_string(), def.value.clone());
-                self.register_symbol(&def.name);
+                let var = self.symbol_var(&def.name);
+                let ty = Ty::Struct(def.value.clone());
+                if let Ok(struct_var) = self.type_from_ast_ty(&ty) {
+                    let _ = self.unify(var, struct_var);
+                }
             }
             ItemKind::DefStructural(def) => {
                 let struct_ty = TypeStruct {
@@ -471,14 +521,23 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             ItemKind::Impl(impl_block) => {
                 let ctx = self.resolve_impl_context(&impl_block.self_ty);
                 self.impl_stack.push(ctx.clone());
-                self.enter_scope();
                 if let Some(ref ctx) = ctx {
                     for child in &impl_block.items {
                         if let ItemKind::DefFunction(func) = child.kind() {
                             self.register_method_stub(ctx, func);
+                            for candidate in self.struct_name_variants(&ctx.struct_name) {
+                                let key = format!("{}::{}", candidate, func.name.as_str());
+                                if self.lookup_env_var(&key).is_none() {
+                                    let var = self.fresh_type_var();
+                                    self.insert_env(key, EnvEntry::Mono(var));
+                                    self.prebind_function_signature(func, var);
+                                }
+                            }
                         }
                     }
                 }
+
+                self.enter_scope();
                 for child in &impl_block.items {
                     self.predeclare_item(child);
                 }
@@ -498,6 +557,63 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn predeclare_macro_item(&mut self, mac: &ItemMacro) {
+        let macro_name = mac
+            .invocation
+            .path
+            .segments
+            .last()
+            .map(|ident| ident.as_str());
+        let Some(macro_name) = macro_name else {
+            return;
+        };
+        let tokens = tokenize_macro_tokens(&mac.invocation.tokens);
+        match macro_name {
+            "common_struct" => {
+                if let Some(name) = find_ident_after_keyword(&tokens, "struct") {
+                    self.register_placeholder_struct(&name);
+                }
+            }
+            "common_enum" => {
+                if let Some(name) = find_ident_after_keyword(&tokens, "enum") {
+                    self.register_placeholder_enum(&name);
+                }
+            }
+            "plain_value" => {
+                if let Some(name) = find_first_type_ident(&tokens) {
+                    self.register_placeholder_struct(&name);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn register_placeholder_struct(&mut self, name: &str) {
+        if self.struct_defs.contains_key(name) {
+            return;
+        }
+        let ty = TypeStruct {
+            name: Ident::new(name),
+            generics_params: Vec::new(),
+            fields: Vec::new(),
+        };
+        self.struct_defs.insert(name.to_string(), ty);
+        self.register_symbol(&Ident::new(name));
+    }
+
+    fn register_placeholder_enum(&mut self, name: &str) {
+        if self.enum_defs.contains_key(name) {
+            return;
+        }
+        let ty = TypeEnum {
+            name: Ident::new(name),
+            generics_params: Vec::new(),
+            variants: Vec::new(),
+        };
+        self.enum_defs.insert(name.to_string(), ty);
+        self.register_symbol(&Ident::new(name));
+    }
+
     fn register_import_aliases(&mut self, import: &ItemImport) {
         let entries = match self.expand_import_tree(&import.tree, Vec::new()) {
             Ok(entries) => entries,
@@ -509,7 +625,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
         for (path_segments, alias) in entries {
             if let Some(first) = path_segments.first() {
-                if first == "std" || first == "core" || first == "alloc" || first == "fp_rust" {
+                if first == "std" || first == "core" || first == "alloc" {
                     continue;
                 }
             }
@@ -525,7 +641,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.insert_module_alias(&alias, path_segments);
                 continue;
             }
-            self.emit_error(format!("unresolved import: {}", qualified));
+            if self.lossy_mode {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Any);
+                self.insert_env(qualified.clone(), EnvEntry::Mono(var));
+                self.insert_symbol_alias(&alias, qualified);
+                self.emit_warning(format!("unresolved import: {}", alias));
+            } else {
+                self.emit_error(format!("unresolved import: {}", qualified));
+            }
         }
     }
 
@@ -705,7 +829,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn infer_item(&mut self, item: &mut Item) -> Result<()> {
         let span = item.span();
         let previous = self.current_span;
-        let active = span.or(previous);
+        let active = self.span_or_previous(span, previous);
         self.current_span = active;
         let result = (|| {
             let ty = match item.kind_mut() {
@@ -900,6 +1024,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.register_import_aliases(import);
                     Ty::Unit(TypeUnit)
                 }
+                ItemKind::Macro(_) => {
+                    if self.lossy_mode {
+                        Ty::Unit(TypeUnit)
+                    } else {
+                        self.emit_error("macro items are not yet supported");
+                        Ty::Unknown(TypeUnknown)
+                    }
+                }
                 ItemKind::DefTrait(trait_def) => {
                     let trait_name = trait_def.name.as_str().to_string();
                     self.enter_scope();
@@ -950,20 +1082,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     .receiver
                                     .as_ref()
                                     .map(|receiver| self.ty_for_receiver(ctx, receiver));
-                                let entry = self
-                                    .struct_methods
-                                    .entry(ctx.struct_name.clone())
-                                    .or_default();
-                                if entry.contains_key(&method_name) {
-                                    continue;
+                                for candidate in self.struct_name_variants(&ctx.struct_name) {
+                                    let entry = self.struct_methods.entry(candidate).or_default();
+                                    if entry.contains_key(&method_name) {
+                                        continue;
+                                    }
+                                    entry.insert(
+                                        method_name.clone(),
+                                        MethodRecord {
+                                            receiver_ty: receiver_ty.clone(),
+                                            scheme: Some(scheme.clone()),
+                                        },
+                                    );
                                 }
-                                entry.insert(
-                                    method_name,
-                                    MethodRecord {
-                                        receiver_ty,
-                                        scheme: Some(scheme),
-                                    },
-                                );
                             }
                         }
                     }
@@ -1091,6 +1222,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let body_var = if let Some(kind) = func.sig.quote_kind {
             let body_block = func.body.as_ref().clone().into_block();
             let mut quote_expr = Expr::from(ExprKind::Quote(ExprQuote {
+                span: Span::null(),
                 block: body_block,
                 kind: Some(kind),
             }));
@@ -1142,20 +1274,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         if let Some(ctx) = impl_ctx.as_ref() {
-            let entry = self
-                .struct_methods
-                .entry(ctx.struct_name.clone())
-                .or_default();
-            let record = entry
-                .entry(func.name.as_str().to_string())
-                .or_insert(MethodRecord {
-                    receiver_ty: receiver_ty.clone(),
-                    scheme: None,
-                });
-            if record.receiver_ty.is_none() && receiver_ty.is_some() {
-                record.receiver_ty = receiver_ty.clone();
+            for candidate in self.struct_name_variants(&ctx.struct_name) {
+                let entry = self.struct_methods.entry(candidate).or_default();
+                let record = entry
+                    .entry(func.name.as_str().to_string())
+                    .or_insert(MethodRecord {
+                        receiver_ty: receiver_ty.clone(),
+                        scheme: None,
+                    });
+                if record.receiver_ty.is_none() && receiver_ty.is_some() {
+                    record.receiver_ty = receiver_ty.clone();
+                }
+                record.scheme = Some(scheme.clone());
             }
-            record.scheme = Some(scheme.clone());
         }
 
         let func_ty = TypeFunction {
@@ -1453,13 +1584,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ) {
                     let struct_name = struct_segment.as_str();
                     let method_name = method_segment.as_str();
-                    if let Some(methods) = self.struct_methods.get(struct_name) {
-                        if let Some(record) = methods.get(method_name) {
-                            if let Some(scheme) = record.scheme.as_ref() {
-                                return Ok(Some(self.instantiate_scheme(&scheme.clone())));
-                            }
-                            if let Some(var) = self.lookup_env_var(method_name) {
-                                return Ok(Some(var));
+                    for candidate in self.struct_name_variants(struct_name) {
+                        let qualified = format!("{}::{}", candidate, method_name);
+                        if let Some(var) = self.lookup_env_var(&qualified) {
+                            return Ok(Some(var));
+                        }
+                        if let Some(methods) = self.struct_methods.get(&candidate) {
+                            if let Some(record) = methods.get(method_name) {
+                                if let Some(scheme) = record.scheme.as_ref() {
+                                    return Ok(Some(self.instantiate_scheme(&scheme.clone())));
+                                }
+                                if let Some(var) = self.lookup_env_var(method_name) {
+                                    return Ok(Some(var));
+                                }
                             }
                         }
                     }
@@ -1684,6 +1821,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn span_option(&self, span: Span) -> Option<Span> {
+        if span.is_null() {
+            None
+        } else {
+            Some(span)
+        }
+    }
+
+    fn span_or_previous(&self, span: Span, previous: Option<Span>) -> Option<Span> {
+        if span.is_null() {
+            previous
+        } else {
+            Some(span)
+        }
+    }
+
     fn error_with_span(&self, err: Error, span: Option<Span>) -> Error {
         let Some(span) = span else {
             return err;
@@ -1794,6 +1947,51 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             _ => None,
         }
     }
+}
+
+fn tokenize_macro_tokens(tokens: &str) -> Vec<&str> {
+    tokens.split_whitespace().collect()
+}
+
+fn is_ident_token(token: &str) -> bool {
+    let mut chars = token.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    if !(first.is_ascii_alphabetic() || first == '_') {
+        return false;
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+fn find_ident_after_keyword(tokens: &[&str], keyword: &str) -> Option<String> {
+    let mut iter = tokens.iter().peekable();
+    while let Some(token) = iter.next() {
+        if *token == keyword {
+            for next in iter.by_ref() {
+                if is_ident_token(next) {
+                    return Some(next.to_string());
+                }
+            }
+            break;
+        }
+    }
+    None
+}
+
+fn find_first_type_ident(tokens: &[&str]) -> Option<String> {
+    for token in tokens {
+        if is_ident_token(token) {
+            if token
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_uppercase())
+            {
+                return Some((*token).to_string());
+            }
+        }
+    }
+    None
 }
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.

@@ -8,6 +8,7 @@ use crate::ast::{
 use crate::intrinsics::IntrinsicCallKind;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::{common_enum, common_struct};
+use crate::span::Span;
 
 common_enum! {
     pub enum ExprInvokeTarget {
@@ -50,6 +51,8 @@ impl ExprInvokeTarget {
 
 common_struct! {
     pub struct ExprInvoke {
+        #[serde(default)]
+        pub span: Span,
         pub target: ExprInvokeTarget,
         pub args: Vec<Expr>,
     }
@@ -57,6 +60,8 @@ common_struct! {
 
 common_struct! {
     pub struct ExprAwait {
+        #[serde(default)]
+        pub span: Span,
         pub base: BExpr,
     }
 }
@@ -151,6 +156,8 @@ common_struct! {
 
 common_struct! {
     pub struct ExprIntrinsicCall {
+        #[serde(default)]
+        pub span: Span,
         pub kind: IntrinsicCallKind,
         pub args: Vec<Expr>,
         pub kwargs: Vec<ExprKwArg>,
@@ -159,7 +166,12 @@ common_struct! {
 
 impl ExprIntrinsicCall {
     pub fn new(kind: IntrinsicCallKind, args: Vec<Expr>, kwargs: Vec<ExprKwArg>) -> Self {
-        Self { kind, args, kwargs }
+        Self {
+            span: Span::null(),
+            kind,
+            args,
+            kwargs,
+        }
     }
 }
 
@@ -198,6 +210,8 @@ common_struct! {
     /// - `block` holds the surface fragment. Kind may be inferred later.
     /// - `kind` is optional and, when present, indicates explicit fragment kind.
     pub struct ExprQuote {
+        #[serde(default)]
+        pub span: Span,
         pub block: ExprBlock,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub kind: Option<QuoteFragmentKind>,
@@ -208,6 +222,8 @@ common_struct! {
     /// Splice expression: inserts a previously quoted token into the AST.
     /// The `token` expression should evaluate (in const) to a QuoteToken.
     pub struct ExprSplice {
+        #[serde(default)]
+        pub span: Span,
         pub token: BExpr,
     }
 }
@@ -255,6 +271,395 @@ impl Display for FormatArgRef {
 impl Display for ExprKwArg {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}={}", self.name, self.value)
+    }
+}
+
+fn union_spans<I>(spans: I) -> Span
+where
+    I: IntoIterator<Item = Span>,
+{
+    Span::union(spans)
+}
+
+fn span_or(span: Span, fallback: Span) -> Span {
+    if span.is_null() {
+        fallback
+    } else {
+        span
+    }
+}
+
+impl ExprInvokeTarget {
+    pub fn span(&self) -> Span {
+        match self {
+            ExprInvokeTarget::Function(locator) => locator.span(),
+            ExprInvokeTarget::Type(ty) => ty.span(),
+            ExprInvokeTarget::Method(select) => select.span(),
+            ExprInvokeTarget::Closure(func) => func.span(),
+            ExprInvokeTarget::Expr(expr) => expr.span(),
+            ExprInvokeTarget::BinOp(_) => Span::null(),
+        }
+    }
+}
+
+impl ExprInvoke {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                Some(self.target.span())
+                    .into_iter()
+                    .chain(self.args.iter().map(Expr::span)),
+            ),
+        )
+    }
+}
+
+impl ExprAwait {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.base.span())
+    }
+}
+
+impl ExprStringTemplate {
+    pub fn span(&self) -> Span {
+        union_spans(self.parts.iter().map(FormatTemplatePart::span))
+    }
+}
+
+impl FormatTemplatePart {
+    pub fn span(&self) -> Span {
+        match self {
+            FormatTemplatePart::Literal(_) => Span::null(),
+            FormatTemplatePart::Placeholder(placeholder) => placeholder.span(),
+        }
+    }
+}
+
+impl FormatPlaceholder {
+    pub fn span(&self) -> Span {
+        match self.arg_ref {
+            FormatArgRef::Implicit => Span::null(),
+            FormatArgRef::Positional(_) => Span::null(),
+            FormatArgRef::Named(_) => Span::null(),
+        }
+    }
+}
+
+impl ExprKwArg {
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
+}
+
+impl ExprIntrinsicCall {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                self.args
+                    .iter()
+                    .map(Expr::span)
+                    .chain(self.kwargs.iter().map(ExprKwArg::span)),
+            ),
+        )
+    }
+}
+
+impl ExprQuote {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.block.span())
+    }
+}
+
+impl ExprSplice {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.token.span())
+    }
+}
+
+impl ExprSelect {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.obj.span())
+    }
+}
+
+impl ExprIndex {
+    pub fn span(&self) -> Span {
+        span_or(self.span, union_spans([self.obj.span(), self.index.span()]))
+    }
+}
+
+impl ExprReference {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.referee.span())
+    }
+}
+
+impl ExprDereference {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.referee.span())
+    }
+}
+
+impl ExprMatch {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                self.scrutinee
+                    .as_ref()
+                    .map(|expr| expr.span())
+                    .into_iter()
+                    .chain(self.cases.iter().map(ExprMatchCase::span)),
+            ),
+        )
+    }
+}
+
+impl ExprIf {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                [
+                    Some(self.cond.span()),
+                    Some(self.then.span()),
+                    self.elze.as_ref().map(|expr| expr.span()),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
+        )
+    }
+}
+
+impl ExprLoop {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.body.span())
+    }
+}
+
+impl ExprWhile {
+    pub fn span(&self) -> Span {
+        span_or(self.span, union_spans([self.cond.span(), self.body.span()]))
+    }
+}
+
+impl ExprReturn {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            self.value
+                .as_ref()
+                .map(|value| value.span())
+                .unwrap_or_else(Span::null),
+        )
+    }
+}
+
+impl ExprBreak {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            self.value
+                .as_ref()
+                .map(|value| value.span())
+                .unwrap_or_else(Span::null),
+        )
+    }
+}
+
+impl ExprContinue {
+    pub fn span(&self) -> Span {
+        span_or(self.span, Span::null())
+    }
+}
+
+impl ExprConstBlock {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.expr.span())
+    }
+}
+
+impl ExprMatchCase {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                [
+                    self.pat.as_ref().map(|pat| pat.span()),
+                    Some(self.cond.span()),
+                    self.guard.as_ref().map(|expr| expr.span()),
+                    Some(self.body.span()),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
+        )
+    }
+}
+
+impl ExprAsync {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.expr.span())
+    }
+}
+
+impl ExprFor {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans([self.pat.span(), self.iter.span(), self.body.span()]),
+        )
+    }
+}
+
+impl ExprStruct {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                [
+                    Some(self.name.span()),
+                    Some(Span::union(self.fields.iter().map(ExprField::span))),
+                    self.update.as_ref().map(|expr| expr.span()),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
+        )
+    }
+}
+
+impl ExprStructural {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            Span::union(self.fields.iter().map(ExprField::span)),
+        )
+    }
+}
+
+impl ExprField {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            self.value
+                .as_ref()
+                .map(|value| value.span())
+                .unwrap_or_else(Span::null),
+        )
+    }
+}
+
+impl ExprCast {
+    pub fn span(&self) -> Span {
+        span_or(self.span, union_spans([self.expr.span(), self.ty.span()]))
+    }
+}
+
+impl ExprBinOp {
+    pub fn span(&self) -> Span {
+        span_or(self.span, union_spans([self.lhs.span(), self.rhs.span()]))
+    }
+}
+
+impl ExprUnOp {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.val.span())
+    }
+}
+
+impl ExprAssign {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans([self.target.span(), self.value.span()]),
+        )
+    }
+}
+
+impl ExprParen {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.expr.span())
+    }
+}
+
+impl ExprRange {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                [
+                    self.start.as_ref().map(|expr| expr.span()),
+                    self.end.as_ref().map(|expr| expr.span()),
+                    self.step.as_ref().map(|expr| expr.span()),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
+        )
+    }
+}
+
+impl ExprTuple {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl ExprTry {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.expr.span())
+    }
+}
+
+impl ExprLet {
+    pub fn span(&self) -> Span {
+        span_or(self.span, union_spans([self.pat.span(), self.expr.span()]))
+    }
+}
+
+impl ExprClosure {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            union_spans(
+                self.params
+                    .iter()
+                    .map(Pattern::span)
+                    .chain(self.ret_ty.as_ref().map(|ty| ty.span()))
+                    .chain([self.body.span()]),
+            ),
+        )
+    }
+}
+
+impl ExprArray {
+    pub fn span(&self) -> Span {
+        span_or(
+            self.span,
+            Span::union(self.values.iter().map(Expr::span)),
+        )
+    }
+}
+
+impl ExprArrayRepeat {
+    pub fn span(&self) -> Span {
+        span_or(self.span, union_spans([self.elem.span(), self.len.span()]))
+    }
+}
+
+impl ExprSplat {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.iter.span())
+    }
+}
+
+impl ExprSplatDict {
+    pub fn span(&self) -> Span {
+        span_or(self.span, self.dict.span())
     }
 }
 
@@ -449,6 +854,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         IntrinsicCallKind::DebugAssertions
         | IntrinsicCallKind::Input
         | IntrinsicCallKind::Panic
+        | IntrinsicCallKind::Slice
         | IntrinsicCallKind::SizeOf
         | IntrinsicCallKind::ReflectFields
         | IntrinsicCallKind::HasMethod
@@ -586,6 +992,8 @@ common_enum! {
 
 common_struct! {
     pub struct ExprSelect {
+        #[serde(default)]
+        pub span: Span,
         pub obj: BExpr,
         pub field: Ident,
         pub select: ExprSelectType,
@@ -594,6 +1002,8 @@ common_struct! {
 
 common_struct! {
     pub struct ExprIndex {
+        #[serde(default)]
+        pub span: Span,
         pub obj: BExpr,
         pub index: BExpr,
     }
@@ -601,18 +1011,24 @@ common_struct! {
 
 common_struct! {
     pub struct ExprReference {
+        #[serde(default)]
+        pub span: Span,
         pub referee: BExpr,
         pub mutable: Option<bool>,
     }
 }
 common_struct! {
     pub struct ExprDereference {
+        #[serde(default)]
+        pub span: Span,
         pub referee: BExpr,
     }
 }
 
 common_struct! {
     pub struct ExprMatch {
+        #[serde(default)]
+        pub span: Span,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub scrutinee: Option<BExpr>,
         pub cases: Vec<ExprMatchCase>,
@@ -621,6 +1037,8 @@ common_struct! {
 
 common_struct! {
     pub struct ExprIf {
+        #[serde(default)]
+        pub span: Span,
         pub cond: BExpr,
         pub then: BExpr,
         pub elze: Option<BExpr>,
@@ -628,38 +1046,53 @@ common_struct! {
 }
 common_struct! {
     pub struct ExprLoop {
+        #[serde(default)]
+        pub span: Span,
         pub label: Option<Ident>,
         pub body: BExpr,
     }
 }
 common_struct! {
     pub struct ExprWhile {
+        #[serde(default)]
+        pub span: Span,
         pub cond: BExpr,
         pub body: BExpr,
     }
 }
 common_struct! {
     pub struct ExprReturn {
+        #[serde(default)]
+        pub span: Span,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub value: Option<BExpr>,
     }
 }
 common_struct! {
     pub struct ExprBreak {
+        #[serde(default)]
+        pub span: Span,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub value: Option<BExpr>,
     }
 }
 common_struct! {
-    pub struct ExprContinue {}
+    pub struct ExprContinue {
+        #[serde(default)]
+        pub span: Span,
+    }
 }
 common_struct! {
     pub struct ExprConstBlock {
+        #[serde(default)]
+        pub span: Span,
         pub expr: BExpr,
     }
 }
 common_struct! {
     pub struct ExprMatchCase {
+        #[serde(default)]
+        pub span: Span,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub pat: Option<BPattern>,
         pub cond: BExpr,
@@ -674,6 +1107,8 @@ common_struct! {
     /// lowering/normalization passes; at the AST level this acts
     /// as a marker around an inner expression.
     pub struct ExprAsync {
+        #[serde(default)]
+        pub span: Span,
         pub expr: BExpr,
     }
 }
@@ -684,6 +1119,8 @@ common_struct! {
     /// Lowering into concrete control-flow constructs is handled in
     /// later passes; the AST captures the pattern, iterator and body.
     pub struct ExprFor {
+        #[serde(default)]
+        pub span: Span,
         pub pat: BPattern,
         pub iter: BExpr,
         pub body: BExpr,
@@ -704,6 +1141,8 @@ common_enum! {
 }
 common_struct! {
     pub struct ExprStruct {
+        #[serde(default)]
+        pub span: Span,
         pub name: BExpr,
         pub fields: Vec<ExprField>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -713,6 +1152,7 @@ common_struct! {
 impl ExprStruct {
     pub fn new_ident(name: Ident, fields: Vec<ExprField>) -> Self {
         Self {
+            span: Span::null(),
             name: Expr::ident(name).into(),
             fields,
             update: None,
@@ -720,6 +1160,7 @@ impl ExprStruct {
     }
     pub fn new(name: BExpr, fields: Vec<ExprField>) -> Self {
         Self {
+            span: Span::null(),
             name,
             fields,
             update: None,
@@ -728,11 +1169,15 @@ impl ExprStruct {
 }
 common_struct! {
     pub struct ExprStructural {
+        #[serde(default)]
+        pub span: Span,
         pub fields: Vec<ExprField>,
     }
 }
 common_struct! {
     pub struct ExprField {
+        #[serde(default)]
+        pub span: Span,
         pub name: Ident,
         pub value: Option<Expr>,
     }
@@ -740,22 +1185,31 @@ common_struct! {
 impl ExprField {
     pub fn new(name: Ident, value: Expr) -> Self {
         Self {
+            span: Span::null(),
             name,
             value: Some(value),
         }
     }
     pub fn new_no_value(name: Ident) -> Self {
-        Self { name, value: None }
+        Self {
+            span: Span::null(),
+            name,
+            value: None,
+        }
     }
 }
 common_struct! {
     pub struct ExprCast {
+        #[serde(default)]
+        pub span: Span,
         pub expr: BExpr,
         pub ty: Ty,
     }
 }
 common_struct! {
     pub struct ExprBinOp {
+        #[serde(default)]
+        pub span: Span,
         pub kind: BinOpKind,
         pub lhs: BExpr,
         pub rhs: BExpr,
@@ -763,6 +1217,8 @@ common_struct! {
 }
 common_struct! {
     pub struct ExprUnOp {
+        #[serde(default)]
+        pub span: Span,
         pub op: UnOpKind,
         pub val: BExpr,
 
@@ -771,12 +1227,16 @@ common_struct! {
 
 common_struct! {
     pub struct ExprAssign {
+        #[serde(default)]
+        pub span: Span,
         pub target: BExpr,
         pub value: BExpr,
     }
 }
 common_struct! {
     pub struct ExprParen {
+        #[serde(default)]
+        pub span: Span,
         pub expr: BExpr,
     }
 }
@@ -788,6 +1248,8 @@ common_enum! {
 }
 common_struct! {
     pub struct ExprRange {
+        #[serde(default)]
+        pub span: Span,
         pub start: Option<BExpr>,
         pub limit: ExprRangeLimit,
         pub end: Option<BExpr>,
@@ -797,24 +1259,32 @@ common_struct! {
 
 common_struct! {
     pub struct ExprTuple {
+        #[serde(default)]
+        pub span: Span,
         pub values: Vec<Expr>,
     }
 }
 
 common_struct! {
     pub struct ExprTry {
+        #[serde(default)]
+        pub span: Span,
         pub expr: BExpr,
     }
 }
 
 common_struct! {
     pub struct ExprLet {
+        #[serde(default)]
+        pub span: Span,
         pub pat: BPattern,
         pub expr: BExpr,
     }
 }
 common_struct! {
     pub struct ExprClosure {
+        #[serde(default)]
+        pub span: Span,
         pub params: Vec<Pattern>,
         pub ret_ty: Option<BType>,
         pub movability: Option<bool>,
@@ -823,12 +1293,16 @@ common_struct! {
 }
 common_struct! {
     pub struct ExprArray {
+        #[serde(default)]
+        pub span: Span,
         pub values: Vec<Expr>,
     }
 }
 
 common_struct! {
     pub struct ExprArrayRepeat {
+        #[serde(default)]
+        pub span: Span,
         pub elem: BExpr,
         pub len: BExpr,
     }
@@ -837,6 +1311,8 @@ common_struct! {
     /// To "splat" or expand an iterable.
     /// For example, in Python, `*a` will expand `a` into the arguments of a function
     pub struct ExprSplat {
+        #[serde(default)]
+        pub span: Span,
         pub iter: Box<Expr>,
     }
 }
@@ -844,6 +1320,8 @@ common_struct! {
     /// To "splat" or expand a dict.
     /// For example, in Python, `**d` will expand `d` into the keyword arguments of a function
     pub struct ExprSplatDict {
+        #[serde(default)]
+        pub span: Span,
         pub dict: Box<Expr>,
     }
 }

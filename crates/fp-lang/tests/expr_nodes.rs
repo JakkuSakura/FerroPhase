@@ -49,6 +49,8 @@ fn parses_tuple_literal() {
         other => panic!("expected ExprKind::Tuple, found {:?}", other),
     };
     assert_eq!(tuple.values.len(), 2);
+    assert_eq!(tuple.span, e.span());
+    assert!(!tuple.span.is_null());
 }
 
 #[test]
@@ -58,6 +60,13 @@ fn parens_still_group_not_tuple() {
     let e = unwrap_expr(&res.ast);
     // Ensure we did not introduce a tuple here.
     assert!(!matches!(e.kind(), ExprKind::Tuple(_)));
+    assert!(!e.span().is_null());
+    if let ExprKind::Paren(paren) = e.kind() {
+        let inner = paren.expr.span();
+        let outer = e.span();
+        assert!(outer.lo <= inner.lo, "outer span should start before inner");
+        assert!(outer.hi >= inner.hi, "outer span should end after inner");
+    }
 }
 
 #[test]

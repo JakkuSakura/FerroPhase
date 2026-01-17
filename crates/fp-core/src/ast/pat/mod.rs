@@ -1,4 +1,5 @@
 use crate::ast::{Expr, Ident, Locator, QuoteFragmentKind, QuoteItemKind, Ty, TySlot};
+use crate::span::Span;
 use crate::{common_enum, common_struct};
 pub type BPattern = Box<Pattern>;
 common_enum! {
@@ -86,11 +87,20 @@ impl Pattern {
             _ => {}
         }
     }
+
+    pub fn span(&self) -> Span {
+        self.kind.span()
+    }
 }
 // TODO: add patterns for let, if, match, etc.
 common_struct! {
     pub struct PatternTuple {
         pub patterns: Vec<Pattern>,
+    }
+}
+impl PatternTuple {
+    pub fn span(&self) -> Span {
+        Span::union(self.patterns.iter().map(Pattern::span))
     }
 }
 common_struct! {
@@ -99,10 +109,24 @@ common_struct! {
         pub pattern: Box<Pattern>,
     }
 }
+impl PatternBind {
+    pub fn span(&self) -> Span {
+        Span::union([self.ident.span(), self.pattern.span()])
+    }
+}
 common_struct! {
     pub struct PatternTupleStruct {
         pub name: Locator,
         pub patterns: Vec<Pattern>,
+    }
+}
+impl PatternTupleStruct {
+    pub fn span(&self) -> Span {
+        Span::union(
+            Some(self.name.span())
+                .into_iter()
+                .chain(self.patterns.iter().map(Pattern::span)),
+        )
     }
 }
 common_struct! {
@@ -113,11 +137,21 @@ common_struct! {
         pub has_rest: bool,
     }
 }
+impl PatternStruct {
+    pub fn span(&self) -> Span {
+        Span::union(self.fields.iter().map(PatternStructField::span))
+    }
+}
 common_struct! {
     pub struct PatternStructural {
         pub fields: Vec<PatternStructField>,
         #[serde(default, skip_serializing_if = "bool_is_false")]
         pub has_rest: bool,
+    }
+}
+impl PatternStructural {
+    pub fn span(&self) -> Span {
+        Span::union(self.fields.iter().map(PatternStructField::span))
     }
 }
 common_struct! {
@@ -126,9 +160,22 @@ common_struct! {
         pub rename: Option<Box<Pattern>>,
     }
 }
+impl PatternStructField {
+    pub fn span(&self) -> Span {
+        self.rename
+            .as_ref()
+            .map(|pat| pat.span())
+            .unwrap_or_else(Span::null)
+    }
+}
 common_struct! {
     pub struct PatternBox {
         pub pattern: Box<Pattern>,
+    }
+}
+impl PatternBox {
+    pub fn span(&self) -> Span {
+        self.pattern.span()
     }
 }
 common_struct! {
@@ -137,6 +184,18 @@ common_struct! {
         pub pattern: Option<Box<Pattern>>,
     }
 
+}
+impl PatternVariant {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                Some(self.name.span()),
+                self.pattern.as_ref().map(|pat| pat.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
 }
 common_struct! {
     /// let x: T = expr;
@@ -152,6 +211,10 @@ impl PatternType {
             pat: pat.into(),
             ty,
         }
+    }
+
+    pub fn span(&self) -> Span {
+        Span::union([self.pat.span(), self.ty.span()])
     }
 }
 
@@ -179,9 +242,18 @@ impl PatternIdent {
             mutability: None,
         }
     }
+
+    pub fn span(&self) -> Span {
+        self.ident.span()
+    }
 }
 common_struct! {
     pub struct PatternWildcard {}
+}
+impl PatternWildcard {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
 }
 
 common_struct! {
@@ -195,10 +267,39 @@ common_struct! {
         pub has_rest: bool,
     }
 }
+impl PatternQuote {
+    pub fn span(&self) -> Span {
+        Span::union(self.fields.iter().map(PatternStructField::span))
+    }
+}
 
 common_struct! {
     pub struct PatternQuotePlural {
         pub fragment: QuoteFragmentKind,
         pub patterns: Vec<Pattern>,
+    }
+}
+impl PatternQuotePlural {
+    pub fn span(&self) -> Span {
+        Span::union(self.patterns.iter().map(Pattern::span))
+    }
+}
+
+impl PatternKind {
+    pub fn span(&self) -> Span {
+        match self {
+            PatternKind::Ident(ident) => ident.span(),
+            PatternKind::Bind(bind) => bind.span(),
+            PatternKind::Tuple(tuple) => tuple.span(),
+            PatternKind::TupleStruct(tuple) => tuple.span(),
+            PatternKind::Struct(pattern) => pattern.span(),
+            PatternKind::Structural(pattern) => pattern.span(),
+            PatternKind::Box(pattern) => pattern.span(),
+            PatternKind::Variant(pattern) => pattern.span(),
+            PatternKind::Quote(pattern) => pattern.span(),
+            PatternKind::QuotePlural(pattern) => pattern.span(),
+            PatternKind::Type(pattern) => pattern.span(),
+            PatternKind::Wildcard(pattern) => pattern.span(),
+        }
     }
 }

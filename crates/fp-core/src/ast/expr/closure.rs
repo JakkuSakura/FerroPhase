@@ -1,4 +1,5 @@
 use crate::ast::BExpr;
+use crate::span::Span;
 use crate::context::SharedScopedContext;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
@@ -13,6 +14,10 @@ pub struct ExprClosured {
 impl ExprClosured {
     pub fn new(ctx: SharedScopedContext, expr: BExpr) -> Self {
         Self { ctx, expr }
+    }
+
+    pub fn span(&self) -> Span {
+        self.expr.span()
     }
 }
 

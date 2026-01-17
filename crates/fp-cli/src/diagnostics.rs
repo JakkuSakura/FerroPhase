@@ -3,7 +3,7 @@
 #![allow(unused_assignments)] // miette derive generates unused assignments in macro-expanded code.
 
 use crate::{CliError, Result};
-use fp_core::diagnostics::Diagnostic as CoreDiagnostic;
+use fp_core::diagnostics::{Diagnostic as CoreDiagnostic, DiagnosticLevel};
 use fp_core::error::Error as CoreError;
 use fp_core::source_map::{LineSpan, SourceFile};
 use miette::Diagnostic;
@@ -197,6 +197,7 @@ fn render_with_termwiz(
         line,
         col,
         line_span,
+        diag.level,
     );
     let mut changes = Vec::new();
     changes.push(Change::Text("\r".to_string()));
@@ -204,9 +205,12 @@ fn render_with_termwiz(
     changes.push(Change::Text("\r\n".to_string()));
 
     if let Some(header) = plain_lines.first() {
-        changes.push(Change::Attribute(AttributeChange::Foreground(
-            AnsiColor::Red.into(),
-        )));
+        let color = match diag.level {
+            DiagnosticLevel::Error => AnsiColor::Red,
+            DiagnosticLevel::Warning => AnsiColor::Yellow,
+            DiagnosticLevel::Info => AnsiColor::Blue,
+        };
+        changes.push(Change::Attribute(AttributeChange::Foreground(color.into())));
         changes.push(Change::Text(header.clone()));
         changes.push(Change::AllAttributes(CellAttributes::default()));
         changes.push(Change::Text("\r\n".to_string()));
@@ -254,6 +258,7 @@ fn render_plain(diag: &CoreDiagnostic, file: &SourceFile, line_span: &LineSpan) 
         line,
         col,
         line_span,
+        diag.level,
     );
     for line in plain_lines {
         eprintln!("{line}");
@@ -266,8 +271,14 @@ fn format_rustc_plain(
     line: usize,
     col: usize,
     line_span: &LineSpan,
+    level: DiagnosticLevel,
 ) -> Vec<String> {
-    let header = format!("error: {message}");
+    let label = match level {
+        DiagnosticLevel::Error => "error",
+        DiagnosticLevel::Warning => "warning",
+        DiagnosticLevel::Info => "info",
+    };
+    let header = format!("{label}: {message}");
     let location = format!("  --> {path}:{line}:{col}");
     let line_no = line_span.line;
     let gutter_width = line_no.to_string().len();
@@ -302,6 +313,7 @@ mod tests {
             1,
             14,
             &line_span,
+            DiagnosticLevel::Error,
         );
         let rendered = lines.join("\n");
         let expected = "\
@@ -321,7 +333,8 @@ error: failed to parse items (file mode): parse error: expected symbol
             col_end: 9,
             text: "let answer = 42;".to_string(),
         };
-        let lines = format_rustc_plain("invalid token", "/tmp/sample.fp", 42, 8, &line_span);
+        let lines =
+            format_rustc_plain("invalid token", "/tmp/sample.fp", 42, 8, &line_span, DiagnosticLevel::Error);
         let rendered = lines.join("\n");
         let expected = "\
 error: invalid token

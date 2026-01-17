@@ -38,6 +38,10 @@ impl MacroInvocation {
         self.span = Some(span);
         self
     }
+
+    pub fn span(&self) -> Span {
+        self.span.unwrap_or_else(Span::null)
+    }
 }
 
 common_struct! {
@@ -50,6 +54,10 @@ common_struct! {
 impl ExprMacro {
     pub fn new(invocation: MacroInvocation) -> Self {
         Self { invocation }
+    }
+
+    pub fn span(&self) -> Span {
+        self.invocation.span()
     }
 }
 
@@ -64,5 +72,9 @@ common_struct! {
 impl ItemMacro {
     pub fn new(invocation: MacroInvocation) -> Self {
         Self { invocation }
+    }
+
+    pub fn span(&self) -> Span {
+        self.invocation.span()
     }
 }

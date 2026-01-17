@@ -1,12 +1,10 @@
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::Result;
 use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
-use fp_rust::printer::RustPrinter;
 
 fn i32_ty() -> Ty {
     Ty::Primitive(TypePrimitive::Int(TypeInt::I32))
@@ -14,6 +12,7 @@ fn i32_ty() -> Ty {
 
 fn quote_item_expr(item: Item) -> Expr {
     Expr::from(ExprKind::Quote(ExprQuote {
+        span: Span::null(),
         block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(item))]),
         kind: Some(QuoteFragmentKind::Item),
     }))
@@ -104,24 +103,28 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
     // Build: fn demo() -> i32 { const { splice quote { return 42; }; } 0 }
     // Return token
     let ret_expr = Expr::from(ExprKind::Return(ExprReturn {
+        span: Span::null(),
         value: Some(Expr::value(Value::int(42)).into()),
     }));
 
     let quoted_block =
         ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(ret_expr.clone()))]);
     let quote_expr = Expr::from(ExprKind::Quote(ExprQuote {
+        span: Span::null(),
         block: quoted_block,
         kind: None,
     }));
 
     let splice_stmt = BlockStmt::Expr(
         BlockStmtExpr::new(Expr::from(ExprKind::Splice(ExprSplice {
+            span: Span::null(),
             token: quote_expr.into(),
         })))
         .with_semicolon(true),
     );
 
     let const_block_expr = Expr::from(ExprKind::ConstBlock(ExprConstBlock {
+        span: Span::null(),
         expr: Expr::block(ExprBlock::new_stmts(vec![splice_stmt])).into(),
     }));
 
@@ -140,9 +143,6 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
     };
 
     let mut ast = Node::file(file);
-
-    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
-    fp_core::ast::register_threadlocal_serializer(serializer.clone());
 
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
@@ -297,11 +297,7 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
             ExprKind::Closured(cl) => visit_expr(cl.expr.as_ref(), hit),
             ExprKind::Try(t) => visit_expr(t.expr.as_ref(), hit),
             ExprKind::Paren(p) => visit_expr(p.expr.as_ref(), hit),
-            ExprKind::FormatString(fs) => {
-                for a in &fs.args {
-                    visit_expr(a, hit);
-                }
-            }
+            ExprKind::FormatString(_) => {}
             _ => {}
         }
     }
@@ -373,9 +369,6 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
     };
 
     let mut ast = Node::file(file);
-    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
-    fp_core::ast::register_threadlocal_serializer(serializer.clone());
-
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
         mode: InterpreterMode::CompileTime,
@@ -405,8 +398,10 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
 #[test]
 fn splice_executes_expr_outside_const_block() -> Result<()> {
     let quoted_expr = Expr::from(ExprKind::Quote(ExprQuote {
+        span: Span::null(),
         block: ExprBlock::new_stmts(vec![BlockStmt::Expr(BlockStmtExpr::new(Expr::from(
             ExprKind::BinOp(ExprBinOp {
+                span: Span::null(),
                 kind: BinOpKind::Add,
                 lhs: Box::new(Expr::value(Value::int(7))),
                 rhs: Box::new(Expr::value(Value::int(5))),
@@ -415,6 +410,7 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
         kind: Some(QuoteFragmentKind::Expr),
     }));
     let splice_expr = Expr::from(ExprKind::Splice(ExprSplice {
+        span: Span::null(),
         token: quoted_expr.into(),
     }));
 
@@ -434,9 +430,6 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
     };
 
     let mut ast = Node::file(file);
-    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
-    fp_core::ast::register_threadlocal_serializer(serializer.clone());
-
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
         mode: InterpreterMode::CompileTime,
@@ -513,9 +506,6 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
     };
 
     let mut ast = Node::file(file);
-    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
-    fp_core::ast::register_threadlocal_serializer(serializer.clone());
-
     let ctx = SharedScopedContext::new();
     let options = InterpreterOptions {
         mode: InterpreterMode::CompileTime,

@@ -13,6 +13,7 @@ use crate::ast::{
 };
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
+use crate::span::Span;
 
 /// wrap struct declare with derive Debug, Clone, Serialize, Deserialize,
 /// PartialEq, Eq,
@@ -716,6 +717,18 @@ impl FunctionParam {
     pub fn set_ty_annotation(&mut self, ty: Ty) {
         self.ty_annotation = Some(ty);
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                Some(self.ty.span()),
+                self.default.as_ref().map(Value::span),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
 }
 
 // TODO: make it enum to support lifetimes, type bounds and const
@@ -723,6 +736,11 @@ common_struct! {
     pub struct GenericParam {
         pub name: Ident,
         pub bounds: TypeBounds,
+    }
+}
+impl GenericParam {
+    pub fn span(&self) -> Span {
+        self.bounds.span()
     }
 }
 
@@ -751,6 +769,16 @@ impl FunctionSignature {
             ret_ty: None,
         }
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(
+            self.params
+                .iter()
+                .map(FunctionParam::span)
+                .chain(self.ret_ty.as_ref().map(Ty::span))
+                .chain(self.generics_params.iter().map(GenericParam::span)),
+        )
+    }
 }
 
 common_struct! {
@@ -762,6 +790,10 @@ common_struct! {
 impl ValueFunction {
     pub fn is_runtime_only(&self) -> bool {
         self.generics_params.is_empty()
+    }
+
+    pub fn span(&self) -> Span {
+        Span::union([self.sig.span(), self.body.span()])
     }
 }
 impl Deref for ValueFunction {

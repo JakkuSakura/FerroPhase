@@ -193,6 +193,10 @@ fn compile_only(
 
     let mut command = Command::new(&fp_bin);
     command.args(&args);
+    if sources.iter().any(|path| path.extension().and_then(|ext| ext.to_str()) == Some("rs")) {
+        command.env("FERROPHASE_LOSSY", "1");
+        info!("build: enabling lossy mode for Rust sources");
+    }
     command.current_dir(&package.root_path);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());

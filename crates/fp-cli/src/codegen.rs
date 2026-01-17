@@ -1,6 +1,6 @@
 use crate::CliError;
 use fp_core::ast::{AstSerializer, Node, NodeKind};
-use fp_rust::printer::RustPrinter;
+use fp_lang::PrettyAstSerializer;
 use quote::quote;
 
 /// Code generation utilities
@@ -9,24 +9,22 @@ pub struct CodeGenerator;
 impl CodeGenerator {
     /// Generate Rust code from AST
     pub fn generate_rust_code(node: &Node) -> Result<String, CliError> {
-        let printer = RustPrinter::new_with_rustfmt();
+        let printer = PrettyAstSerializer::new();
 
         let node = node.clone();
 
         match node.kind() {
             NodeKind::Expr(expr) => {
                 // Create a proper main function structure
-                let main_body = printer.print_expr_no_braces(expr).map_err(|e| {
+                let body = printer.serialize_expr(expr).map_err(|e| {
                     CliError::Compilation(format!("Failed to generate Rust code: {}", e))
                 })?;
-
-                let rust_code = quote! {
+                Ok(quote! {
                     fn main() {
-                        #main_body
+                        #body
                     }
-                };
-
-                Ok(rust_code.to_string())
+                }
+                .to_string())
             }
             NodeKind::File(file) => printer
                 .serialize_file(file)

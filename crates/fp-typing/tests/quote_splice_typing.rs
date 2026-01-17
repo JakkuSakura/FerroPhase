@@ -7,7 +7,11 @@ fn make_quote_block(stmts: Vec<BlockStmt>, last_expr: Option<Expr>) -> Expr {
         Some(e) => ExprBlock::new_stmts_expr(stmts, e),
         None => ExprBlock::new_stmts(stmts),
     };
-    Expr::from(ExprKind::Quote(ExprQuote { block, kind: None }))
+    Expr::from(ExprKind::Quote(ExprQuote {
+        span: Span::null(),
+        block,
+        kind: None,
+    }))
 }
 
 #[test]
@@ -49,10 +53,12 @@ fn splice_in_expr_requires_expr_quote_token() {
     // Build a splice with explicit expr token
     let block = ExprBlock::new_expr(Expr::value(Value::int(1)));
     let expr_token = Expr::from(ExprKind::Quote(ExprQuote {
+        span: Span::null(),
         block,
         kind: Some(QuoteFragmentKind::Expr),
     }));
     let splice_ok = Expr::from(ExprKind::Splice(ExprSplice {
+        span: Span::null(),
         token: Box::new(expr_token),
     }));
     let mut node_ok = Node::new(NodeKind::Expr(splice_ok));
@@ -66,6 +72,7 @@ fn splice_in_expr_requires_expr_quote_token() {
     // Build a splice with stmt token (no trailing expr)
     let stmt_token = make_quote_block(vec![BlockStmt::Noop], None);
     let splice_bad = Expr::from(ExprKind::Splice(ExprSplice {
+        span: Span::null(),
         token: Box::new(stmt_token),
     }));
     let mut node_bad = Node::new(NodeKind::Expr(splice_bad));
@@ -84,6 +91,7 @@ fn splice_in_expr_requires_expr_quote_token() {
 #[test]
 fn splice_stmt_accepts_item_quote_list() {
     let item_token = Expr::from(ExprKind::Quote(ExprQuote {
+        span: Span::null(),
         block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(Item::from(
             ItemKind::DefStruct(ItemDefStruct::new(Ident::new("Generated"), vec![])),
         )))]),
@@ -91,11 +99,13 @@ fn splice_stmt_accepts_item_quote_list() {
     }));
 
     let token_list = Expr::from(ExprKind::Array(ExprArray {
+        span: Span::null(),
         values: vec![item_token],
     }));
 
     let splice_stmt = BlockStmt::Expr(
         BlockStmtExpr::new(Expr::from(ExprKind::Splice(ExprSplice {
+            span: Span::null(),
             token: Box::new(token_list),
         })))
         .with_semicolon(true),

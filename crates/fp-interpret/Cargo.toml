@@ -7,7 +7,6 @@ edition = "2021"
 fp-core = { path = "../fp-core" }
 fp-pipeline = { path = "../fp-pipeline" }
 fp-typing = { path = "../fp-typing" }
-fp-rust = { path = "../fp-rust" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 itertools = "0.12.1"

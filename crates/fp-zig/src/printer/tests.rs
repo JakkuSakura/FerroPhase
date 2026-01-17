@@ -26,6 +26,7 @@ fn renders_basic_function_stub() {
 #[test]
 fn renders_binary_expression() {
     let expr = Expr::from(ast::ExprBinOp {
+        span: fp_core::span::Span::null(),
         kind: BinOpKind::Add,
         lhs: Expr::ident(ast::Ident::new("a")).into(),
         rhs: Expr::ident(ast::Ident::new("b")).into(),

@@ -2,6 +2,7 @@ use super::super::artifacts::{LirArtifacts, MirArtifacts};
 use super::super::*;
 use fp_backend::optimizer::{MirOptimizer, OptimizationPlan};
 use fp_core::mir;
+use fp_core::config;
 use fp_llvm::target::{OptimizationLevel, TargetConfig};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::sync::Arc;
@@ -28,30 +29,54 @@ impl PipelineStage for HirToMirStage {
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<MirArtifacts, PipelineError> {
         let mut mir_lowering = MirLowering::new();
+        let tolerate_errors = context.options.error_tolerance.enabled || config::lossy_mode();
+        mir_lowering.set_error_tolerance(tolerate_errors);
         let mir_result = mir_lowering.transform(context.hir_program.as_ref().clone());
         let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
         diagnostics.extend(mir_diags);
         let mut mir_program = match (mir_result, mir_had_errors) {
             (Ok(program), false) => program,
             (Ok(_), true) => {
-                diagnostics.push(
-                    Diagnostic::error("HIR→MIR lowering reported errors".to_string())
+                if tolerate_errors {
+                    diagnostics.push(
+                        Diagnostic::warning(
+                            "HIR→MIR lowering reported errors; continuing due to error tolerance"
+                                .to_string(),
+                        )
                         .with_source_context(STAGE_HIR_TO_MIR),
-                );
-                return Err(PipelineError::new(
-                    STAGE_HIR_TO_MIR,
-                    "HIR→MIR lowering reported errors",
-                ));
+                    );
+                    mir::Program::new()
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error("HIR→MIR lowering reported errors".to_string())
+                            .with_source_context(STAGE_HIR_TO_MIR),
+                    );
+                    return Err(PipelineError::new(
+                        STAGE_HIR_TO_MIR,
+                        "HIR→MIR lowering reported errors",
+                    ));
+                }
             }
             (Err(err), _) => {
-                diagnostics.push(
-                    Diagnostic::error(format!("HIR→MIR lowering failed: {}", err))
+                if tolerate_errors {
+                    diagnostics.push(
+                        Diagnostic::warning(format!(
+                            "HIR→MIR lowering failed: {}; continuing due to error tolerance",
+                            err
+                        ))
                         .with_source_context(STAGE_HIR_TO_MIR),
-                );
-                return Err(PipelineError::new(
-                    STAGE_HIR_TO_MIR,
-                    "HIR→MIR lowering failed",
-                ));
+                    );
+                    mir::Program::new()
+                } else {
+                    diagnostics.push(
+                        Diagnostic::error(format!("HIR→MIR lowering failed: {}", err))
+                            .with_source_context(STAGE_HIR_TO_MIR),
+                    );
+                    return Err(PipelineError::new(
+                        STAGE_HIR_TO_MIR,
+                        "HIR→MIR lowering failed",
+                    ));
+                }
             }
         };
 

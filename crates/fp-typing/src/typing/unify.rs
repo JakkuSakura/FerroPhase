@@ -702,9 +702,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             {
                                 if existing.value != rhs_field.value {
                                     return Err(Error::from(format!(
-                                            "cannot merge struct fields: field '{}' has incompatible types",
-                                            rhs_field.name
-                                        )));
+                                        "cannot merge struct fields: field '{}' has incompatible types",
+                                        rhs_field.name
+                                    )));
                                 }
                             } else {
                                 merged.push(rhs_field);
@@ -743,9 +743,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             {
                                 if lhs_field.value != rhs_field.value {
                                     return Err(Error::from(format!(
-                                            "cannot intersect struct fields: field '{}' has incompatible types",
-                                            lhs_field.name
-                                        )));
+                                        "cannot intersect struct fields: field '{}' has incompatible types",
+                                        lhs_field.name
+                                    )));
                                 }
                                 merged.push(lhs_field.clone());
                             }

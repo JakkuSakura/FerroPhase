@@ -6,11 +6,12 @@ pub use runtime::*;
 pub use ty::*;
 pub use value::*;
 
-use crate::ast::{get_threadlocal_serializer, BExpr, Expr, ExprKind};
+use crate::ast::{get_threadlocal_serializer, BExpr, BlockStmt, Expr, ExprKind, Item};
 use crate::common_enum;
 use crate::ops::{BinOpKind, UnOpKind};
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::utils::to_json::ToJson;
+use crate::span::Span;
 use std::fmt::{Display, Formatter};
 
 pub type ValueId = u64;
@@ -103,6 +104,29 @@ impl Value {
             _ => None,
         }
     }
+
+    pub fn span(&self) -> Span {
+        match self {
+            Value::Expr(expr) => expr.span(),
+            Value::List(list) => span_union(list.values.iter().map(Value::span)),
+            Value::Tuple(tuple) => span_union(tuple.values.iter().map(Value::span)),
+            Value::Map(map) => span_union(
+                map.entries
+                    .iter()
+                    .flat_map(|entry| [entry.key.span(), entry.value.span()]),
+            ),
+            Value::Struct(value_struct) => value_struct.span(),
+            Value::Structural(structural) => structural.span(),
+            Value::Some(some) => some.value.span(),
+            Value::Option(option) => option
+                .value
+                .as_ref()
+                .map(|value| value.span())
+                .unwrap_or_else(Span::null),
+            Value::QuoteToken(token) => token.span(),
+            _ => Span::null(),
+        }
+    }
 }
 impl ToJson for Value {
     fn to_json(&self) -> crate::Result<serde_json::Value> {
@@ -130,6 +154,48 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         let s = get_threadlocal_serializer().serialize_value(self).unwrap();
         f.write_str(&s)
+    }
+}
+
+fn span_union<I>(spans: I) -> Span
+where
+    I: IntoIterator<Item = Span>,
+{
+    Span::union(spans)
+}
+
+impl ValueStruct {
+    pub fn span(&self) -> Span {
+        self.structural.span()
+    }
+}
+
+impl ValueStructural {
+    pub fn span(&self) -> Span {
+        span_union(self.fields.iter().map(ValueField::span))
+    }
+}
+
+impl ValueField {
+    pub fn span(&self) -> Span {
+        self.value.span()
+    }
+}
+
+impl ValueMapEntry {
+    pub fn span(&self) -> Span {
+        span_union([self.key.span(), self.value.span()])
+    }
+}
+
+impl ValueQuoteToken {
+    pub fn span(&self) -> Span {
+        match &self.value {
+            QuoteTokenValue::Expr(expr) => expr.span(),
+            QuoteTokenValue::Stmts(stmts) => span_union(stmts.iter().map(BlockStmt::span)),
+            QuoteTokenValue::Items(items) => span_union(items.iter().map(Item::span)),
+            QuoteTokenValue::Type(_) => Span::null(),
+        }
     }
 }
 impl From<BValue> for Value {

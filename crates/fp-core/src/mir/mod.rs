@@ -519,6 +519,209 @@ impl BasicBlockData {
     }
 }
 
+impl Program {
+    pub fn span(&self) -> Span {
+        Span::union(self.items.iter().map(Item::span))
+    }
+}
+
+impl Item {
+    pub fn span(&self) -> Span {
+        self.kind.span()
+    }
+}
+
+impl ItemKind {
+    pub fn span(&self) -> Span {
+        match self {
+            ItemKind::Function(func) => func.span(),
+            ItemKind::Static(stat) => stat.span(),
+        }
+    }
+}
+
+impl Function {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl FunctionSig {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl Static {
+    pub fn span(&self) -> Span {
+        self.init.span()
+    }
+}
+
+impl Body {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl BasicBlockData {
+    pub fn span(&self) -> Span {
+        Span::union(
+            self.statements
+                .iter()
+                .map(Statement::span)
+                .chain(self.terminator.as_ref().map(Terminator::span)),
+        )
+    }
+}
+
+impl Statement {
+    pub fn span(&self) -> Span {
+        self.source_info
+    }
+}
+
+impl StatementKind {
+    pub fn span(&self) -> Span {
+        match self {
+            StatementKind::Assign(_, rvalue) => rvalue.span(),
+            StatementKind::IntrinsicCall { args, .. } => {
+                Span::union(args.iter().map(Operand::span))
+            }
+            StatementKind::SetDiscriminant { .. }
+            | StatementKind::StorageLive(_)
+            | StatementKind::StorageDead(_)
+            | StatementKind::Retag(_, _)
+            | StatementKind::AscribeUserType(_, _, _)
+            | StatementKind::Nop => Span::null(),
+        }
+    }
+}
+
+impl Terminator {
+    pub fn span(&self) -> Span {
+        self.source_info
+    }
+}
+
+impl TerminatorKind {
+    pub fn span(&self) -> Span {
+        match self {
+            TerminatorKind::Goto { .. }
+            | TerminatorKind::Resume
+            | TerminatorKind::Abort
+            | TerminatorKind::Return
+            | TerminatorKind::Unreachable
+            | TerminatorKind::GeneratorDrop => Span::null(),
+            TerminatorKind::SwitchInt { discr, .. } => discr.span(),
+            TerminatorKind::Drop { place, .. } => place.span(),
+            TerminatorKind::DropAndReplace { place, value, .. } => {
+                Span::union([place.span(), value.span()])
+            }
+            TerminatorKind::Call {
+                func,
+                args,
+                destination,
+                ..
+            } => Span::union(
+                Some(func.span())
+                    .into_iter()
+                    .chain(args.iter().map(Operand::span))
+                    .chain(destination.as_ref().map(|(place, _)| place.span())),
+            ),
+            TerminatorKind::Assert { cond, .. } => cond.span(),
+            TerminatorKind::Yield { value, resume_arg, .. } => {
+                Span::union([value.span(), resume_arg.span()])
+            }
+            TerminatorKind::FalseEdge { .. }
+            | TerminatorKind::FalseUnwind { .. } => Span::null(),
+            TerminatorKind::InlineAsm { line_spans, .. } => Span::union(line_spans.iter().copied()),
+        }
+    }
+}
+
+impl Rvalue {
+    pub fn span(&self) -> Span {
+        match self {
+            Rvalue::Use(operand) => operand.span(),
+            Rvalue::IntrinsicCall { args, .. } => Span::union(args.iter().map(Operand::span)),
+            Rvalue::Repeat(op, _) => op.span(),
+            Rvalue::Ref(_, _, place) => place.span(),
+            Rvalue::ThreadLocalRef(_) => Span::null(),
+            Rvalue::AddressOf(_, place) => place.span(),
+            Rvalue::Len(place) => place.span(),
+            Rvalue::Cast(_, op, _) => op.span(),
+            Rvalue::BinaryOp(_, lhs, rhs)
+            | Rvalue::CheckedBinaryOp(_, lhs, rhs) => Span::union([lhs.span(), rhs.span()]),
+            Rvalue::NullaryOp(_, _) => Span::null(),
+            Rvalue::UnaryOp(_, op) => op.span(),
+            Rvalue::Discriminant(place) => place.span(),
+            Rvalue::Aggregate(_, ops) => Span::union(ops.iter().map(Operand::span)),
+            Rvalue::ContainerLiteral { elements, .. } => {
+                Span::union(elements.iter().map(Operand::span))
+            }
+            Rvalue::ContainerMapLiteral { entries, .. } => Span::union(
+                entries
+                    .iter()
+                    .flat_map(|(k, v)| [k.span(), v.span()]),
+            ),
+            Rvalue::ContainerLen { container, .. } => container.span(),
+            Rvalue::ContainerGet { container, key, .. } => {
+                Span::union([container.span(), key.span()])
+            }
+            Rvalue::ShallowInitBox(op, _) => op.span(),
+        }
+    }
+}
+
+impl Operand {
+    pub fn span(&self) -> Span {
+        match self {
+            Operand::Copy(place) | Operand::Move(place) => place.span(),
+            Operand::Constant(constant) => constant.span,
+        }
+    }
+}
+
+impl Place {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl Constant {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
+impl LocalDecl {
+    pub fn span(&self) -> Span {
+        self.source_info
+    }
+}
+
+impl VarDebugInfo {
+    pub fn span(&self) -> Span {
+        self.source_info
+    }
+}
+
+impl VarDebugInfoContents {
+    pub fn span(&self) -> Span {
+        match self {
+            VarDebugInfoContents::Place(place) => place.span(),
+            VarDebugInfoContents::Const(constant) => constant.span,
+        }
+    }
+}
+
+impl BlockTailInfo {
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
+
 impl Place {
     pub fn from_local(local: LocalId) -> Self {
         Self {

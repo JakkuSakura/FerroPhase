@@ -203,6 +203,7 @@ pub struct MirLowering {
     opaque_types: HashMap<String, Ty>,
     synthetic_runtime_functions: HashSet<String>,
     tolerate_errors: bool,
+    lossy_mode: bool,
     next_synthetic_hir_def_id: hir::DefId,
 }
 
@@ -268,11 +269,33 @@ impl MirLowering {
             opaque_types: HashMap::new(),
             synthetic_runtime_functions: HashSet::new(),
             tolerate_errors: false,
+            lossy_mode: fp_core::config::lossy_mode(),
             next_synthetic_hir_def_id: 1,
         }
     }
 
     pub fn transform(&mut self, hir_program: hir::Program) -> Result<mir::Program> {
+        if self.tolerate_errors && self.lossy_mode {
+            let mut saw_rust = false;
+            let mut saw_non_rust = false;
+            for item in &hir_program.items {
+                if self.is_rust_span(item.span) {
+                    saw_rust = true;
+                } else {
+                    saw_non_rust = true;
+                    break;
+                }
+            }
+            if saw_rust && !saw_non_rust {
+                if let Some(span) = hir_program.items.first().map(|item| item.span) {
+                    self.emit_warning(
+                        span,
+                        "error tolerance: skipping HIR→MIR lowering for Rust sources",
+                    );
+                }
+                return Ok(mir::Program::new());
+            }
+        }
         self.lower_program(&hir_program)
     }
 
@@ -304,6 +327,13 @@ impl MirLowering {
 
         for item in &program.items {
             if let hir::ItemKind::Const(const_item) = &item.kind {
+                if self.lossy_mode && self.is_rust_span(const_item.body.value.span) {
+                    self.emit_warning(
+                        const_item.body.value.span,
+                        "lossy mode: skipping const evaluation for Rust source",
+                    );
+                    continue;
+                }
                 self.register_const_value(program, item.def_id, const_item);
             }
         }
@@ -317,6 +347,13 @@ impl MirLowering {
                     self.register_enum(item.def_id, def, item.span);
                 }
                 hir::ItemKind::Const(const_item) => {
+                    if self.lossy_mode && self.is_rust_span(const_item.body.value.span) {
+                        self.emit_warning(
+                            const_item.body.value.span,
+                            "lossy mode: skipping const lowering for Rust source",
+                        );
+                        continue;
+                    }
                     let ty = self.lower_type_expr(&const_item.ty);
                     if Self::is_unit_ty(&ty) {
                         // Unit consts don't need a static allocation; keep them as inline constants.
@@ -457,7 +494,17 @@ impl MirLowering {
 
         let sig = self.lower_function_sig(&function.sig, None);
         self.function_sigs.insert(item.def_id, sig.clone());
-        let mir_body = self.lower_body(program, item, function, &sig, None)?;
+        let span = function
+            .body
+            .as_ref()
+            .map(|body| body.value.span)
+            .unwrap_or(item.span);
+        let mir_body = if self.lossy_mode && self.is_rust_span(span) {
+            self.emit_warning(span, "lossy mode: stubbing MIR for Rust source");
+            self.stub_body(&sig, span)
+        } else {
+            self.lower_body(program, item, function, &sig, None)?
+        };
 
         let mir_function = mir::Function {
             name: mir::Symbol::from(function.sig.name.clone()),
@@ -474,6 +521,48 @@ impl MirLowering {
         self.next_mir_id += 1;
 
         Ok((mir_item, body_id, mir_body))
+    }
+
+    fn is_rust_span(&self, span: Span) -> bool {
+        let Some(file) = fp_core::source_map::source_map().file(span.file) else {
+            return true;
+        };
+        match file.path.extension().and_then(|ext| ext.to_str()) {
+            Some("fp") => false,
+            Some("rs") => true,
+            _ => true,
+        }
+    }
+
+    fn stub_body(&mut self, sig: &mir::FunctionSig, span: Span) -> mir::Body {
+        let mut locals = Vec::new();
+        locals.push(self.make_local_decl(&sig.output, span));
+        for input in &sig.inputs {
+            locals.push(self.make_local_decl(input, span));
+        }
+
+        let mut block = mir::BasicBlockData::new(Some(mir::Terminator {
+            source_info: span,
+            kind: mir::TerminatorKind::Return,
+        }));
+
+        if !Self::is_unit_ty(&sig.output) {
+            let literal = self.default_constant_for_ty(&sig.output);
+            let constant = mir::Constant {
+                span,
+                user_ty: None,
+                literal,
+            };
+            block.statements.push(mir::Statement {
+                source_info: span,
+                kind: mir::StatementKind::Assign(
+                    mir::Place::from_local(0),
+                    mir::Rvalue::Use(mir::Operand::Constant(constant)),
+                ),
+            });
+        }
+
+        mir::Body::new(vec![block], locals, sig.inputs.len(), span)
     }
 
     fn register_generic_function(&mut self, def_id: hir::DefId, function: &hir::Function) {
@@ -2990,6 +3079,13 @@ impl MirLowering {
         if self.const_values.contains_key(&def_id) {
             return;
         }
+        if self.lossy_mode && self.is_rust_span(konst.body.value.span) {
+            self.emit_warning(
+                konst.body.value.span,
+                "lossy mode: skipping const evaluation for Rust source",
+            );
+            return;
+        }
 
         let ty = self.lower_type_expr(&konst.ty);
         let container_args = self.container_args_from_type_expr(&konst.ty);
@@ -4133,6 +4229,7 @@ struct BodyBuilder<'a> {
     type_substs: HashMap<String, Ty>,
     loop_stack: Vec<LoopContext>,
     null_locals: HashSet<mir::LocalId>,
+    active_exprs: HashSet<hir::HirId>,
 }
 
 struct PlaceInfo {
@@ -4178,6 +4275,28 @@ struct LoopContext {
     break_value_allowed: bool,
 }
 
+struct ExprRecursionGuard {
+    set: *mut HashSet<hir::HirId>,
+    id: hir::HirId,
+}
+
+impl ExprRecursionGuard {
+    fn new(set: &mut HashSet<hir::HirId>, id: hir::HirId) -> Self {
+        Self {
+            set: set as *mut HashSet<hir::HirId>,
+            id,
+        }
+    }
+}
+
+impl Drop for ExprRecursionGuard {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.set).remove(&self.id);
+        }
+    }
+}
+
 impl<'a> BodyBuilder<'a> {
     fn new(
         lowering: &'a mut MirLowering,
@@ -4209,6 +4328,7 @@ impl<'a> BodyBuilder<'a> {
             type_substs,
             loop_stack: Vec::new(),
             null_locals: HashSet::new(),
+            active_exprs: HashSet::new(),
         };
 
         let body_params = builder
@@ -7655,6 +7775,21 @@ impl<'a> BodyBuilder<'a> {
     }
 
     fn lower_operand(&mut self, expr: &hir::Expr, expected: Option<&Ty>) -> Result<OperandInfo> {
+        if self.active_exprs.contains(&expr.hir_id) {
+            let message = "recursive expression detected during MIR lowering";
+            if self.lowering.lossy_mode {
+                self.lowering.emit_warning(expr.span, message);
+            } else {
+                self.lowering.emit_error(expr.span, message);
+            }
+            let constant = self.lowering.error_constant(expr.span);
+            return Ok(OperandInfo {
+                operand: mir::Operand::Constant(constant),
+                ty: self.lowering.error_ty(),
+            });
+        }
+        self.active_exprs.insert(expr.hir_id);
+        let _guard = ExprRecursionGuard::new(&mut self.active_exprs, expr.hir_id);
         if let Some(place) = self.lower_place(expr)? {
             if let Some(expected_ty) = expected {
                 if let Some((variant, layout)) =
@@ -8468,6 +8603,63 @@ impl<'a> BodyBuilder<'a> {
                     return Ok(OperandInfo {
                         operand: mir::Operand::copy(local_place),
                         ty: now_ty,
+                    });
+                }
+                if call.kind == IntrinsicCallKind::Slice {
+                    let args = &call.callargs;
+                    if args.len() != 3 {
+                        self.lowering.emit_error(
+                            expr.span,
+                            "slice intrinsic expects base, start, and end arguments",
+                        );
+                    }
+                    let base = args.get(0).map(|arg| &arg.value);
+                    let start = args.get(1).map(|arg| &arg.value);
+                    let end = args.get(2).map(|arg| &arg.value);
+                    let index_ty = Ty {
+                        kind: TyKind::Uint(UintTy::Usize),
+                    };
+                    let base_operand = base
+                        .map(|expr| self.lower_operand(expr, None))
+                        .transpose()?;
+                    let start_operand = start
+                        .map(|expr| self.lower_operand(expr, Some(&index_ty)))
+                        .transpose()?;
+                    let end_operand = end
+                        .map(|expr| self.lower_operand(expr, Some(&index_ty)))
+                        .transpose()?;
+                    let slice_ty = expected.cloned().unwrap_or_else(|| Ty {
+                        kind: TyKind::Slice(Box::new(Ty {
+                            kind: TyKind::Int(IntTy::I8),
+                        })),
+                    });
+                    let local_id = self.allocate_temp(slice_ty.clone(), expr.span);
+                    let local_place = mir::Place::from_local(local_id);
+                    let mut args = Vec::new();
+                    if let Some(base) = base_operand {
+                        args.push(base.operand);
+                    }
+                    if let Some(start) = start_operand {
+                        args.push(start.operand);
+                    }
+                    if let Some(end) = end_operand {
+                        args.push(end.operand);
+                    }
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            local_place.clone(),
+                            mir::Rvalue::IntrinsicCall {
+                                kind: IntrinsicCallKind::Slice,
+                                format: String::new(),
+                                args,
+                            },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(OperandInfo {
+                        operand: mir::Operand::copy(local_place),
+                        ty: slice_ty.clone(),
                     });
                 }
                 if call.kind == IntrinsicCallKind::Len {

@@ -272,6 +272,10 @@ impl CstToken {
                 | CstTokenKind::TriviaBlockComment
         )
     }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -304,17 +308,14 @@ impl CstNode {
             span,
         }
     }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
 }
 
-pub fn span_for_children(children: &[CstElement]) -> Option<Span> {
-    let mut iter = children.iter();
-    let first = iter.next()?;
-    let mut span = first.span();
-    for child in iter {
-        let s = child.span();
-        span = Span::new(span.file, span.lo.min(s.lo), span.hi.max(s.hi));
-    }
-    Some(span)
+pub fn span_for_children(children: &[CstElement]) -> Span {
+    Span::union(children.iter().map(CstElement::span))
 }
 
 pub fn collect_tokens<'a>(node: &'a CstNode, out: &mut Vec<&'a CstToken>) {

@@ -6,7 +6,6 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
 use fp_core::ops::{BinOpKind, UnOpKind};
-use fp_rust::normalization::RustIntrinsicNormalizer;
 
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
@@ -129,8 +128,10 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             }
         }
 
-        let fallback = Expr::from_parts(ty_slot, ExprKind::Macro(macro_expr));
-        RustIntrinsicNormalizer::default().normalize_macro(fallback)
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            ty_slot,
+            ExprKind::Macro(macro_expr),
+        )))
     }
 }
 
@@ -308,10 +309,12 @@ fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {
 fn assert_macro(cond: Expr, message: &str) -> Expr {
     let panic_expr = panic_call_with_message(message);
     let negated = Expr::new(ExprKind::UnOp(ExprUnOp {
+        span: fp_core::span::Span::null(),
         op: UnOpKind::Not,
         val: cond.into(),
     }));
     let if_expr = Expr::new(ExprKind::If(ExprIf {
+        span: fp_core::span::Span::null(),
         cond: negated.into(),
         then: Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
             BlockStmtExpr::new(panic_expr).with_semicolon(true),
@@ -335,16 +338,19 @@ fn assert_compare_macro(left: Expr, right: Expr, op: BinOpKind, message: &str) -
     let right_binding = BlockStmt::Let(StmtLet::new_simple(right_ident.clone(), right));
 
     let comparison = Expr::new(ExprKind::BinOp(ExprBinOp {
+        span: fp_core::span::Span::null(),
         kind: op,
         lhs: Expr::ident(left_ident).into(),
         rhs: Expr::ident(right_ident).into(),
     }));
     let negated = Expr::new(ExprKind::UnOp(ExprUnOp {
+        span: fp_core::span::Span::null(),
         op: UnOpKind::Not,
         val: comparison.into(),
     }));
     let panic_expr = panic_call_with_message(message);
     let if_expr = Expr::new(ExprKind::If(ExprIf {
+        span: fp_core::span::Span::null(),
         cond: negated.into(),
         then: Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
             BlockStmtExpr::new(panic_expr).with_semicolon(true),

@@ -1554,6 +1554,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::Print => "print",
         IntrinsicCallKind::Format => "format",
         IntrinsicCallKind::Len => "len",
+        IntrinsicCallKind::Slice => "slice",
         IntrinsicCallKind::DebugAssertions => "debug_assertions",
         IntrinsicCallKind::Input => "input",
         IntrinsicCallKind::Panic => "panic",

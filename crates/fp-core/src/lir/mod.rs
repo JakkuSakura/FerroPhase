@@ -5,6 +5,7 @@ pub mod layout;
 pub mod pretty;
 pub mod ty;
 
+use crate::span::Span;
 pub use ident::Name;
 pub use ty::Ty;
 pub type LirType = Ty;
@@ -553,5 +554,83 @@ impl Default for Linkage {
 impl Default for Visibility {
     fn default() -> Self {
         Visibility::Default
+    }
+}
+
+impl LirProgram {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirFunction {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirBasicBlock {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirInstruction {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirInstructionKind {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirTerminator {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirValue {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirConstant {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirGlobal {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirTypeDefinition {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl LirLocal {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl StackSlot {
+    pub fn span(&self) -> Span {
+        Span::null()
+    }
+}
+
+impl DebugInfo {
+    pub fn span(&self) -> Span {
+        Span::null()
     }
 }

@@ -509,13 +509,21 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let values = node_children_exprs(node)
                 .map(lower_expr_from_cst)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(ExprKind::Tuple(ExprTuple { values }).into())
+            Ok(ExprKind::Tuple(ExprTuple {
+                span: node.span,
+                values,
+            })
+            .into())
         }
         SyntaxKind::ExprArray => {
             let values = node_children_exprs(node)
                 .map(lower_expr_from_cst)
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(ExprKind::Array(ExprArray { values }).into())
+            Ok(ExprKind::Array(ExprArray {
+                span: node.span,
+                values,
+            })
+            .into())
         }
         SyntaxKind::ExprArrayRepeat => {
             let mut exprs = node_children_exprs(node);
@@ -528,6 +536,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let elem = lower_expr_from_cst(elem)?;
             let len = lower_expr_from_cst(len)?;
             Ok(ExprKind::ArrayRepeat(ExprArrayRepeat {
+                span: node.span,
                 elem: Box::new(elem),
                 len: Box::new(len),
             })
@@ -541,6 +550,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let name_expr = lower_expr_from_cst(name)?;
             let (fields, update) = lower_struct_fields(node)?;
             Ok(ExprKind::Struct(ExprStruct {
+                span: node.span,
                 name: Box::new(name_expr),
                 fields,
                 update: update.map(Box::new),
@@ -552,7 +562,11 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             if update.is_some() {
                 return Err(LowerError::UnexpectedNode(SyntaxKind::ExprStructural));
             }
-            Ok(ExprKind::Structural(ExprStructural { fields }).into())
+            Ok(ExprKind::Structural(ExprStructural {
+                span: node.span,
+                fields,
+            })
+            .into())
         }
         SyntaxKind::ExprBlock => {
             let block = lower_block_from_cst(node)?;
@@ -564,13 +578,19 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprQuote))?;
             let block = lower_block_from_cst(block_node)?;
             let kind = quote_kind_from_cst(node)?;
-            Ok(ExprKind::Quote(ExprQuote { block, kind }).into())
+            Ok(ExprKind::Quote(ExprQuote {
+                span: node.span,
+                block,
+                kind,
+            })
+            .into())
         }
         SyntaxKind::ExprQuoteToken => Err(LowerError::UnexpectedNode(SyntaxKind::ExprQuoteToken)),
         SyntaxKind::ExprSplice => {
             let token_expr = last_child_expr(node)?;
             let expr = lower_expr_from_cst(token_expr)?;
             Ok(ExprKind::Splice(ExprSplice {
+                span: node.span,
                 token: Box::new(expr),
             })
             .into())
@@ -581,6 +601,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprAsync))?;
             let block = lower_block_from_cst(block_node)?;
             Ok(ExprKind::Async(ExprAsync {
+                span: node.span,
                 expr: Box::new(ExprKind::Block(block).into()),
             })
             .into())
@@ -591,6 +612,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprConstBlock))?;
             let block = lower_block_from_cst(block_node)?;
             Ok(ExprKind::ConstBlock(ExprConstBlock {
+                span: node.span,
                 expr: Box::new(ExprKind::Block(block).into()),
             })
             .into())
@@ -620,6 +642,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             };
 
             Ok(ExprKind::If(ExprIf {
+                span: node.span,
                 cond: Box::new(cond),
                 then: Box::new(then_expr),
                 elze: else_expr,
@@ -632,6 +655,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprLoop))?;
             let block = lower_block_from_cst(block_node)?;
             Ok(ExprKind::Loop(ExprLoop {
+                span: node.span,
                 label: None,
                 body: Box::new(ExprKind::Block(block).into()),
             })
@@ -648,6 +672,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let cond = lower_expr_from_cst(cond)?;
             let body_block = lower_block_from_cst(body)?;
             Ok(ExprKind::While(ExprWhile {
+                span: node.span,
                 cond: Box::new(cond),
                 body: Box::new(ExprKind::Block(body_block).into()),
             })
@@ -684,6 +709,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let iter = lower_expr_from_cst(iter)?;
             let body_block = lower_block_from_cst(body)?;
             Ok(ExprKind::For(ExprFor {
+                span: node.span,
                 pat: Box::new(pat),
                 iter: Box::new(iter),
                 body: Box::new(ExprKind::Block(body_block).into()),
@@ -714,6 +740,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 // decide how to lower. Keep the legacy `cond` field populated with
                 // `true` for compatibility.
                 cases.push(ExprMatchCase {
+                    span: arm.span,
                     pat: Some(Box::new(pat)),
                     cond: Box::new(Expr::value(Value::bool(true))),
                     guard: guard_expr.map(Box::new),
@@ -722,6 +749,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             }
 
             Ok(ExprKind::Match(ExprMatch {
+                span: node.span,
                 scrutinee: Some(Box::new(scrutinee_expr)),
                 cases,
             })
@@ -730,6 +758,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         SyntaxKind::ExprClosure => {
             let (params, body) = lower_closure_from_cst(node)?;
             Ok(ExprKind::Closure(ExprClosure {
+                span: node.span,
                 params,
                 ret_ty: None,
                 movability: None,
@@ -743,7 +772,11 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .map(lower_expr_from_cst)
                 .transpose()?
                 .map(Box::new);
-            Ok(ExprKind::Return(ExprReturn { value }).into())
+            Ok(ExprKind::Return(ExprReturn {
+                span: node.span,
+                value,
+            })
+            .into())
         }
         SyntaxKind::ExprBreak => {
             let value = node_children_exprs(node)
@@ -751,9 +784,13 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .map(lower_expr_from_cst)
                 .transpose()?
                 .map(Box::new);
-            Ok(ExprKind::Break(ExprBreak { value }).into())
+            Ok(ExprKind::Break(ExprBreak {
+                span: node.span,
+                value,
+            })
+            .into())
         }
-        SyntaxKind::ExprContinue => Ok(ExprKind::Continue(ExprContinue {}).into()),
+        SyntaxKind::ExprContinue => Ok(ExprKind::Continue(ExprContinue { span: node.span }).into()),
         SyntaxKind::ExprName => {
             let name = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprName))?;
@@ -827,11 +864,13 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let inner = lower_expr_from_cst(expr)?;
             match op.as_str() {
                 "-" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
+                    span: node.span,
                     op: UnOpKind::Neg,
                     val: Box::new(inner),
                 })
                 .into()),
                 "!" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
+                    span: node.span,
                     op: UnOpKind::Not,
                     val: Box::new(inner),
                 })
@@ -841,6 +880,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     Ok(inner)
                 }
                 "*" => Ok(ExprKind::Dereference(fp_core::ast::ExprDereference {
+                    span: node.span,
                     referee: Box::new(inner),
                 })
                 .into()),
@@ -849,6 +889,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                         matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut")
                     });
                     Ok(ExprKind::Reference(fp_core::ast::ExprReference {
+                        span: node.span,
                         referee: Box::new(inner),
                         mutable: if is_mut { Some(true) } else { None },
                     })
@@ -861,6 +902,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let base = first_child_expr(node)?;
             let expr = lower_expr_from_cst(base)?;
             Ok(ExprKind::Try(ExprTry {
+                span: node.span,
                 expr: Box::new(expr),
             })
             .into())
@@ -869,6 +911,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let base = first_child_expr(node)?;
             let expr = lower_expr_from_cst(base)?;
             Ok(ExprKind::Await(ExprAwait {
+                span: node.span,
                 base: Box::new(expr),
             })
             .into())
@@ -882,6 +925,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
 
             if op == "=" {
                 return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
+                    span: node.span,
                     target: Box::new(lhs),
                     value: Box::new(rhs),
                 })
@@ -890,12 +934,14 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
 
             if let Some(binop) = compound_assign_binop(&op) {
                 let combined = ExprKind::BinOp(ExprBinOp {
+                    span: node.span,
                     kind: binop,
                     lhs: Box::new(lhs.clone()),
                     rhs: Box::new(rhs),
                 })
                 .into();
                 return Ok(ExprKind::Assign(fp_core::ast::ExprAssign {
+                    span: node.span,
                     target: Box::new(lhs),
                     value: Box::new(combined),
                 })
@@ -904,6 +950,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
 
             let kind = binop_from_text(&op).ok_or(LowerError::MissingOperator)?;
             Ok(ExprKind::BinOp(ExprBinOp {
+                span: node.span,
                 kind,
                 lhs: Box::new(lhs),
                 rhs: Box::new(rhs),
@@ -924,6 +971,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .map(Box::new);
             let end = end_node.map(lower_expr_from_cst).transpose()?.map(Box::new);
             Ok(ExprKind::Range(ExprRange {
+                span: node.span,
                 start,
                 limit,
                 end,
@@ -937,6 +985,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let field = direct_last_ident_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprSelect))?;
             Ok(ExprKind::Select(ExprSelect {
+                span: node.span,
                 obj: Box::new(obj),
                 field: Ident::new(field),
                 select: ExprSelectType::Unknown,
@@ -954,6 +1003,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let obj = lower_expr_from_cst(obj)?;
             let index = lower_expr_from_cst(index)?;
             Ok(ExprKind::Index(ExprIndex {
+                span: node.span,
                 obj: Box::new(obj),
                 index: Box::new(index),
             })
@@ -976,7 +1026,12 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 _ => ExprInvokeTarget::expr(callee),
             };
 
-            Ok(ExprKind::Invoke(ExprInvoke { target, args }).into())
+            Ok(ExprKind::Invoke(ExprInvoke {
+                span: node.span,
+                target,
+                args,
+            })
+            .into())
         }
         SyntaxKind::ExprMacroCall => {
             // Shape: <name> ! <group>
@@ -1026,6 +1081,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let expr = lower_expr_from_cst(expr)?;
             let ty = lower_type_from_cst(ty_node)?;
             Ok(ExprKind::Cast(fp_core::ast::ExprCast {
+                span: node.span,
                 expr: Box::new(expr),
                 ty,
             })
@@ -1034,7 +1090,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         other => Err(LowerError::UnexpectedNode(other)),
     }?;
 
-    if !matches!(node.kind, SyntaxKind::Root | SyntaxKind::ExprParen) {
+    if !matches!(node.kind, SyntaxKind::Root) {
         expr = expr.with_span(node.span);
     }
 
@@ -1060,6 +1116,7 @@ fn lower_struct_fields(node: &SyntaxNode) -> Result<(Vec<ExprField>, Option<Expr
             Some(Expr::ident(name_ident.clone()))
         };
         out.push(ExprField {
+            span: field.span,
             name: name_ident,
             value,
         });
@@ -1226,7 +1283,9 @@ fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
             _ => {}
         }
     }
-    Ok(ExprBlock::new_stmts(stmts))
+    let mut block = ExprBlock::new_stmts(stmts);
+    block.span = node.span;
+    Ok(block)
 }
 
 fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {

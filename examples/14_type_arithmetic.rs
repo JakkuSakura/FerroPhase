@@ -1,4 +1,3 @@
-pub use fp_rust::t;
 pub use std::fmt::Display;
 pub fn print(i: impl Display) -> () {
     println!("{}", i)

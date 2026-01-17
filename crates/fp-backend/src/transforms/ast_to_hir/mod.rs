@@ -765,6 +765,21 @@ impl HirGenerator {
                 )))
             }
             ItemKind::DeclFunction(_) => Ok(()),
+            ItemKind::Macro(_) => {
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "dropping macro item during AST→HIR in lossy mode".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    return Ok(());
+                }
+                Err(crate::error::optimization_error(format!(
+                    "Unimplemented AST item type for HIR transformation: {:?}",
+                    item
+                )))
+            }
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
                 program.def_map.insert(hir_item.def_id, hir_item.clone());
@@ -810,6 +825,32 @@ impl HirGenerator {
                         span: self.create_span(1),
                     };
                     Ok(hir::StmtKind::Expr(unit_expr))
+                }
+            }
+            ItemKind::Macro(_) => {
+                if self.error_tolerance {
+                    self.add_warning(
+                        Diagnostic::warning(
+                            "dropping macro item in statement position during AST→HIR".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT),
+                    );
+                    let unit_block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    let unit_expr = hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: hir::ExprKind::Block(unit_block),
+                        span: self.create_span(1),
+                    };
+                    Ok(hir::StmtKind::Expr(unit_expr))
+                } else {
+                    Err(crate::error::optimization_error(format!(
+                        "Unimplemented AST item type for HIR transformation: {:?}",
+                        item
+                    )))
                 }
             }
             _ => {
@@ -2180,6 +2221,7 @@ impl ClosureLowering {
         let struct_name_expr = ast::Expr::ident(struct_ident.clone());
 
         let mut struct_expr = ast::Expr::new(ast::ExprKind::Struct(ast::ExprStruct {
+            span: fp_core::span::Span::null(),
             name: struct_name_expr.into(),
             fields,
             update: None,
@@ -2826,6 +2868,7 @@ impl CaptureReplacer {
                     if let Some(capture_ty) = self.captures.get(ident.as_str()) {
                         let mut expr_struct =
                             ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
+                                span: fp_core::span::Span::null(),
                                 obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                 field: ident.clone(),
                                 select: ast::ExprSelectType::Field,
@@ -2894,6 +2937,7 @@ impl CaptureReplacer {
                             if let Some(capture_ty) = self.captures.get(ident.as_str()) {
                                 let mut expr_struct =
                                     ast::Expr::new(ast::ExprKind::Select(ast::ExprSelect {
+                                        span: fp_core::span::Span::null(),
                                         obj: ast::Expr::ident(self.env_ident.clone()).into(),
                                         field: ident.clone(),
                                         select: ast::ExprSelectType::Field,

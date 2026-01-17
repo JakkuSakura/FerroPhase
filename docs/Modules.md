@@ -120,7 +120,7 @@ pub struct ModuleDescriptor {
 - `exports` enumerate public symbols; providers may enrich them with signatures
   or docstrings.
 
-Providers such as `RustModuleProvider` or the FerroPhase module loader populate
+Providers such as the FerroPhase module loader populate
 these descriptors from the virtual filesystem, allowing language servers and
 build tools to reason about modules without touching the real disk.
 

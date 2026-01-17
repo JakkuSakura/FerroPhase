@@ -119,8 +119,8 @@ impl Expr {
         self.ty = Some(ty);
     }
 
-    pub fn span(&self) -> Option<Span> {
-        self.span
+    pub fn span(&self) -> Span {
+        self.span.unwrap_or_else(|| self.kind.span())
     }
 
     pub fn with_span(mut self, span: Span) -> Self {
@@ -197,6 +197,64 @@ impl Expr {
     }
     pub fn macro_invocation(invocation: MacroInvocation) -> Self {
         ExprKind::Macro(ExprMacro::new(invocation)).into()
+    }
+}
+
+fn union_spans(spans: impl IntoIterator<Item = Span>) -> Span {
+    Span::union(spans)
+}
+
+impl ExprKind {
+    pub fn span(&self) -> Span {
+        match self {
+            ExprKind::Id(_) => Span::null(),
+            ExprKind::Locator(locator) => locator.span(),
+            ExprKind::Value(value) => value.span(),
+            ExprKind::Any(_) => Span::null(),
+            ExprKind::Block(block) => block.span(),
+            ExprKind::Match(match_expr) => match_expr.span(),
+            ExprKind::If(expr_if) => expr_if.span(),
+            ExprKind::Loop(expr_loop) => expr_loop.span(),
+            ExprKind::While(expr_while) => expr_while.span(),
+            ExprKind::Return(expr_return) => expr_return.span(),
+            ExprKind::Break(expr_break) => expr_break.span(),
+            ExprKind::Continue(_) => Span::null(),
+            ExprKind::Invoke(invoke) => invoke.span(),
+            ExprKind::BinOp(binop) => union_spans([binop.lhs.span(), binop.rhs.span()]),
+            ExprKind::UnOp(unop) => unop.val.span(),
+            ExprKind::Assign(assign) => union_spans([assign.target.span(), assign.value.span()]),
+            ExprKind::Select(select) => select.span(),
+            ExprKind::Index(index) => index.span(),
+            ExprKind::Struct(expr_struct) => expr_struct.span(),
+            ExprKind::Structural(expr_structural) => expr_structural.span(),
+            ExprKind::Cast(cast) => cast.span(),
+            ExprKind::Reference(reference) => reference.span(),
+            ExprKind::Dereference(deref) => deref.span(),
+            ExprKind::Tuple(tuple) => tuple.span(),
+            ExprKind::Try(expr_try) => expr_try.span(),
+            ExprKind::For(expr_for) => expr_for.span(),
+            ExprKind::Async(async_expr) => async_expr.span(),
+            ExprKind::Let(expr_let) => expr_let.span(),
+            ExprKind::Closure(closure) => closure.span(),
+            ExprKind::Array(array) => union_spans(array.values.iter().map(Expr::span)),
+            ExprKind::ArrayRepeat(repeat) => {
+                union_spans([repeat.elem.span(), repeat.len.span()])
+            }
+            ExprKind::ConstBlock(block) => block.expr.span(),
+            ExprKind::IntrinsicContainer(container) => container.span(),
+            ExprKind::IntrinsicCall(call) => call.span(),
+            ExprKind::Quote(quote) => quote.span(),
+            ExprKind::Splice(splice) => splice.span(),
+            ExprKind::Closured(closured) => closured.span(),
+            ExprKind::Await(await_expr) => await_expr.span(),
+            ExprKind::Paren(paren) => paren.expr.span(),
+            ExprKind::Range(range) => range.span(),
+            ExprKind::FormatString(template) => template.span(),
+            ExprKind::Splat(splat) => splat.iter.span(),
+            ExprKind::SplatDict(splat) => splat.dict.span(),
+            ExprKind::Macro(mac) => mac.span(),
+            ExprKind::Item(item) => item.span(),
+        }
     }
 }
 impl Display for Expr {

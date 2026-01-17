@@ -13,7 +13,6 @@ fp-core = { path = "../fp-core" }
 fp-interpret = { path = "../fp-interpret" }
 fp-backend = { path = "../fp-backend" }
 fp-typing = { path = "../fp-typing" }
-fp-rust = { path = "../fp-rust" }
 fp-typescript = { path = "../fp-typescript" }
 fp-csharp = { path = "../fp-csharp" }
 fp-python = { path = "../fp-python" }
@@ -30,6 +29,7 @@ fp-bytecode = { path = "../fp-bytecode" }
 fp-stackvm = { path = "../fp-stackvm" }
 fp-wasm = { path = "../fp-wasm" }
 fp-native = { path = "../fp-native" }
+fp-cranelift = { path = "../fp-cranelift" }
 
 # CLI and argument parsing
 clap = { version = "4.4", features = ["derive", "color"] }

@@ -1,4 +1,5 @@
 use crate::ast::{Ident, Visibility};
+use crate::span::Span;
 use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
 
@@ -6,6 +7,11 @@ common_struct! {
     pub struct ItemImport {
         pub visibility: Visibility,
         pub tree: ItemImportTree,
+    }
+}
+impl ItemImport {
+    pub fn span(&self) -> Span {
+        self.tree.span()
     }
 }
 
@@ -30,6 +36,11 @@ common_struct! {
     pub struct ItemImportRename {
         pub from: Ident,
         pub to: Ident,
+    }
+}
+impl ItemImportRename {
+    pub fn span(&self) -> Span {
+        Span::union([self.from.span(), self.to.span()])
     }
 }
 impl Display for ItemImportRename {
@@ -100,6 +111,10 @@ impl ItemImportPath {
         }
         true
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(self.segments.iter().map(ItemImportTree::span))
+    }
 }
 common_struct! {
     pub struct ItemImportGroup {
@@ -149,6 +164,10 @@ impl ItemImportGroup {
         }
         true
     }
+
+    pub fn span(&self) -> Span {
+        Span::union(self.items.iter().map(ItemImportTree::span))
+    }
 }
 impl Display for ItemImportTree {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -188,6 +207,16 @@ impl ItemImportTree {
             Self::Ident(_) | Self::Rename(_) | Self::Glob => true,
             Self::Path(nodes) => nodes.validate(depth),
             Self::Group(nodes) => nodes.validate(depth),
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        match self {
+            ItemImportTree::Ident(ident) => ident.span(),
+            ItemImportTree::Rename(rename) => rename.span(),
+            ItemImportTree::Path(path) => path.span(),
+            ItemImportTree::Group(group) => group.span(),
+            _ => Span::null(),
         }
     }
 }

@@ -3,6 +3,7 @@ use std::hash::Hash;
 use crate::ast::{
     BExpr, BItem, Expr, ExprKind, Ident, Item, Pattern, PatternIdent, PatternKind, PatternType, Ty,
 };
+use crate::span::Span;
 use crate::common_enum;
 use crate::common_struct;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
@@ -19,6 +20,22 @@ common_enum! {
 }
 
 impl BlockStmt {
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Expr(expr) => expr.expr.span(),
+            Self::Item(item) => item.span(),
+            Self::Let(stmt) => Span::union(
+                [
+                    Some(stmt.pat.span()),
+                    stmt.init.as_ref().map(|expr| expr.span()),
+                    stmt.diverge.as_ref().map(|expr| expr.span()),
+                ]
+                .into_iter()
+                .flatten(),
+            ),
+            Self::Noop | Self::Any(_) => Span::null(),
+        }
+    }
     pub fn noop() -> Self {
         Self::Noop
     }
@@ -99,23 +116,35 @@ pub type StmtChunk = Vec<BlockStmt>;
 
 common_struct! {
     pub struct ExprBlock {
+        #[serde(default)]
+        pub span: Span,
         pub stmts: StmtChunk,
     }
 }
 impl ExprBlock {
     pub fn new() -> Self {
-        Self { stmts: Vec::new() }
+        Self {
+            span: Span::null(),
+            stmts: Vec::new(),
+        }
     }
     pub fn new_stmts(stmts: StmtChunk) -> Self {
-        Self { stmts }
+        Self {
+            span: Span::null(),
+            stmts,
+        }
     }
     pub fn new_stmts_expr(stmts: StmtChunk, expr: impl Into<BExpr>) -> Self {
-        let mut this = Self { stmts };
+        let mut this = Self {
+            span: Span::null(),
+            stmts,
+        };
         this.push_expr(expr);
         this
     }
     pub fn new_expr(expr: Expr) -> Self {
         Self {
+            span: Span::null(),
             stmts: vec![BlockStmt::Expr(BlockStmtExpr::new(expr))],
         }
     }
@@ -181,6 +210,14 @@ impl ExprBlock {
             &self.stmts[..self.stmts.len() - 1]
         } else {
             &self.stmts
+        }
+    }
+
+    pub fn span(&self) -> Span {
+        if self.span.is_null() {
+            Span::union(self.stmts.iter().map(BlockStmt::span))
+        } else {
+            self.span
         }
     }
 }

@@ -179,7 +179,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn infer_expr(&mut self, expr: &mut Expr) -> Result<TypeVarId> {
         let span = expr.span();
         let previous = self.current_span;
-        let active = span.or(previous);
+        let active = self.span_or_previous(span, previous);
         self.current_span = active;
         let result = (|| {
             let existing_ty = expr.ty().cloned();
@@ -824,6 +824,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             IntrinsicCallKind::Format => {
                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
             }
+            IntrinsicCallKind::Slice => {
+                let elem_var = self.fresh_type_var();
+                self.bind(elem_var, TypeTerm::Any);
+                self.bind(result_var, TypeTerm::Slice(elem_var));
+            }
             IntrinsicCallKind::Len
             | IntrinsicCallKind::SizeOf
             | IntrinsicCallKind::FieldCount
@@ -1028,7 +1033,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if let Some(var) = self.lookup_associated_function(locator)? {
                     var
                 } else {
-                    self.lookup_locator(locator)?
+                    let var = self.lookup_locator(locator)?;
+                    if let Ok(resolved) = self.resolve_to_ty(var) {
+                        if matches!(
+                            resolved,
+                            Ty::Struct(_) | Ty::Enum(_) | Ty::Structural(_) | Ty::TypeBounds(_)
+                        ) {
+                            self.emit_error(format!(
+                                "cannot invoke type {} as a function",
+                                locator
+                            ));
+                            return Ok(self.error_type_var());
+                        }
+                    }
+                    var
                 }
             }
             ExprInvokeTarget::Expr(expr) => self.infer_expr(expr.as_mut())?,
@@ -1111,7 +1129,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 if select.field.name.as_str() == "len" && invoke.args.is_empty() {
                     if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
-                        if Self::is_collection_with_len(&obj_ty) {
+                        let peeled = Self::peel_reference(obj_ty.clone());
+                        if matches!(peeled, Ty::Primitive(TypePrimitive::String))
+                            || Self::is_collection_with_len(&obj_ty)
+                        {
                             let result_var = self.fresh_type_var();
                             self.bind(
                                 result_var,
@@ -1121,6 +1142,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 }
+
                 if let Some(field_var) =
                     self.try_infer_field_function_call(obj_var, &select.field)?
                 {
@@ -1914,6 +1936,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     if let Some(var) = self.lookup_unique_trait_method(field)? {
                         return Ok(var);
                     }
+                    if self.lossy_mode {
+                        let var = self.fresh_type_var();
+                        self.bind(var, TypeTerm::Any);
+                        return Ok(var);
+                    }
                 }
                 self.emit_error(format!(
                     "cannot call method {} on value of type {}",
@@ -1922,11 +1949,37 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.error_type_var());
             }
         };
-        let record = self
+        let short_name = struct_name.rsplit("::").next().unwrap_or(&struct_name);
+        let mut struct_key = struct_name.clone();
+        let mut record = self
             .struct_methods
-            .get(&struct_name)
+            .get(&struct_key)
             .and_then(|methods| methods.get(field.as_str()))
             .cloned();
+        if record.is_none() && short_name != struct_name {
+            if let Some(found) = self
+                .struct_methods
+                .keys()
+                .find(|key| key.rsplit("::").next() == Some(short_name))
+                .cloned()
+            {
+                struct_key = found;
+                record = self
+                    .struct_methods
+                    .get(&struct_key)
+                    .and_then(|methods| methods.get(field.as_str()))
+                    .cloned();
+            } else {
+                record = self
+                    .struct_methods
+                    .get(short_name)
+                    .and_then(|methods| methods.get(field.as_str()))
+                    .cloned();
+                if record.is_some() {
+                    struct_key = short_name.to_string();
+                }
+            }
+        }
         if let Some(record) = record {
             if let Some(expected) = record.receiver_ty.as_ref() {
                 let receiver_var = self.type_from_ast_ty(expected)?;
@@ -1939,9 +1992,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if let Some(scheme) = record.scheme.as_ref() {
                 return Ok(self.instantiate_scheme(scheme));
             }
-            if let Some(var) = self.lookup_env_var(field.as_str()) {
+        }
+
+        let qualified = format!("{}::{}", struct_key, field.as_str());
+        if let Some(var) = self.lookup_env_var(&qualified) {
+            return Ok(var);
+        }
+        if short_name != struct_key {
+            let fallback = format!("{}::{}", short_name, field.as_str());
+            if let Some(var) = self.lookup_env_var(&fallback) {
                 return Ok(var);
             }
+        }
+        if let Some(var) = self.lookup_env_var(field.as_str()) {
+            return Ok(var);
         }
         self.emit_error(format!(
             "unknown method {} on struct {}",
@@ -2168,11 +2232,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             other => {
-                self.emit_error(format!(
-                    "cannot access field {} on value of type {}",
-                    field, other
-                ));
-                Ok(self.error_type_var())
+                if self.lossy_mode && matches!(other, Ty::Any(_) | Ty::Unknown(_)) {
+                    let var = self.fresh_type_var();
+                    self.bind(var, TypeTerm::Any);
+                    Ok(var)
+                } else {
+                    self.emit_error(format!(
+                        "cannot access field {} on value of type {}",
+                        field, other
+                    ));
+                    Ok(self.error_type_var())
+                }
             }
         }
     }

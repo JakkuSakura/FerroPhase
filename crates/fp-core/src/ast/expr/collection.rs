@@ -4,11 +4,17 @@ use crate::ast::{
 };
 use crate::common_enum;
 use crate::common_struct;
+use crate::span::Span;
 
 common_struct! {
     pub struct ExprIntrinsicContainerEntry {
         pub key: Expr,
         pub value: Expr,
+    }
+}
+impl ExprIntrinsicContainerEntry {
+    pub fn span(&self) -> Span {
+        Span::union([self.key.span(), self.value.span()])
     }
 }
 
@@ -24,6 +30,22 @@ common_enum! {
         HashMapEntries {
             entries: Vec<ExprIntrinsicContainerEntry>,
         },
+    }
+}
+
+impl ExprIntrinsicContainer {
+    pub fn span(&self) -> Span {
+        match self {
+            ExprIntrinsicContainer::VecElements { elements } => {
+                Span::union(elements.iter().map(Expr::span))
+            }
+            ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                Span::union([elem.span(), len.span()])
+            }
+            ExprIntrinsicContainer::HashMapEntries { entries } => {
+                Span::union(entries.iter().map(ExprIntrinsicContainerEntry::span))
+            }
+        }
     }
 }
 
@@ -54,11 +76,16 @@ impl ExprIntrinsicContainer {
     pub fn into_const_expr(self) -> Expr {
         match self {
             ExprIntrinsicContainer::VecElements { elements } => {
-                let array_expr = ExprKind::Array(ExprArray { values: elements }).into();
+                let array_expr =
+                    ExprKind::Array(ExprArray { span: Span::null(), values: elements }).into();
                 make_const_collection_call(vec_from_call(array_expr))
             }
             ExprIntrinsicContainer::VecRepeat { elem, len } => {
-                let repeat = ExprArrayRepeat { elem, len };
+                let repeat = ExprArrayRepeat {
+                    span: Span::null(),
+                    elem,
+                    len,
+                };
                 let array_expr = ExprKind::ArrayRepeat(repeat).into();
                 make_const_collection_call(vec_from_call(array_expr))
             }
@@ -67,12 +94,14 @@ impl ExprIntrinsicContainer {
                     .into_iter()
                     .map(|entry| {
                         let tuple = ExprTuple {
+                            span: Span::null(),
                             values: vec![entry.key, entry.value],
                         };
                         ExprKind::Tuple(tuple).into()
                     })
                     .collect();
-                let array_expr = ExprKind::Array(ExprArray { values: tuples }).into();
+                let array_expr =
+                    ExprKind::Array(ExprArray { span: Span::null(), values: tuples }).into();
                 make_const_collection_call(hash_map_from_call(array_expr))
             }
         }
@@ -139,7 +168,7 @@ impl ExprIntrinsicContainer {
                     let mut entries = Vec::with_capacity(array.values.len());
                     for value in &array.values {
                         match value.kind() {
-                            ExprKind::Tuple(tuple) if tuple.values.len() == 2 => {
+                                ExprKind::Tuple(tuple) if tuple.values.len() == 2 => {
                                 entries.push(ExprIntrinsicContainerEntry {
                                     key: tuple.values[0].clone(),
                                     value: tuple.values[1].clone(),
@@ -167,6 +196,7 @@ impl ExprIntrinsicContainer {
 fn make_const_collection_call(expr: Expr) -> Expr {
     let block = ExprBlock::new_expr(expr);
     ExprKind::ConstBlock(ExprConstBlock {
+        span: Span::null(),
         expr: Expr::block(block).into(),
     })
     .into()
@@ -185,6 +215,7 @@ fn make_function_call(path: &[&str], args: Vec<Expr>) -> Expr {
         path.iter().map(|segment| Ident::new(*segment)).collect(),
     ));
     ExprKind::Invoke(ExprInvoke {
+        span: Span::null(),
         target: ExprInvokeTarget::Function(locator),
         args,
     })
@@ -269,10 +300,12 @@ mod tests {
     #[test]
     fn hashmap_from_array_of_tuples_maps_entries() {
         let tuple1 = ExprKind::Tuple(ExprTuple {
+            span: Span::null(),
             values: vec![Expr::unit(), Expr::unit()],
         })
         .into();
         let tuple2 = ExprKind::Tuple(ExprTuple {
+            span: Span::null(),
             values: vec![Expr::unit(), Expr::unit()],
         })
         .into();

@@ -865,6 +865,116 @@ impl LirGenerator {
                             "print/println must be emitted as statements".to_string(),
                         ))
                     }
+                    IntrinsicCallKind::Slice => {
+                        if args.len() != 3 {
+                            fp_core::diagnostics::report_warning_with_context(
+                                "mir→lir",
+                                format!(
+                                    "slice intrinsic expects 3 arguments, got {}; lowering to undef",
+                                    args.len()
+                                ),
+                            );
+                            let fallback_ty =
+                                destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
+                            result_value = Some(lir::LirValue::Constant(lir::LirConstant::Undef(
+                                fallback_ty,
+                            )));
+                            return Ok(instructions);
+                        }
+
+                        let base_op = &args[0];
+                        let start_op = &args[1];
+                        let end_op = &args[2];
+
+                        let base_value = self.transform_operand(base_op)?;
+                        instructions.extend(self.take_queued_instructions());
+                        let start_value = self.transform_operand(start_op)?;
+                        instructions.extend(self.take_queued_instructions());
+                        let end_value = self.transform_operand(end_op)?;
+                        instructions.extend(self.take_queued_instructions());
+
+                        let base_lir_ty = self.type_of_operand(base_op);
+                        let elem_lir_ty = destination_lir_ty
+                            .as_ref()
+                            .and_then(Self::slice_element_type)
+                            .or_else(|| match base_lir_ty.as_ref() {
+                                Some(lir::LirType::Struct { .. }) => {
+                                    base_lir_ty.as_ref().and_then(Self::slice_element_type)
+                                }
+                                Some(lir::LirType::Ptr(elem)) => Some((**elem).clone()),
+                                _ => None,
+                            })
+                            .unwrap_or(lir::LirType::I8);
+
+                        let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
+                        let base_ptr = match base_lir_ty.as_ref() {
+                            Some(lir::LirType::Struct { .. })
+                                if Self::slice_element_type(
+                                    base_lir_ty.as_ref().unwrap(),
+                                )
+                                .is_some() =>
+                            {
+                                self.extract_slice_field(
+                                    base_value,
+                                    0,
+                                    ptr_ty.clone(),
+                                    &mut instructions,
+                                )
+                            }
+                            Some(lir::LirType::Ptr(_)) => base_value,
+                            other => {
+                                fp_core::diagnostics::report_warning_with_context(
+                                    "mir→lir",
+                                    format!(
+                                        "slice intrinsic base type {:?} not supported; lowering to undef",
+                                        other
+                                    ),
+                                );
+                                let fallback_ty =
+                                    destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
+                                result_value = Some(lir::LirValue::Constant(
+                                    lir::LirConstant::Undef(fallback_ty),
+                                ));
+                                return Ok(instructions);
+                            }
+                        };
+
+                        let len_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: len_id,
+                            kind: lir::LirInstructionKind::Sub(end_value.clone(), start_value.clone()),
+                            type_hint: Some(lir::LirType::I64),
+                            debug_info: None,
+                        });
+                        let len_value = lir::LirValue::Register(len_id);
+
+                        let gep_id = self.next_id();
+                        instructions.push(lir::LirInstruction {
+                            id: gep_id,
+                            kind: lir::LirInstructionKind::GetElementPtr {
+                                ptr: base_ptr,
+                                indices: vec![start_value],
+                                inbounds: true,
+                            },
+                            type_hint: Some(ptr_ty.clone()),
+                            debug_info: None,
+                        });
+                        let slice_ptr = lir::LirValue::Register(gep_id);
+
+                        if matches!(destination_lir_ty, Some(lir::LirType::Ptr(_))) {
+                            result_value = Some(slice_ptr);
+                            return Ok(instructions);
+                        }
+
+                        let slice_value = self.build_slice_value_with_len_value(
+                            slice_ptr,
+                            len_value,
+                            &elem_lir_ty,
+                            &mut instructions,
+                        );
+                        result_value = Some(slice_value);
+                        return Ok(instructions);
+                    }
                     _ => {
                         fp_core::diagnostics::report_warning_with_context(
                             "mir→lir",

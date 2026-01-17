@@ -232,6 +232,19 @@ struct ReceiverBinding {
     shared: Option<Arc<Mutex<Value>>>,
 }
 
+struct SpanGuard<'ctx> {
+    interpreter: *mut AstInterpreter<'ctx>,
+    prev: Option<Span>,
+}
+
+impl<'ctx> Drop for SpanGuard<'ctx> {
+    fn drop(&mut self) {
+        unsafe {
+            (*self.interpreter).current_span = self.prev;
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct GenericTemplate {
     function: ItemDefFunction,
@@ -300,6 +313,7 @@ pub struct AstInterpreter<'ctx> {
     imported_types: HashSet<String>,
     loop_depth: usize,
     function_depth: usize,
+    current_span: Option<Span>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -348,6 +362,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             imported_types: HashSet::new(),
             loop_depth: 0,
             function_depth: 0,
+            current_span: None,
         }
     }
 
@@ -526,6 +541,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         let quote = ExprQuote {
+            span: Span::null(),
             block: ExprBlock::new_stmts(vec![BlockStmt::Item(Box::new(quoted_item))]),
             kind: Some(QuoteFragmentKind::Item),
         };
@@ -536,6 +552,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 continue;
             };
             let mut invoke = ExprInvoke {
+                span: Span::null(),
                 target: ExprInvokeTarget::Function(locator.clone()),
                 args: vec![expr],
             };
@@ -3768,7 +3785,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn emit_error(&mut self, message: impl Into<String>) {
-        self.emit_error_at(None, message);
+        self.emit_error_at(self.current_span, message);
     }
 
     fn emit_warning(&mut self, message: impl Into<String>) {
@@ -3780,10 +3797,21 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn emit_error_at(&mut self, span: Option<Span>, message: impl Into<String>) {
         let mut diagnostic =
             Diagnostic::error(message.into()).with_source_context(self.diagnostic_context);
-        if let Some(span) = span {
+        if let Some(span) = span.or(self.current_span) {
             diagnostic = diagnostic.with_span(span);
         }
         self.push_diagnostic(diagnostic);
+    }
+
+    fn push_span(&mut self, span: Option<Span>) -> SpanGuard<'ctx> {
+        let prev = self.current_span;
+        if span.is_some() {
+            self.current_span = span;
+        }
+        SpanGuard {
+            interpreter: self as *mut _,
+            prev,
+        }
     }
 
     fn push_diagnostic(&mut self, diagnostic: Diagnostic) {

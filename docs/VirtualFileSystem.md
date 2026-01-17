@@ -142,7 +142,7 @@ pub enum ProviderError {
 }
 ```
 
-### CargoPackageProvider (`fp_rust::package`)
+### CargoPackageProvider (`fp_lang::package`)
 
 - Implemented in the `fp-rust` crate to keep Cargo specifics out of `fp-core`.
 - Reads workspace metadata via `cargo metadata` or by parsing `Cargo.toml`.
@@ -152,7 +152,7 @@ pub enum ProviderError {
 - Supports `refresh()` by re-running metadata when `Cargo.toml` or lockfiles
   change.
 
-### RustModuleProvider (`fp_rust::package`)
+### FerroModuleProvider (`fp_lang::package`)
 
 - Wraps any `PackageProvider` that exposes Rust sources (typically the Cargo
   adapter) and scans module trees under `src/`.
@@ -181,7 +181,7 @@ real project directories.
         ┌───────────────────────────────────┐
         │         PackageProvider           │
         │ ┌───────────────────────────────┐ │
-        │ │ Cargo (fp_rust::package) │ │
+        │ │ Cargo (fp_lang::package) │ │
         │ └───────────────────────────────┘ │
         └───────────────────────────────────┘
                       │
@@ -189,7 +189,7 @@ real project directories.
         ┌───────────────────────────────────┐
         │          ModuleProvider           │
         │ ┌───────────────────────────────┐ │
-        │ │ Rust modules (fp_rust)  │ │
+        │ │ Ferro modules (fp_lang) │ │
         │ └───────────────────────────────┘ │
         └───────────────────────────────────┘
 ```

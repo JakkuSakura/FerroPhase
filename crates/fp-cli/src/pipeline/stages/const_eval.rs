@@ -1,5 +1,6 @@
 use super::super::*;
 use fp_core::ast::Node;
+use fp_core::config;
 use fp_interpret::const_eval::{
     ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
 };
@@ -11,6 +12,7 @@ impl Pipeline {
         ast: &mut Node,
         options: &PipelineOptions,
     ) -> Result<ConstEvalOutcome, CliError> {
+        let tolerate_errors = options.error_tolerance.enabled || config::lossy_mode();
         let mut std_modules = Vec::new();
         if !matches!(options.target, BackendKind::Interpret) {
             for std_path in runtime_std_paths() {
@@ -48,11 +50,26 @@ impl Pipeline {
             serializer: self.serializer.clone(),
             std_modules,
         };
-        let ConstEvalResult {
-            ast: next_ast,
-            outcome,
-        } = self.run_pipeline_stage(STAGE_CONST_EVAL, stage, context, options)?;
-        *ast = next_ast;
-        Ok(outcome)
+        match self.run_pipeline_stage(STAGE_CONST_EVAL, stage, context, options) {
+            Ok(ConstEvalResult {
+                ast: next_ast,
+                outcome,
+            }) => {
+                *ast = next_ast;
+                Ok(outcome)
+            }
+            Err(err) => {
+                if tolerate_errors {
+                    let diagnostic = Diagnostic::warning(
+                        "const-eval failed; continuing due to error tolerance".to_string(),
+                    )
+                    .with_source_context(STAGE_CONST_EVAL);
+                    diag::emit(&[diagnostic], Some(STAGE_CONST_EVAL), options);
+                    Ok(ConstEvalOutcome::default())
+                } else {
+                    Err(err)
+                }
+            }
+        }
     }
 }

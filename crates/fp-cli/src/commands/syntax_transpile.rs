@@ -11,9 +11,9 @@ use crate::{
 use clap::Args;
 use console::style;
 use fp_core::ast::{AstSerializer, Node};
+use fp_lang::PrettyAstSerializer;
 use fp_csharp::CSharpSerializer;
 use fp_python::PythonSerializer;
-use fp_rust::printer::RustPrinter;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_wit::WorldMode;
 use fp_wit::{WitOptions, WitSerializer};
@@ -239,7 +239,7 @@ fn syntax_transpile_node(
             })
         }
         crate::languages::backend::LanguageTarget::Rust => {
-            let serializer = RustPrinter::new_with_rustfmt();
+            let serializer = PrettyAstSerializer::new();
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;

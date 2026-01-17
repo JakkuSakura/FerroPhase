@@ -1,4 +1,5 @@
 use crate::ast::{FunctionSignature, Ident, Ty, TySlot, TypeBounds};
+use crate::span::Span;
 use crate::common_struct;
 
 common_struct! {
@@ -7,6 +8,18 @@ common_struct! {
         pub ty_annotation: TySlot,
         pub name: Ident,
         pub ty: Ty,
+    }
+}
+impl ItemDeclConst {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                Some(self.ty.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
     }
 }
 
@@ -18,6 +31,18 @@ common_struct! {
         pub ty: Ty,
     }
 }
+impl ItemDeclStatic {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                Some(self.ty.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
+}
 common_struct! {
     pub struct ItemDeclType {
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -26,11 +51,35 @@ common_struct! {
         pub bounds: TypeBounds,
     }
 }
+impl ItemDeclType {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                Some(self.bounds.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
+    }
+}
 common_struct! {
     pub struct ItemDeclFunction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty_annotation: TySlot,
         pub name: Ident,
         pub sig: FunctionSignature,
+    }
+}
+impl ItemDeclFunction {
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.ty_annotation.as_ref().map(Ty::span),
+                Some(self.sig.span()),
+            ]
+            .into_iter()
+            .flatten(),
+        )
     }
 }

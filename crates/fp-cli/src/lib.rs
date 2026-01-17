@@ -15,7 +15,6 @@ pub mod utils;
 // Re-export core types for convenience, avoiding conflicts
 pub use fp_backend::*;
 pub use fp_core::{Error as CoreError, Result as CoreResult, ast, context, ops, span};
-pub use fp_rust::parser;
 
 // CLI-specific error handling
 pub mod error {

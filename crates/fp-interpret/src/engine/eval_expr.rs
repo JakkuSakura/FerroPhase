@@ -407,6 +407,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_expr(&mut self, expr: &mut Expr) -> Value {
+        let _guard = self.push_span(expr.span);
         let expr_ty_snapshot = expr.ty().cloned();
 
         // Check if we need to specialize a function reference before matching

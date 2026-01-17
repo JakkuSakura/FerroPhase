@@ -734,6 +734,7 @@ fn lower_interface_member(member: &TsTypeElement) -> Option<StructuralField> {
 
 fn option_ty(inner: Ty) -> Ty {
     let invoke = ExprInvoke {
+        span: fp_core::span::Span::null(),
         target: ExprInvokeTarget::Function(Locator::ident("option")),
         args: vec![Expr::value(Value::Type(inner))],
     };

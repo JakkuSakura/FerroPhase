@@ -1,5 +1,5 @@
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
-use crate::syntax::{SyntaxElement, SyntaxKind, SyntaxNode};
+use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant, Expr, ExprKind,
     ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item,
@@ -744,8 +744,16 @@ fn lower_item_macro(node: &SyntaxNode) -> Result<ItemMacro, LowerItemsError> {
             _ => None,
         })
         .unwrap_or(MacroDelimiter::Brace);
+    let mut tokens = Vec::new();
+    collect_tokens(node, &mut tokens);
+    let tokens_text = tokens
+        .iter()
+        .filter(|tok| !tok.is_trivia())
+        .map(|tok| tok.text.as_str())
+        .collect::<Vec<_>>()
+        .join(" ");
     Ok(ItemMacro {
-        invocation: MacroInvocation::new(Path::from_ident(name), delimiter, String::new())
+        invocation: MacroInvocation::new(Path::from_ident(name), delimiter, tokens_text)
             .with_span(node.span),
     })
 }
@@ -880,6 +888,7 @@ fn lower_bound_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerItemsError>
             lower_type_from_cst(inner).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
         let inner_expr = Expr::value(Value::Type(ty));
         let expr = ExprKind::UnOp(ExprUnOp {
+            span: fp_core::span::Span::null(),
             op: UnOpKind::Not,
             val: Box::new(inner_expr),
         });

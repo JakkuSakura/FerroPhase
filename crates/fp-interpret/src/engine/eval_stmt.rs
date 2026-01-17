@@ -4,6 +4,16 @@ impl<'ctx> AstInterpreter<'ctx> {
     // Evaluate a single block statement during const-eval.
     // Returns Some(value) if the statement is an expression statement that yields a value.
     pub(super) fn eval_stmt(&mut self, stmt: &mut BlockStmt) -> Option<Value> {
+        let span = match stmt {
+            BlockStmt::Expr(expr_stmt) => expr_stmt.expr.span,
+            BlockStmt::Let(stmt_let) => stmt_let
+                .init
+                .as_ref()
+                .and_then(|expr| expr.span),
+            BlockStmt::Item(item) => item.span,
+            BlockStmt::Noop | BlockStmt::Any(_) => None,
+        };
+        let _guard = self.push_span(span);
         match stmt {
             BlockStmt::Expr(expr_stmt) => {
                 if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {

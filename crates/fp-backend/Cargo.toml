@@ -17,10 +17,8 @@ tracing = "0.1"
 syn = "2"
 proc-macro2 = "1"
 eyre = "0.6"
-fp-rust = { path = "../fp-rust" }
 
 [dev-dependencies]
-fp-rust = { path = "../fp-rust" }
 syn = "2"
 quote = "1"
 proc-macro2 = "1"

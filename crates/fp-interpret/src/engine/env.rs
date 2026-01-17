@@ -39,7 +39,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    pub(super) fn lookup_value(&self, name: &str) -> Option<Value> {
+    pub fn lookup_value(&self, name: &str) -> Option<Value> {
         for scope in self.value_env.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Some(value.value());
@@ -98,7 +98,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    pub(super) fn pattern_matches(&mut self, pattern: &Pattern, value: &Value) -> bool {
+    pub fn pattern_matches(&mut self, pattern: &Pattern, value: &Value) -> bool {
         match pattern.kind() {
             PatternKind::Wildcard(_) => true,
             PatternKind::Ident(_) => {

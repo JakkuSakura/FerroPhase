@@ -4,18 +4,19 @@
 
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
+use fp_core::ops::BinOpKind;
+use fp_core::pretty::{PrettyOptions, pretty};
 use fp_core::Result;
-use fp_rust::printer::RustPrinter;
-use fp_rust::{shll_parse_expr, shll_parse_value};
 use pretty_assertions::assert_eq;
-use std::sync::Arc;
+
+fn int_expr(value: i64) -> Expr {
+    Expr::value(Value::int(value))
+}
 
 // ===== CORE AST VALUE TESTS =====
 
 #[test]
 fn test_ast_value_creation() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test creation of basic AST values
     let int_val = Value::int(42);
     let bool_val = Value::bool(true);
@@ -26,21 +27,19 @@ fn test_ast_value_creation() -> Result<()> {
     assert!(unit_val.is_unit());
 
     // Test value display
-    assert!(!int_val.to_string().is_empty());
-    assert!(!bool_val.to_string().is_empty());
-    assert!(!string_val.to_string().is_empty());
+    assert!(!format!("{int_val:?}").is_empty());
+    assert!(!format!("{bool_val:?}").is_empty());
+    assert!(!format!("{string_val:?}").is_empty());
 
     Ok(())
 }
 
 #[test]
 fn test_ast_value_comparison() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test that values can be compared
-    let val1 = shll_parse_value!(42);
-    let val2 = shll_parse_value!(42);
-    let val3 = shll_parse_value!(24);
+    let val1 = Value::int(42);
+    let val2 = Value::int(42);
+    let val3 = Value::int(24);
 
     assert_eq!(val1, val2);
     assert_ne!(val1, val3);
@@ -50,10 +49,8 @@ fn test_ast_value_comparison() -> Result<()> {
 
 #[test]
 fn test_ast_expr_parsing() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test that expressions parse into correct AST structures
-    let expr = shll_parse_expr!(42);
+    let expr = int_expr(42);
     match expr.kind() {
         ExprKind::Value(val) => match val.as_ref() {
             Value::Int(int_val) => assert_eq!(int_val.value, 42),
@@ -69,8 +66,6 @@ fn test_ast_expr_parsing() -> Result<()> {
 
 #[test]
 fn test_shared_scoped_context_creation() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test basic context creation and management
     let ctx = SharedScopedContext::new();
 
@@ -92,10 +87,13 @@ fn test_shared_scoped_context_creation() -> Result<()> {
 
 #[test]
 fn test_complex_ast_structures() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test that complex AST structures can be built
-    let expr = shll_parse_expr!(5 + 3);
+    let expr = Expr::from(ExprKind::BinOp(ExprBinOp {
+        span: fp_core::span::Span::null(),
+        kind: BinOpKind::Add,
+        lhs: Box::new(int_expr(5)),
+        rhs: Box::new(int_expr(3)),
+    }));
 
     // Verify the AST structure is correct
     match expr.kind() {
@@ -116,10 +114,18 @@ fn test_complex_ast_structures() -> Result<()> {
 
 #[test]
 fn test_nested_ast_expressions() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test nested expression parsing
-    let expr = shll_parse_expr!(2 + 3 * 4);
+    let expr = Expr::from(ExprKind::BinOp(ExprBinOp {
+        span: fp_core::span::Span::null(),
+        kind: BinOpKind::Add,
+        lhs: Box::new(int_expr(2)),
+        rhs: Box::new(Expr::from(ExprKind::BinOp(ExprBinOp {
+            span: fp_core::span::Span::null(),
+            kind: BinOpKind::Mul,
+            lhs: Box::new(int_expr(3)),
+            rhs: Box::new(int_expr(4)),
+        }))),
+    }));
 
     // Should parse as 2 + (3 * 4) due to precedence
     match expr.kind() {
@@ -142,11 +148,9 @@ fn test_nested_ast_expressions() -> Result<()> {
 
 #[test]
 fn test_ast_serialization() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test that AST nodes can be serialized to strings
-    let expr = shll_parse_expr!(42);
-    let serialized = expr.to_string();
+    let expr = int_expr(42);
+    let serialized = format!("{}", pretty(&expr, PrettyOptions::default()));
 
     assert!(
         !serialized.is_empty(),
@@ -157,8 +161,13 @@ fn test_ast_serialization() -> Result<()> {
         "Serialized expression should contain the value"
     );
 
-    let complex_expr = shll_parse_expr!(1 + 2);
-    let complex_serialized = complex_expr.to_string();
+    let complex_expr = Expr::from(ExprKind::BinOp(ExprBinOp {
+        span: fp_core::span::Span::null(),
+        kind: BinOpKind::Add,
+        lhs: Box::new(int_expr(1)),
+        rhs: Box::new(int_expr(2)),
+    }));
+    let complex_serialized = format!("{}", pretty(&complex_expr, PrettyOptions::default()));
 
     assert!(
         !complex_serialized.is_empty(),
@@ -172,8 +181,6 @@ fn test_ast_serialization() -> Result<()> {
 
 #[test]
 fn test_core_error_types() -> Result<()> {
-    register_threadlocal_serializer(Arc::new(RustPrinter::new()));
-
     // Test that core error types can be created and handled
     // This is a basic test to ensure error handling infrastructure works
 

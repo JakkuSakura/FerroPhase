@@ -2,10 +2,52 @@ use fp_backend::transformations::HirGenerator;
 use fp_core::error::Result as OptimizeResult;
 use fp_core::hir::{self, FormatTemplatePart, ItemKind, StmtKind};
 use fp_core::intrinsics::IntrinsicCallKind;
-use fp_rust::parser::RustParser;
-use std::path::PathBuf;
+use fp_core::ops::BinOpKind;
 
 mod support;
+
+fn ident(name: &str) -> fp_core::ast::Ident {
+    fp_core::ast::Ident::new(name)
+}
+
+fn int_ty() -> fp_core::ast::Ty {
+    fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+        fp_core::ast::TypeInt::I32,
+    ))
+}
+
+fn ty_ident(name: &str) -> fp_core::ast::Ty {
+    fp_core::ast::Ty::ident(ident(name))
+}
+
+fn call_expr(path: &[&str], args: Vec<fp_core::ast::Expr>) -> fp_core::ast::Expr {
+    let segments = path.iter().map(|s| ident(s)).collect();
+    let target = fp_core::ast::ExprInvokeTarget::Function(fp_core::ast::Locator::path(
+        fp_core::ast::Path::new(segments),
+    ));
+    fp_core::ast::Expr::from(fp_core::ast::ExprKind::Invoke(fp_core::ast::ExprInvoke {
+        span: fp_core::span::Span::null(),
+        target,
+        args,
+    }))
+}
+
+fn make_fn(
+    name: &str,
+    params: Vec<(fp_core::ast::Ident, fp_core::ast::Ty)>,
+    ret: fp_core::ast::Ty,
+    body: fp_core::ast::Expr,
+) -> fp_core::ast::Item {
+    let func = fp_core::ast::ItemDefFunction::new_simple(ident(name), body.into())
+        .with_params(params)
+        .with_ret_ty(ret);
+    fp_core::ast::Item::from(fp_core::ast::ItemKind::DefFunction(func))
+}
+
+fn transform_file(file: fp_core::ast::File) -> OptimizeResult<hir::Program> {
+    let mut generator = HirGenerator::new();
+    generator.transform_file(&file)
+}
 
 #[test]
 fn transforms_literal_expression_into_main_function() -> OptimizeResult<()> {
@@ -38,6 +80,7 @@ fn propagates_unimplemented_expression_error() {
 
     let mut generator = HirGenerator::new();
     let unsupported: Expr = ExprKind::Try(ExprTry {
+        span: fp_core::span::Span::null(),
         expr: Box::new(Expr::unit()),
     })
     .into();
@@ -47,26 +90,63 @@ fn propagates_unimplemented_expression_error() {
 
 #[test]
 fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
-    let source = r#"
-        pub mod math {
-            pub fn add(x: i32, y: i32) -> i32 { x + y }
-        }
+    let add_body = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
+        fp_core::ast::ExprBinOp {
+            span: fp_core::span::Span::null(),
+            kind: BinOpKind::Add,
+            lhs: Box::new(fp_core::ast::Expr::ident(ident("x"))),
+            rhs: Box::new(fp_core::ast::Expr::ident(ident("y"))),
+        },
+    ));
+    let add_fn = make_fn(
+        "add",
+        vec![(ident("x"), int_ty()), (ident("y"), int_ty())],
+        int_ty(),
+        fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(add_body)),
+    );
+    let math_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
+        fp_core::ast::Module {
+            name: ident("math"),
+            items: vec![add_fn],
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        },
+    ));
 
-        use math::add as sum;
+    let import_tree = fp_core::ast::ItemImportTree::Path(fp_core::ast::ItemImportPath {
+        segments: vec![
+            fp_core::ast::ItemImportTree::Ident(ident("math")),
+            fp_core::ast::ItemImportTree::Rename(fp_core::ast::ItemImportRename {
+                from: ident("add"),
+                to: ident("sum"),
+            }),
+        ],
+    });
+    let import = fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(
+        fp_core::ast::ItemImport {
+            visibility: fp_core::ast::Visibility::Private,
+            tree: import_tree,
+        },
+    ));
 
-        pub fn call_sum(a: i32, b: i32) -> i32 {
-            sum(a, b)
-        }
-    "#;
+    let call_sum_body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(call_expr(
+        &["sum"],
+        vec![
+            fp_core::ast::Expr::ident(ident("a")),
+            fp_core::ast::Expr::ident(ident("b")),
+        ],
+    )));
+    let call_sum = make_fn(
+        "call_sum",
+        vec![(ident("a"), int_ty()), (ident("b"), int_ty())],
+        int_ty(),
+        call_sum_body,
+    );
 
-    let parser = RustParser::new();
-    let syn_file = syn::parse_file(source).expect("valid Rust source");
-    let ast_file = parser
-        .parse_file_content(PathBuf::from("<memory>"), syn_file)
-        .expect("AST parsing succeeds");
-
-    let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = transform_file(fp_core::ast::File {
+        path: "<memory>".into(),
+        items: vec![math_module, import, call_sum],
+    })?;
 
     let add_item = program
         .items
@@ -97,7 +177,15 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
 
     if let ItemKind::Function(func) = &call_item.kind {
         let body = func.body.as_ref().expect("call_sum has a body");
-        match &body.value.kind {
+        let expr = match &body.value.kind {
+            hir::ExprKind::Call(_, _) => &body.value,
+            hir::ExprKind::Block(block) => block
+                .expr
+                .as_ref()
+                .expect("block should hold call expression"),
+            other => panic!("expected call expression, found {:?}", other),
+        };
+        match &expr.kind {
             hir::ExprKind::Call(callee, args) => {
                 assert_eq!(args.len(), 2);
                 if let hir::ExprKind::Path(path) = &callee.kind {
@@ -119,28 +207,68 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
 
 #[test]
 fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
-    let source = r#"
-        pub mod math {
-            pub fn add(x: i32, y: i32) -> i32 { x + y }
-        }
+    let add_body = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
+        fp_core::ast::ExprBinOp {
+            span: fp_core::span::Span::null(),
+            kind: BinOpKind::Add,
+            lhs: Box::new(fp_core::ast::Expr::ident(ident("x"))),
+            rhs: Box::new(fp_core::ast::Expr::ident(ident("y"))),
+        },
+    ));
+    let add_fn = make_fn(
+        "add",
+        vec![(ident("x"), int_ty()), (ident("y"), int_ty())],
+        int_ty(),
+        fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(add_body)),
+    );
+    let math_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
+        fp_core::ast::Module {
+            name: ident("math"),
+            items: vec![add_fn],
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        },
+    ));
 
-        pub use math::add;
+    let reexport_tree = fp_core::ast::ItemImportTree::Path(fp_core::ast::ItemImportPath {
+        segments: vec![
+            fp_core::ast::ItemImportTree::Ident(ident("math")),
+            fp_core::ast::ItemImportTree::Ident(ident("add")),
+        ],
+    });
+    let reexport = fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(
+        fp_core::ast::ItemImport {
+            visibility: fp_core::ast::Visibility::Public,
+            tree: reexport_tree,
+        },
+    ));
 
-        pub mod callers {
-            pub fn call(a: i32, b: i32) -> i32 {
-                super::add(a, b)
-            }
-        }
-    "#;
+    let call_body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(call_expr(
+        &["super", "add"],
+        vec![
+            fp_core::ast::Expr::ident(ident("a")),
+            fp_core::ast::Expr::ident(ident("b")),
+        ],
+    )));
+    let call_fn = make_fn(
+        "call",
+        vec![(ident("a"), int_ty()), (ident("b"), int_ty())],
+        int_ty(),
+        call_body,
+    );
+    let callers_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
+        fp_core::ast::Module {
+            name: ident("callers"),
+            items: vec![call_fn],
+            visibility: fp_core::ast::Visibility::Public,
+            is_external: false,
+        },
+    ));
 
-    let parser = RustParser::new();
-    let syn_file = syn::parse_file(source).expect("valid Rust source");
-    let ast_file = parser
-        .parse_file_content(PathBuf::from("<memory>"), syn_file)
-        .expect("AST parsing succeeds");
-
-    let mut generator = HirGenerator::new();
-    let program = generator.transform_file(&ast_file)?;
+    let program = transform_file(fp_core::ast::File {
+        path: "<memory>".into(),
+        items: vec![math_module, reexport, callers_module],
+    })?;
 
     let add_item = program
         .items
@@ -168,7 +296,15 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
 
     if let ItemKind::Function(func) = &callers_item.kind {
         let body = func.body.as_ref().expect("call has a body");
-        match &body.value.kind {
+        let expr = match &body.value.kind {
+            hir::ExprKind::Call(_, _) => &body.value,
+            hir::ExprKind::Block(block) => block
+                .expr
+                .as_ref()
+                .expect("block should hold call expression"),
+            other => panic!("expected call expression, found {:?}", other),
+        };
+        match &expr.kind {
             hir::ExprKind::Call(callee, args) => {
                 assert_eq!(args.len(), 2);
                 if let hir::ExprKind::Path(path) = &callee.kind {
@@ -187,29 +323,6 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     Ok(())
 }
 
-fn transform_source(source: &str) -> OptimizeResult<hir::Program> {
-    let parser = RustParser::new();
-    let syn_file = syn::parse_file(source).expect("valid Rust source");
-    let mut ast_file = parser
-        .parse_file_content(PathBuf::from("<memory>"), syn_file)
-        .expect("AST parsing succeeds");
-
-    // Lower builtin macros and normalize intrinsic forms before HIR generation.
-    let mut node = fp_core::ast::Node::from(fp_core::ast::NodeKind::File(ast_file));
-    fp_core::intrinsics::normalize_intrinsics_with(
-        &mut node,
-        &fp_rust::normalization::RustIntrinsicNormalizer,
-    )
-    .expect("intrinsic normalization");
-    let ast_file = match node.kind() {
-        fp_core::ast::NodeKind::File(f) => f.clone(),
-        _ => unreachable!("expected file node after normalization"),
-    };
-
-    let mut generator = HirGenerator::new();
-    generator.transform_file(&ast_file)
-}
-
 fn find_function<'a>(program: &'a hir::Program, name: &str) -> &'a hir::Function {
     program
         .items
@@ -223,13 +336,44 @@ fn find_function<'a>(program: &'a hir::Program, name: &str) -> &'a hir::Function
 
 #[test]
 fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
-    let program = transform_source(
-        r#"
-        fn main() {
-            println!("value={} and count={} ", 42, 7);
-        }
-    "#,
-    )?;
+    let template = fp_core::ast::Expr::from(fp_core::ast::ExprKind::FormatString(
+        fp_core::ast::ExprStringTemplate {
+            parts: vec![
+                fp_core::ast::FormatTemplatePart::Literal("value=".to_string()),
+                fp_core::ast::FormatTemplatePart::Placeholder(fp_core::ast::FormatPlaceholder {
+                    arg_ref: fp_core::ast::FormatArgRef::Implicit,
+                    format_spec: None,
+                }),
+                fp_core::ast::FormatTemplatePart::Literal(" and count=".to_string()),
+                fp_core::ast::FormatTemplatePart::Placeholder(fp_core::ast::FormatPlaceholder {
+                    arg_ref: fp_core::ast::FormatArgRef::Implicit,
+                    format_spec: None,
+                }),
+                fp_core::ast::FormatTemplatePart::Literal(" ".to_string()),
+            ],
+        },
+    ));
+    let call = fp_core::ast::Expr::from(fp_core::ast::ExprKind::IntrinsicCall(
+        fp_core::ast::ExprIntrinsicCall::new(
+            IntrinsicCallKind::Println,
+            vec![
+                template,
+                fp_core::ast::Expr::value(fp_core::ast::Value::int(42)),
+                fp_core::ast::Expr::value(fp_core::ast::Value::int(7)),
+            ],
+            Vec::new(),
+        ),
+    ));
+    let body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_stmts(vec![
+        fp_core::ast::BlockStmt::Expr(
+            fp_core::ast::BlockStmtExpr::new(call).with_semicolon(true),
+        ),
+    ]));
+    let main_fn = make_fn("main", vec![], fp_core::ast::Ty::unit(), body);
+    let program = transform_file(fp_core::ast::File {
+        path: "<memory>".into(),
+        items: vec![main_fn],
+    })?;
 
     let main_fn = find_function(&program, "main");
     let body = main_fn.body.as_ref().expect("main has body");
@@ -274,13 +418,37 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
 
 #[test]
 fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
-    let program = transform_source(
-        r#"
-        fn main() {
-            print!("prefix: {}", 3.14);
-        }
-    "#,
-    )?;
+    let template = fp_core::ast::Expr::from(fp_core::ast::ExprKind::FormatString(
+        fp_core::ast::ExprStringTemplate {
+            parts: vec![
+                fp_core::ast::FormatTemplatePart::Literal("prefix: ".to_string()),
+                fp_core::ast::FormatTemplatePart::Placeholder(fp_core::ast::FormatPlaceholder {
+                    arg_ref: fp_core::ast::FormatArgRef::Implicit,
+                    format_spec: None,
+                }),
+            ],
+        },
+    ));
+    let call = fp_core::ast::Expr::from(fp_core::ast::ExprKind::IntrinsicCall(
+        fp_core::ast::ExprIntrinsicCall::new(
+            IntrinsicCallKind::Print,
+            vec![
+                template,
+                fp_core::ast::Expr::value(fp_core::ast::Value::decimal(3.14)),
+            ],
+            Vec::new(),
+        ),
+    ));
+    let body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_stmts(vec![
+        fp_core::ast::BlockStmt::Expr(
+            fp_core::ast::BlockStmtExpr::new(call).with_semicolon(true),
+        ),
+    ]));
+    let main_fn = make_fn("main", vec![], fp_core::ast::Ty::unit(), body);
+    let program = transform_file(fp_core::ast::File {
+        path: "<memory>".into(),
+        items: vec![main_fn],
+    })?;
 
     let main_fn = find_function(&program, "main");
     let body = main_fn.body.as_ref().expect("main has body");
@@ -319,14 +487,55 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
 
 #[test]
 fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
-    let program = transform_source(
-        r#"
-        struct Point { x: i32, y: i32 }
+    let point = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefStruct(
+        fp_core::ast::ItemDefStruct::new(
+            ident("Point"),
+            vec![
+                fp_core::ast::StructuralField::new(ident("x"), int_ty()),
+                fp_core::ast::StructuralField::new(ident("y"), int_ty()),
+            ],
+        ),
+    ));
 
-        const SIZE: usize = sizeof!(Point);
-        const FIELDS: usize = field_count!(Point);
-    "#,
-    )?;
+    let sizeof_call = fp_core::ast::Expr::from(fp_core::ast::ExprKind::IntrinsicCall(
+        fp_core::ast::ExprIntrinsicCall::new(
+            IntrinsicCallKind::SizeOf,
+            vec![fp_core::ast::Expr::ident(ident("Point"))],
+            Vec::new(),
+        ),
+    ));
+    let field_count_call = fp_core::ast::Expr::from(fp_core::ast::ExprKind::IntrinsicCall(
+        fp_core::ast::ExprIntrinsicCall::new(
+            IntrinsicCallKind::FieldCount,
+            vec![fp_core::ast::Expr::ident(ident("Point"))],
+            Vec::new(),
+        ),
+    ));
+    let size_const = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Private,
+            name: ident("SIZE"),
+            ty: Some(ty_ident("usize")),
+            value: Box::new(sizeof_call),
+        },
+    ));
+    let fields_const = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Private,
+            name: ident("FIELDS"),
+            ty: Some(ty_ident("usize")),
+            value: Box::new(field_count_call),
+        },
+    ));
+
+    let program = transform_file(fp_core::ast::File {
+        path: "<memory>".into(),
+        items: vec![point, size_const, fields_const],
+    })?;
 
     let mut saw_sizeof = false;
     let mut saw_field_count = false;

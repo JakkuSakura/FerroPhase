@@ -553,7 +553,6 @@ ast::File {
                 kwargs: []
       }
     }
-    pub import fp_rust::t : ()
     pub import std::fmt::Display : ()
     pub type Int = Expr(i64) : i64
     pub type Foo = structural{a: Expr(Int), common: Expr(Int), foo: Expr(Int)} : Foo{a: Expr(Int), common: Expr(Int), foo: Expr(Int)}

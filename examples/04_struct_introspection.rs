@@ -21,27 +21,27 @@ pub fn main() -> () {
     println!("Color size: {} bytes", ::core::mem::size_of::<Color>());
     println!(
         "Point fields: {}",
-        ::fp_rust::intrinsic_field_count::<Point>()
+        field_count!(Point)
     );
     println!(
         "Color fields: {}",
-        ::fp_rust::intrinsic_field_count::<Color>()
+        field_count!(Color)
     );
     println!(
         "Point has x: {}",
-        ::fp_rust::intrinsic_has_field::<Point>("x")
+        hasfield!(Point, "x")
     );
     println!(
         "Point has z: {}",
-        ::fp_rust::intrinsic_has_field::<Point>("z")
+        hasfield!(Point, "z")
     );
     println!(
         "Point methods: {}",
-        ::fp_rust::intrinsic_method_count::<Point>()
+        method_count!(Point)
     );
     println!(
         "Color methods: {}",
-        ::fp_rust::intrinsic_method_count::<Color>()
+        method_count!(Color)
     );
     println!("\n✓ Introspection completed!");
     println!("\n=== Transpilation Demo ===");

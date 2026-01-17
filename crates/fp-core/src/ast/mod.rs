@@ -1,6 +1,7 @@
 //! AST are trees, so Box<T> is fine
 
 use crate::query::QueryDocument;
+use crate::span::Span;
 use crate::workspace::WorkspaceDocument;
 use crate::{common_enum, common_struct};
 use std::path::PathBuf;
@@ -107,6 +108,14 @@ impl Node {
 
     pub fn kind_mut(&mut self) -> &mut NodeKind {
         &mut self.kind
+    }
+
+    pub fn span(&self) -> Span {
+        match &self.kind {
+            NodeKind::Item(item) => item.span(),
+            NodeKind::Expr(expr) => expr.span(),
+            _ => Span::null(),
+        }
     }
 
     pub fn with_ty_slot(mut self, ty: TySlot) -> Self {

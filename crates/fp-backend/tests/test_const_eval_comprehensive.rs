@@ -2,28 +2,108 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    register_threadlocal_serializer, AstSerializer, ExprKind, File, ItemKind, Node, NodeKind, Value,
+    AstSerializer, ExprKind, File, ItemKind, Node, NodeKind, Value,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
 use fp_interpret::const_eval::ConstEvaluationOrchestrator;
-use fp_rust::{printer::RustPrinter, shll_parse_items};
+use fp_core::query::QuerySerializer;
+use fp_core::ops::BinOpKind;
 
 #[test]
 fn const_eval_replaces_consts_and_records_results() -> Result<()> {
-    let serializer: Arc<dyn AstSerializer> = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(serializer.clone());
+    let serializer: Arc<dyn AstSerializer> = Arc::new(QuerySerializer::new());
+    fn ident(name: &str) -> fp_core::ast::Ident {
+        fp_core::ast::Ident::new(name)
+    }
 
-    let items = shll_parse_items! {
-        const WIDTH: i64 = 6;
-        const HEIGHT: i64 = 7;
-        const AREA: i64 = WIDTH * HEIGHT;
+    let width = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Private,
+            name: ident("WIDTH"),
+            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::I64,
+            ))),
+            value: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(6))),
+        },
+    ));
+    let height = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Private,
+            name: ident("HEIGHT"),
+            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::I64,
+            ))),
+            value: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(7))),
+        },
+    ));
+    let area_expr = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
+        fp_core::ast::ExprBinOp {
+            span: fp_core::span::Span::null(),
+            kind: BinOpKind::Mul,
+            lhs: Box::new(fp_core::ast::Expr::ident(ident("WIDTH"))),
+            rhs: Box::new(fp_core::ast::Expr::ident(ident("HEIGHT"))),
+        },
+    ));
+    let area = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Private,
+            name: ident("AREA"),
+            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::I64,
+            ))),
+            value: Box::new(area_expr),
+        },
+    ));
 
-        mod shapes {
-            pub const EDGE: i64 = 3;
-            pub const PERIMETER: i64 = EDGE * 4;
-        }
-    };
+    let edge = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Public,
+            name: ident("EDGE"),
+            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::I64,
+            ))),
+            value: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(3))),
+        },
+    ));
+    let perimeter_expr = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
+        fp_core::ast::ExprBinOp {
+            span: fp_core::span::Span::null(),
+            kind: BinOpKind::Mul,
+            lhs: Box::new(fp_core::ast::Expr::ident(ident("EDGE"))),
+            rhs: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(4))),
+        },
+    ));
+    let perimeter = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
+        fp_core::ast::ItemDefConst {
+            mutable: None,
+            ty_annotation: None,
+            visibility: fp_core::ast::Visibility::Public,
+            name: ident("PERIMETER"),
+            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
+                fp_core::ast::TypeInt::I64,
+            ))),
+            value: Box::new(perimeter_expr),
+        },
+    ));
+    let shapes = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
+        fp_core::ast::Module {
+            name: ident("shapes"),
+            items: vec![edge, perimeter],
+            visibility: fp_core::ast::Visibility::Private,
+            is_external: false,
+        },
+    ));
+
+    let items = vec![width, height, area, shapes];
 
     let mut ast = Node::file(File {
         path: PathBuf::from("const_eval.fp"),

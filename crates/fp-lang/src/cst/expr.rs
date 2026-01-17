@@ -207,7 +207,7 @@ impl Parser {
                 children.push(SyntaxElement::Node(Box::new(ty)));
             } else if kind == SyntaxKind::ExprRange && self.range_end_is_missing() {
                 let span =
-                    span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                    span_for_children(&children);
                 left = SyntaxNode::new(kind, children, span);
                 continue;
             } else {
@@ -215,7 +215,7 @@ impl Parser {
                 children.push(SyntaxElement::Node(Box::new(right)));
             }
 
-            let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+            let span = span_for_children(&children);
             left = SyntaxNode::new(kind, children, span);
         }
 
@@ -243,7 +243,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
             let expr = self.parse_expr_bp(255)?;
             children.push(SyntaxElement::Node(Box::new(expr)));
-            let span = span_for_children(&children).unwrap_or(start_span);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::ExprAwait, children, span));
         }
 
@@ -298,7 +298,7 @@ impl Parser {
                 }
                 let expr = self.parse_expr_bp_inner(255, allow_struct_literal)?;
                 children.push(SyntaxElement::Node(Box::new(expr)));
-                let span = span_for_children(&children).unwrap_or(start_span);
+                let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::ExprUnary, children, span))
             }
             _ => self.parse_primary(),
@@ -338,7 +338,7 @@ impl Parser {
                     self.bump_trivia_into(&mut children);
                     self.bump_token_into(&mut children);
                     let span =
-                        span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                        span_for_children(&children);
                     base = SyntaxNode::new(SyntaxKind::ExprTry, children, span);
                 }
                 Some(".") => {
@@ -406,7 +406,7 @@ impl Parser {
         self.expect_token_raw("}")?;
         self.bump_token_into(&mut children);
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprBlock, children, span))
     }
 
@@ -473,7 +473,7 @@ impl Parser {
         self.idx = last_idx + 1;
 
         children.push(SyntaxElement::Node(Box::new(item)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::BlockStmtItem, children, span))
     }
 
@@ -521,7 +521,7 @@ impl Parser {
         self.expect_token_raw(";")?;
         self.bump_token_into(&mut children);
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::BlockStmtLet, children, span))
     }
 
@@ -545,7 +545,7 @@ impl Parser {
             self.bump_token_into(&mut children);
         }
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::BlockStmtExpr, children, span))
     }
 
@@ -605,10 +605,10 @@ impl Parser {
         if self.peek_non_trivia_raw() == Some("{") {
             let block = self.parse_block_expr()?;
             children.push(SyntaxElement::Node(Box::new(block)));
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             Ok(SyntaxNode::new(SyntaxKind::ExprQuote, children, span))
         } else {
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             Ok(SyntaxNode::new(SyntaxKind::ExprQuoteToken, children, span))
         }
     }
@@ -634,7 +634,7 @@ impl Parser {
             let token_expr = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(token_expr)));
         }
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprSplice, children, span))
     }
 
@@ -648,7 +648,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
         children.push(SyntaxElement::Node(Box::new(block)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprAsync, children, span))
     }
 
@@ -662,7 +662,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
         children.push(SyntaxElement::Node(Box::new(block)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprConstBlock, children, span))
     }
 
@@ -691,7 +691,7 @@ impl Parser {
                 children.push(SyntaxElement::Node(Box::new(else_block)));
             }
         }
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprIf, children, span))
     }
 
@@ -705,7 +705,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
         children.push(SyntaxElement::Node(Box::new(block)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprLoop, children, span))
     }
 
@@ -722,7 +722,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
         children.push(SyntaxElement::Node(Box::new(block)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprWhile, children, span))
     }
 
@@ -741,7 +741,7 @@ impl Parser {
         match self.peek_non_trivia_raw() {
             Some("_") => {
                 self.bump_token_into(&mut children);
-                let span = span_for_children(&children).unwrap_or(start);
+                let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::PatternWildcard, children, span))
             }
             Some("(") => {
@@ -767,13 +767,13 @@ impl Parser {
 
                 self.expect_token_raw(")")?;
                 self.bump_token_into(&mut children);
-                let span = span_for_children(&children).unwrap_or(start);
+                let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::PatternTuple, children, span))
             }
             _ => {
                 self.expect_ident_token()?;
                 self.bump_token_into(&mut children);
-                let span = span_for_children(&children).unwrap_or(start);
+                let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::PatternIdent, children, span))
             }
         }
@@ -803,7 +803,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         let block = self.parse_block_expr()?;
         children.push(SyntaxElement::Node(Box::new(block)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprFor, children, span))
     }
 
@@ -837,7 +837,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.expect_token_raw("}")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprMatch, children, span))
     }
 
@@ -874,7 +874,7 @@ impl Parser {
             self.parse_expr_bp(0)?
         };
         children.push(SyntaxElement::Node(Box::new(body)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::MatchArm, children, span))
     }
 
@@ -924,7 +924,7 @@ impl Parser {
             self.parse_expr_bp(0)?
         };
         children.push(SyntaxElement::Node(Box::new(body)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprClosure, children, span))
     }
 
@@ -946,7 +946,7 @@ impl Parser {
             let ty = self.parse_type_node_until(&[",", "|"])?;
             typed_children.push(SyntaxElement::Node(Box::new(ty)));
             let span =
-                span_for_children(&typed_children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                span_for_children(&typed_children);
             pat_node = SyntaxNode::new(SyntaxKind::PatternType, typed_children, span);
         }
 
@@ -966,7 +966,7 @@ impl Parser {
             let expr = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(expr)));
         }
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprReturn, children, span))
     }
 
@@ -982,7 +982,7 @@ impl Parser {
             let expr = self.parse_expr_bp(0)?;
             children.push(SyntaxElement::Node(Box::new(expr)));
         }
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprBreak, children, span))
     }
 
@@ -993,7 +993,7 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children); // `continue`
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprContinue, children, span))
     }
 
@@ -1026,7 +1026,7 @@ impl Parser {
 
         if self.peek_non_trivia_normalized() == Some("await") {
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::ExprAwait, children, span));
         }
 
@@ -1034,7 +1034,7 @@ impl Parser {
             Some(TokenKind::Ident) => {
                 self.bump_token_into(&mut children);
                 let span =
-                    span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                    span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::ExprSelect, children, span))
             }
             _ => {
@@ -1072,7 +1072,7 @@ impl Parser {
             return Err(self.error("expected ')' to close call"));
         }
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprCall, children, span))
     }
 
@@ -1098,7 +1098,7 @@ impl Parser {
             return Err(self.error("expected ']' to close index"));
         }
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprIndex, children, span))
     }
 
@@ -1125,7 +1125,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
         }
 
-        let span = span_for_children(&children).unwrap_or(span_start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprRange, children, span))
     }
 
@@ -1153,7 +1153,7 @@ impl Parser {
 
         self.parse_balanced_group_into(open, close, &mut children)?;
 
-        let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprMacroCall, children, span))
     }
 
@@ -1184,7 +1184,7 @@ impl Parser {
                 self.bump_trivia_into(&mut children);
                 self.bump_token_into(&mut children);
                 let span =
-                    span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+                    span_for_children(&children);
                 left = SyntaxNode::new(SyntaxKind::TyOptional, children, span);
                 continue;
             }
@@ -1207,7 +1207,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
             let right = self.parse_type_bp_until(r_bp, stops)?;
             children.push(SyntaxElement::Node(Box::new(right)));
-            let span = span_for_children(&children).unwrap_or_else(|| Span::new(self.file, 0, 0));
+            let span = span_for_children(&children);
             left = SyntaxNode::new(SyntaxKind::TyBinary, children, span);
         }
 
@@ -1247,7 +1247,7 @@ impl Parser {
                 let mut children = Vec::new();
                 self.bump_trivia_into(&mut children);
                 self.bump_token_into(&mut children);
-                let span = span_for_children(&children).unwrap_or(start);
+                let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::TyUnknown, children, span))
             }
             Some("(") => self.parse_paren_type(stops),
@@ -1261,7 +1261,7 @@ impl Parser {
                     let mut children = Vec::new();
                     self.bump_trivia_into(&mut children);
                     self.bump_token_into(&mut children);
-                    let span = span_for_children(&children).unwrap_or(start);
+                    let span = span_for_children(&children);
                     Ok(SyntaxNode::new(SyntaxKind::TyPath, children, span))
                 }
             }
@@ -1282,7 +1282,7 @@ impl Parser {
         let mut children = Vec::new();
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyValue, children, span))
     }
 
@@ -1298,7 +1298,7 @@ impl Parser {
 
         if self.peek_non_trivia_raw() == Some(")") {
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::TyUnit, children, span));
         }
 
@@ -1325,7 +1325,7 @@ impl Parser {
             }
             self.expect_token_raw(")")?;
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::TyTuple, children, span));
         }
 
@@ -1381,7 +1381,7 @@ impl Parser {
 
         let inner = self.parse_type_bp_until(0, stops)?;
         children.push(SyntaxElement::Node(Box::new(inner)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyRef, children, span))
     }
 
@@ -1407,13 +1407,13 @@ impl Parser {
             self.bump_trivia_into(&mut children);
             self.expect_token_raw("]")?;
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::TyArray, children, span));
         }
 
         self.expect_token_raw("]")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TySlice, children, span))
     }
 
@@ -1456,7 +1456,7 @@ impl Parser {
             children.push(SyntaxElement::Node(Box::new(ret)));
         }
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyFn, children, span))
     }
 
@@ -1503,7 +1503,7 @@ impl Parser {
             }
         }
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyImplTraits, children, span))
     }
 
@@ -1551,7 +1551,7 @@ impl Parser {
 
         self.expect_token_raw("}")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyStructural, children, span))
     }
 
@@ -1569,7 +1569,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         let ty = self.parse_type_bp_until(0, &[",", "}"])?;
         children.push(SyntaxElement::Node(Box::new(ty)));
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyField, children, span))
     }
 
@@ -1653,11 +1653,11 @@ impl Parser {
             };
             self.parse_balanced_group_into(open, close, &mut children)?;
 
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::TyMacroCall, children, span));
         }
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyPath, children, span))
     }
 
@@ -1713,7 +1713,7 @@ impl Parser {
 
         if self.peek_non_trivia_raw() == Some(")") {
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::ExprUnit, children, span));
         }
 
@@ -1740,13 +1740,13 @@ impl Parser {
 
             self.expect_token_raw(")")?;
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::ExprTuple, children, span));
         }
 
         self.expect_token_raw(")")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprParen, children, span))
     }
 
@@ -1761,7 +1761,7 @@ impl Parser {
 
         if self.peek_non_trivia_raw() == Some("]") {
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::ExprArray, children, span));
         }
 
@@ -1778,7 +1778,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
             self.expect_token_raw("]")?;
             self.bump_token_into(&mut children);
-            let span = span_for_children(&children).unwrap_or(start);
+            let span = span_for_children(&children);
             return Ok(SyntaxNode::new(SyntaxKind::ExprArrayRepeat, children, span));
         }
 
@@ -1795,7 +1795,7 @@ impl Parser {
 
         self.expect_token_raw("]")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprArray, children, span))
     }
 
@@ -1816,7 +1816,7 @@ impl Parser {
 
         self.expect_token_raw("}")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprStructural, children, span))
     }
 
@@ -1833,7 +1833,7 @@ impl Parser {
         self.bump_trivia_into(&mut children);
         self.expect_token_raw("}")?;
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprStruct, children, span))
     }
 
@@ -1915,7 +1915,7 @@ impl Parser {
             }
         }
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::StructField, children, span))
     }
 
@@ -1948,7 +1948,7 @@ impl Parser {
             self.bump_trivia_into(&mut children);
         }
 
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(
             if is_path {
                 SyntaxKind::ExprPath
@@ -1967,7 +1967,7 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprNumber, children, span))
     }
 
@@ -1978,7 +1978,7 @@ impl Parser {
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children);
-        let span = span_for_children(&children).unwrap_or(start);
+        let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprString, children, span))
     }
 

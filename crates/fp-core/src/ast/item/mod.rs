@@ -101,8 +101,8 @@ impl Item {
         self.ty = Some(ty);
     }
 
-    pub fn span(&self) -> Option<Span> {
-        self.span
+    pub fn span(&self) -> Span {
+        self.span.unwrap_or_else(|| self.kind.span())
     }
 
     pub fn with_span(mut self, span: Span) -> Self {
@@ -208,6 +208,31 @@ impl Item {
     }
 }
 
+impl ItemKind {
+    pub fn span(&self) -> Span {
+        match self {
+            ItemKind::Module(module) => module.span(),
+            ItemKind::DefStruct(def) => def.span(),
+            ItemKind::DefStructural(def) => def.span(),
+            ItemKind::DefEnum(def) => def.span(),
+            ItemKind::DefType(def) => def.span(),
+            ItemKind::DefConst(def) => def.span(),
+            ItemKind::DefStatic(def) => def.span(),
+            ItemKind::DefFunction(def) => def.span(),
+            ItemKind::DefTrait(def) => def.span(),
+            ItemKind::DeclType(decl) => decl.span(),
+            ItemKind::DeclConst(decl) => decl.span(),
+            ItemKind::DeclStatic(decl) => decl.span(),
+            ItemKind::DeclFunction(decl) => decl.span(),
+            ItemKind::Import(import) => import.span(),
+            ItemKind::Impl(impl_block) => impl_block.span(),
+            ItemKind::Macro(mac) => mac.span(),
+            ItemKind::Expr(expr) => expr.span(),
+            ItemKind::Any(_) => Span::null(),
+        }
+    }
+}
+
 impl<T> From<T> for Item
 where
     ItemKind: From<T>,
@@ -279,6 +304,11 @@ common_struct! {
         pub is_external: bool,
     }
 }
+impl Module {
+    pub fn span(&self) -> Span {
+        Span::union(self.items.iter().map(Item::span))
+    }
+}
 
 common_enum! {
     /// Visibility is a label to an item
@@ -318,5 +348,17 @@ impl ItemImpl {
             generics_params: Vec::new(),
             items,
         }
+    }
+
+    pub fn span(&self) -> Span {
+        Span::union(
+            [
+                self.trait_ty.as_ref().map(Locator::span),
+                Some(self.self_ty.span()),
+                Some(Span::union(self.items.iter().map(Item::span))),
+            ]
+            .into_iter()
+            .flatten(),
+        )
     }
 }

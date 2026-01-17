@@ -2,7 +2,7 @@ use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::languages::frontend::{
     FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, JsonSchemaFrontend,
-    LanguageFrontend, PrqlFrontend, RustFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
+    LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
@@ -114,8 +114,6 @@ impl Pipeline {
         };
         let ferro_frontend: Arc<dyn LanguageFrontend> = Arc::new(FerroFrontend::new());
         register(ferro_frontend);
-        let rust_frontend: Arc<dyn LanguageFrontend> = Arc::new(RustFrontend::new());
-        register(rust_frontend);
         let wit_frontend: Arc<dyn LanguageFrontend> = Arc::new(WitFrontend::new());
         register(wit_frontend);
         let ts_frontend_concrete = Arc::new(TypeScriptFrontend::new(TsParseMode::Loose));
@@ -729,6 +727,20 @@ impl Pipeline {
                         info!("pipeline: start {}", STAGE_LINK_BINARY);
                         let binary_path =
                             self.stage_link_binary_native(&lir.lir_program, base_path, options)?;
+                        info!(
+                            "pipeline: finished {} in {:.2?}",
+                            STAGE_LINK_BINARY,
+                            stage_started.elapsed()
+                        );
+                        PipelineOutput::Binary(binary_path)
+                    } else if backend == "cranelift" || backend == "fp-cranelift" {
+                        let stage_started = std::time::Instant::now();
+                        info!("pipeline: start {}", STAGE_LINK_BINARY);
+                        let binary_path = self.stage_link_binary_cranelift(
+                            &lir.lir_program,
+                            base_path,
+                            options,
+                        )?;
                         info!(
                             "pipeline: finished {} in {:.2?}",
                             STAGE_LINK_BINARY,
