@@ -23,7 +23,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_add(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value + r.value)),
+            (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value + r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value + r.value)),
+            (Value::BigDecimal(l), Value::BigDecimal(r)) => {
+                Ok(Value::big_decimal(l.value + r.value))
+            }
             (Value::String(l), Value::String(r)) => {
                 Ok(Value::string(format!("{}{}", l.value, r.value)))
             }
@@ -36,7 +40,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_sub(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value - r.value)),
+            (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value - r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value - r.value)),
+            (Value::BigDecimal(l), Value::BigDecimal(r)) => {
+                Ok(Value::big_decimal(l.value - r.value))
+            }
             other => Err(interpretation_error(format!(
                 "unsupported operands for '-': {:?}",
                 other
@@ -46,7 +54,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_mul(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value * r.value)),
+            (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value * r.value)),
             (Value::Decimal(l), Value::Decimal(r)) => Ok(Value::decimal(l.value * r.value)),
+            (Value::BigDecimal(l), Value::BigDecimal(r)) => {
+                Ok(Value::big_decimal(l.value * r.value))
+            }
             other => Err(interpretation_error(format!(
                 "unsupported operands for '*': {:?}",
                 other
@@ -64,11 +76,25 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Ok(Value::decimal(l.value as f64 / r.value as f64))
                 }
             }
+            (Value::BigInt(l), Value::BigInt(r)) => {
+                if r.value == 0.into() {
+                    Err(interpretation_error("division by zero".to_string()))
+                } else {
+                    Ok(Value::big_int(l.value / r.value))
+                }
+            }
             (Value::Decimal(l), Value::Decimal(r)) => {
                 if r.value == 0.0 {
                     Err(interpretation_error("division by zero".to_string()))
                 } else {
                     Ok(Value::decimal(l.value / r.value))
+                }
+            }
+            (Value::BigDecimal(l), Value::BigDecimal(r)) => {
+                if r.value == 0.into() {
+                    Err(interpretation_error("division by zero".to_string()))
+                } else {
+                    Ok(Value::big_decimal(l.value / r.value))
                 }
             }
             other => Err(interpretation_error(format!(
@@ -80,6 +106,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn binop_mod(&self, lhs: Value, rhs: Value) -> Result<Value> {
         match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => Ok(Value::int(l.value % r.value)),
+            (Value::BigInt(l), Value::BigInt(r)) => Ok(Value::big_int(l.value % r.value)),
             other => Err(interpretation_error(format!(
                 "unsupported operands for '%': {:?}",
                 other
@@ -90,7 +117,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         use std::cmp::Ordering;
         let ordering = match (lhs, rhs) {
             (Value::Int(l), Value::Int(r)) => l.value.cmp(&r.value),
+            (Value::BigInt(l), Value::BigInt(r)) => l.value.cmp(&r.value),
             (Value::Decimal(l), Value::Decimal(r)) => l.value.total_cmp(&r.value),
+            (Value::BigDecimal(l), Value::BigDecimal(r)) => l.value.cmp(&r.value),
             (Value::String(l), Value::String(r)) => l.value.cmp(&r.value),
             other => {
                 return Err(interpretation_error(format!(
@@ -145,6 +174,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 Ok(Value::int(result))
             }
+            (Value::BigInt(l), Value::BigInt(r)) => {
+                let result = match op {
+                    BinOpKind::BitAnd => l.value & r.value,
+                    BinOpKind::BitOr => l.value | r.value,
+                    BinOpKind::BitXor => l.value ^ r.value,
+                    _ => unreachable!(),
+                };
+                Ok(Value::big_int(result))
+            }
             other => Err(interpretation_error(format!(
                 "bitwise operators require integers, found {:?}",
                 other
@@ -162,6 +200,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                     _ => unreachable!(),
                 };
                 Ok(Value::int(result))
+            }
+            (Value::BigInt(l), Value::BigInt(r)) => {
+                let shift = usize::try_from(&r.value).map_err(|_| {
+                    interpretation_error("shift amount must be a non-negative integer".to_string())
+                })?;
+                let result = match op {
+                    BinOpKind::Shl => l.value << shift,
+                    BinOpKind::Shr => l.value >> shift,
+                    _ => unreachable!(),
+                };
+                Ok(Value::big_int(result))
             }
             other => Err(interpretation_error(format!(
                 "shift operators require integers, found {:?}",
@@ -181,7 +230,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             },
             UnOpKind::Neg => match value {
                 Value::Int(i) => Ok(Value::int(-i.value)),
+                Value::BigInt(i) => Ok(Value::big_int(-i.value)),
                 Value::Decimal(d) => Ok(Value::decimal(-d.value)),
+                Value::BigDecimal(d) => Ok(Value::big_decimal(-d.value)),
                 other => Err(interpretation_error(format!(
                     "operator '-' requires numeric operand, found {}",
                     other

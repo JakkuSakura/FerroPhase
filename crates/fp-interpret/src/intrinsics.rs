@@ -365,6 +365,8 @@ pub fn intrinsic_type_name() -> IntrinsicFunction {
                 Value::Int(_) => "i64".to_string(),
                 Value::Bool(_) => "bool".to_string(),
                 Value::Decimal(_) => "f64".to_string(),
+                Value::BigInt(_) => "bigint".to_string(),
+                Value::BigDecimal(_) => "bigdecimal".to_string(),
                 Value::String(_) => "String".to_string(),
                 Value::Unit(_) => "()".to_string(),
                 _ => "unknown".to_string(),

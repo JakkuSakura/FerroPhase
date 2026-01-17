@@ -3,6 +3,8 @@ use crate::cst::parse_expr_lexemes_prefix_to_cst;
 use crate::lexer::lexeme::LexemeKind;
 use crate::lexer::tokenizer::lex_lexemes;
 use crate::lexer::tokenizer::strip_number_suffix;
+use bigdecimal::BigDecimal;
+use num_bigint::BigInt;
 use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
@@ -830,19 +832,8 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         SyntaxKind::ExprNumber => {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprNumber))?;
-            let stripped = strip_number_suffix(&raw);
-            let normalized = stripped.replace('_', "");
-            if normalized.contains('.') {
-                let d = normalized
-                    .parse::<f64>()
-                    .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
-                Ok(Expr::value(Value::decimal(d)))
-            } else {
-                let i = normalized
-                    .parse::<i64>()
-                    .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
-                Ok(Expr::value(Value::int(i)))
-            }
+            let value = parse_numeric_literal(&raw)?;
+            Ok(Expr::value(value))
         }
         SyntaxKind::ExprString => {
             let raw = direct_first_non_trivia_token_text(node)
@@ -1654,6 +1645,43 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     Some(inner.to_string())
 }
 
+fn parse_numeric_literal(raw: &str) -> Result<Value, LowerError> {
+    let stripped = strip_number_suffix(raw);
+    let normalized = stripped.replace('_', "");
+    let suffix = &raw[stripped.len()..];
+
+    match suffix {
+        "ib" => {
+            if normalized.contains('.') {
+                return Err(LowerError::InvalidNumber(raw.to_string()));
+            }
+            let value = normalized
+                .parse::<BigInt>()
+                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            Ok(Value::big_int(value))
+        }
+        "fb" => {
+            let value = normalized
+                .parse::<BigDecimal>()
+                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            Ok(Value::big_decimal(value))
+        }
+        _ => {
+            if normalized.contains('.') {
+                let d = normalized
+                    .parse::<f64>()
+                    .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+                Ok(Value::decimal(d))
+            } else {
+                let i = normalized
+                    .parse::<i64>()
+                    .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+                Ok(Value::int(i))
+            }
+        }
+    }
+}
+
 fn parse_f_string_literal(raw: &str) -> Result<Expr, LowerError> {
     let Some(decoded) = strip_string_prefix(raw, "f") else {
         return Err(LowerError::Unsupported(
@@ -1832,19 +1860,7 @@ fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
                 let decoded = decode_string_literal(&raw).unwrap_or(raw);
                 Value::String(ValueString::new_ref(decoded))
             } else {
-                let stripped = strip_number_suffix(&raw);
-                let normalized = stripped.replace('_', "");
-                if normalized.contains('.') {
-                    let d = normalized
-                        .parse::<f64>()
-                        .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
-                    Value::decimal(d)
-                } else {
-                    let i = normalized
-                        .parse::<i64>()
-                        .map_err(|_| LowerError::InvalidNumber(raw.clone()))?;
-                    Value::int(i)
-                }
+                parse_numeric_literal(&raw)?
             }
         }
     };

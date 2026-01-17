@@ -27,6 +27,7 @@ use fp_core::package::graph::PackageGraph;
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
+use num_traits::ToPrimitive;
 mod blocks;
 mod closures;
 mod const_regions;
@@ -1098,6 +1099,28 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::Int(int_val) => Value::int(int_val.value),
                 Value::Bool(bool_val) => Value::int(if bool_val.value { 1 } else { 0 }),
                 Value::Decimal(decimal_val) => Value::int(decimal_val.value as i64),
+                Value::BigInt(big_int) => match i64::try_from(&big_int.value) {
+                    Ok(value) => Value::int(value),
+                    Err(_) => {
+                        self.emit_error(format!(
+                            "cannot cast value {} to integer type {}",
+                            Value::BigInt(big_int),
+                            target_ty
+                        ));
+                        Value::undefined()
+                    }
+                },
+                Value::BigDecimal(big_decimal) => match big_decimal.value.to_i64() {
+                    Some(value) => Value::int(value),
+                    None => {
+                        self.emit_error(format!(
+                            "cannot cast value {} to integer type {}",
+                            Value::BigDecimal(big_decimal),
+                            target_ty
+                        ));
+                        Value::undefined()
+                    }
+                },
                 Value::Any(any) => {
                     if let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() {
                         if let Some(discriminant) = enum_value.discriminant {
@@ -1138,6 +1161,46 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::undefined()
             }
         }
+    }
+
+    fn numeric_to_i64(&mut self, value: &Value, context: &str) -> Option<i64> {
+        match value {
+            Value::Int(int_val) => Some(int_val.value),
+            Value::Decimal(decimal_val) => Some(decimal_val.value as i64),
+            Value::BigInt(big_int) => match i64::try_from(&big_int.value) {
+                Ok(value) => Some(value),
+                Err(_) => {
+                    self.emit_error(format!("{} is out of range for i64", context));
+                    None
+                }
+            },
+            Value::BigDecimal(big_decimal) => match big_decimal.value.to_i64() {
+                Some(value) => Some(value),
+                None => {
+                    self.emit_error(format!("{} is out of range for i64", context));
+                    None
+                }
+            },
+            other => {
+                self.emit_error(format!(
+                    "{} must be an integer literal, found {}",
+                    context, other
+                ));
+                None
+            }
+        }
+    }
+
+    fn numeric_to_non_negative_usize(&mut self, value: &Value, context: &str) -> Option<usize> {
+        let numeric_value = self.numeric_to_i64(value, context)?;
+        if numeric_value < 0 {
+            self.emit_error(format!("{} must be non-negative", context));
+            return None;
+        }
+        usize::try_from(numeric_value).ok().or_else(|| {
+            self.emit_error(format!("{} is out of range for usize", context));
+            None
+        })
     }
 
     fn locator_segments(locator: &Locator) -> Vec<String> {
@@ -2367,20 +2430,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             other => return self.finish_runtime_flow(other),
         };
 
-        let len = match len_value {
-            Value::Int(int) if int.value >= 0 => int.value as usize,
-            Value::Int(_) => {
-                self.emit_error("array repeat length must be non-negative");
-                return Value::undefined();
-            }
-            Value::Decimal(decimal) if decimal.value >= 0.0 => decimal.value as usize,
-            other => {
-                self.emit_error(format!(
-                    "array repeat length must be an integer constant, found {}",
-                    other
-                ));
-                return Value::undefined();
-            }
+        let len = match self.numeric_to_non_negative_usize(&len_value, "array repeat length") {
+            Some(value) => value,
+            None => return Value::undefined(),
         };
 
         let mut values = Vec::with_capacity(len);
@@ -2535,15 +2587,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn evaluate_index(&mut self, target: Value, index: Value) -> Value {
         match target {
             Value::List(list) => {
-                let idx = match index {
-                    Value::Int(int) if int.value >= 0 => int.value as usize,
-                    other => {
-                        self.emit_error(format!(
-                            "index must be a non-negative integer, found {}",
-                            other
-                        ));
-                        return Value::undefined();
-                    }
+                let idx = match self.numeric_to_non_negative_usize(&index, "index") {
+                    Some(value) => value,
+                    None => return Value::undefined(),
                 };
                 list.values.get(idx).cloned().unwrap_or_else(|| {
                     self.emit_error("index out of bounds for list");
@@ -2551,15 +2597,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 })
             }
             Value::Tuple(tuple) => {
-                let idx = match index {
-                    Value::Int(int) if int.value >= 0 => int.value as usize,
-                    other => {
-                        self.emit_error(format!(
-                            "index must be a non-negative integer, found {}",
-                            other
-                        ));
-                        return Value::undefined();
-                    }
+                let idx = match self.numeric_to_non_negative_usize(&index, "index") {
+                    Some(value) => value,
+                    None => return Value::undefined(),
                 };
                 tuple.values.get(idx).cloned().unwrap_or_else(|| {
                     self.emit_error("index out of bounds for tuple");
@@ -2586,27 +2626,19 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn evaluate_range_index(&mut self, target: Value, range: &mut ExprRange) -> Value {
         let start = match range.start.as_mut() {
             Some(expr) => match self.eval_expr(expr.as_mut()) {
-                Value::Int(int) if int.value >= 0 => Some(int.value as usize),
-                other => {
-                    self.emit_error(format!(
-                        "range start must be a non-negative integer, found {}",
-                        other
-                    ));
-                    return Value::undefined();
-                }
+                value => match self.numeric_to_non_negative_usize(&value, "range start") {
+                    Some(value) => Some(value),
+                    None => return Value::undefined(),
+                },
             },
             None => None,
         };
         let end = match range.end.as_mut() {
             Some(expr) => match self.eval_expr(expr.as_mut()) {
-                Value::Int(int) if int.value >= 0 => Some(int.value as usize),
-                other => {
-                    self.emit_error(format!(
-                        "range end must be a non-negative integer, found {}",
-                        other
-                    ));
-                    return Value::undefined();
-                }
+                value => match self.numeric_to_non_negative_usize(&value, "range end") {
+                    Some(value) => Some(value),
+                    None => return Value::undefined(),
+                },
             },
             None => None,
         };
@@ -2723,7 +2755,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn infer_value_ty(&self, value: &Value) -> Option<Ty> {
         match value {
             Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
+            Value::BigInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
             Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
+            Value::BigDecimal(_) => {
+                Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::BigDecimal)))
+            }
             Value::Bool(_) => Some(Ty::Primitive(TypePrimitive::Bool)),
             Value::Char(_) => Some(Ty::Primitive(TypePrimitive::Char)),
             Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
@@ -2929,20 +2965,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         let elem_value = self.eval_expr(repeat.elem.as_mut());
         let len_value = self.eval_expr(repeat.len.as_mut());
 
-        let len = match len_value {
-            Value::Int(int) if int.value >= 0 => int.value as usize,
-            Value::Int(_) => {
-                self.emit_error("array repeat length must be non-negative");
-                return Value::undefined();
-            }
-            Value::Decimal(decimal) if decimal.value >= 0.0 => decimal.value as usize,
-            other => {
-                self.emit_error(format!(
-                    "array repeat length must be an integer constant, found {}",
-                    other
-                ));
-                return Value::undefined();
-            }
+        let len = match self.numeric_to_non_negative_usize(&len_value, "array repeat length") {
+            Some(value) => value,
+            None => return Value::undefined(),
         };
 
         let mut values = Vec::with_capacity(len);
@@ -2956,23 +2981,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         match ty {
             Ty::Array(array_ty) => {
                 let len_value = self.eval_expr(array_ty.len.as_mut());
-                match len_value {
-                    Value::Int(int_value) => {
-                        let replacement = Expr::value(Value::Int(int_value.clone()));
-                        *array_ty.len = replacement.into();
-                    }
-                    Value::Decimal(decimal) => {
-                        let as_int = decimal.value as i64;
-                        let replacement = Expr::value(Value::int(as_int));
-                        *array_ty.len = replacement.into();
-                    }
-                    other => {
-                        self.emit_error(format!(
-                            "array length type must be an integer literal, found {}",
-                            other
-                        ));
-                    }
-                }
+                let len = match self.numeric_to_i64(&len_value, "array length") {
+                    Some(value) => value,
+                    None => return,
+                };
+                let replacement = Expr::value(Value::int(len));
+                *array_ty.len = replacement.into();
             }
             Ty::Expr(expr) => {
                 if let ExprKind::ConstBlock(_) = expr.kind() {
@@ -3147,6 +3161,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             Value::Int(_)
             | Value::Bool(_)
             | Value::Decimal(_)
+            | Value::BigInt(_)
+            | Value::BigDecimal(_)
             | Value::Char(_)
             | Value::String(_) => Some(value.clone()),
             _ => None,
@@ -3235,18 +3251,13 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                     let replacement = match value {
                         Value::List(list) => match key {
-                            Value::Int(int) if int.value >= 0 => list
-                                .values
-                                .get(int.value as usize)
-                                .cloned()
-                                .unwrap_or_else(|| {
+                            _ => match self.numeric_to_non_negative_usize(&key, "list index") {
+                                Some(index) => list.values.get(index).cloned().unwrap_or_else(|| {
                                     self.emit_error("index out of bounds for list");
                                     Value::undefined()
                                 }),
-                            _ => {
-                                self.emit_error("list index must be a non-negative integer");
-                                Value::undefined()
-                            }
+                                None => Value::undefined(),
+                            },
                         },
                         Value::Map(map) => map.get(&key).cloned().unwrap_or_else(|| {
                             self.emit_error(format!(

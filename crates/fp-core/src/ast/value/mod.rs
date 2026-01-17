@@ -19,8 +19,10 @@ pub type BValue = Box<Value>;
 common_enum! {
     pub enum Value {
         Int(ValueInt),
+        BigInt(ValueBigInt),
         Bool(ValueBool),
         Decimal(ValueDecimal),
+        BigDecimal(ValueBigDecimal),
         Char(ValueChar),
         String(ValueString),
         List(ValueList),
@@ -58,8 +60,14 @@ impl Value {
     pub fn decimal(d: f64) -> Value {
         Value::Decimal(ValueDecimal::new(d))
     }
+    pub fn big_decimal(d: bigdecimal::BigDecimal) -> Value {
+        Value::BigDecimal(ValueBigDecimal::new(d))
+    }
     pub fn int(i: i64) -> Value {
         Value::Int(ValueInt::new(i))
+    }
+    pub fn big_int(i: num_bigint::BigInt) -> Value {
+        Value::BigInt(ValueBigInt::new(i))
     }
     pub fn unit() -> Value {
         Value::Unit(ValueUnit)
@@ -134,6 +142,8 @@ impl ToJson for Value {
             Value::Int(i) => i.to_json(),
             Value::Bool(b) => b.to_json(),
             Value::Decimal(d) => d.to_json(),
+            Value::BigDecimal(d) => d.to_json(),
+            Value::BigInt(i) => i.to_json(),
             Value::Char(c) => c.to_json(),
             Value::String(s) => s.to_json(),
             Value::List(l) => l.to_json(),

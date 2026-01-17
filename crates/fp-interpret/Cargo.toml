@@ -13,6 +13,7 @@ itertools = "0.12.1"
 tracing = "0.1"
 eyre = "0.6"
 syn = { version = "2", features = ["full"] }
+num-traits = "0.2"
 
 [dev-dependencies]
 pretty_assertions = "1"

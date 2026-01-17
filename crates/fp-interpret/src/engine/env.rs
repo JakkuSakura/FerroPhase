@@ -151,7 +151,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let expected = self.eval_expr(&mut name_expr);
                 match (&expected, value) {
                     (Value::Int(a), Value::Int(b)) => a.value == b.value,
+                    (Value::BigInt(a), Value::BigInt(b)) => a.value == b.value,
                     (Value::Bool(a), Value::Bool(b)) => a.value == b.value,
+                    (Value::Decimal(a), Value::Decimal(b)) => a.value == b.value,
+                    (Value::BigDecimal(a), Value::BigDecimal(b)) => a.value == b.value,
                     (Value::String(a), Value::String(b)) => a.value == b.value,
                     _ => false,
                 }

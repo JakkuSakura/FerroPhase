@@ -242,12 +242,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     },
                     None => Value::int(0),
                 };
-                let (start, end) = match (start, end) {
-                    (Value::Int(start), Value::Int(end)) => (start.value, end.value),
-                    _ => {
-                        self.emit_error("range bounds must be integers");
-                        return RuntimeFlow::Value(Value::undefined());
-                    }
+                let start = match self.numeric_to_i64(&start, "range start") {
+                    Some(value) => value,
+                    None => return RuntimeFlow::Value(Value::undefined()),
+                };
+                let end = match self.numeric_to_i64(&end, "range end") {
+                    Some(value) => value,
+                    None => return RuntimeFlow::Value(Value::undefined()),
                 };
                 let mut values = Vec::new();
                 let mut current = start;
@@ -957,6 +958,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                     Value::String(_) => value,
                     Value::Int(int_val) => Value::string(int_val.value.to_string()),
                     Value::Decimal(dec_val) => Value::string(dec_val.value.to_string()),
+                    Value::BigInt(int_val) => Value::string(int_val.value.to_string()),
+                    Value::BigDecimal(dec_val) => Value::string(dec_val.value.to_string()),
                     Value::Bool(bool_val) => Value::string(bool_val.value.to_string()),
                     Value::Char(char_val) => Value::string(char_val.value.to_string()),
                     other => {
@@ -1424,6 +1427,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                         Value::String(value) => Value::String(value),
                         Value::Int(value) => Value::string(value.value.to_string()),
                         Value::Decimal(value) => Value::string(value.value.to_string()),
+                        Value::BigInt(value) => Value::string(value.value.to_string()),
+                        Value::BigDecimal(value) => Value::string(value.value.to_string()),
                         Value::Bool(value) => Value::string(value.value.to_string()),
                         Value::Char(value) => Value::string(value.value.to_string()),
                         other => {

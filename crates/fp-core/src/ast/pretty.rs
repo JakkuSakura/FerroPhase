@@ -1151,8 +1151,10 @@ fn render_function_receiver(receiver: &ast::FunctionParamReceiver) -> String {
 fn summarize_value(value: &ast::Value) -> String {
     match value {
         ast::Value::Int(int_val) => int_val.value.to_string(),
+        ast::Value::BigInt(int_val) => format!("{}ib", int_val.value),
         ast::Value::Bool(bool_val) => bool_val.value.to_string(),
         ast::Value::Decimal(decimal) => decimal.value.to_string(),
+        ast::Value::BigDecimal(decimal) => format!("{}fb", decimal.value),
         ast::Value::Char(ch) => format!("'{}'", escape_char(ch.value)),
         ast::Value::String(string) => format!("\"{}\"", escape_string(&string.value)),
         ast::Value::List(list) => format!("[{} values]", list.values.len()),

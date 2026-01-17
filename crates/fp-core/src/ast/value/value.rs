@@ -2,8 +2,10 @@ use std::fmt::{Debug, Display, Formatter};
 use std::hash::{Hash, Hasher};
 use std::ops::{Add, Deref, DerefMut, Mul, Sub};
 
+use bigdecimal::BigDecimal;
 use bytes::BytesMut;
 use itertools::Itertools;
+use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -68,6 +70,26 @@ plain_value! {
     ValueBool: bool
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ValueBigInt {
+    pub value: BigInt,
+}
+impl ValueBigInt {
+    pub fn new(value: BigInt) -> Self {
+        Self { value }
+    }
+}
+impl ToJson for ValueBigInt {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
+        Ok(json!(self.value.to_string()))
+    }
+}
+impl Display for ValueBigInt {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueDecimal {
     pub value: f64,
@@ -107,6 +129,47 @@ impl ToJson for ValueDecimal {
     }
 }
 impl Display for ValueDecimal {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.value)
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValueBigDecimal {
+    pub value: BigDecimal,
+}
+impl ValueBigDecimal {
+    pub fn new(value: BigDecimal) -> Self {
+        Self { value }
+    }
+}
+impl PartialEq for ValueBigDecimal {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+impl Eq for ValueBigDecimal {}
+impl PartialOrd for ValueBigDecimal {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.value.cmp(&other.value))
+    }
+}
+impl Ord for ValueBigDecimal {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.value.cmp(&other.value)
+    }
+}
+impl Hash for ValueBigDecimal {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.to_string().hash(state);
+    }
+}
+impl ToJson for ValueBigDecimal {
+    fn to_json(&self) -> crate::error::Result<serde_json::Value> {
+        Ok(json!(self.value.to_string()))
+    }
+}
+impl Display for ValueBigDecimal {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.value)
     }
