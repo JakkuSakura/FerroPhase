@@ -1,6 +1,8 @@
 pub mod config;
+mod codegen;
 
 use crate::config::{CraneliftConfig, EmitKind};
+use crate::codegen::CraneliftBackend;
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};
@@ -19,17 +21,22 @@ impl CraneliftEmitter {
 
     /// Emit LIR into an object or executable.
     pub fn emit(&self, lir_program: LirProgram, source_file: Option<&Path>) -> Result<PathBuf> {
-        let _ = (lir_program, source_file);
+        let _ = source_file;
 
         if let Some(parent) = self.config.output_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
 
-        match self.config.emit {
-            EmitKind::Object | EmitKind::Executable => {
-                Err("fp-cranelift is wired in but LIR lowering is not implemented yet")?
-            }
-        }
+        let backend = CraneliftBackend::new(&self.config)?;
+        let object_bytes = backend.emit_object(&lir_program)?;
+
+        let output = match self.config.emit {
+            EmitKind::Object => self.config.output_path.clone(),
+            EmitKind::Executable => self.config.output_path.clone(),
+        };
+
+        std::fs::write(&output, object_bytes)?;
+        Ok(output)
     }
 
     /// Back-compat for older callers.
@@ -39,4 +46,3 @@ impl CraneliftEmitter {
 }
 
 pub type CraneliftCompiler = CraneliftEmitter;
-

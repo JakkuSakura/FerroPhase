@@ -8,6 +8,7 @@ use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 pub(crate) struct MaterializeContext {
     pub ast: Node,
     pub target: BackendKind,
+    pub backend: Option<String>,
 }
 
 pub(crate) struct MaterializeStage;
@@ -25,7 +26,7 @@ impl PipelineStage for MaterializeStage {
         context: MaterializeContext,
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<Node, PipelineError> {
-        let materializer = IntrinsicsMaterializer::for_target(&context.target);
+        let materializer = IntrinsicsMaterializer::for_target(&context.target, context.backend.as_deref());
         let mut ast = context.ast;
         match materializer.materialize(&mut ast) {
             Ok(()) => Ok(ast),
@@ -54,6 +55,7 @@ impl Pipeline {
         let context = MaterializeContext {
             ast: ast.clone(),
             target: target.clone(),
+            backend: options.backend.clone(),
         };
         let next_ast =
             self.run_pipeline_stage(STAGE_RUNTIME_MATERIALIZE, stage, context, options)?;
@@ -70,11 +72,22 @@ struct NoopIntrinsicMaterializer;
 impl IntrinsicMaterializer for NoopIntrinsicMaterializer {}
 
 impl IntrinsicsMaterializer {
-    fn for_target(target: &BackendKind) -> Self {
+    fn for_target(target: &BackendKind, backend: Option<&str>) -> Self {
         match target {
-            BackendKind::Llvm | BackendKind::Binary => Self {
-                strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
-            },
+            BackendKind::Llvm | BackendKind::Binary => {
+                let wants_cranelift = backend
+                    .map(|value| value.eq_ignore_ascii_case("cranelift") || value.eq_ignore_ascii_case("fp-cranelift"))
+                    .unwrap_or(false);
+                if wants_cranelift {
+                    Self {
+                        strategy: Box::new(NoopIntrinsicMaterializer),
+                    }
+                } else {
+                    Self {
+                        strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
+                    }
+                }
+            }
             _ => Self {
                 strategy: Box::new(NoopIntrinsicMaterializer),
             },

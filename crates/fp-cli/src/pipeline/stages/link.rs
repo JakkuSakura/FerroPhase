@@ -260,11 +260,15 @@ impl PipelineStage for LinkCraneliftStage {
             PipelineError::new(STAGE_LINK_BINARY, "fp-cranelift failed")
         })?;
 
+        let runtime_path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../crates/fp-cranelift/runtime/fp_cranelift_runtime.c");
+        let extra = vec![runtime_path];
         link_object_with_clang(
             &object_path,
             &binary_path,
             &context.options,
             diagnostics,
+            &extra,
         )?;
 
         if !context.options.save_intermediates {
@@ -321,6 +325,7 @@ fn link_object_with_clang(
     binary_path: &Path,
     options: &PipelineOptions,
     diagnostics: &mut PipelineDiagnostics,
+    extra_inputs: &[PathBuf],
 ) -> Result<(), PipelineError> {
     let linker = options
         .linker
@@ -328,6 +333,12 @@ fn link_object_with_clang(
         .unwrap_or("clang");
     let mut cmd = Command::new(linker);
     cmd.arg(object_path);
+    for input in extra_inputs {
+        cmd.arg(input);
+    }
+    if !extra_inputs.is_empty() {
+        cmd.arg("-lm");
+    }
     if let Some(target_triple) = options.target_triple.as_deref() {
         cmd.arg("--target").arg(target_triple);
     }
