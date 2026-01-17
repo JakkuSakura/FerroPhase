@@ -1,9 +1,43 @@
 use super::*;
-use fp_core::ast::register_threadlocal_serializer;
-use fp_rust::printer::RustPrinter;
-use fp_rust::shll_parse_items;
+use fp_core::ast;
+use fp_core::ops::BinOpKind;
+use fp_core::span::Span;
 use std::collections::HashMap;
-use std::sync::Arc;
+
+fn ident(name: &str) -> ast::Ident {
+    ast::Ident::new(name)
+}
+
+fn int_ty() -> ast::Ty {
+    ast::Ty::Primitive(ast::TypePrimitive::Int(ast::TypeInt::I64))
+}
+
+fn ty_ident(name: &str) -> ast::Ty {
+    ast::Ty::ident(ident(name))
+}
+
+fn make_struct(name: &str, fields: Vec<(&str, ast::Ty)>) -> ast::Item {
+    let fields = fields
+        .into_iter()
+        .map(|(name, ty)| ast::StructuralField::new(ident(name), ty))
+        .collect();
+    ast::Item::from(ast::ItemKind::DefStruct(ast::ItemDefStruct::new(
+        ident(name),
+        fields,
+    )))
+}
+
+fn make_fn(
+    name: &str,
+    params: Vec<(ast::Ident, ast::Ty)>,
+    ret: ast::Ty,
+    body: ast::Expr,
+) -> ast::Item {
+    let func = ast::ItemDefFunction::new_simple(ident(name), body.into())
+        .with_params(params)
+        .with_ret_ty(ret);
+    ast::Item::from(ast::ItemKind::DefFunction(func))
+}
 
 #[test]
 fn test_hir_generator_creation() {
@@ -64,14 +98,22 @@ fn transform_slice_type_to_hir() -> Result<()> {
 
 #[test]
 fn transform_index_expression_to_hir() -> Result<()> {
-    let printer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(printer.clone());
-
-    let items = shll_parse_items! {
-        fn pick(values: [i64; 3], idx: usize) -> i64 {
-            values[idx]
-        }
-    };
+    let array_ty = ast::Ty::Array(ast::TypeArray {
+        elem: Box::new(int_ty()),
+        len: Box::new(ast::Expr::value(ast::Value::int(3))),
+    });
+    let index_expr = ast::Expr::from(ast::ExprKind::Index(ast::ExprIndex {
+        span: Span::null(),
+        obj: Box::new(ast::Expr::ident(ident("values"))),
+        index: Box::new(ast::Expr::ident(ident("idx"))),
+    }));
+    let body = ast::Expr::block(ast::ExprBlock::new_expr(index_expr));
+    let items = vec![make_fn(
+        "pick",
+        vec![(ident("values"), array_ty), (ident("idx"), ty_ident("usize"))],
+        int_ty(),
+        body,
+    )];
 
     let ast_file = ast::File {
         path: "index.fp".into(),
@@ -102,20 +144,88 @@ fn transform_index_expression_to_hir() -> Result<()> {
 }
 
 #[test]
-fn transform_file_with_function_and_struct() -> Result<()> {
-    let printer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(printer.clone());
-
-    let items = shll_parse_items! {
-        struct Point {
-            x: i64,
-            y: i64,
-        }
-
-        fn add(a: i64, b: i64) -> i64 {
-            a + b
-        }
+fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
+    let mut generator = HirGenerator::new();
+    let target = ast::ExprInvokeTarget::Function(ast::Locator::Ident(ident("Result")));
+    let arg = ast::Expr::path(ast::Path::new(vec![ident("hir"), ident("GenericArgs")]));
+    let invoke = ast::ExprInvoke {
+        span: Span::null(),
+        target,
+        args: vec![arg],
     };
+    let ty = ast::Ty::expr(ast::Expr::from(ast::ExprKind::Invoke(invoke)));
+    let lowered = generator.transform_type_to_hir(&ty)?;
+
+    let hir::TypeExprKind::Path(path) = &lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "expected type path from invoke expression".to_string(),
+        ));
+    };
+    assert_eq!(path.segments.len(), 1);
+    let seg = &path.segments[0];
+    assert_eq!(seg.name.as_str(), "Result");
+    let args = seg.args.as_ref().ok_or_else(|| {
+        crate::error::optimization_error("expected generic args on Result".to_string())
+    })?;
+    assert_eq!(args.args.len(), 1);
+    let hir::GenericArg::Type(arg_ty) = &args.args[0] else {
+        return Err(crate::error::optimization_error(
+            "expected type generic arg".to_string(),
+        ));
+    };
+    let hir::TypeExprKind::Path(arg_path) = &arg_ty.kind else {
+        return Err(crate::error::optimization_error(
+            "expected type path for generic arg".to_string(),
+        ));
+    };
+    assert_eq!(arg_path.segments.len(), 2);
+    assert_eq!(arg_path.segments[0].name.as_str(), "hir");
+    assert_eq!(arg_path.segments[1].name.as_str(), "GenericArgs");
+
+    Ok(())
+}
+
+#[test]
+fn transform_intrinsic_container_to_hir() -> Result<()> {
+    let mut generator = HirGenerator::new();
+    let container = ast::ExprIntrinsicContainer::VecElements {
+        elements: vec![
+            ast::Expr::value(ast::Value::int(1)),
+            ast::Expr::value(ast::Value::int(2)),
+        ],
+    };
+    let expr = ast::Expr::from(ast::ExprKind::IntrinsicContainer(container));
+    let lowered = generator.transform_expr_to_hir(&expr)?;
+
+    let hir::ExprKind::Array(elements) = lowered.kind else {
+        return Err(crate::error::optimization_error(
+            "expected array from intrinsic container".to_string(),
+        ));
+    };
+    assert_eq!(elements.len(), 2);
+
+    Ok(())
+}
+
+#[test]
+fn transform_file_with_function_and_struct() -> Result<()> {
+    let point = make_struct(
+        "Point",
+        vec![("x", int_ty()), ("y", int_ty())],
+    );
+    let add_body = ast::Expr::from(ast::ExprKind::BinOp(ast::ExprBinOp {
+        span: fp_core::span::Span::null(),
+        kind: BinOpKind::Add,
+        lhs: Box::new(ast::Expr::ident(ident("a"))),
+        rhs: Box::new(ast::Expr::ident(ident("b"))),
+    }));
+    let add = make_fn(
+        "add",
+        vec![(ident("a"), int_ty()), (ident("b"), int_ty())],
+        int_ty(),
+        ast::Expr::block(ast::ExprBlock::new_expr(add_body)),
+    );
+    let items = vec![point, add];
 
     let ast_file = ast::File {
         path: "test.fp".into(),
@@ -144,24 +254,42 @@ fn transform_file_with_function_and_struct() -> Result<()> {
 
 #[test]
 fn transform_generic_function_and_method() -> Result<()> {
-    let printer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(printer.clone());
+    let container = make_struct("Container", vec![("value", int_ty())]);
+    let mut method = ast::ItemDefFunction::new_simple(
+        ident("get"),
+        ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::from(
+            ast::ExprKind::Select(ast::ExprSelect {
+                span: Span::null(),
+                obj: Box::new(ast::Expr::ident(ident("self"))),
+                field: ident("value"),
+                select: ast::ExprSelectType::Field,
+            }),
+        )))
+        .into(),
+    );
+    method.sig.receiver = Some(ast::FunctionParamReceiver::Ref);
+    method.sig.ret_ty = Some(int_ty());
+    let impl_block = ast::ItemImpl::new_ident(
+        ident("Container"),
+        vec![ast::Item::from(ast::ItemKind::DefFunction(method))],
+    );
 
-    let items = shll_parse_items! {
-        struct Container {
-            value: i64,
-        }
+    let mut identity = ast::ItemDefFunction::new_simple(
+        ident("identity"),
+        ast::Expr::block(ast::ExprBlock::new_expr(ast::Expr::ident(ident("x")))).into(),
+    );
+    identity.sig.generics_params = vec![ast::GenericParam {
+        name: ident("T"),
+        bounds: ast::TypeBounds::any(),
+    }];
+    identity.sig.params = vec![ast::FunctionParam::new(ident("x"), ty_ident("T"))];
+    identity.sig.ret_ty = Some(ty_ident("T"));
 
-        impl Container {
-            fn get(&self) -> i64 {
-                self.value
-            }
-        }
-
-        fn identity<T>(x: T) -> T {
-            x
-        }
-    };
+    let items = vec![
+        container,
+        ast::Item::from(ast::ItemKind::Impl(impl_block)),
+        ast::Item::from(ast::ItemKind::DefFunction(identity)),
+    ];
 
     let ast_file = ast::File {
         path: "generics.fp".into(),
@@ -227,18 +355,34 @@ fn transform_generic_function_and_method() -> Result<()> {
 
 #[test]
 fn transform_scoped_block_name_resolution() -> Result<()> {
-    let printer = Arc::new(RustPrinter::new());
-    register_threadlocal_serializer(printer.clone());
-
-    let items = shll_parse_items! {
-        fn outer(a: i64) -> i64 {
-            let b = a;
-            {
-                let c = b;
-                c + a
-            }
-        }
-    };
+    let stmt_b = ast::BlockStmt::Let(ast::StmtLet::new_simple(
+        ident("b"),
+        ast::Expr::ident(ident("a")),
+    ));
+    let stmt_c = ast::BlockStmt::Let(ast::StmtLet::new_simple(
+        ident("c"),
+        ast::Expr::ident(ident("b")),
+    ));
+    let sum_expr = ast::Expr::from(ast::ExprKind::BinOp(ast::ExprBinOp {
+        span: fp_core::span::Span::null(),
+        kind: BinOpKind::Add,
+        lhs: Box::new(ast::Expr::ident(ident("c"))),
+        rhs: Box::new(ast::Expr::ident(ident("a"))),
+    }));
+    let inner_block = ast::Expr::block(ast::ExprBlock::new_stmts_expr(
+        vec![stmt_c],
+        sum_expr,
+    ));
+    let outer_body = ast::Expr::block(ast::ExprBlock::new_stmts_expr(
+        vec![stmt_b],
+        inner_block,
+    ));
+    let items = vec![make_fn(
+        "outer",
+        vec![(ident("a"), int_ty())],
+        int_ty(),
+        outer_body,
+    )];
 
     let ast_file = ast::File {
         path: "scopes.fp".into(),

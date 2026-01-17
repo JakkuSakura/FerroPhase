@@ -1,6 +1,5 @@
 use super::*;
-use fp_rust::parser::RustParser;
-use fp_rust::RawExpr;
+use fp_core::intrinsics::IntrinsicCallKind;
 
 struct EnumerateLoopSpec {
     base_segments: Vec<ast::Ident>,
@@ -11,10 +10,6 @@ struct EnumerateLoopSpec {
 struct IterLoopSpec {
     base_segments: Vec<ast::Ident>,
     value_ident: ast::Ident,
-}
-
-fn parse_raw_expr(expr: syn::Expr) -> fp_core::error::Result<ast::Expr> {
-    RustParser::new().parse_expr(expr)
 }
 
 impl HirGenerator {
@@ -47,10 +42,89 @@ impl HirGenerator {
             ExprKind::ArrayRepeat(array_repeat) => {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
+            ExprKind::Range(_range) => {
+                if self.error_tolerance {
+                    self.add_warning(Diagnostic::warning(
+                        "range expressions are only supported in for loops and slicing; treating as empty array".to_string(),
+                    ));
+                    hir::ExprKind::Array(Vec::new())
+                } else {
+                    return Err(crate::error::optimization_error(
+                        "range expressions are only supported in for loops and slicing",
+                    ));
+                }
+            }
             ExprKind::Index(index_expr) => {
-                let base = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
-                let index = self.transform_expr_to_hir(index_expr.index.as_ref())?;
-                hir::ExprKind::Index(Box::new(base), Box::new(index))
+                if let ast::ExprKind::Range(range) = index_expr.index.kind() {
+                    if range.step.is_some() {
+                        self.add_warning(Diagnostic::warning(
+                            "range steps are not supported in slicing; ignoring step".to_string(),
+                        ));
+                    }
+                    let base_expr = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
+                    let start_expr = match range.start.as_ref() {
+                        Some(expr) => self.transform_expr_to_hir(expr.as_ref())?,
+                        None => hir::Expr {
+                            hir_id: self.next_id(),
+                            kind: hir::ExprKind::Literal(hir::Lit::Integer(0)),
+                            span: self.create_span(1),
+                        },
+                    };
+                    let mut end_expr = match range.end.as_ref() {
+                        Some(expr) => self.transform_expr_to_hir(expr.as_ref())?,
+                        None => {
+                            let len_call = hir::IntrinsicCallExpr {
+                                kind: IntrinsicCallKind::Len,
+                                callargs: vec![hir::CallArg {
+                                    name: hir::Symbol::new("base"),
+                                    value: base_expr.clone(),
+                                }],
+                            };
+                            hir::Expr {
+                                hir_id: self.next_id(),
+                                kind: hir::ExprKind::IntrinsicCall(len_call),
+                                span: self.create_span(1),
+                            }
+                        }
+                    };
+                    if matches!(range.limit, ast::ExprRangeLimit::Inclusive) {
+                        end_expr = hir::Expr {
+                            hir_id: self.next_id(),
+                            kind: hir::ExprKind::Binary(
+                                hir::BinOp::Add,
+                                Box::new(end_expr),
+                                Box::new(hir::Expr {
+                                    hir_id: self.next_id(),
+                                    kind: hir::ExprKind::Literal(hir::Lit::Integer(1)),
+                                    span: self.create_span(1),
+                                }),
+                            ),
+                            span: self.create_span(1),
+                        };
+                    }
+                    let call = hir::IntrinsicCallExpr {
+                        kind: IntrinsicCallKind::Slice,
+                        callargs: vec![
+                            hir::CallArg {
+                                name: hir::Symbol::new("base"),
+                                value: base_expr,
+                            },
+                            hir::CallArg {
+                                name: hir::Symbol::new("start"),
+                                value: start_expr,
+                            },
+                            hir::CallArg {
+                                name: hir::Symbol::new("end"),
+                                value: end_expr,
+                            },
+                        ],
+                    };
+                    hir::ExprKind::IntrinsicCall(call)
+                } else {
+                    let base = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
+                    let index = self.transform_expr_to_hir(index_expr.index.as_ref())?;
+                    hir::ExprKind::Index(Box::new(base), Box::new(index))
+                }
             }
             ExprKind::Quote(_quote) => {
                 return Err(crate::error::optimization_error(
@@ -144,16 +218,7 @@ impl HirGenerator {
                 hir::ExprKind::Cast(Box::new(operand), Box::new(ty))
             }
             ExprKind::Any(any) => {
-                if let Some(raw_expr) = any.downcast_ref::<RawExpr>() {
-                    let parsed = parse_raw_expr(raw_expr.raw.clone()).map_err(|err| {
-                        crate::error::optimization_error(format!(
-                            "failed to parse dynamic expression: {}",
-                            err
-                        ))
-                    })?;
-                    let lowered = self.transform_expr_to_hir(&parsed)?;
-                    lowered.kind
-                } else if let Some(expr) = any.downcast_ref::<ast::Expr>() {
+                if let Some(expr) = any.downcast_ref::<ast::Expr>() {
                     let lowered = self.transform_expr_to_hir(expr)?;
                     lowered.kind
                 } else if let Some(value) = any.downcast_ref::<ast::Value>() {
@@ -214,6 +279,9 @@ impl HirGenerator {
                 return Err(crate::error::optimization_error(
                     "const block must be evaluated before AST→HIR lowering",
                 ));
+            }
+            ExprKind::IntrinsicContainer(container) => {
+                self.transform_intrinsic_container_to_hir(container)?
             }
             ExprKind::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
             ExprKind::Reference(reference) => {
@@ -401,6 +469,39 @@ impl HirGenerator {
         let elem = Box::new(self.transform_expr_to_hir(repeat.elem.as_ref())?);
         let len = Box::new(self.transform_expr_to_hir(repeat.len.as_ref())?);
         Ok(hir::ExprKind::ArrayRepeat { elem, len })
+    }
+
+    fn transform_intrinsic_container_to_hir(
+        &mut self,
+        container: &ast::ExprIntrinsicContainer,
+    ) -> Result<hir::ExprKind> {
+        match container {
+            ast::ExprIntrinsicContainer::VecElements { elements } => {
+                let mut items = Vec::with_capacity(elements.len());
+                for element in elements {
+                    items.push(self.transform_expr_to_hir(element)?);
+                }
+                Ok(hir::ExprKind::Array(items))
+            }
+            ast::ExprIntrinsicContainer::VecRepeat { elem, len } => {
+                let elem = Box::new(self.transform_expr_to_hir(elem.as_ref())?);
+                let len = Box::new(self.transform_expr_to_hir(len.as_ref())?);
+                Ok(hir::ExprKind::ArrayRepeat { elem, len })
+            }
+            ast::ExprIntrinsicContainer::HashMapEntries { entries } => {
+                let mut items = Vec::with_capacity(entries.len());
+                for entry in entries {
+                    let key = self.transform_expr_to_hir(&entry.key)?;
+                    let value = self.transform_expr_to_hir(&entry.value)?;
+                    items.push(hir::Expr {
+                        hir_id: self.next_id(),
+                        kind: hir::ExprKind::Array(vec![key, value]),
+                        span: self.create_span(1),
+                    });
+                }
+                Ok(hir::ExprKind::Array(items))
+            }
+        }
     }
 
     /// Transform binary operation to HIR

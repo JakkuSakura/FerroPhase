@@ -126,6 +126,50 @@ impl HirGenerator {
                 base.segments.push(seg);
                 Ok(base)
             }
+            ast::ExprKind::Invoke(invoke) => {
+                let mut base = match &invoke.target {
+                    ast::ExprInvokeTarget::Function(locator) => {
+                        self.locator_to_hir_path_with_scope(locator, scope)?
+                    }
+                    ast::ExprInvokeTarget::Expr(expr) => {
+                        self.ast_expr_to_hir_path(expr.as_ref(), scope)?
+                    }
+                    ast::ExprInvokeTarget::Method(select) => {
+                        let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
+                        let seg = self.make_path_segment(&select.field.name, None);
+                        base.segments.push(seg);
+                        base
+                    }
+                    other => {
+                        return Err(crate::error::optimization_error(format!(
+                            "expected path-like expression for type path, found {:?}",
+                            other
+                        )));
+                    }
+                };
+
+                if !invoke.args.is_empty() {
+                    let args: Vec<ast::Ty> = invoke
+                        .args
+                        .iter()
+                        .map(|arg| match arg.kind() {
+                            ast::ExprKind::Value(value) => match value.as_ref() {
+                                ast::Value::Type(ty) => ty.clone(),
+                                _ => ast::Ty::expr(arg.clone()),
+                            },
+                            _ => ast::Ty::expr(arg.clone()),
+                        })
+                        .collect();
+                    let hir_args = self.convert_generic_args(&args)?;
+                    if let Some(last) = base.segments.last_mut() {
+                        if last.args.is_none() {
+                            last.args = Some(hir_args);
+                        }
+                    }
+                }
+
+                Ok(base)
+            }
             other => Err(crate::error::optimization_error(format!(
                 "expected path-like expression for type path, found {:?}",
                 other
