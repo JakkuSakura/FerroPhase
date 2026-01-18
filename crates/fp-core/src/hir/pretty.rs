@@ -584,6 +584,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::ReflectFields => "reflect_fields",
         IntrinsicCallKind::HasMethod => "has_method",
         IntrinsicCallKind::TypeName => "type_name",
+        IntrinsicCallKind::TypeOf => "type_of",
         IntrinsicCallKind::CreateStruct => "create_struct",
         IntrinsicCallKind::CloneStruct => "clone_struct",
         IntrinsicCallKind::AddField => "add_field",

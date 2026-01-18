@@ -941,6 +941,7 @@ fn parse_intrinsic_kind(raw: &str) -> Result<IntrinsicCallKind, BytecodeError> {
         "ReflectFields" => Ok(IntrinsicCallKind::ReflectFields),
         "HasMethod" => Ok(IntrinsicCallKind::HasMethod),
         "TypeName" => Ok(IntrinsicCallKind::TypeName),
+        "TypeOf" => Ok(IntrinsicCallKind::TypeOf),
         "CreateStruct" => Ok(IntrinsicCallKind::CreateStruct),
         "CloneStruct" => Ok(IntrinsicCallKind::CloneStruct),
         "AddField" => Ok(IntrinsicCallKind::AddField),

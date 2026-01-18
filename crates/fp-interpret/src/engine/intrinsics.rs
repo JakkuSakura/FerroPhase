@@ -97,6 +97,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 | IntrinsicCallKind::FieldType
                 | IntrinsicCallKind::StructSize
                 | IntrinsicCallKind::TypeName
+                | IntrinsicCallKind::TypeOf
                 | IntrinsicCallKind::HasField
                 | IntrinsicCallKind::HasMethod
                 | IntrinsicCallKind::MethodCount
@@ -131,6 +132,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             },
             IntrinsicCallKind::DebugAssertions => Value::bool(self.debug_assertions),
+            IntrinsicCallKind::TypeOf => {
+                if call.args.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        call.args.len()
+                    ));
+                    return Value::undefined();
+                }
+                let target = &mut call.args[0];
+                if let Some(ty) = target.ty() {
+                    return Value::Type(ty.clone());
+                }
+                let value = self.eval_expr(target);
+                Value::Type(self.type_from_value(&value))
+            }
             IntrinsicCallKind::Panic | IntrinsicCallKind::CatchUnwind => {
                 self.emit_error(format!(
                     "intrinsic {:?} is not supported during const evaluation",
@@ -198,6 +215,28 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         for kwarg in call.kwargs.iter_mut() {
             self.evaluate_function_body(&mut kwarg.value);
+        }
+    }
+
+    fn type_from_value(&self, value: &Value) -> Ty {
+        match value {
+            Value::Int(_) => Ty::Primitive(TypePrimitive::i64()),
+            Value::Decimal(_) => Ty::Primitive(TypePrimitive::f64()),
+            Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
+            Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
+            Value::String(_) => Ty::Primitive(TypePrimitive::String),
+            Value::Unit(_) => Ty::Unit(TypeUnit),
+            Value::Type(_) => Ty::Type(TypeType),
+            Value::Struct(value_struct) => Ty::Struct(value_struct.ty.clone()),
+            Value::Tuple(tuple) => Ty::Tuple(TypeTuple {
+                types: tuple
+                    .values
+                    .iter()
+                    .map(|item| self.type_from_value(item))
+                    .collect(),
+            }),
+            Value::List(_) => Ty::Primitive(TypePrimitive::List),
+            _ => Ty::Any(TypeAny),
         }
     }
 

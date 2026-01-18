@@ -126,6 +126,23 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
+            if name.as_str() == "type_of" || name.as_str() == "typeof" {
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                if args.len() != 1 {
+                    return Err(fp_core::error::Error::from(
+                        "type_of! requires exactly one argument",
+                    ));
+                }
+                let replacement = Expr::from_parts(
+                    ty_slot.clone(),
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        IntrinsicCallKind::TypeOf,
+                        args,
+                        Vec::new(),
+                    )),
+                );
+                return Ok(NormalizeOutcome::Normalized(replacement));
+            }
             if name.as_str() == "print" || name.as_str() == "println" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 let kind = if name.as_str() == "println" {

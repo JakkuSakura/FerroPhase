@@ -859,6 +859,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::ReflectFields
         | IntrinsicCallKind::HasMethod
         | IntrinsicCallKind::TypeName
+        | IntrinsicCallKind::TypeOf
         | IntrinsicCallKind::CreateStruct
         | IntrinsicCallKind::CloneStruct
         | IntrinsicCallKind::AddField

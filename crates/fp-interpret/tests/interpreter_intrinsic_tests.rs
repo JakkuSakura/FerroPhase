@@ -1,6 +1,6 @@
 use fp_core::ast::{
     Expr, ExprIntrinsicCall, ExprKind, ExprStringTemplate, FormatArgRef, FormatPlaceholder,
-    FormatTemplatePart, Value,
+    FormatTemplatePart, Ty, TypeInt, TypePrimitive, Value,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -119,4 +119,26 @@ fn println_with_missing_placeholder_argument_emits_diagnostic() {
         .diagnostics
         .iter()
         .any(|diag| diag.message.contains("has no argument")));
+}
+
+#[test]
+fn type_of_returns_typed_expression_type() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());
+
+    let mut arg = Expr::value(Value::int(42));
+    arg.set_ty(Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
+    let call = ExprIntrinsicCall::new(IntrinsicCallKind::TypeOf, vec![arg], Vec::new());
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    match value {
+        Value::Type(ty) => {
+            assert!(matches!(
+                ty,
+                Ty::Primitive(TypePrimitive::Int(TypeInt::I64))
+            ));
+        }
+        other => panic!("expected type value, got {:?}", other),
+    }
 }

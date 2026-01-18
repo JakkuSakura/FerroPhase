@@ -1070,6 +1070,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
             }
+            IntrinsicCallKind::TypeOf => {
+                if arg_vars.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        arg_vars.len()
+                    ));
+                }
+                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+            }
             IntrinsicCallKind::ReflectFields => {
                 if arg_vars.len() != 1 {
                     self.emit_error(format!(

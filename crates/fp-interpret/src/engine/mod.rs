@@ -12,7 +12,8 @@ use fp_core::ast::{
     ItemImport, ItemImportTree, ItemKind, MacroInvocation, MacroTokenTree, Node,
     NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
     TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit, TypeVec, Value, ValueField,
+    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value,
+    ValueField,
     ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::ast::{Ident, Locator};
@@ -4048,6 +4049,7 @@ fn intrinsic_symbol(kind: IntrinsicCallKind) -> Option<&'static str> {
         IntrinsicCallKind::ReflectFields => Some("reflect_fields!"),
         IntrinsicCallKind::HasMethod => Some("hasmethod!"),
         IntrinsicCallKind::TypeName => Some("type_name!"),
+        IntrinsicCallKind::TypeOf => Some("type_of!"),
         IntrinsicCallKind::CreateStruct => Some("create_struct!"),
         IntrinsicCallKind::CloneStruct => Some("clone_struct!"),
         IntrinsicCallKind::AddField => Some("addfield!"),

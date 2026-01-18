@@ -31,6 +31,8 @@ pub enum IntrinsicCallKind {
     HasMethod,
     /// `type_name!` - get the name of a type as a string
     TypeName,
+    /// `type_of!` - get the type of an expression as a type value
+    TypeOf,
     /// `create_struct!` - create a new struct type dynamically
     CreateStruct,
     /// `clone_struct!` - clone an existing struct type
