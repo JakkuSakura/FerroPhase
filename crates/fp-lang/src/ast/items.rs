@@ -1,13 +1,13 @@
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    AttrMeta, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant, Expr, ExprKind,
-    ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item,
-    ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction,
-    ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup,
-    ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator,
-    MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum,
-    TypeQuote, TypeStruct, Value, Visibility,
+    AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant, Expr,
+    ExprKind, ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam,
+    Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum,
+    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
+    ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro,
+    Locator, MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds,
+    TypeEnum, TypeQuote, TypeStruct, Value, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::ops::UnOpKind;
@@ -456,50 +456,76 @@ fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
         }
     }
 
-    let eq_pos = inner_tokens.iter().position(|tok| tok == "=");
-    if let Some(eq_pos) = eq_pos {
-        let name_tokens = &inner_tokens[..eq_pos];
-        let value_tokens = &inner_tokens[eq_pos + 1..];
-        let name_segments = parse_attr_path_segments(name_tokens);
-        if let (Some(name_path), Some(value_expr)) = (
-            name_segments.map(Path::new),
-            parse_attr_value_expr(value_tokens),
-        ) {
-            return Some(Attribute {
-                style: AttrStyle::Outer,
-                meta: AttrMeta::NameValue(AttrMetaNameValue {
-                    name: name_path,
-                    value: value_expr,
-                }),
-            });
-        }
-    }
-
-    let segments = parse_attr_path_segments(&inner_tokens)?;
+    let meta = parse_attr_meta(&inner_tokens)?;
     Some(Attribute {
         style: AttrStyle::Outer,
-        meta: AttrMeta::Path(Path::new(segments)),
+        meta,
     })
 }
 
-fn parse_attr_path_segments(tokens: &[String]) -> Option<Vec<Ident>> {
+fn parse_attr_meta(tokens: &[String]) -> Option<AttrMeta> {
+    let (meta, consumed) = parse_attr_meta_at(tokens, 0)?;
+    if consumed != tokens.len() {
+        return None;
+    }
+    Some(meta)
+}
+
+fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, usize)> {
+    let (path, next) = parse_attr_path(tokens, idx)?;
+    idx = next;
+
+    if tokens.get(idx).is_some_and(|tok| tok == "(") {
+        idx += 1;
+        let mut items = Vec::new();
+        while !tokens.get(idx).is_some_and(|tok| tok == ")") {
+            let (item, next_idx) = parse_attr_meta_at(tokens, idx)?;
+            idx = next_idx;
+            items.push(item);
+            if tokens.get(idx).is_some_and(|tok| tok == ",") {
+                idx += 1;
+            }
+        }
+        if !tokens.get(idx).is_some_and(|tok| tok == ")") {
+            return None;
+        }
+        idx += 1;
+        return Some((AttrMeta::List(AttrMetaList { name: path, items }), idx));
+    }
+
+    if tokens.get(idx).is_some_and(|tok| tok == "=") {
+        idx += 1;
+        let value_expr = parse_attr_value_expr(&tokens[idx..])?;
+        return Some((
+            AttrMeta::NameValue(AttrMetaNameValue {
+                name: path,
+                value: value_expr,
+            }),
+            tokens.len(),
+        ));
+    }
+
+    Some((AttrMeta::Path(path), idx))
+}
+
+fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
     let mut segments = Vec::new();
-    for tok in tokens {
+    while let Some(tok) = tokens.get(idx) {
         if tok == "::" {
+            idx += 1;
             continue;
         }
-        if tok
-            .chars()
-            .next()
-            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
-        {
+        if is_attr_ident(tok) {
             segments.push(Ident::new(tok.to_string()));
+            idx += 1;
+            continue;
         }
+        break;
     }
     if segments.is_empty() {
         None
     } else {
-        Some(segments)
+        Some((Path::new(segments), idx))
     }
 }
 
@@ -507,6 +533,13 @@ fn parse_attr_value_expr(tokens: &[String]) -> Option<BExpr> {
     let value_token = tokens.iter().find(|tok| !tok.is_empty())?;
     let decoded = decode_string_literal(value_token)?;
     Some(Box::new(Expr::value(Value::string(decoded))))
+}
+
+fn is_attr_ident(token: &str) -> bool {
+    token
+        .chars()
+        .next()
+        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
 }
 
 fn decode_string_literal(raw: &str) -> Option<String> {

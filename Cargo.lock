@@ -1290,6 +1290,7 @@ dependencies = [
  "itertools 0.12.1",
  "num-traits",
  "pretty_assertions",
+ "proc-macro2",
  "serde",
  "serde_json",
  "syn 2.0.114",

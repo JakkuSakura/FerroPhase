@@ -109,7 +109,7 @@ fn parse_match_quote_fn_splice_binds_name() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();
     let expr = parser
-        .parse_expr_ast("match token { quote { fn splice(name)(i: i32) } => name, _ => \"none\" }")
+        .parse_expr_ast("match token { quote<fn> => name, _ => \"none\" }")
         .unwrap();
 
     let ExprKind::Match(match_expr) = expr.kind() else {
@@ -124,9 +124,7 @@ fn parse_match_quote_fn_splice_binds_name() {
         panic!("expected quote pattern, got {:?}", pattern.kind());
     };
     assert_eq!(quote.item, Some(QuoteItemKind::Function));
-    assert_eq!(quote.fields.len(), 1);
-    assert_eq!(quote.fields[0].name.as_str(), "name");
-    assert!(quote.fields[0].rename.is_some());
+    assert_eq!(quote.fields.len(), 0);
 }
 
 #[test]

@@ -1787,6 +1787,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let quote_var = self.type_from_ast_ty(&quote_ty)?;
                 self.unify(var, quote_var)?;
             }
+            Value::TokenStream(_) => {
+                let ts_var = self.type_from_ast_ty(&Ty::TokenStream(TypeTokenStream))?;
+                self.unify(var, ts_var)?;
+            }
             Value::Expr(_) => {
                 let message = "embedded expression values are not yet supported".to_string();
                 self.emit_error(message.clone());

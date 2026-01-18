@@ -4,6 +4,7 @@ use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::Result;
+use fp_core::span::Span;
 use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 
 fn i32_ty() -> Ty {
@@ -48,6 +49,7 @@ fn quote_fn_structural_pattern_binds_name() -> Result<()> {
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
+        macro_parser: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -88,6 +90,7 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
+        macro_parser: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -151,6 +154,7 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
+        macro_parser: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -326,15 +330,18 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
     )));
 
     let then_items = ExprKind::Array(ExprArray {
+        span: Span::null(),
         values: vec![quote_item_expr(struct_a)],
     })
     .into();
     let else_items = ExprKind::Array(ExprArray {
+        span: Span::null(),
         values: vec![quote_item_expr(struct_b)],
     })
     .into();
 
     let if_expr: Expr = ExprKind::If(ExprIf {
+        span: Span::null(),
         cond: Box::new(Expr::value(Value::bool(true))),
         then: Box::new(then_items),
         elze: Some(Box::new(else_items)),
@@ -344,15 +351,18 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
     let build_fn = ItemDefFunction::new_simple(Ident::new("build_items"), if_expr.into());
 
     let invoke = ExprKind::Invoke(ExprInvoke {
+        span: Span::null(),
         target: ExprInvokeTarget::Function(Locator::from_ident(Ident::new("build_items"))),
         args: vec![],
     })
     .into();
     let splice_expr: Expr = ExprKind::Splice(ExprSplice {
+        span: Span::null(),
         token: Box::new(invoke),
     })
     .into();
     let const_block = ExprKind::ConstBlock(ExprConstBlock {
+        span: Span::null(),
         expr: Expr::block(ExprBlock::new_stmts(vec![BlockStmt::Expr(
             BlockStmtExpr::new(splice_expr).with_semicolon(true),
         )]))
@@ -376,6 +386,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
+        macro_parser: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -437,6 +448,7 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
+        macro_parser: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -490,6 +502,7 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
     )));
     let quoted_items = quote_item_expr(struct_item);
     let splice_expr = Expr::from(ExprKind::Splice(ExprSplice {
+        span: Span::null(),
         token: quoted_items.into(),
     }));
 
@@ -513,6 +526,7 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
         diagnostics: None,
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
+        macro_parser: None,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);

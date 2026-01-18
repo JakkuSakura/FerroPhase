@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 
 use crate::error::interpretation_error;
@@ -6,15 +7,17 @@ use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
 use fp_core::ast::Pattern;
 use fp_core::ast::{
-    AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprIntrinsicCall,
+    AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
+    ExprIntrinsicCall,
     ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
     ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
-    ItemImport, ItemImportTree, ItemKind, MacroInvocation, MacroTokenTree, Node,
-    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
+    ItemImport, ItemImportTree, ItemKind, MacroGroup, MacroInvocation, MacroToken,
+    MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet,
+    StructuralField, Ty, TypeAny,
     TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
     TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value,
-    ValueField,
-    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
+    ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
+    ValueTuple,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
@@ -29,6 +32,7 @@ use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
 use num_traits::ToPrimitive;
+use proc_macro2::{Delimiter, TokenTree};
 use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
 mod blocks;
 mod closures;
@@ -72,6 +76,19 @@ enum MacroExpansionContext {
     Item,
     Expr,
     Type,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcMacroKind {
+    FunctionLike,
+    Attribute,
+    Derive,
+}
+
+#[derive(Debug, Clone)]
+struct ProcMacroDefinition {
+    kind: ProcMacroKind,
+    function: ItemDefFunction,
 }
 
 #[derive(Clone)]
@@ -313,6 +330,7 @@ pub struct AstInterpreter<'ctx> {
     pending_stmt_splices: Vec<Vec<BlockStmt>>,
     mutations_applied: bool,
     macro_env: Vec<HashMap<String, MacroRulesDefinition>>,
+    proc_macro_env: Vec<HashMap<String, ProcMacroDefinition>>,
     macro_depth: usize,
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
@@ -365,6 +383,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             pending_stmt_splices: Vec::new(),
             mutations_applied: false,
             macro_env: vec![HashMap::new()],
+            proc_macro_env: vec![HashMap::new()],
             macro_depth: 0,
             pending_closure: None,
             pending_expr_ty: None,
@@ -514,6 +533,23 @@ impl<'ctx> AstInterpreter<'ctx> {
         None
     }
 
+    fn register_proc_macro(&mut self, name: &str, def: ProcMacroDefinition) {
+        if let Some(scope) = self.proc_macro_env.last_mut() {
+            scope.insert(name.to_string(), def);
+        }
+    }
+
+    fn lookup_proc_macro(&self, name: &str, kind: ProcMacroKind) -> Option<&ProcMacroDefinition> {
+        for scope in self.proc_macro_env.iter().rev() {
+            if let Some(def) = scope.get(name) {
+                if def.kind == kind {
+                    return Some(def);
+                }
+            }
+        }
+        None
+    }
+
     fn expand_macro_invocation(
         &mut self,
         invocation: &MacroInvocation,
@@ -525,10 +561,26 @@ impl<'ctx> AstInterpreter<'ctx> {
             .last()
             .map(|seg| seg.as_str())
             .unwrap_or("");
-        let def = self.lookup_macro_rules(name).ok_or_else(|| {
-            fp_core::error::Error::from(format!("macro `{}` is not defined", invocation.path))
-        })?;
-        let expansion = expand_macro(def, invocation)?;
+        let expansion = if let Some(def) = self.lookup_macro_rules(name) {
+            expand_macro(def, invocation)?
+        } else if let Some(def) = self.lookup_proc_macro(name, ProcMacroKind::FunctionLike) {
+            let input = Value::TokenStream(ValueTokenStream {
+                tokens: invocation.token_trees.clone(),
+            });
+            let output = self.call_function(def.function.clone(), vec![input]);
+            let Value::TokenStream(stream) = output else {
+                return Err(fp_core::error::Error::from(format!(
+                    "proc macro `{}` must return TokenStream",
+                    invocation.path
+                )));
+            };
+            stream.tokens
+        } else {
+            return Err(fp_core::error::Error::from(format!(
+                "macro `{}` is not defined",
+                invocation.path
+            )));
+        };
         if expansion.is_empty() {
             return Ok(expansion);
         }
@@ -583,12 +635,16 @@ impl<'ctx> AstInterpreter<'ctx> {
         Some(Locator::path(path))
     }
 
-    fn apply_item_attributes(&mut self, item: &mut Item, attrs: &[Attribute]) -> bool {
+    fn apply_item_attributes(&mut self, item: &mut Item, attrs: &mut Vec<Attribute>) -> bool {
         if attrs.is_empty() {
             return false;
         }
         if !self.in_const_region() && !matches!(self.mode, InterpreterMode::CompileTime) {
             self.emit_error("attributes require const evaluation");
+            return true;
+        }
+
+        if self.apply_proc_macro_attributes(item, attrs) {
             return true;
         }
 
@@ -676,12 +732,253 @@ impl<'ctx> AstInterpreter<'ctx> {
         true
     }
 
+    fn proc_macro_registration(&mut self, func: &ItemDefFunction) -> Option<(String, ProcMacroKind)> {
+        let mut registration: Option<(String, ProcMacroKind)> = None;
+        for attr in &func.attrs {
+            let name = self.attr_name(attr)?;
+            let kind = match name.as_str() {
+                "proc_macro" => ProcMacroKind::FunctionLike,
+                "proc_macro_attribute" => ProcMacroKind::Attribute,
+                "proc_macro_derive" => ProcMacroKind::Derive,
+                _ => continue,
+            };
+            if registration.is_some() {
+                self.emit_error(format!(
+                    "proc macro `{}` cannot declare multiple proc-macro attributes",
+                    func.name
+                ));
+                return None;
+            }
+            let reg_name = if kind == ProcMacroKind::Derive {
+                match self.proc_macro_derive_name(attr) {
+                    Some(name) => name,
+                    None => {
+                        self.emit_error("proc_macro_derive requires a derive name");
+                        return None;
+                    }
+                }
+            } else {
+                func.name.as_str().to_string()
+            };
+            registration = Some((reg_name, kind));
+        }
+        registration
+    }
+
+    fn apply_proc_macro_attributes(&mut self, item: &mut Item, attrs: &mut Vec<Attribute>) -> bool {
+        if self.proc_macro_env.is_empty() {
+            return false;
+        }
+
+        let mut handled = false;
+        let mut derive_names = Vec::new();
+        let mut remaining = Vec::new();
+
+        for attr in attrs.iter() {
+            if let Some(name) = self.attr_name(attr) {
+                if name == "derive" {
+                    if let Some(names) = self.derive_names(attr) {
+                        derive_names.extend(names);
+                        handled = true;
+                        continue;
+                    }
+                }
+                if self.lookup_proc_macro(&name, ProcMacroKind::Attribute).is_some() {
+                    if handled {
+                        self.emit_error("multiple proc-macro attributes on one item are not supported");
+                        return true;
+                    }
+                    let Some(tokens) = self.proc_macro_attribute_tokens(attr, item) else {
+                        return true;
+                    };
+                    let parser = match self.macro_parser.clone() {
+                        Some(parser) => parser,
+                        None => {
+                            self.emit_error("macro expansion requires a parser hook");
+                            return true;
+                        }
+                    };
+                    let Some(def) = self.lookup_proc_macro(&name, ProcMacroKind::Attribute) else {
+                        return true;
+                    };
+                    let (attr_tokens, item_tokens) = tokens;
+                    let output = self.call_function(
+                        def.function.clone(),
+                        vec![
+                            Value::TokenStream(ValueTokenStream { tokens: attr_tokens }),
+                            Value::TokenStream(ValueTokenStream { tokens: item_tokens }),
+                        ],
+                    );
+                    let Value::TokenStream(stream) = output else {
+                        self.emit_error(format!(
+                            "proc macro attribute `{}` must return TokenStream",
+                            name
+                        ));
+                        return true;
+                    };
+                    match parser.parse_items(&stream.tokens) {
+                        Ok(items) => {
+                            if !items.is_empty() {
+                                self.append_pending_items(items);
+                            }
+                            *item = Item::unit();
+                            self.mark_mutated();
+                            return true;
+                        }
+                        Err(err) => {
+                            self.emit_error(err.to_string());
+                            return true;
+                        }
+                    }
+                }
+            }
+            remaining.push(attr.clone());
+        }
+
+        if !derive_names.is_empty() {
+            let parser = match self.macro_parser.clone() {
+                Some(parser) => parser,
+                None => {
+                    self.emit_error("macro expansion requires a parser hook");
+                    return true;
+                }
+            };
+            let item_tokens = match self.item_to_token_stream(item) {
+                Ok(tokens) => tokens,
+                Err(err) => {
+                    self.emit_error(err.to_string());
+                    return true;
+                }
+            };
+            for name in derive_names {
+                let Some(def) = self.lookup_proc_macro(&name, ProcMacroKind::Derive) else {
+                    continue;
+                };
+                let output = self.call_function(
+                    def.function.clone(),
+                    vec![Value::TokenStream(ValueTokenStream {
+                        tokens: item_tokens.clone(),
+                    })],
+                );
+                let Value::TokenStream(stream) = output else {
+                    self.emit_error(format!(
+                        "proc macro derive `{}` must return TokenStream",
+                        name
+                    ));
+                    return true;
+                };
+                match parser.parse_items(&stream.tokens) {
+                    Ok(items) => {
+                        if !items.is_empty() {
+                            self.append_pending_items(items);
+                        }
+                        handled = true;
+                    }
+                    Err(err) => {
+                        self.emit_error(err.to_string());
+                        return true;
+                    }
+                }
+            }
+        }
+
+        if handled {
+            *attrs = remaining;
+        }
+
+        false
+    }
+
+    fn attr_name(&self, attr: &Attribute) -> Option<String> {
+        match &attr.meta {
+            AttrMeta::Path(path) => Some(path.last().as_str().to_string()),
+            AttrMeta::List(list) => Some(list.name.last().as_str().to_string()),
+            AttrMeta::NameValue(nv) => Some(nv.name.last().as_str().to_string()),
+        }
+    }
+
+    fn proc_macro_derive_name(&self, attr: &Attribute) -> Option<String> {
+        let AttrMeta::List(list) = &attr.meta else {
+            return None;
+        };
+        let first = list.items.first()?;
+        match first {
+            AttrMeta::Path(path) => Some(path.last().as_str().to_string()),
+            AttrMeta::List(list) => Some(list.name.last().as_str().to_string()),
+            AttrMeta::NameValue(nv) => Some(nv.name.last().as_str().to_string()),
+        }
+    }
+
+    fn derive_names(&self, attr: &Attribute) -> Option<Vec<String>> {
+        let AttrMeta::List(list) = &attr.meta else {
+            return None;
+        };
+        if list.name.last().as_str() != "derive" {
+            return None;
+        }
+        let mut names = Vec::new();
+        for item in &list.items {
+            match item {
+                AttrMeta::Path(path) => names.push(path.last().as_str().to_string()),
+                AttrMeta::List(list) => names.push(list.name.last().as_str().to_string()),
+                AttrMeta::NameValue(nv) => names.push(nv.name.last().as_str().to_string()),
+            }
+        }
+        if names.is_empty() { None } else { Some(names) }
+    }
+
+    fn proc_macro_attribute_tokens(
+        &self,
+        attr: &Attribute,
+        item: &Item,
+    ) -> Option<(Vec<MacroTokenTree>, Vec<MacroTokenTree>)> {
+        let attr_tokens = self.attr_args_to_tokens(attr);
+        let item_tokens = self.item_to_token_stream(item).ok()?;
+        Some((attr_tokens, item_tokens))
+    }
+
+    fn attr_args_to_tokens(&self, attr: &Attribute) -> Vec<MacroTokenTree> {
+        match &attr.meta {
+            AttrMeta::Path(_) => Vec::new(),
+            AttrMeta::NameValue(nv) => meta_name_value_tokens(nv),
+            AttrMeta::List(list) => meta_list_tokens(&list.items),
+        }
+    }
+
+    fn item_to_token_stream(&self, item: &Item) -> Result<Vec<MacroTokenTree>> {
+        let mut stripped = item.clone();
+        if let ItemKind::DefFunction(func) = stripped.kind_mut() {
+            func.attrs.clear();
+        }
+        let options = fp_core::pretty::PrettyOptions {
+            show_types: false,
+            show_spans: false,
+            ..Default::default()
+        };
+        let text = format!("{}", fp_core::pretty::pretty(&stripped, options));
+        let stream = proc_macro2::TokenStream::from_str(&text)
+            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+        Ok(macro_token_trees_from_proc_macro_stream(stream))
+    }
+
     fn evaluate_item(&mut self, item: &mut Item) {
         if matches!(self.mode, InterpreterMode::CompileTime) {
             if let ItemKind::DefFunction(func) = item.kind() {
+                if let Some((name, kind)) = self.proc_macro_registration(func) {
+                    self.register_proc_macro(
+                        &name,
+                        ProcMacroDefinition {
+                            kind,
+                            function: func.clone(),
+                        },
+                    );
+                    *item = Item::unit();
+                    self.mark_mutated();
+                    return;
+                }
                 if !func.attrs.is_empty() {
-                    let attrs = func.attrs.clone();
-                    if self.apply_item_attributes(item, &attrs) {
+                    let mut attrs = func.attrs.clone();
+                    if self.apply_item_attributes(item, &mut attrs) {
                         return;
                     }
                 }
@@ -1882,7 +2179,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         match ty {
-            Ty::Primitive(_) | Ty::Unit(_) | Ty::Nothing(_) | Ty::Any(_) | Ty::Unknown(_) => {
+            Ty::Primitive(_)
+            | Ty::TokenStream(_)
+            | Ty::Unit(_)
+            | Ty::Nothing(_)
+            | Ty::Any(_)
+            | Ty::Unknown(_) => {
                 ty.clone()
             }
             Ty::Struct(strct) => Ty::Struct(self.substitute_struct(strct, subst)),
@@ -3942,6 +4244,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.value_env.push(HashMap::new());
         self.type_env.push(HashMap::new());
         self.macro_env.push(HashMap::new());
+        self.proc_macro_env.push(HashMap::new());
         if let Some(typer) = self.typer.as_mut() {
             typer.push_scope();
         }
@@ -3951,6 +4254,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.value_env.pop();
         self.type_env.pop();
         self.macro_env.pop();
+        self.proc_macro_env.pop();
         if let Some(typer) = self.typer.as_mut() {
             typer.pop_scope();
         }
@@ -4040,6 +4344,118 @@ fn is_quote_only_item(item: &Item) -> bool {
             has_quote_ty || has_quote_value
         }
         _ => false,
+    }
+}
+
+fn meta_list_tokens(items: &[AttrMeta]) -> Vec<MacroTokenTree> {
+    let mut texts = Vec::new();
+    for (idx, item) in items.iter().enumerate() {
+        if idx > 0 {
+            texts.push(",".to_string());
+        }
+        meta_to_token_texts(item, &mut texts);
+    }
+    texts
+        .into_iter()
+        .map(|text| MacroTokenTree::Token(MacroToken { text, span: Span::null() }))
+        .collect()
+}
+
+fn meta_name_value_tokens(nv: &AttrMetaNameValue) -> Vec<MacroTokenTree> {
+    let mut texts = Vec::new();
+    meta_path_to_texts(&nv.name, &mut texts);
+    texts.push("=".to_string());
+    if let Some(value_text) = attr_value_text(nv.value.as_ref()) {
+        texts.push(value_text);
+    }
+    texts
+        .into_iter()
+        .map(|text| MacroTokenTree::Token(MacroToken { text, span: Span::null() }))
+        .collect()
+}
+
+fn meta_to_token_texts(meta: &AttrMeta, out: &mut Vec<String>) {
+    match meta {
+        AttrMeta::Path(path) => meta_path_to_texts(path, out),
+        AttrMeta::NameValue(nv) => {
+            meta_path_to_texts(&nv.name, out);
+            out.push("=".to_string());
+            if let Some(value_text) = attr_value_text(nv.value.as_ref()) {
+                out.push(value_text);
+            }
+        }
+        AttrMeta::List(list) => {
+            meta_path_to_texts(&list.name, out);
+            out.push("(".to_string());
+            for (idx, item) in list.items.iter().enumerate() {
+                if idx > 0 {
+                    out.push(",".to_string());
+                }
+                meta_to_token_texts(item, out);
+            }
+            out.push(")".to_string());
+        }
+    }
+}
+
+fn meta_path_to_texts(path: &Path, out: &mut Vec<String>) {
+    for (idx, seg) in path.segments.iter().enumerate() {
+        if idx > 0 {
+            out.push("::".to_string());
+        }
+        out.push(seg.as_str().to_string());
+    }
+}
+
+fn attr_value_text(expr: &Expr) -> Option<String> {
+    match expr.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(value) => Some(format!("{:?}", value.value)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn macro_token_trees_from_proc_macro_stream(stream: proc_macro2::TokenStream) -> Vec<MacroTokenTree> {
+    stream
+        .into_iter()
+        .flat_map(macro_token_trees_from_proc_macro_tree)
+        .collect()
+}
+
+fn macro_token_trees_from_proc_macro_tree(tree: TokenTree) -> Vec<MacroTokenTree> {
+    match tree {
+        TokenTree::Group(group) => {
+            let inner = macro_token_trees_from_proc_macro_stream(group.stream());
+            let delimiter = match group.delimiter() {
+                Delimiter::Parenthesis => Some(fp_core::ast::MacroDelimiter::Parenthesis),
+                Delimiter::Brace => Some(fp_core::ast::MacroDelimiter::Brace),
+                Delimiter::Bracket => Some(fp_core::ast::MacroDelimiter::Bracket),
+                Delimiter::None => None,
+            };
+            if let Some(delimiter) = delimiter {
+                vec![MacroTokenTree::Group(MacroGroup {
+                    delimiter,
+                    tokens: inner,
+                    span: Span::null(),
+                })]
+            } else {
+                inner
+            }
+        }
+        TokenTree::Ident(ident) => vec![MacroTokenTree::Token(MacroToken {
+            text: ident.to_string(),
+            span: Span::null(),
+        })],
+        TokenTree::Punct(punct) => vec![MacroTokenTree::Token(MacroToken {
+            text: punct.as_char().to_string(),
+            span: Span::null(),
+        })],
+        TokenTree::Literal(literal) => vec![MacroTokenTree::Token(MacroToken {
+            text: literal.to_string(),
+            span: Span::null(),
+        })],
     }
 }
 

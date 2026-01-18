@@ -809,6 +809,7 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
             ast::TypePrimitive::String => "string".into(),
             ast::TypePrimitive::List => "list".into(),
         },
+        ast::Ty::TokenStream(_) => "TokenStream".into(),
         ast::Ty::Struct(struct_ty) => {
             let mut result = format!("{}", struct_ty.name);
             if !struct_ty.fields.is_empty() {
@@ -1204,6 +1205,7 @@ fn summarize_value(value: &ast::Value) -> String {
             };
             format!("quote<{}>", kind)
         }
+        ast::Value::TokenStream(stream) => format!("TokenStream({} tokens)", stream.tokens.len()),
         ast::Value::Expr(expr) => format!("expr({})", render_expr_inline(expr)),
         ast::Value::BinOpKind(kind) => format!("operator {}", kind),
         ast::Value::UnOpKind(kind) => format!("operator {}", kind),

@@ -51,6 +51,7 @@ common_enum! {
     /// TypeValue is a solid type value
     pub enum Ty {
         Primitive(TypePrimitive),
+        TokenStream(TypeTokenStream),
         Struct(TypeStruct),
         Structural(TypeStructural),
         Enum(TypeEnum),
@@ -155,6 +156,7 @@ impl Ty {
 
     pub fn span(&self) -> Span {
         match self {
+            Ty::TokenStream(_) => Span::null(),
             Ty::Struct(ty) => ty.span(),
             Ty::Structural(ty) => ty.span(),
             Ty::Enum(ty) => ty.span(),
@@ -373,6 +375,7 @@ macro_rules! plain_type {
     };
 }
 plain_type! { TypeAny }
+plain_type! { TypeTokenStream }
 plain_type! { TypeUnit }
 plain_type! { TypeUnknown }
 plain_type! { TypeNothing }

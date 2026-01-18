@@ -43,6 +43,7 @@ common_enum! {
         Function(ValueFunction),
         Tuple(ValueTuple),
         QuoteToken(ValueQuoteToken),
+        TokenStream(ValueTokenStream),
         Expr(BExpr),
         BinOpKind(BinOpKind),
         UnOpKind(UnOpKind),
@@ -132,6 +133,7 @@ impl Value {
                 .map(|value| value.span())
                 .unwrap_or_else(Span::null),
             Value::QuoteToken(token) => token.span(),
+            Value::TokenStream(stream) => stream.span(),
             _ => Span::null(),
         }
     }
@@ -156,6 +158,7 @@ impl ToJson for Value {
             Value::None(n) => n.to_json(),
             Value::Some(s) => s.to_json(),
             Value::Option(o) => o.to_json(),
+            Value::TokenStream(_) => bail!("cannot convert token stream to json"),
             _ => bail!("cannot convert value to json: {:?}", self),
         }
     }

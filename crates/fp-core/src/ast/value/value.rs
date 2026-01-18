@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BlockStmt, Expr, Ident, Item, QuoteFragmentKind, Ty, TySlot,
-    TypeBounds, TypeStruct, Value,
+    get_threadlocal_serializer, BExpr, BlockStmt, Expr, Ident, Item, MacroTokenTree,
+    QuoteFragmentKind, Ty, TySlot, TypeBounds, TypeStruct, Value,
 };
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
@@ -325,6 +325,24 @@ common_struct! {
     pub struct ValueQuoteToken {
         pub kind: QuoteFragmentKind,
         pub value: QuoteTokenValue,
+    }
+}
+
+common_struct! {
+    pub struct ValueTokenStream {
+        pub tokens: Vec<MacroTokenTree>,
+    }
+}
+
+impl ValueTokenStream {
+    pub fn span(&self) -> Span {
+        fn token_span(tree: &MacroTokenTree) -> Span {
+            match tree {
+                MacroTokenTree::Token(tok) => tok.span,
+                MacroTokenTree::Group(group) => group.span,
+            }
+        }
+        Span::union(self.tokens.iter().map(token_span))
     }
 }
 

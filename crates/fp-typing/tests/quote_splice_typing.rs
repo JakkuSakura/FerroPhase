@@ -1,4 +1,5 @@
 use fp_core::ast::*;
+use fp_core::span::Span;
 use fp_typing::{AstTypeInferencer, TypingDiagnosticLevel};
 
 fn make_quote_block(stmts: Vec<BlockStmt>, last_expr: Option<Expr>) -> Expr {

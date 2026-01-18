@@ -376,6 +376,7 @@ fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
             normalize_ty(op.rhs.as_mut(), strategy)?;
         }
         Ty::Primitive(_)
+        | Ty::TokenStream(_)
         | Ty::Any(_)
         | Ty::Unit(_)
         | Ty::Unknown(_)

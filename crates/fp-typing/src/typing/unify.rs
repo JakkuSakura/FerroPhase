@@ -818,6 +818,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 // Treat AnyBox payloads as fully dynamic until a specific handler exists.
                 self.bind(var, TypeTerm::Any);
             }
+            Ty::TokenStream(_) => {
+                self.bind(var, TypeTerm::Custom(ty.clone()));
+            }
             Ty::Struct(struct_ty) => {
                 self.struct_defs
                     .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
@@ -906,6 +909,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .unwrap_or_default(),
                         other => other.to_string(),
                     };
+                    if is_token_stream_name(&name) {
+                        self.bind(var, TypeTerm::Custom(Ty::TokenStream(TypeTokenStream)));
+                        return Ok(var);
+                    }
                     if name == "HashMap" {
                         self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);
@@ -1062,6 +1069,10 @@ fn primitive_from_name(name: &str) -> Option<TypePrimitive> {
         "f64" => Some(TypePrimitive::Decimal(DecimalType::F64)),
         _ => None,
     }
+}
+
+fn is_token_stream_name(name: &str) -> bool {
+    name == "TokenStream" || name.ends_with("::TokenStream")
 }
 
 fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
