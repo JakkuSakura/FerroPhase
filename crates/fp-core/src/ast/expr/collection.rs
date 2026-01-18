@@ -254,6 +254,7 @@ mod tests {
     #[test]
     fn vec_new_becomes_empty_elements() {
         let invoke = ExprInvoke {
+            span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["Vec", "new"])),
             args: vec![],
         };
@@ -267,9 +268,11 @@ mod tests {
     #[test]
     fn vec_from_array_maps_to_elements() {
         let array = ExprArray {
+            span: Span::null(),
             values: vec![Expr::unit(), Expr::unit()],
         };
         let invoke = ExprInvoke {
+            span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["Vec", "from"])),
             args: vec![ExprKind::Array(array).into()],
         };
@@ -283,10 +286,12 @@ mod tests {
     #[test]
     fn vec_from_repeat_maps_to_repeat_variant() {
         let repeat = ExprArrayRepeat {
+            span: Span::null(),
             elem: Expr::unit().into(),
             len: Expr::unit().into(),
         };
         let invoke = ExprInvoke {
+            span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["Vec", "from"])),
             args: vec![ExprKind::ArrayRepeat(repeat.clone()).into()],
         };
@@ -310,9 +315,11 @@ mod tests {
         })
         .into();
         let array = ExprArray {
+            span: Span::null(),
             values: vec![tuple1, tuple2],
         };
         let invoke = ExprInvoke {
+            span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["HashMap", "from"])),
             args: vec![ExprKind::Array(array).into()],
         };

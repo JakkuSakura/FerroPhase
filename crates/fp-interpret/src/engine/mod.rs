@@ -13,7 +13,7 @@ use fp_core::ast::{
     ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
     ItemImport, ItemImportTree, ItemKind, MacroGroup, MacroInvocation, MacroToken,
     MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet,
-    StructuralField, Ty, TypeAny,
+    StructuralField, Ty, TypeAny, TypeTokenStream,
     TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
     TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value,
     ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
@@ -976,11 +976,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.mark_mutated();
                     return;
                 }
-                if !func.attrs.is_empty() {
-                    let mut attrs = func.attrs.clone();
-                    if self.apply_item_attributes(item, &mut attrs) {
-                        return;
-                    }
+            }
+            let mut attrs_buffer = Self::item_attrs_mut(item)
+                .map(std::mem::take)
+                .unwrap_or_default();
+            if !attrs_buffer.is_empty() {
+                if self.apply_item_attributes(item, &mut attrs_buffer) {
+                    return;
+                }
+                if let Some(attrs) = Self::item_attrs_mut(item) {
+                    *attrs = attrs_buffer;
                 }
             }
         }
@@ -1422,6 +1427,23 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Import(import) => {
                 self.handle_import(import);
             }
+        }
+    }
+
+    fn item_attrs_mut(item: &mut Item) -> Option<&mut Vec<Attribute>> {
+        match item.kind_mut() {
+            ItemKind::Module(module) => Some(&mut module.attrs),
+            ItemKind::DefStruct(def) => Some(&mut def.attrs),
+            ItemKind::DefStructural(def) => Some(&mut def.attrs),
+            ItemKind::DefEnum(def) => Some(&mut def.attrs),
+            ItemKind::DefType(def) => Some(&mut def.attrs),
+            ItemKind::DefConst(def) => Some(&mut def.attrs),
+            ItemKind::DefStatic(def) => Some(&mut def.attrs),
+            ItemKind::DefFunction(def) => Some(&mut def.attrs),
+            ItemKind::DefTrait(def) => Some(&mut def.attrs),
+            ItemKind::Import(import) => Some(&mut import.attrs),
+            ItemKind::Impl(impl_block) => Some(&mut impl_block.attrs),
+            _ => None,
         }
     }
 
@@ -3167,6 +3189,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         match value {
             Value::Struct(struct_value) => Some(struct_value.ty.name.as_str().to_string()),
             Value::Type(Ty::Struct(struct_ty)) => Some(struct_ty.name.as_str().to_string()),
+            Value::TokenStream(_) => Some("TokenStream".to_string()),
             Value::Any(any) => any
                 .downcast_ref::<RuntimeEnum>()
                 .map(|enm| enm.enum_name.clone()),
@@ -3187,6 +3210,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
             Value::List(_) => Some(Ty::Primitive(TypePrimitive::List)),
             Value::Struct(struct_value) => Some(Ty::Struct(struct_value.ty.clone())),
+            Value::TokenStream(_) => Some(Ty::TokenStream(TypeTokenStream)),
             Value::Function(function) => Some(Ty::Function(TypeFunction {
                 params: function
                     .sig

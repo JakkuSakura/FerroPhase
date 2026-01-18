@@ -1,10 +1,12 @@
-use crate::ast::{Ident, Visibility};
+use crate::ast::{Attribute, Ident, Visibility};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
 use std::fmt::{Display, Formatter};
 
 common_struct! {
     pub struct ItemImport {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub visibility: Visibility,
         pub tree: ItemImportTree,
     }

@@ -1141,6 +1141,7 @@ fn merge_std_module(
             module
         }
         None => Module {
+            attrs: Vec::new(),
             name: Ident::new("std"),
             items: std_items,
             visibility: Visibility::Public,
@@ -1202,6 +1203,7 @@ impl<'a> FileModuleLoader<'a> {
                         let module_items = self.load_module_items(base_dir, &module.name)?;
                         let nested_items = self.resolve_items(&module_items, &child_dir)?;
                         Module {
+                            attrs: module.attrs.clone(),
                             name: module.name.clone(),
                             items: nested_items,
                             visibility: module.visibility.clone(),
@@ -1210,6 +1212,7 @@ impl<'a> FileModuleLoader<'a> {
                     } else {
                         let nested_items = self.resolve_items(&module.items, &child_dir)?;
                         Module {
+                            attrs: module.attrs.clone(),
                             name: module.name.clone(),
                             items: nested_items,
                             visibility: module.visibility.clone(),

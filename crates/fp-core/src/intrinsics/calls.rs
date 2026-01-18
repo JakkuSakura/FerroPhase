@@ -55,4 +55,10 @@ pub enum IntrinsicCallKind {
     CompileError,
     /// `compile_warning!` - generate a compile-time warning
     CompileWarning,
+
+    // Proc-macro helpers
+    /// Parse a string into a TokenStream.
+    ProcMacroTokenStreamFromStr,
+    /// Render a TokenStream into a string.
+    ProcMacroTokenStreamToString,
 }

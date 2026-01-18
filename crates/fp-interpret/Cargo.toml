@@ -18,3 +18,4 @@ proc-macro2 = "1"
 
 [dev-dependencies]
 pretty_assertions = "1"
+fp-lang = { path = "../fp-lang" }

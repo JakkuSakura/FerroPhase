@@ -106,6 +106,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
     );
     let math_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
         fp_core::ast::Module {
+            attrs: Vec::new(),
             name: ident("math"),
             items: vec![add_fn],
             visibility: fp_core::ast::Visibility::Public,
@@ -124,6 +125,7 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
     });
     let import = fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(
         fp_core::ast::ItemImport {
+            attrs: Vec::new(),
             visibility: fp_core::ast::Visibility::Private,
             tree: import_tree,
         },
@@ -223,6 +225,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     );
     let math_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
         fp_core::ast::Module {
+            attrs: Vec::new(),
             name: ident("math"),
             items: vec![add_fn],
             visibility: fp_core::ast::Visibility::Public,
@@ -238,6 +241,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     });
     let reexport = fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(
         fp_core::ast::ItemImport {
+            attrs: Vec::new(),
             visibility: fp_core::ast::Visibility::Public,
             tree: reexport_tree,
         },
@@ -258,6 +262,7 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
     );
     let callers_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
         fp_core::ast::Module {
+            attrs: Vec::new(),
             name: ident("callers"),
             items: vec![call_fn],
             visibility: fp_core::ast::Visibility::Public,
@@ -513,6 +518,7 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
     ));
     let size_const = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
@@ -523,6 +529,7 @@ fn lowers_sizeof_and_field_count_intrinsics() -> OptimizeResult<()> {
     ));
     let fields_const = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,

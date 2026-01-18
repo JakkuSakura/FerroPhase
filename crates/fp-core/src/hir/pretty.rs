@@ -596,6 +596,8 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::GenerateMethod => "generate_method",
         IntrinsicCallKind::CompileError => "compile_error",
         IntrinsicCallKind::CompileWarning => "compile_warning",
+        IntrinsicCallKind::ProcMacroTokenStreamFromStr => "token_stream_from_str",
+        IntrinsicCallKind::ProcMacroTokenStreamToString => "token_stream_to_string",
     }
 }
 

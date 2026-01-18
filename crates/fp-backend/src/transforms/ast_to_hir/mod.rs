@@ -2119,6 +2119,7 @@ impl ClosureLowering {
         let env_struct_ty = ast::Ty::Struct(struct_decl.clone());
 
         let mut struct_item = ast::Item::new(ast::ItemKind::DefStruct(ast::ItemDefStruct {
+            attrs: Vec::new(),
             visibility: ast::Visibility::Private,
             name: struct_ident.clone(),
             value: struct_decl.clone(),

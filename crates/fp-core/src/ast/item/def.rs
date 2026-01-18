@@ -8,6 +8,8 @@ use crate::span::Span;
 
 common_struct! {
     pub struct ItemDefStruct {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub visibility: Visibility,
         pub name: Ident,
         pub value: TypeStruct,
@@ -16,6 +18,7 @@ common_struct! {
 impl ItemDefStruct {
     pub fn new(name: Ident, fields: Vec<StructuralField>) -> Self {
         Self {
+            attrs: Vec::new(),
             visibility: Visibility::Public,
             value: TypeStruct {
                 name: name.clone(),
@@ -33,6 +36,8 @@ impl ItemDefStruct {
 
 common_struct! {
     pub struct ItemDefStructural {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub visibility: Visibility,
         pub name: Ident,
         pub value: TypeStructural,
@@ -45,6 +50,8 @@ impl ItemDefStructural {
 }
 common_struct! {
     pub struct ItemDefEnum {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub visibility: Visibility,
         pub name: Ident,
         pub value: TypeEnum,
@@ -57,6 +64,8 @@ impl ItemDefEnum {
 }
 common_struct! {
     pub struct ItemDefType {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub visibility: Visibility,
         pub name: Ident,
         pub value: Ty,
@@ -69,6 +78,8 @@ impl ItemDefType {
 }
 common_struct! {
     pub struct ItemDefConst {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub mutable: Option<bool>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -106,6 +117,8 @@ impl ItemDefConst {
 }
 common_struct! {
     pub struct ItemDefStatic {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub ty_annotation: TySlot,
         pub visibility: Visibility,
@@ -214,6 +227,8 @@ impl ItemDefFunction {
 }
 common_struct! {
     pub struct ItemDefTrait {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub name: Ident,
         pub bounds: TypeBounds,
         pub items: ItemChunk,

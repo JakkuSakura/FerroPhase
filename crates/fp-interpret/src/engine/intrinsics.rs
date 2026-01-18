@@ -1,5 +1,7 @@
 use super::*;
 use fp_core::ast::ExprKwArg;
+use proc_macro2::TokenStream as ProcMacroTokenStream;
+use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -147,6 +149,46 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 let value = self.eval_expr(target);
                 Value::Type(self.type_from_value(&value))
+            }
+            IntrinsicCallKind::ProcMacroTokenStreamFromStr => {
+                if call.args.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        call.args.len()
+                    ));
+                    return Value::undefined();
+                }
+                let input = self.eval_expr(&mut call.args[0]);
+                let Value::String(text) = input else {
+                    self.emit_error("proc macro token_stream_from_str expects a string argument");
+                    return Value::undefined();
+                };
+                match ProcMacroTokenStream::from_str(text.value.as_str()) {
+                    Ok(stream) => Value::TokenStream(ValueTokenStream {
+                        tokens: super::macro_token_trees_from_proc_macro_stream(stream),
+                    }),
+                    Err(err) => {
+                        self.emit_error(err.to_string());
+                        Value::undefined()
+                    }
+                }
+            }
+            IntrinsicCallKind::ProcMacroTokenStreamToString => {
+                if call.args.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        call.args.len()
+                    ));
+                    return Value::undefined();
+                }
+                let input = self.eval_expr(&mut call.args[0]);
+                let Value::TokenStream(stream) = input else {
+                    self.emit_error("proc macro token_stream_to_string expects a TokenStream argument");
+                    return Value::undefined();
+                };
+                Value::string(token_stream_to_string(&stream.tokens))
             }
             IntrinsicCallKind::Panic | IntrinsicCallKind::CatchUnwind => {
                 self.emit_error(format!(
@@ -445,6 +487,49 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         Ok(output)
     }
+}
+
+fn token_stream_to_string(tokens: &[MacroTokenTree]) -> String {
+    fn is_ident_like(text: &str) -> bool {
+        text.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
+    }
+    fn needs_space(prev: &str, next: &str) -> bool {
+        is_ident_like(prev) && is_ident_like(next)
+    }
+    fn flatten(tokens: &[MacroTokenTree], out: &mut Vec<String>) {
+        for tree in tokens {
+            match tree {
+                MacroTokenTree::Token(tok) => out.push(tok.text.clone()),
+                MacroTokenTree::Group(group) => {
+                    let (open, close) = match group.delimiter {
+                        fp_core::ast::MacroDelimiter::Parenthesis => ("(", ")"),
+                        fp_core::ast::MacroDelimiter::Bracket => ("[", "]"),
+                        fp_core::ast::MacroDelimiter::Brace => ("{", "}"),
+                    };
+                    out.push(open.to_string());
+                    flatten(&group.tokens, out);
+                    out.push(close.to_string());
+                }
+            }
+        }
+    }
+
+    let mut parts = Vec::new();
+    flatten(tokens, &mut parts);
+    let mut out = String::new();
+    let mut prev: Option<String> = None;
+    for part in parts {
+        if let Some(prev_part) = prev.as_deref() {
+            if needs_space(prev_part, &part) {
+                out.push(' ');
+            }
+        }
+        out.push_str(&part);
+        prev = Some(part);
+    }
+    out
 }
 
 fn split_format_call(

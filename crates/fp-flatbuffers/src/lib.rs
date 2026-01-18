@@ -89,6 +89,7 @@ fn collect_items(source: &str) -> Vec<Item> {
                 "enum" => {
                     let ident = name.clone();
                     let enum_item = ItemDefEnum {
+                        attrs: Vec::new(),
                         visibility: Visibility::Public,
                         name: ident.clone(),
                         value: TypeEnum {

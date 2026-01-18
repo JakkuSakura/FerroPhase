@@ -97,6 +97,7 @@ fn lower_visibility(node: Option<&SyntaxNode>) -> Result<Visibility, LowerItemsE
 }
 
 fn lower_use_item(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let tree = node
         .children
@@ -117,12 +118,14 @@ fn lower_use_item(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> {
         })
         .ok_or(LowerItemsError::MissingToken("use tree"))?;
     Ok(ItemImport {
+        attrs,
         visibility,
         tree: lower_use_tree(tree)?,
     })
 }
 
 fn lower_extern_crate(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let crate_name =
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("crate name"))?;
@@ -149,10 +152,15 @@ fn lower_extern_crate(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> 
         path.push(ItemImportTree::Ident(crate_ident));
         ItemImportTree::Path(path)
     };
-    Ok(ItemImport { visibility, tree })
+    Ok(ItemImport {
+        attrs,
+        visibility,
+        tree,
+    })
 }
 
 fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name =
         Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("mod name"))?);
@@ -166,6 +174,7 @@ fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
         (Vec::new(), true)
     };
     Ok(Module {
+        attrs,
         name,
         items,
         visibility,
@@ -174,6 +183,7 @@ fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
 }
 
 fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name = Ident::new(
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("struct name"))?,
@@ -208,6 +218,7 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         fields.push(StructuralField::new(fname, fty));
     }
     Ok(ItemDefStruct {
+        attrs,
         visibility,
         name: name.clone(),
         value: TypeStruct {
@@ -219,6 +230,7 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
 }
 
 fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name =
         Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("enum name"))?);
@@ -260,6 +272,7 @@ fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
         });
     }
     Ok(ItemDefEnum {
+        attrs,
         visibility,
         name: name.clone(),
         value: TypeEnum {
@@ -271,6 +284,7 @@ fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {
 }
 
 fn lower_type_alias(node: &SyntaxNode) -> Result<ItemDefType, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name =
         Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("type name"))?);
@@ -279,6 +293,7 @@ fn lower_type_alias(node: &SyntaxNode) -> Result<ItemDefType, LowerItemsError> {
     let value =
         lower_type_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
     Ok(ItemDefType {
+        attrs,
         visibility,
         name,
         value,
@@ -286,6 +301,7 @@ fn lower_type_alias(node: &SyntaxNode) -> Result<ItemDefType, LowerItemsError> {
 }
 
 fn lower_const(node: &SyntaxNode) -> Result<ItemDefConst, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let is_mutable = node.children.iter().any(|child| match child {
         SyntaxElement::Token(token) => token.text == "mut",
@@ -304,6 +320,7 @@ fn lower_const(node: &SyntaxNode) -> Result<ItemDefConst, LowerItemsError> {
     let value =
         lower_expr_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
     Ok(ItemDefConst {
+        attrs,
         mutable: if is_mutable { Some(true) } else { None },
         ty_annotation: None,
         visibility,
@@ -314,6 +331,7 @@ fn lower_const(node: &SyntaxNode) -> Result<ItemDefConst, LowerItemsError> {
 }
 
 fn lower_static(node: &SyntaxNode) -> Result<ItemDefStatic, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name = Ident::new(
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("static name"))?,
@@ -327,6 +345,7 @@ fn lower_static(node: &SyntaxNode) -> Result<ItemDefStatic, LowerItemsError> {
     let value =
         lower_expr_from_cst(value_node).map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
     Ok(ItemDefStatic {
+        attrs,
         ty_annotation: None,
         visibility,
         name,
@@ -598,6 +617,7 @@ fn decode_string_literal(raw: &str) -> Option<String> {
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name = Ident::new(
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("trait name"))?,
@@ -626,6 +646,7 @@ fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
     }
 
     Ok(ItemDefTrait {
+        attrs,
         visibility,
         name,
         bounds,
@@ -699,6 +720,7 @@ fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
 }
 
 fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
+    let attrs = lower_outer_attrs(node);
     let generics = node
         .children
         .iter()
@@ -753,6 +775,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
     };
 
     Ok(ItemImpl {
+        attrs,
         trait_ty,
         self_ty,
         generics_params: generics,

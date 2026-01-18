@@ -92,6 +92,7 @@ fn lower_package(package: &WitPackage) -> Option<Module> {
 
     let name = Ident::new(sanitize_identifier(&package.name));
     Some(Module {
+        attrs: Vec::new(),
         name,
         items,
         visibility: Visibility::Public,
@@ -115,6 +116,7 @@ fn lower_interface(interface: &WitInterface) -> Option<Module> {
     }
 
     Some(Module {
+        attrs: Vec::new(),
         name: interface.name.clone(),
         items,
         visibility: Visibility::Public,
@@ -128,6 +130,7 @@ fn lower_type(ty: &WitType) -> Item {
             let mut value = struct_ty.clone();
             value.name = ty.name.clone();
             Item::from(ItemDefStruct {
+                attrs: Vec::new(),
                 visibility: Visibility::Public,
                 name: ty.name.clone(),
                 value,
@@ -137,12 +140,14 @@ fn lower_type(ty: &WitType) -> Item {
             let mut value = enum_ty.clone();
             value.name = ty.name.clone();
             Item::from(ItemDefEnum {
+                attrs: Vec::new(),
                 visibility: Visibility::Public,
                 name: ty.name.clone(),
                 value,
             })
         }
         other => Item::from(ItemDefType {
+            attrs: Vec::new(),
             visibility: Visibility::Public,
             name: ty.name.clone(),
             value: other.clone(),

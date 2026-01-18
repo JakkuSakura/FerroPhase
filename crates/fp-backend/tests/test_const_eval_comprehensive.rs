@@ -19,6 +19,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
 
     let width = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
@@ -31,6 +32,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     ));
     let height = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
@@ -51,6 +53,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     ));
     let area = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
@@ -64,6 +67,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
 
     let edge = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Public,
@@ -84,6 +88,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     ));
     let perimeter = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
+            attrs: Vec::new(),
             mutable: None,
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Public,
@@ -96,6 +101,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     ));
     let shapes = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
         fp_core::ast::Module {
+            attrs: Vec::new(),
             name: ident("shapes"),
             items: vec![edge, perimeter],
             visibility: fp_core::ast::Visibility::Private,

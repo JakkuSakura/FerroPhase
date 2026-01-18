@@ -157,6 +157,7 @@ fn parse_enum_decl(
     }
 
     let def = ItemDefEnum {
+        attrs: Vec::new(),
         visibility,
         name: name.clone(),
         value: fp_core::ast::TypeEnum {
@@ -176,6 +177,7 @@ fn parse_const_value(
 ) -> Result<Item> {
     let value_expr = parse_literal_expr(value_node, source)?;
     Ok(Item::new(ItemKind::DefConst(ItemDefConst {
+        attrs: Vec::new(),
         mutable: None,
         ty_annotation: None,
         visibility,

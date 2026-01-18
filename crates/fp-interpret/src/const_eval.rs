@@ -224,6 +224,7 @@ fn merge_std_module(
             module
         }
         None => Module {
+            attrs: Vec::new(),
             name: Ident::new("std"),
             items: std_items,
             visibility: Visibility::Public,

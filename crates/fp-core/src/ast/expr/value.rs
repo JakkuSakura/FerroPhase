@@ -850,6 +850,26 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             invoke.args.clone(),
             Vec::new(),
         )),
+        IntrinsicCallKind::ProcMacroTokenStreamFromStr => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                Vec::new(),
+            ))
+        }
+        IntrinsicCallKind::ProcMacroTokenStreamToString => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                Vec::new(),
+            ))
+        }
         IntrinsicCallKind::Format => None,
         IntrinsicCallKind::DebugAssertions
         | IntrinsicCallKind::Input
@@ -896,6 +916,18 @@ fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
                     Some(IntrinsicCallKind::Len)
                 }
                 ["std", "time", "now"] => Some(IntrinsicCallKind::TimeNow),
+                ["proc_macro", "token_stream_from_str"]
+                | ["std", "proc_macro", "token_stream_from_str"]
+                | ["proc_macro", "TokenStream", "from_str"]
+                | ["std", "proc_macro", "TokenStream", "from_str"] => {
+                    Some(IntrinsicCallKind::ProcMacroTokenStreamFromStr)
+                }
+                ["proc_macro", "token_stream_to_string"]
+                | ["std", "proc_macro", "token_stream_to_string"]
+                | ["proc_macro", "TokenStream", "to_string"]
+                | ["std", "proc_macro", "TokenStream", "to_string"] => {
+                    Some(IntrinsicCallKind::ProcMacroTokenStreamToString)
+                }
                 _ => None,
             }
         }

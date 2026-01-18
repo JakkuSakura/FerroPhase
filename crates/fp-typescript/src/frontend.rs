@@ -440,6 +440,7 @@ fn lower_import(import: &ImportDecl) -> Vec<Item> {
     }
 
     vec![Item::from(ItemImport {
+        attrs: Vec::new(),
         visibility: Visibility::Inherited,
         tree: ItemImportTree::Path(path),
     })]
@@ -467,6 +468,7 @@ fn lower_export_all(export: &ExportAll) -> Vec<Item> {
     path.push(ItemImportTree::Glob);
 
     vec![Item::from(ItemImport {
+        attrs: Vec::new(),
         visibility: Visibility::Public,
         tree: ItemImportTree::Path(path),
     })]
@@ -532,6 +534,7 @@ fn lower_named_export(export: &NamedExport) -> Vec<Item> {
 
         if !path.segments.is_empty() {
             items.push(Item::from(ItemImport {
+                attrs: Vec::new(),
                 visibility: Visibility::Public,
                 tree: ItemImportTree::Path(path),
             }));
@@ -599,6 +602,7 @@ fn lower_type_alias(
     let ty = lower_ts_type(alias.type_ann.as_ref());
     if let Ty::Structural(structural) = &ty {
         let def = ItemDefStruct {
+            attrs: Vec::new(),
             visibility,
             name: ident.clone(),
             value: TypeStruct {
@@ -611,6 +615,7 @@ fn lower_type_alias(
     }
 
     let def = ItemDefType {
+        attrs: Vec::new(),
         visibility,
         name: ident,
         value: ty,
@@ -672,6 +677,7 @@ fn lower_interface_decl(
     {
         if let Some(base_ident) = inherited_names.first() {
             let def = ItemDefType {
+                attrs: Vec::new(),
                 visibility,
                 name: ident,
                 value: Ty::ident(base_ident.clone()),
@@ -694,6 +700,7 @@ fn lower_interface_decl(
     if merged_fields.is_empty() {
         if let Some(base_ident) = inherited_names.first() {
             let def = ItemDefType {
+                attrs: Vec::new(),
                 visibility,
                 name: ident,
                 value: Ty::ident(base_ident.clone()),
@@ -704,6 +711,7 @@ fn lower_interface_decl(
     }
 
     let def = ItemDefStruct {
+        attrs: Vec::new(),
         visibility,
         name: ident.clone(),
         value: TypeStruct {
@@ -834,6 +842,7 @@ fn lower_enum_decl(enum_decl: &TsEnumDecl, visibility: Visibility) -> Vec<Item> 
     }
 
     let def = ItemDefEnum {
+        attrs: Vec::new(),
         visibility,
         name: ident.clone(),
         value: TypeEnum {
@@ -886,6 +895,7 @@ fn lower_class_like(
     }
 
     vec![Item::from(AstModule {
+        attrs: Vec::new(),
         name: Ident::new(class_name),
         items,
         visibility,
@@ -1483,6 +1493,7 @@ fn lower_var_decl(var_decl: &VarDecl, visibility: Visibility) -> Vec<Item> {
         match var_decl.kind {
             VarDeclKind::Const => {
                 let mut item = ItemDefConst {
+                    attrs: Vec::new(),
                     mutable: None,
                     ty_annotation: None,
                     visibility: visibility.clone(),

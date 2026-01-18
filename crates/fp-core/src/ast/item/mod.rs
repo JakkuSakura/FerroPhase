@@ -297,6 +297,8 @@ impl ItemChunkExt for ItemChunk {
 }
 common_struct! {
     pub struct Module {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub name: Ident,
         pub items: ItemChunk,
         pub visibility: Visibility,
@@ -324,6 +326,8 @@ common_enum! {
 
 common_struct! {
     pub struct ItemImpl {
+        #[serde(default)]
+        pub attrs: Vec<Attribute>,
         pub trait_ty: Option<Locator>,
         pub self_ty: Expr,
         #[serde(default)]
@@ -335,6 +339,7 @@ common_struct! {
 impl ItemImpl {
     pub fn new_ident(self_ty: Ident, items: ItemChunk) -> Self {
         Self {
+            attrs: Vec::new(),
             trait_ty: None,
             self_ty: Expr::ident(self_ty).into(),
             generics_params: Vec::new(),
@@ -343,6 +348,7 @@ impl ItemImpl {
     }
     pub fn new(trait_ty: Option<Locator>, self_ty: Expr, items: ItemChunk) -> Self {
         Self {
+            attrs: Vec::new(),
             trait_ty,
             self_ty,
             generics_params: Vec::new(),
