@@ -89,6 +89,7 @@ impl LanguageFrontend for SqlFrontend {
             ast: node,
             serializer,
             intrinsic_normalizer: None,
+            macro_parser: None,
             snapshot: Some(snapshot),
             diagnostics,
         })

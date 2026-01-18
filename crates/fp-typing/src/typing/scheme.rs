@@ -24,6 +24,7 @@ pub(crate) enum SchemeType {
     Vec(Box<SchemeType>),
     Array(Box<SchemeType>),
     Reference(Box<SchemeType>),
+    Boxed(Box<SchemeType>),
     Any,
     Custom(Ty),
     Unknown,

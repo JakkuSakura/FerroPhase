@@ -2,8 +2,10 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
+mod macro_parser;
 mod normalization;
 mod serializer;
+use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::ast::{Expr, ExprKind, Node};
 pub use serializer::PrettyAstSerializer;
@@ -59,6 +61,9 @@ impl LanguageFrontend for FerroFrontend {
         let serializer = Arc::new(PrettyAstSerializer::new());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(FerroIntrinsicNormalizer::default());
+        let macro_parser = Arc::new(FerroMacroExpansionParser::new(Arc::new(
+            FerroPhaseParser::new(),
+        )));
         let file_id = fp_core::source_map::register_source(
             path.unwrap_or_else(|| Path::new("<expr>")),
             &cleaned,
@@ -94,6 +99,7 @@ impl LanguageFrontend for FerroFrontend {
                         ast,
                         serializer,
                         intrinsic_normalizer: Some(intrinsic_normalizer.clone()),
+                        macro_parser: Some(macro_parser.clone()),
                         snapshot: Some(snapshot),
                         diagnostics,
                     });
@@ -130,6 +136,7 @@ impl LanguageFrontend for FerroFrontend {
                 ast,
                 serializer,
                 intrinsic_normalizer: Some(intrinsic_normalizer),
+                macro_parser: Some(macro_parser.clone()),
                 snapshot: None,
                 diagnostics,
             });
@@ -154,6 +161,7 @@ impl LanguageFrontend for FerroFrontend {
                     ast,
                     serializer,
                     intrinsic_normalizer: Some(intrinsic_normalizer),
+                    macro_parser: Some(macro_parser.clone()),
                     snapshot: None,
                     diagnostics,
                 })

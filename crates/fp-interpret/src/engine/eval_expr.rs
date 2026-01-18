@@ -748,14 +748,42 @@ impl<'ctx> AstInterpreter<'ctx> {
                 result
             }
             ExprKind::Macro(macro_expr) => {
-                self.emit_error_at(
-                    macro_expr.invocation.span,
-                    format!(
-                        "macro `{}` should have been lowered before const evaluation",
-                        macro_expr.invocation.path
-                    ),
-                );
-                Value::undefined()
+                let parser = match self.macro_parser.clone() {
+                    Some(parser) => parser,
+                    None => {
+                        self.emit_error_at(
+                            macro_expr.invocation.span,
+                            "macro expansion requires a parser hook",
+                        );
+                        return Value::undefined();
+                    }
+                };
+                if self.macro_depth > 64 {
+                    self.emit_error_at(
+                        macro_expr.invocation.span,
+                        "macro expansion exceeded recursion limit",
+                    );
+                    return Value::undefined();
+                }
+                self.macro_depth += 1;
+                let expanded = self
+                    .expand_macro_invocation(&macro_expr.invocation, MacroExpansionContext::Expr)
+                    .and_then(|tokens| parser.parse_expr(&tokens));
+                self.macro_depth = self.macro_depth.saturating_sub(1);
+                match expanded {
+                    Ok(mut new_expr) => {
+                        if let Some(ty) = expr_ty_snapshot.clone() {
+                            new_expr.ty = Some(ty);
+                        }
+                        *expr = new_expr;
+                        self.mark_mutated();
+                        self.eval_expr(expr)
+                    }
+                    Err(err) => {
+                        self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                        Value::undefined()
+                    }
+                }
             }
             ExprKind::Closure(closure) => {
                 if let Some(Ty::Function(ref fn_sig)) = expr_ty_snapshot.as_ref() {

@@ -9,11 +9,11 @@ use fp_core::ast::{
     AttrMeta, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField, ExprIntrinsicCall,
     ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
     ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
-    ItemImport, ItemImportTree, ItemKind, Node, NodeKind, Path, QuoteFragmentKind, QuoteTokenValue,
-    StmtLet, StructuralField, Ty, TypeAny, TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt,
-    TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStruct, TypeStructural, TypeTuple,
-    TypeUnit, TypeVec, Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural,
-    ValueTuple,
+    ItemImport, ItemImportTree, ItemKind, MacroInvocation, MacroTokenTree, Node,
+    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
+    TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
+    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit, TypeVec, Value, ValueField,
+    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
@@ -28,6 +28,7 @@ use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::AstTypeInferencer;
 use num_traits::ToPrimitive;
+use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
 mod blocks;
 mod closures;
 mod const_regions;
@@ -35,6 +36,7 @@ mod env;
 mod eval_expr;
 mod eval_stmt;
 mod intrinsics;
+mod macro_rules;
 mod operators;
 mod quote;
 
@@ -64,7 +66,14 @@ pub(super) enum ResolutionMode {
     Attribute,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MacroExpansionContext {
+    Item,
+    Expr,
+    Type,
+}
+
+#[derive(Clone)]
 pub struct InterpreterOptions {
     pub mode: InterpreterMode,
     pub debug_assertions: bool,
@@ -72,6 +81,7 @@ pub struct InterpreterOptions {
     pub diagnostic_context: &'static str,
     // Optional module resolution context for handling `use`/imports during evaluation.
     pub module_resolution: Option<ModuleResolutionContext>,
+    pub macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
 }
 
 impl Default for InterpreterOptions {
@@ -82,6 +92,7 @@ impl Default for InterpreterOptions {
             diagnostics: None,
             diagnostic_context: DEFAULT_DIAGNOSTIC_CONTEXT,
             module_resolution: None,
+            macro_parser: None,
         }
     }
 }
@@ -282,6 +293,7 @@ pub struct AstInterpreter<'ctx> {
     debug_assertions: bool,
     diagnostic_context: &'static str,
     module_resolution: Option<ModuleResolutionContext>,
+    macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -299,6 +311,8 @@ pub struct AstInterpreter<'ctx> {
     pending_items: Vec<Vec<Item>>,
     pending_stmt_splices: Vec<Vec<BlockStmt>>,
     mutations_applied: bool,
+    macro_env: Vec<HashMap<String, MacroRulesDefinition>>,
+    macro_depth: usize,
     pending_closure: Option<ConstClosure>,
     pending_expr_ty: Option<Ty>,
     closure_types: HashMap<String, Ty>,
@@ -332,6 +346,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             debug_assertions: options.debug_assertions,
             diagnostic_context: options.diagnostic_context,
             module_resolution: options.module_resolution.clone(),
+            macro_parser: options.macro_parser.clone(),
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -348,6 +363,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             pending_items: Vec::new(),
             pending_stmt_splices: Vec::new(),
             mutations_applied: false,
+            macro_env: vec![HashMap::new()],
+            macro_depth: 0,
             pending_closure: None,
             pending_expr_ty: None,
             closure_types: HashMap::new(),
@@ -478,6 +495,51 @@ impl<'ctx> AstInterpreter<'ctx> {
             scope_pending.extend(items);
         } else {
             self.pending_items.push(items);
+        }
+    }
+
+    fn register_macro_rules(&mut self, name: &str, def: MacroRulesDefinition) {
+        if let Some(scope) = self.macro_env.last_mut() {
+            scope.insert(name.to_string(), def);
+        }
+    }
+
+    fn lookup_macro_rules(&self, name: &str) -> Option<&MacroRulesDefinition> {
+        for scope in self.macro_env.iter().rev() {
+            if let Some(def) = scope.get(name) {
+                return Some(def);
+            }
+        }
+        None
+    }
+
+    fn expand_macro_invocation(
+        &mut self,
+        invocation: &MacroInvocation,
+        context: MacroExpansionContext,
+    ) -> Result<Vec<MacroTokenTree>> {
+        let name = invocation
+            .path
+            .segments
+            .last()
+            .map(|seg| seg.as_str())
+            .unwrap_or("");
+        let def = self.lookup_macro_rules(name).ok_or_else(|| {
+            fp_core::error::Error::from(format!("macro `{}` is not defined", invocation.path))
+        })?;
+        let expansion = expand_macro(def, invocation)?;
+        if expansion.is_empty() {
+            return Ok(expansion);
+        }
+        if expansion.len() > 10_000 {
+            return Err(fp_core::error::Error::from(
+                "macro expansion too large; aborting",
+            ));
+        }
+        match context {
+            MacroExpansionContext::Item
+            | MacroExpansionContext::Expr
+            | MacroExpansionContext::Type => Ok(expansion),
         }
     }
 
@@ -626,8 +688,65 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         match item.kind_mut() {
-            ItemKind::Macro(_mac) => {
-                // Item macros are compile-time constructs; interpreter skips them.
+            ItemKind::Macro(mac) => {
+                if matches!(self.mode, InterpreterMode::CompileTime) {
+                    let macro_name = mac
+                        .invocation
+                        .path
+                        .segments
+                        .last()
+                        .map(|seg| seg.as_str())
+                        .unwrap_or("");
+                    if macro_name == "macro_rules" {
+                        let Some(declared) = mac.declared_name.as_ref() else {
+                            self.emit_error_at(
+                                mac.invocation.span,
+                                "macro_rules! requires a macro name",
+                            );
+                            return;
+                        };
+                        match parse_macro_rules(&mac.invocation, declared.as_str()) {
+                            Ok(def) => {
+                                self.register_macro_rules(declared.as_str(), def);
+                                *item = Item::unit();
+                                self.mark_mutated();
+                            }
+                            Err(err) => {
+                                self.emit_error_at(mac.invocation.span, err.to_string());
+                            }
+                        }
+                        return;
+                    }
+
+                    let parser = match self.macro_parser.clone() {
+                        Some(parser) => parser,
+                        None => {
+                            self.emit_error_at(
+                                mac.invocation.span,
+                                "macro expansion requires a parser hook",
+                            );
+                            return;
+                        }
+                    };
+                    match self.expand_macro_invocation(&mac.invocation, MacroExpansionContext::Item)
+                    {
+                        Ok(tokens) => match parser.parse_items(&tokens) {
+                            Ok(items) => {
+                                if !items.is_empty() {
+                                    self.append_pending_items(items);
+                                }
+                                *item = Item::unit();
+                                self.mark_mutated();
+                            }
+                            Err(err) => {
+                                self.emit_error_at(mac.invocation.span, err.to_string());
+                            }
+                        },
+                        Err(err) => {
+                            self.emit_error_at(mac.invocation.span, err.to_string());
+                        }
+                    }
+                }
             }
             ItemKind::DefStruct(def) => {
                 let ty = Ty::Struct(def.value.clone());
@@ -2989,19 +3108,58 @@ impl<'ctx> AstInterpreter<'ctx> {
                 *array_ty.len = replacement.into();
             }
             Ty::Expr(expr) => {
-                if let ExprKind::ConstBlock(_) = expr.kind() {
-                    let value = self.eval_expr(expr.as_mut());
-                    match value {
-                        Value::Type(resolved_ty) => {
-                            *ty = resolved_ty;
-                        }
-                        other => {
-                            self.emit_error(format!(
-                                "type expression must evaluate to a type, found {}",
-                                other
-                            ));
+                match expr.kind() {
+                    ExprKind::ConstBlock(_) => {
+                        let value = self.eval_expr(expr.as_mut());
+                        match value {
+                            Value::Type(resolved_ty) => {
+                                *ty = resolved_ty;
+                            }
+                            other => {
+                                self.emit_error(format!(
+                                    "type expression must evaluate to a type, found {}",
+                                    other
+                                ));
+                            }
                         }
                     }
+                    ExprKind::Macro(macro_expr) => {
+                        let parser = match self.macro_parser.clone() {
+                            Some(parser) => parser,
+                            None => {
+                                self.emit_error_at(
+                                    macro_expr.invocation.span,
+                                    "macro expansion requires a parser hook",
+                                );
+                                return;
+                            }
+                        };
+                        if self.macro_depth > 64 {
+                            self.emit_error_at(
+                                macro_expr.invocation.span,
+                                "macro expansion exceeded recursion limit",
+                            );
+                            return;
+                        }
+                        self.macro_depth += 1;
+                        let expanded = self
+                            .expand_macro_invocation(
+                                &macro_expr.invocation,
+                                MacroExpansionContext::Type,
+                            )
+                            .and_then(|tokens| parser.parse_type(&tokens));
+                        self.macro_depth = self.macro_depth.saturating_sub(1);
+                        match expanded {
+                            Ok(new_ty) => {
+                                *ty = new_ty;
+                                self.mark_mutated();
+                            }
+                            Err(err) => {
+                                self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -3782,6 +3940,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn push_scope(&mut self) {
         self.value_env.push(HashMap::new());
         self.type_env.push(HashMap::new());
+        self.macro_env.push(HashMap::new());
         if let Some(typer) = self.typer.as_mut() {
             typer.push_scope();
         }
@@ -3790,6 +3949,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn pop_scope(&mut self) {
         self.value_env.pop();
         self.type_env.pop();
+        self.macro_env.pop();
         if let Some(typer) = self.typer.as_mut() {
             typer.pop_scope();
         }

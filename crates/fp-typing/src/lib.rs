@@ -292,6 +292,228 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn validate_struct_recursion(&mut self, name: &str, fields: &[StructuralField]) {
+        let mut visiting = HashSet::new();
+        for field in fields {
+            let mut path = vec![field.name.as_str().to_string()];
+            if let Some((path_str, chain)) = self.contains_illegal_struct_recursion(
+                &field.value,
+                name,
+                false,
+                &mut visiting,
+                &mut path,
+            ) {
+                let location = if path_str.is_empty() {
+                    "field".to_string()
+                } else {
+                    format!("field {}", path_str)
+                };
+                let chain = if chain.is_empty() {
+                    String::new()
+                } else {
+                    let mut cycle = chain.clone();
+                    if let Some(first) = chain.first() {
+                        cycle.push(first.clone());
+                    }
+                    format!(" (cycle: {})", cycle.join(" -> "))
+                };
+                self.emit_error_with_span(
+                    self.span_option(field.span()),
+                    format!(
+                        "recursive struct {} {} must use heap indirection (Box/Arc/Rc/Weak/Vec/&/Box<dyn ...>){}",
+                        name, location, chain
+                    ),
+                );
+            }
+        }
+    }
+
+    fn contains_illegal_struct_recursion(
+        &self,
+        ty: &Ty,
+        target: &str,
+        heap_wrapped: bool,
+        visiting: &mut HashSet<String>,
+        path: &mut Vec<String>,
+    ) -> Option<(String, Vec<String>)> {
+        if heap_wrapped {
+            return None;
+        }
+
+        if let Some(inner) = self.heap_inner_ty(ty) {
+            return self.contains_illegal_struct_recursion(inner, target, true, visiting, path);
+        }
+
+        match ty {
+            Ty::Struct(struct_ty) => {
+                let name = struct_ty.name.as_str();
+                if name == target {
+                    return Some((path.join("."), vec![target.to_string()]));
+                }
+                if !visiting.insert(name.to_string()) {
+                    return None;
+                }
+                let result = struct_ty.fields.iter().find_map(|field| {
+                    path.push(field.name.as_str().to_string());
+                    let found = self.contains_illegal_struct_recursion(
+                        &field.value,
+                        target,
+                        false,
+                        visiting,
+                        path,
+                    );
+                    path.pop();
+                    found
+                });
+                visiting.remove(name);
+                result
+            }
+            Ty::Structural(structural) => structural.fields.iter().find_map(|field| {
+                path.push(field.name.as_str().to_string());
+                let found = self.contains_illegal_struct_recursion(
+                    &field.value,
+                    target,
+                    false,
+                    visiting,
+                    path,
+                );
+                path.pop();
+                found
+            }),
+            Ty::Tuple(tuple) => tuple.types.iter().find_map(|elem| {
+                path.push("tuple".to_string());
+                let found =
+                    self.contains_illegal_struct_recursion(elem, target, false, visiting, path);
+                path.pop();
+                found
+            }),
+            Ty::Vec(vec) => self.contains_illegal_struct_recursion(
+                &vec.ty,
+                target,
+                false,
+                visiting,
+                path,
+            ),
+            Ty::Array(array) => self.contains_illegal_struct_recursion(
+                &array.elem,
+                target,
+                false,
+                visiting,
+                path,
+            ),
+            Ty::Slice(slice) => self.contains_illegal_struct_recursion(
+                &slice.elem,
+                target,
+                false,
+                visiting,
+                path,
+            ),
+            Ty::Reference(reference) => self.contains_illegal_struct_recursion(
+                &reference.ty,
+                target,
+                false,
+                visiting,
+                path,
+            ),
+            Ty::Function(function) => {
+                for param in &function.params {
+                    if let Some(found) =
+                        self.contains_illegal_struct_recursion(param, target, false, visiting, path)
+                    {
+                        return Some(found);
+                    }
+                }
+                function
+                    .ret_ty
+                    .as_ref()
+                    .and_then(|ret| {
+                        self.contains_illegal_struct_recursion(ret, target, false, visiting, path)
+                    })
+            }
+            Ty::TypeBinaryOp(op) => self
+                .contains_illegal_struct_recursion(&op.lhs, target, false, visiting, path)
+                .or_else(|| {
+                    self.contains_illegal_struct_recursion(&op.rhs, target, false, visiting, path)
+                }),
+            Ty::Expr(expr) => {
+                let ExprKind::Locator(locator) = expr.kind() else {
+                    return None;
+                };
+                if let Some(inner) = self.heap_inner_ty(ty) {
+                    return self.contains_illegal_struct_recursion(
+                        inner,
+                        target,
+                        true,
+                        visiting,
+                        path,
+                    );
+                }
+                let Some(name) = self.locator_tail_name(locator) else {
+                    return None;
+                };
+                if name == target {
+                    return Some((path.join("."), vec![target.to_string()]));
+                }
+                let Some(def) = self.struct_defs.get(&name) else {
+                    return None;
+                };
+                if !visiting.insert(name.clone()) {
+                    return None;
+                }
+                let result = def.fields.iter().find_map(|field| {
+                    path.push(field.name.as_str().to_string());
+                    let found = self.contains_illegal_struct_recursion(
+                        &field.value,
+                        target,
+                        false,
+                        visiting,
+                        path,
+                    );
+                    path.pop();
+                    found.map(|(path_str, mut chain)| {
+                        chain.insert(0, name.clone());
+                        (path_str, chain)
+                    })
+                });
+                visiting.remove(&name);
+                result
+            }
+            _ => None,
+        }
+    }
+
+    fn heap_inner_ty<'a>(&self, ty: &'a Ty) -> Option<&'a Ty> {
+        match ty {
+            Ty::Reference(reference) => Some(&reference.ty),
+            Ty::Vec(vec) => Some(&vec.ty),
+            Ty::Expr(expr) => {
+                let ExprKind::Locator(Locator::ParameterPath(path)) = expr.kind() else {
+                    return None;
+                };
+                let segment = path.segments.last()?;
+                if segment.args.len() != 1 {
+                    return None;
+                }
+                match segment.ident.as_str() {
+                    "Box" | "Arc" | "Rc" | "Weak" | "Vec" => Some(&segment.args[0]),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn locator_tail_name(&self, locator: &Locator) -> Option<String> {
+        match locator {
+            Locator::Ident(ident) => Some(ident.as_str().to_string()),
+            Locator::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
+            Locator::ParameterPath(path) => path
+                .segments
+                .last()
+                .map(|seg| seg.ident.as_str().to_string()),
+        }
+    }
+
     fn struct_name_variants(&self, name: &str) -> Vec<String> {
         let mut names = Vec::new();
         let mut seen = HashSet::new();
@@ -834,6 +1056,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let result = (|| {
             let ty = match item.kind_mut() {
                 ItemKind::DefStruct(def) => {
+                    self.validate_struct_recursion(def.name.as_str(), &def.value.fields);
                     let ty = Ty::Struct(def.value.clone());
                     let placeholder = self.symbol_var(&def.name);
                     let var = self.type_from_ast_ty(&ty)?;
@@ -842,6 +1065,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ty
                 }
                 ItemKind::DefStructural(def) => {
+                    self.validate_struct_recursion(def.name.as_str(), &def.value.fields);
                     let ty = Ty::Struct(TypeStruct {
                         name: def.name.clone(),
                         generics_params: Vec::new(),

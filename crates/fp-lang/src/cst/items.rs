@@ -492,8 +492,23 @@ fn parse_item_cst(
         TokenKind::Ident if matches!(input.get(1), Some(Token { kind: TokenKind::Symbol, lexeme, .. }) if lexeme == "!") =>
         {
             let name = expect_ident_token(input)?;
+            let name_text = name.text.clone();
             children.push(SyntaxElement::Token(name));
-            expect_symbol(input, "!")?;
+            let bang = expect_symbol_token(input)?;
+            if bang.text != "!" {
+                return cut_message(input, "expected symbol '!'");
+            }
+            children.push(SyntaxElement::Token(bang));
+            if name_text == "macro_rules" {
+                if matches!(input.first(), Some(Token { kind: TokenKind::Ident, .. }))
+                    && (matches_symbol(input.get(1), "(")
+                        || matches_symbol(input.get(1), "{")
+                        || matches_symbol(input.get(1), "["))
+                {
+                    let declared = expect_ident_token(input)?;
+                    children.push(SyntaxElement::Token(declared));
+                }
+            }
             let open = expect_symbol_token(input)?;
             let open_text = open.text.clone();
             children.push(SyntaxElement::Token(open));

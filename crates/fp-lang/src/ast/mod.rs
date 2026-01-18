@@ -151,6 +151,7 @@ impl FerroPhaseParser {
 
 pub(crate) mod expr;
 pub(crate) mod items;
+pub(crate) mod macros;
 
 pub(crate) use expr::lower_expr_from_cst;
 pub(crate) use items::lower_items_from_cst;

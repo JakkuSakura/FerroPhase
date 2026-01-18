@@ -48,6 +48,7 @@ impl Pipeline {
                 execute_main: options.execute_main,
             },
             serializer: self.serializer.clone(),
+            macro_parser: self.macro_parser.clone(),
             std_modules,
         };
         match self.run_pipeline_stage(STAGE_CONST_EVAL, stage, context, options) {

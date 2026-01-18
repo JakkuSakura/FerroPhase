@@ -9,8 +9,8 @@ use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
 use fp_bytecode;
 use fp_core::ast::register_threadlocal_serializer;
 use fp_core::ast::{
-    AstSerializer, File, Ident, Item, ItemChunk, ItemKind, Module, Node, NodeKind, RuntimeValue,
-    Value, Visibility,
+    AstSerializer, File, Ident, Item, ItemChunk, ItemKind, MacroExpansionParser, Module, Node,
+    NodeKind, RuntimeValue, Value, Visibility,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
@@ -88,6 +88,7 @@ pub struct Pipeline {
     default_runtime: String,
     serializer: Option<Arc<dyn AstSerializer>>,
     intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
+    macro_parser: Option<Arc<dyn MacroExpansionParser>>,
     source_language: Option<String>,
     frontend_snapshot: Option<FrontendSnapshot>,
     last_const_eval: Option<ConstEvalOutcome>,
@@ -132,6 +133,7 @@ impl Pipeline {
             default_runtime: "literal".to_string(),
             serializer: None,
             intrinsic_normalizer: None,
+            macro_parser: None,
             source_language: None,
             frontend_snapshot: None,
             last_const_eval: None,
@@ -202,6 +204,7 @@ impl Pipeline {
             ast,
             serializer,
             intrinsic_normalizer,
+            macro_parser,
             snapshot,
             diagnostics,
             ..
@@ -239,6 +242,7 @@ impl Pipeline {
         register_threadlocal_serializer(serializer.clone());
         self.serializer = Some(serializer);
         self.intrinsic_normalizer = intrinsic_normalizer;
+        self.macro_parser = macro_parser;
         self.frontend_snapshot = snapshot;
         self.source_language = Some(frontend.language().to_string());
 
@@ -363,6 +367,7 @@ impl Pipeline {
     fn reset_state(&mut self) {
         self.serializer = None;
         self.intrinsic_normalizer = None;
+        self.macro_parser = None;
         self.source_language = None;
         self.frontend_snapshot = None;
         self.last_const_eval = None;
@@ -401,6 +406,7 @@ impl Pipeline {
             ast,
             serializer,
             intrinsic_normalizer,
+            macro_parser,
             snapshot,
             diagnostics,
         } = match frontend.parse(source, input_path) {
@@ -428,6 +434,7 @@ impl Pipeline {
         register_threadlocal_serializer(serializer.clone());
         self.serializer = Some(serializer.clone());
         self.intrinsic_normalizer = intrinsic_normalizer;
+        self.macro_parser = macro_parser;
         self.frontend_snapshot = snapshot;
 
         Ok(ast)
@@ -943,6 +950,7 @@ impl Pipeline {
             diagnostics: None,
             diagnostic_context: STAGE_AST_INTERPRET,
             module_resolution: None,
+            macro_parser: self.macro_parser.clone(),
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
 

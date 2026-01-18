@@ -1,4 +1,5 @@
 use super::*;
+use num_traits::Zero;
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn evaluate_binop(&self, op: BinOpKind, lhs: Value, rhs: Value) -> Result<Value> {
@@ -91,7 +92,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             (Value::BigDecimal(l), Value::BigDecimal(r)) => {
-                if r.value == 0.into() {
+                if r.value.is_zero() {
                     Err(interpretation_error("division by zero".to_string()))
                 } else {
                     Ok(Value::big_decimal(l.value / r.value))

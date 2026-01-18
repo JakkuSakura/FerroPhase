@@ -40,6 +40,7 @@ pub(crate) enum TypeTerm {
     // caused mismatches with slice/array unification and generic substitution.
     Array(TypeVarId, Option<BExpr>),
     Reference(TypeVarId),
+    Boxed(TypeVarId),
     Any,
     Custom(Ty),
     Unknown,
@@ -134,6 +135,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Reference(elem) => {
                 let elem = self.build_scheme_type(elem, mapping, next)?;
                 SchemeType::Reference(Box::new(elem))
+            }
+            TypeTerm::Boxed(elem) => {
+                let elem = self.build_scheme_type(elem, mapping, next)?;
+                SchemeType::Boxed(Box::new(elem))
             }
         })
     }
@@ -255,6 +260,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Reference(elem_var));
                 var
             }
+            SchemeType::Boxed(elem) => {
+                let elem_var = self.instantiate_scheme_type(elem, mapping);
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Boxed(elem_var));
+                var
+            }
         }
     }
 
@@ -370,7 +381,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Slice(elem)
             | TypeTerm::Vec(elem)
             | TypeTerm::Array(elem, _)
-            | TypeTerm::Reference(elem) => self.occurs_in(var, *elem),
+            | TypeTerm::Reference(elem)
+            | TypeTerm::Boxed(elem) => self.occurs_in(var, *elem),
             _ => false,
         }
     }
@@ -502,7 +514,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
             | (TypeTerm::Vec(a), TypeTerm::Vec(b))
-            | (TypeTerm::Reference(a), TypeTerm::Reference(b)) => self.unify(a, b),
+            | (TypeTerm::Reference(a), TypeTerm::Reference(b))
+            | (TypeTerm::Boxed(a), TypeTerm::Boxed(b)) => self.unify(a, b),
             (TypeTerm::Slice(a), TypeTerm::Vec(b)) | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => {
                 self.unify(a, b)
             }
@@ -650,6 +663,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     mutability: None,
                     lifetime: None,
                 })
+            }
+            TypeTerm::Boxed(elem) => {
+                let elem_ty = self.resolve_to_ty(elem)?;
+                let segment = ParameterPathSegment::new(Ident::new("Box"), vec![elem_ty]);
+                let path = ParameterPath::new(vec![segment]);
+                Ty::expr(Expr::locator(Locator::parameter_path(path)))
             }
         })
     }
@@ -870,6 +889,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             if segment.ident.as_str() == "Vec" && segment.args.len() == 1 {
                                 let elem_var = self.type_from_ast_ty(&segment.args[0])?;
                                 self.bind(var, TypeTerm::Vec(elem_var));
+                                return Ok(var);
+                            }
+                            if segment.ident.as_str() == "Box" && segment.args.len() == 1 {
+                                let elem_var = self.type_from_ast_ty(&segment.args[0])?;
+                                self.bind(var, TypeTerm::Boxed(elem_var));
                                 return Ok(var);
                             }
                         }

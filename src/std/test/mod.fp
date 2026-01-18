@@ -27,15 +27,15 @@ fn run_tests() -> TestReport {
         let ok = catch_unwind(|| (test.run)());
         if ok {
             passed = passed + 1;
-            println!("  {} ... ok", test.name);
+            println("  {} ... ok", test.name);
         } else {
             failed = failed + 1;
-            println!("  {} ... FAILED", test.name);
+            println("  {} ... FAILED", test.name);
         }
         idx = idx + 1;
     }
     let total = passed + failed;
-    println!(
+    println(
         "test result: {} passed; {} failed; {} total",
         passed,
         failed,

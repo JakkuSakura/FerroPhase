@@ -13,7 +13,7 @@ use fp_core::ast::{
     ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprSelectType,
     ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits, Locator,
-    MacroDelimiter, MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern,
+    MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern,
     PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
@@ -1035,11 +1035,13 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             }
             let path = macro_callee_path(name)?;
 
-            let (delimiter, tokens) = macro_group_delimiter_and_tokens(node)
+            let macro_tokens = crate::ast::macros::macro_group_tokens(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprMacroCall))?;
 
             Ok(ExprKind::Macro(fp_core::ast::ExprMacro::new(
-                MacroInvocation::new(path, delimiter, tokens).with_span(node.span),
+                MacroInvocation::new(path, macro_tokens.delimiter, macro_tokens.text)
+                    .with_token_trees(macro_tokens.token_trees)
+                    .with_span(node.span),
             ))
             .into())
         }
@@ -1911,13 +1913,13 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     if segments.is_empty() {
         return Err(LowerError::UnexpectedNode(SyntaxKind::TyMacroCall));
     }
-    let (delimiter, tokens) = macro_group_delimiter_and_tokens(node)
+    let macro_tokens = crate::ast::macros::macro_group_tokens(node)
         .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
 
     // `t! { ... }` is used as a type-level quoting wrapper in existing examples; lower it by
     // parsing the inner token stream as a type expression.
     if segments.len() == 1 && segments[0].as_str() == "t" {
-        let lexemes = crate::lexer::tokenizer::lex_lexemes(&tokens)
+        let lexemes = crate::lexer::tokenizer::lex_lexemes(&macro_tokens.text)
             .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
         let (ty_cst, consumed) = crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, 0, &[])
             .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
@@ -1932,7 +1934,9 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
 
     let path = Path::new(segments);
     let expr: Expr = ExprKind::Macro(fp_core::ast::ExprMacro::new(
-        MacroInvocation::new(path, delimiter, tokens).with_span(node.span),
+        MacroInvocation::new(path, macro_tokens.delimiter, macro_tokens.text)
+            .with_token_trees(macro_tokens.token_trees)
+            .with_span(node.span),
     ))
     .into();
     Ok(Ty::expr(expr))
@@ -2573,72 +2577,6 @@ fn direct_last_ident_token_text(node: &SyntaxNode) -> Option<String> {
     })
 }
 
-fn macro_group_delimiter_and_tokens(node: &SyntaxNode) -> Option<(MacroDelimiter, String)> {
-    // Find the first delimiter token after '!'.
-    let mut seen_bang = false;
-    let mut open_idx = None;
-    let mut close_idx = None;
-    let mut tokens: Vec<&crate::syntax::SyntaxToken> = Vec::new();
-    crate::syntax::collect_tokens(node, &mut tokens);
-    for (idx, tok) in tokens.iter().enumerate() {
-        if tok.is_trivia() {
-            continue;
-        }
-        if !seen_bang {
-            if tok.text == "!" {
-                seen_bang = true;
-            }
-            continue;
-        }
-        if open_idx.is_none() {
-            if tok.text == "(" || tok.text == "{" || tok.text == "[" {
-                open_idx = Some(idx);
-            }
-            continue;
-        }
-        // Track the last closing delimiter; parse ensures it's balanced.
-        if tok.text == ")" || tok.text == "}" || tok.text == "]" {
-            close_idx = Some(idx);
-        }
-    }
-
-    let open_idx = open_idx?;
-    let close_idx = close_idx?;
-    let open = tokens[open_idx].text.as_str();
-    let delimiter = match open {
-        "(" => MacroDelimiter::Parenthesis,
-        "{" => MacroDelimiter::Brace,
-        "[" => MacroDelimiter::Bracket,
-        _ => return None,
-    };
-
-    fn is_ident_like_char(c: char) -> bool {
-        c.is_ascii_alphanumeric() || c == '_'
-    }
-    fn needs_space(prev: &str, next: &str) -> bool {
-        let Some(p) = prev.chars().last() else {
-            return false;
-        };
-        let Some(n) = next.chars().next() else {
-            return false;
-        };
-        is_ident_like_char(p) && is_ident_like_char(n)
-    }
-
-    let mut inner = String::new();
-    let mut prev: Option<&str> = None;
-    for t in &tokens[(open_idx + 1)..close_idx] {
-        let text = t.text.as_str();
-        if let Some(prev_text) = prev {
-            if needs_space(prev_text, text) {
-                inner.push(' ');
-            }
-        }
-        inner.push_str(text);
-        prev = Some(text);
-    }
-    Some((delimiter, inner))
-}
 
 fn binop_from_text(op: &str) -> Option<BinOpKind> {
     Some(match op {

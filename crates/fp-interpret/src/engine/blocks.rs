@@ -241,13 +241,40 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Macro(macro_expr) => {
-                self.emit_error_at(
-                    macro_expr.invocation.span,
-                    format!(
-                        "macro `{}` should have been lowered before const evaluation",
-                        macro_expr.invocation.path
-                    ),
-                );
+                let parser = match self.macro_parser.clone() {
+                    Some(parser) => parser,
+                    None => {
+                        self.emit_error_at(
+                            macro_expr.invocation.span,
+                            "macro expansion requires a parser hook",
+                        );
+                        return;
+                    }
+                };
+                if self.macro_depth > 64 {
+                    self.emit_error_at(
+                        macro_expr.invocation.span,
+                        "macro expansion exceeded recursion limit",
+                    );
+                    return;
+                }
+                self.macro_depth += 1;
+                let expanded = self
+                    .expand_macro_invocation(&macro_expr.invocation, MacroExpansionContext::Expr)
+                    .and_then(|tokens| parser.parse_expr(&tokens));
+                self.macro_depth = self.macro_depth.saturating_sub(1);
+                match expanded {
+                    Ok(new_expr) => {
+                        *expr = new_expr;
+                        self.mark_mutated();
+                        self.evaluate_function_body(expr);
+                        return;
+                    }
+                    Err(err) => {
+                        self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                        return;
+                    }
+                }
             }
             ExprKind::ConstBlock(const_block) => {
                 let mut value_expr = const_block.expr.as_ref().clone();

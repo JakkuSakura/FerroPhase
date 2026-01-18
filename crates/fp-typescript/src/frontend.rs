@@ -174,6 +174,7 @@ impl LanguageFrontend for TypeScriptFrontend {
             ast: node,
             serializer: self.serializer.clone(),
             intrinsic_normalizer: None,
+            macro_parser: None,
             snapshot: None,
             diagnostics,
         })

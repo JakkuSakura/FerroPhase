@@ -94,6 +94,7 @@ impl LanguageFrontend for PrqlFrontend {
             ast: node,
             serializer,
             intrinsic_normalizer: None,
+            macro_parser: None,
             snapshot: Some(snapshot),
             diagnostics,
         })

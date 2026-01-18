@@ -63,7 +63,7 @@ fn run_benches() -> BenchReport {
             } else {
                 0.0
             };
-            println!(
+            println(
                 "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})",
                 bench.name,
                 measure_iters,
@@ -72,12 +72,12 @@ fn run_benches() -> BenchReport {
             );
         } else {
             failed = failed + 1;
-            println!("  {} ... FAILED", bench.name);
+            println("  {} ... FAILED", bench.name);
         }
         idx = idx + 1;
     }
     let total = passed + failed;
-    println!(
+    println(
         "bench result: {} passed; {} failed; {} total",
         passed,
         failed,

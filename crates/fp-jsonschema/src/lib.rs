@@ -71,6 +71,7 @@ impl LanguageFrontend for JsonSchemaFrontend {
             last: Node::schema(document.clone()),
             ast: Node::schema(document),
             intrinsic_normalizer: None,
+            macro_parser: None,
             snapshot: Some(snapshot),
             diagnostics,
         })

@@ -654,6 +654,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn infer_index(&mut self, index: &mut ExprIndex) -> Result<TypeVarId> {
         let object_var = self.infer_expr(index.obj.as_mut())?;
+        if matches!(index.index.kind(), ExprKind::Range(_)) {
+            if let ExprKind::Range(range) = index.index.kind_mut() {
+                let _ = self.infer_range(range)?;
+            }
+            return self.infer_slice_index(object_var);
+        }
+
         let idx_var = self.infer_expr(index.index.as_mut())?;
 
         if let Some((key_var, value_var)) = self.lookup_hashmap_args(object_var) {
@@ -666,6 +673,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ty::Vec(vec) => return self.type_from_ast_ty(&vec.ty),
                 Ty::Array(array) => return self.type_from_ast_ty(&array.elem),
                 Ty::Slice(slice) => return self.type_from_ast_ty(&slice.elem),
+                Ty::Primitive(TypePrimitive::String) => {
+                    self.ensure_integer(idx_var, "string index")?;
+                    return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                }
                 _ => {}
             }
         }
@@ -756,11 +767,164 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 _ => {}
             }
-            self.emit_error("indexing is only supported on vector, slice, or array types");
+            self.emit_error("indexing is only supported on string, vector, slice, or array types");
             return Ok(self.error_type_var());
         }
         self.ensure_integer(idx_var, "index expression")?;
         Ok(elem_slice_var)
+    }
+
+    fn infer_slice_index(&mut self, object_var: TypeVarId) -> Result<TypeVarId> {
+        let is_string_like = |ty: &Ty| {
+            matches!(ty, Ty::Primitive(TypePrimitive::String))
+                || matches!(
+                    ty,
+                    Ty::Reference(reference)
+                        if matches!(reference.ty.as_ref(), Ty::Primitive(TypePrimitive::String))
+                )
+        };
+        if let Ok(obj_ty) = self.resolve_to_ty(object_var) {
+            match Self::peel_reference(obj_ty) {
+                Ty::Primitive(TypePrimitive::String) => {
+                    return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                }
+                Ty::Vec(vec) => {
+                    if is_string_like(vec.ty.as_ref()) {
+                        return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                    }
+                    let elem_var = self.type_from_ast_ty(&vec.ty)?;
+                    let slice_var = self.fresh_type_var();
+                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    return Ok(slice_var);
+                }
+                Ty::Slice(slice) => {
+                    if is_string_like(slice.elem.as_ref()) {
+                        return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                    }
+                    let elem_var = self.type_from_ast_ty(&slice.elem)?;
+                    let slice_var = self.fresh_type_var();
+                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    return Ok(slice_var);
+                }
+                Ty::Array(array) => {
+                    if is_string_like(array.elem.as_ref()) {
+                        return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                    }
+                    let elem_var = self.type_from_ast_ty(&array.elem)?;
+                    let slice_var = self.fresh_type_var();
+                    self.bind(slice_var, TypeTerm::Slice(elem_var));
+                    return Ok(slice_var);
+                }
+                _ => {}
+            }
+        }
+
+        let string_var = self.fresh_type_var();
+        self.bind(
+            string_var,
+            TypeTerm::Primitive(TypePrimitive::String),
+        );
+        let vec_string_var = self.fresh_type_var();
+        self.bind(vec_string_var, TypeTerm::Vec(string_var));
+        if self.unify(object_var, vec_string_var).is_ok() {
+            return Ok(string_var);
+        }
+        let ref_string_var = self.fresh_type_var();
+        self.bind(ref_string_var, TypeTerm::Reference(string_var));
+        let vec_ref_string_var = self.fresh_type_var();
+        self.bind(vec_ref_string_var, TypeTerm::Vec(ref_string_var));
+        if self.unify(object_var, vec_ref_string_var).is_ok() {
+            return Ok(string_var);
+        }
+        let slice_string_var = self.fresh_type_var();
+        self.bind(slice_string_var, TypeTerm::Slice(string_var));
+        if self.unify(object_var, slice_string_var).is_ok() {
+            return Ok(string_var);
+        }
+        let slice_ref_string_var = self.fresh_type_var();
+        self.bind(slice_ref_string_var, TypeTerm::Slice(ref_string_var));
+        if self.unify(object_var, slice_ref_string_var).is_ok() {
+            return Ok(string_var);
+        }
+        let array_string_var = self.fresh_type_var();
+        self.bind(array_string_var, TypeTerm::Array(string_var, None));
+        if self.unify(object_var, array_string_var).is_ok() {
+            return Ok(string_var);
+        }
+        let ref_string_vec = self.fresh_type_var();
+        self.bind(ref_string_vec, TypeTerm::Reference(vec_string_var));
+        if self.unify(object_var, ref_string_vec).is_ok() {
+            return Ok(string_var);
+        }
+        let ref_string_slice = self.fresh_type_var();
+        self.bind(ref_string_slice, TypeTerm::Reference(slice_string_var));
+        if self.unify(object_var, ref_string_slice).is_ok() {
+            return Ok(string_var);
+        }
+
+        let elem_var = self.fresh_type_var();
+        let slice_var = self.fresh_type_var();
+        self.bind(slice_var, TypeTerm::Slice(elem_var));
+
+        let vec_var = self.fresh_type_var();
+        self.bind(vec_var, TypeTerm::Vec(elem_var));
+        if self.unify(object_var, vec_var).is_ok() {
+            return Ok(slice_var);
+        }
+
+        if self.unify(object_var, slice_var).is_ok() {
+            return Ok(slice_var);
+        }
+
+        let string_var = self.fresh_type_var();
+        self.bind(
+            string_var,
+            TypeTerm::Primitive(TypePrimitive::String),
+        );
+        if self.unify(object_var, string_var).is_ok() {
+            return Ok(string_var);
+        }
+
+        if let Ok(obj_ty) = self.resolve_to_ty(object_var) {
+            if let Ty::Reference(reference) = obj_ty {
+                match *reference.ty {
+                    Ty::Vec(vec) => {
+                        if matches!(vec.ty.as_ref(), Ty::Primitive(TypePrimitive::String)) {
+                            return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                        }
+                        let elem_var = self.type_from_ast_ty(&vec.ty)?;
+                        let slice_var = self.fresh_type_var();
+                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        return Ok(slice_var);
+                    }
+                    Ty::Slice(slice) => {
+                        if matches!(slice.elem.as_ref(), Ty::Primitive(TypePrimitive::String)) {
+                            return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                        }
+                        let elem_var = self.type_from_ast_ty(&slice.elem)?;
+                        let slice_var = self.fresh_type_var();
+                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        return Ok(slice_var);
+                    }
+                    Ty::Array(array) => {
+                        if matches!(array.elem.as_ref(), Ty::Primitive(TypePrimitive::String)) {
+                            return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                        }
+                        let elem_var = self.type_from_ast_ty(&array.elem)?;
+                        let slice_var = self.fresh_type_var();
+                        self.bind(slice_var, TypeTerm::Slice(elem_var));
+                        return Ok(slice_var);
+                    }
+                    Ty::Primitive(TypePrimitive::String) => {
+                        return self.type_from_ast_ty(&Ty::Primitive(TypePrimitive::String));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        self.emit_error("slicing is only supported on string, vector, slice, or array types");
+        Ok(self.error_type_var())
     }
 
     pub(crate) fn infer_range(&mut self, range: &mut ExprRange) -> Result<TypeVarId> {

@@ -7,6 +7,7 @@ use fp_core::ast::{Ident, Locator};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::intrinsics::{ensure_function_decl, make_function_decl, IntrinsicMaterializer};
+use fp_core::span::Span;
 
 /// Backend strategy that lowers FerroPhase print intrinsics to `printf` calls for LLVM.
 pub struct LlvmRuntimeIntrinsicMaterializer;
@@ -80,6 +81,7 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
     let invoke = ExprKind::Invoke(ExprInvoke {
         target,
         args: invoke_args,
+        span: Span::null(),
     });
 
     Ok(Expr::with_ty(invoke, expr_ty))
@@ -220,6 +222,7 @@ fn infer_printf_spec_with_replacement_from_expr(expr: &Expr) -> Result<(String, 
             let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
             let mut deref = Expr::new(ExprKind::Dereference(ExprDereference {
                 referee: Box::new(expr.clone()),
+                span: Span::null(),
             }));
             deref.set_ty((*reference.ty).clone());
             return Ok((spec, Some(deref)));
@@ -284,6 +287,7 @@ fn infer_printf_spec_for_select(select: &ExprSelect) -> Result<(String, Option<E
             let (spec, _) = infer_printf_spec_with_replacement(Some(inner))?;
             let mut deref = Expr::new(ExprKind::Dereference(ExprDereference {
                 referee: Box::new(Expr::new(ExprKind::Select(select.clone()))),
+                span: Span::null(),
             }));
             deref.set_ty((*reference.ty).clone());
             Ok((spec, Some(deref)))

@@ -5,7 +5,7 @@ use fp_core::ast::{
     ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam, Ident, Item,
     ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum, ItemDefFunction,
     ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport, ItemImportGroup,
-    ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter,
+    ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro, Locator,
     MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum,
     TypeQuote, TypeStruct, Value, Visibility,
 };
@@ -731,31 +731,44 @@ fn lower_item_macro(node: &SyntaxNode) -> Result<ItemMacro, LowerItemsError> {
     let name = Ident::new(
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("macro name"))?,
     );
-    let delimiter = node
-        .children
-        .iter()
-        .find_map(|c| match c {
-            SyntaxElement::Token(t) if !t.is_trivia() => match t.text.as_str() {
-                "(" => Some(MacroDelimiter::Parenthesis),
-                "{" => Some(MacroDelimiter::Brace),
-                "[" => Some(MacroDelimiter::Bracket),
-                _ => None,
-            },
-            _ => None,
-        })
-        .unwrap_or(MacroDelimiter::Brace);
+    let macro_tokens = crate::ast::macros::macro_group_tokens(node)
+        .ok_or(LowerItemsError::UnexpectedNode(SyntaxKind::ItemMacro))?;
+
+    let declared_name = if name.as_str() == "macro_rules" {
+        find_macro_rules_name(node)
+    } else {
+        None
+    };
+
+    Ok(ItemMacro {
+        invocation: MacroInvocation::new(Path::from_ident(name), macro_tokens.delimiter, macro_tokens.text)
+            .with_token_trees(macro_tokens.token_trees)
+            .with_span(node.span),
+        declared_name,
+    })
+}
+
+fn find_macro_rules_name(node: &SyntaxNode) -> Option<Ident> {
     let mut tokens = Vec::new();
     collect_tokens(node, &mut tokens);
-    let tokens_text = tokens
-        .iter()
-        .filter(|tok| !tok.is_trivia())
-        .map(|tok| tok.text.as_str())
-        .collect::<Vec<_>>()
-        .join(" ");
-    Ok(ItemMacro {
-        invocation: MacroInvocation::new(Path::from_ident(name), delimiter, tokens_text)
-            .with_span(node.span),
-    })
+    let mut seen_bang = false;
+    for tok in tokens.iter().filter(|tok| !tok.is_trivia()) {
+        if !seen_bang {
+            if tok.text == "!" {
+                seen_bang = true;
+            }
+            continue;
+        }
+        if tok
+            .text
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+        {
+            return Some(Ident::new(tok.text.clone()));
+        }
+    }
+    None
 }
 
 fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError> {

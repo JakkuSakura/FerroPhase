@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, Module, Node, Ty, Value,
-    Visibility,
+    register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, MacroExpansionParser,
+    Module, Node, Ty, Value, Visibility,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
@@ -62,6 +62,7 @@ impl ConstEvaluationOrchestrator {
         &mut self,
         ast: &mut Node,
         ctx: &SharedScopedContext,
+        macro_parser: Option<Arc<dyn MacroExpansionParser>>,
     ) -> CoreResult<ConstEvalOutcome> {
         let options = InterpreterOptions {
             mode: InterpreterMode::CompileTime,
@@ -69,6 +70,7 @@ impl ConstEvaluationOrchestrator {
             diagnostics: self.diagnostics.clone(),
             diagnostic_context: STAGE_CONST_EVAL,
             module_resolution: None,
+            macro_parser,
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
@@ -96,6 +98,7 @@ pub struct ConstEvalContext {
     pub ast: Node,
     pub options: ConstEvalOptions,
     pub serializer: Option<Arc<dyn AstSerializer>>,
+    pub macro_parser: Option<Arc<dyn MacroExpansionParser>>,
     pub std_modules: Vec<Node>,
 }
 
@@ -146,23 +149,12 @@ impl PipelineStage for ConstEvalStage {
         }
         let lang_items = collect_lang_items(&ast);
         register_threadlocal_lang_items(lang_items);
-        if let Err(err) = fp_core::intrinsics::normalize_intrinsics(&mut ast) {
-            diagnostics.push(
-                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
-                    .with_source_context(STAGE_CONST_EVAL),
-            );
-            return Err(PipelineError::new(
-                STAGE_CONST_EVAL,
-                "Intrinsic normalization failed",
-            ));
-        }
-
         let shared_context = SharedScopedContext::new();
         let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
         orchestrator.set_debug_assertions(!context.options.release);
         orchestrator.set_execute_main(context.options.execute_main);
 
-        let outcome = match orchestrator.evaluate(&mut ast, &shared_context) {
+        let outcome = match orchestrator.evaluate(&mut ast, &shared_context, context.macro_parser) {
             Ok(outcome) => outcome,
             Err(err) => {
                 diagnostics.push(

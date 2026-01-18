@@ -2,6 +2,7 @@ use super::super::*;
 use fp_core::ast;
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicMaterializer;
+use fp_core::span::Span;
 use fp_llvm::runtime::LlvmRuntimeIntrinsicMaterializer;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
@@ -493,10 +494,12 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
         obj: expr_index.obj,
         field: ast::Ident::new("get_unchecked"),
         select: ast::ExprSelectType::Method,
+        span: Span::null(),
     };
     let invoke = ast::ExprInvoke {
         target: ast::ExprInvokeTarget::Method(select),
         args: vec![*expr_index.index],
+        span: Span::null(),
     };
     ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
 }
@@ -533,6 +536,7 @@ fn build_hashmap_from_entries(
     let invoke = ast::ExprInvoke {
         target: ast::ExprInvokeTarget::Function(locator),
         args: vec![vec_entries],
+        span: Span::null(),
     };
 
     ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)

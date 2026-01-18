@@ -1,4 +1,4 @@
-use crate::ast::{AstSerializer, Node};
+use crate::ast::{AstSerializer, MacroExpansionParser, Node};
 use crate::diagnostics::DiagnosticManager;
 use crate::error::Result;
 use crate::intrinsics::IntrinsicNormalizer;
@@ -23,6 +23,7 @@ pub struct FrontendResult {
     pub ast: Node,
     pub serializer: Arc<dyn AstSerializer>,
     pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
+    pub macro_parser: Option<Arc<dyn MacroExpansionParser>>,
     pub snapshot: Option<FrontendSnapshot>,
     pub diagnostics: Arc<DiagnosticManager>,
 }

@@ -57,6 +57,7 @@ impl LanguageFrontend for FlatbuffersFrontend {
             ast: Node::file(file),
             serializer,
             intrinsic_normalizer: None,
+            macro_parser: None,
             snapshot: Some(FrontendSnapshot {
                 language: self.language().to_string(),
                 description,

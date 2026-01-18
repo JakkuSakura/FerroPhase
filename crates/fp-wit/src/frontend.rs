@@ -57,6 +57,7 @@ impl LanguageFrontend for WitFrontend {
             ast,
             serializer,
             intrinsic_normalizer: None,
+            macro_parser: None,
             snapshot: Some(snapshot),
             diagnostics: Arc::new(DiagnosticManager::new()),
         })

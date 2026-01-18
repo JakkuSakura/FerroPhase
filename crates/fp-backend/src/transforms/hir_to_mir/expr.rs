@@ -184,9 +184,11 @@ pub struct MirLowering {
     struct_defs_by_name: HashMap<String, hir::DefId>,
     struct_layouts: HashMap<StructLayoutKey, StructLayout>,
     struct_layouts_by_ty: HashMap<Ty, StructLayoutKey>,
+    struct_layouts_in_progress: HashSet<StructLayoutKey>,
     structural_defs: HashMap<StructuralLayoutKey, hir::DefId>,
     enum_defs: HashMap<hir::DefId, EnumDefinition>,
     enum_layouts: HashMap<EnumLayoutKey, EnumLayout>,
+    enum_layouts_in_progress: HashSet<EnumLayoutKey>,
     enum_variants: HashMap<hir::DefId, EnumVariantInfo>,
     enum_variant_names: HashMap<String, hir::DefId>,
     const_values: HashMap<hir::DefId, ConstInfo>,
@@ -250,9 +252,11 @@ impl MirLowering {
             struct_defs_by_name: HashMap::new(),
             struct_layouts: HashMap::new(),
             struct_layouts_by_ty: HashMap::new(),
+            struct_layouts_in_progress: HashSet::new(),
             structural_defs: HashMap::new(),
             enum_defs: HashMap::new(),
             enum_layouts: HashMap::new(),
+            enum_layouts_in_progress: HashSet::new(),
             enum_variants: HashMap::new(),
             enum_variant_names: HashMap::new(),
             const_values: HashMap::new(),
@@ -2623,6 +2627,13 @@ impl MirLowering {
         if let Some(layout) = self.struct_layouts.get(&key) {
             return Some(layout.clone());
         }
+        if self.struct_layouts_in_progress.contains(&key) {
+            let opaque = self.opaque_ty(&struct_def.name);
+            return Some(StructLayout {
+                ty: opaque,
+                field_tys: Vec::new(),
+            });
+        }
 
         if struct_def.generics.len() != args.len() {
             self.emit_error(
@@ -2642,6 +2653,8 @@ impl MirLowering {
             substs.insert(name.clone(), ty);
         }
 
+        self.struct_layouts_in_progress.insert(key.clone());
+
         let mut field_tys = Vec::with_capacity(struct_def.fields.len());
         for field in &struct_def.fields {
             field_tys.push(self.lower_type_expr_with_substs(&field.ty, &substs));
@@ -2657,7 +2670,8 @@ impl MirLowering {
         };
 
         self.struct_layouts.insert(key.clone(), layout.clone());
-        self.struct_layouts_by_ty.insert(struct_ty, key);
+        self.struct_layouts_by_ty.insert(struct_ty, key.clone());
+        self.struct_layouts_in_progress.remove(&key);
 
         Some(layout)
     }
@@ -2706,6 +2720,17 @@ impl MirLowering {
         if let Some(layout) = self.enum_layouts.get(&key) {
             return Some(layout.clone());
         }
+        if self.enum_layouts_in_progress.contains(&key) {
+            let opaque = self.opaque_ty(&enum_def.name);
+            return Some(EnumLayout {
+                tag_ty: Ty {
+                    kind: TyKind::Int(IntTy::Isize),
+                },
+                payload_tys: Vec::new(),
+                enum_ty: opaque,
+                variant_payloads: HashMap::new(),
+            });
+        }
 
         if enum_def.generics.len() != args.len() {
             self.emit_error(
@@ -2724,6 +2749,8 @@ impl MirLowering {
         for (name, ty) in enum_def.generics.iter().zip(args.iter().cloned()) {
             substs.insert(name.clone(), ty);
         }
+
+        self.enum_layouts_in_progress.insert(key.clone());
 
         let tag_ty = Ty {
             kind: TyKind::Int(IntTy::Isize),
@@ -2790,7 +2817,8 @@ impl MirLowering {
             variant_payloads,
         };
 
-        self.enum_layouts.insert(key, layout.clone());
+        self.enum_layouts.insert(key.clone(), layout.clone());
+        self.enum_layouts_in_progress.remove(&key);
 
         if !has_payload {
             for variant in &enum_def.variants {
