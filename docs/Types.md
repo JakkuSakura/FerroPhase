@@ -79,7 +79,8 @@ The Hindley–Milner solver lives in a dedicated crate and offers:
 
 - In-place annotation of AST nodes.
 - Query APIs (`expr_ty`, `pattern_ty`) for tooling.
-- Hooks for const evaluation to request generalisations or specialisations when
+- Incremental hooks so the interpreter can resolve missing symbols during
+  const evaluation and request generalisations or specialisations when
   intrinsics introduce new constraints.
 
 ## Future Work

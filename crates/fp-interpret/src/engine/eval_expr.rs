@@ -4,6 +4,7 @@ use fp_core::ast::Locator;
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
     pub(super) fn eval_expr_runtime(&mut self, expr: &mut Expr) -> RuntimeFlow {
+        self.ensure_expr_typed(expr);
         let expr_ty_snapshot = expr.ty().cloned();
         match expr.kind_mut() {
             ExprKind::IntrinsicContainer(collection) => {
@@ -409,6 +410,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn eval_expr(&mut self, expr: &mut Expr) -> Value {
         let _guard = self.push_span(expr.span);
+        self.ensure_expr_typed(expr);
         let expr_ty_snapshot = expr.ty().cloned();
 
         // Check if we need to specialize a function reference before matching

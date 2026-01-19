@@ -2,7 +2,7 @@
 
 Const evaluation now operates directly on the typed AST. The interpreter runs in
 const mode over the same structures used by runtime execution and backend
-lowerings.
+lowerings, requesting types lazily as it evaluates expressions.
 
 ```
 Source → LAST → AST → ASTᵗ → (Const Evaluation) → ASTᵗ′
@@ -10,7 +10,9 @@ Source → LAST → AST → ASTᵗ → (Const Evaluation) → ASTᵗ′
 
 - `ASTᵗ` is the canonical AST annotated with types by the Algorithm W inferencer.
 - Const evaluation mutates the AST when necessary (constant folding, generated
-  declarations, intrinsic rewrites) and returns `ASTᵗ′`.
+  declarations, intrinsic rewrites) and returns `ASTᵗ′`. The interpreter can
+  infer missing types on demand and registers any generated items with the
+  incremental typer.
 - `ASTᵗ′` is the authoritative programme for all downstream stages (HIRᵗ, MIR,
   LIR, transpilers).
 
@@ -84,8 +86,11 @@ const GENERATED: Type = {
 ## Evaluation Pipeline
 
 1. **Type foundation**
-   - Parse, normalise, and run Algorithm W inference to annotate the AST.
-   - Capture a `TypeSnapshot` for queries (`sizeof`, `hasfield`, etc.).
+   - Parse and normalise the AST, then initialize the incremental type
+     environment (predeclare items, prepare query hooks).
+   - The interpreter requests type info as needed, using the same Algorithm W
+     solver, and can resolve missing symbols by materialising const-generated
+     items.
 
 2. **Const execution**
    - Build dependency order from the typed AST (const items, const blocks,

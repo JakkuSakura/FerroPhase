@@ -2,17 +2,20 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use fp_core::ast::{
-    AstSerializer, ExprKind, File, ItemKind, Node, NodeKind, Value,
+    AstSerializer, BlockStmt, BlockStmtExpr, ExprBlock, ExprConstBlock, ExprField, ExprInvoke,
+    ExprKind, ExprSelect, ExprSelectType, ExprStruct, File, Item, ItemDefConst, ItemDefStruct,
+    ItemKind, Node, NodeKind, Pattern, PatternIdent, PatternKind, StmtLet, StructuralField,
+    TypeInt, TypePrimitive, Ty, Value,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::Result;
 use fp_interpret::const_eval::ConstEvaluationOrchestrator;
-use fp_core::query::QuerySerializer;
 use fp_core::ops::BinOpKind;
+use fp_core::span::Span;
 
 #[test]
 fn const_eval_replaces_consts_and_records_results() -> Result<()> {
-    let serializer: Arc<dyn AstSerializer> = Arc::new(QuerySerializer::new());
+    let serializer: Arc<dyn AstSerializer> = Arc::new(TestSerializer);
     fn ident(name: &str) -> fp_core::ast::Ident {
         fp_core::ast::Ident::new(name)
     }
@@ -117,8 +120,9 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     });
 
     let ctx = SharedScopedContext::new();
+    fp_core::ast::register_threadlocal_serializer(serializer.clone());
     let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
-    let outcome = orchestrator.evaluate(&mut ast, &ctx)?;
+    let outcome = orchestrator.evaluate(&mut ast, &ctx, None)?;
 
     assert!(
         outcome.mutations_applied,
@@ -203,4 +207,123 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[test]
+fn const_eval_materializes_late_type_for_typing() -> Result<()> {
+    let serializer: Arc<dyn AstSerializer> = Arc::new(TestSerializer);
+    fn ident(name: &str) -> fp_core::ast::Ident {
+        fp_core::ast::Ident::new(name)
+    }
+
+    let later_struct = fp_core::ast::Item::from(ItemKind::DefStruct(ItemDefStruct::new(
+        ident("Later"),
+        vec![StructuralField::new(
+            ident("x"),
+            Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+        )],
+    )));
+
+    let struct_expr = ExprKind::Struct(ExprStruct {
+        span: Span::null(),
+        name: Box::new(fp_core::ast::Expr::ident(ident("Later"))),
+        fields: vec![ExprField::new(ident("x"), fp_core::ast::Expr::value(Value::int(1)))],
+        update: None,
+    });
+
+    let let_stmt = StmtLet::new(
+        Pattern::from(PatternKind::Ident(PatternIdent::new(ident("p")))),
+        Some(fp_core::ast::Expr::from(struct_expr)),
+        None,
+    );
+
+    let select_expr = fp_core::ast::Expr::from(ExprKind::Select(ExprSelect {
+        span: Span::null(),
+        obj: Box::new(fp_core::ast::Expr::ident(ident("p"))),
+        field: ident("x"),
+        select: ExprSelectType::Field,
+    }));
+
+    let block = ExprBlock {
+        span: Span::null(),
+        stmts: vec![
+            BlockStmt::Let(let_stmt),
+            BlockStmt::Expr(BlockStmtExpr::new(select_expr).with_semicolon(false)),
+        ],
+    };
+
+    let const_expr = fp_core::ast::Expr::from(ExprKind::ConstBlock(ExprConstBlock {
+        span: Span::null(),
+        expr: Box::new(fp_core::ast::Expr::from(ExprKind::Block(block))),
+    }));
+
+    let const_item = fp_core::ast::Item::from(ItemKind::DefConst(ItemDefConst {
+        attrs: Vec::new(),
+        mutable: None,
+        ty_annotation: None,
+        visibility: fp_core::ast::Visibility::Private,
+        name: ident("VALUE"),
+        ty: Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
+        value: Box::new(const_expr),
+    }));
+
+    let mut ast = Node::file(File {
+        path: PathBuf::from("lazy_types.fp"),
+        items: vec![const_item, later_struct],
+    });
+
+    let ctx = SharedScopedContext::new();
+    let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
+    let outcome = orchestrator.evaluate(&mut ast, &ctx, None)?;
+
+    assert!(!outcome.has_errors, "const eval should succeed");
+
+    let NodeKind::File(file) = ast.kind() else {
+        panic!("expected file node after const eval");
+    };
+    let value_item = file
+        .items
+        .iter()
+        .find(|item| matches!(item.kind(), ItemKind::DefConst(def) if def.name.as_str() == "VALUE"))
+        .expect("VALUE const should exist");
+
+    let ItemKind::DefConst(def) = value_item.kind() else {
+        panic!("expected VALUE to be a const");
+    };
+    match def.value.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::Int(int_value) => {
+                assert_eq!(int_value.value, 1, "VALUE should evaluate to 1");
+            }
+            other => panic!("expected VALUE to be literal int after const eval, got {other:?}"),
+        },
+        other => panic!("expected VALUE to be literal after const eval, got {other:?}"),
+    }
+
+    Ok(())
+}
+
+#[derive(Clone)]
+struct TestSerializer;
+
+impl AstSerializer for TestSerializer {
+    fn serialize_expr(&self, node: &fp_core::ast::Expr) -> fp_core::Result<String> {
+        Ok(format!("{node:?}"))
+    }
+
+    fn serialize_value(&self, node: &Value) -> fp_core::Result<String> {
+        Ok(format!("{node:?}"))
+    }
+
+    fn serialize_type(&self, node: &Ty) -> fp_core::Result<String> {
+        Ok(format!("{node:?}"))
+    }
+
+    fn serialize_item(&self, node: &Item) -> fp_core::Result<String> {
+        Ok(format!("{node:?}"))
+    }
+
+    fn serialize_invoke(&self, node: &ExprInvoke) -> fp_core::Result<String> {
+        Ok(format!("{node:?}"))
+    }
 }

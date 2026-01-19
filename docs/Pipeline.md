@@ -28,19 +28,21 @@ lowerings consume the already-typed structures.
      spans are preserved.
    - The output is the normalized AST that every downstream mode consumes.
 
-3. **Type Enrichment (AST → ASTᵗ)**
-   - An Algorithm W style inferencer walks the normalised AST, resolving names
-     and constraints while writing inferred types back onto AST nodes
-     (`ast::Expr.ty`, `ast::Pattern.ty`, …).
+3. **Type Enrichment (AST → ASTᵗ, incremental)**
+   - The Algorithm W inferencer supports incremental queries. It can predeclare
+     items up front and later infer expressions on demand, writing inferred
+     types back onto AST nodes (`ast::Expr.ty`, `ast::Pattern.ty`, …).
    - The output is the same structural AST enriched with optional type slots
      (`ASTᵗ`). No HIR/THIR projection occurs during typing.
 
-4. **Typed Interpretation (ASTᵗ → ASTᵗ′)**
-   - Compile-time and runtime interpretation operate on the typed AST. Both
-     modes share the same evaluator with different configuration flags.
+4. **Typed Interpretation (ASTᵗ → ASTᵗ′, interleaved)**
+   - Compile-time and runtime interpretation operate on the typed AST and can
+     request missing types lazily as expressions are evaluated.
    - Const evaluation may mutate the AST in place (folding expressions,
-     synthesising declarations, materialising intrinsic calls). The resulting
-     `ASTᵗ′` snapshot becomes the source of truth for subsequent stages.
+     synthesising declarations, materialising intrinsic calls). The interpreter
+     registers new items with the typer so later expressions see newly
+     materialised types. The resulting `ASTᵗ′` snapshot becomes the source of
+     truth for subsequent stages.
 
    Keywords vs builtins in this phase
    - Keywords (`const`, `quote`, `splice`) affect staging/behaviour and are

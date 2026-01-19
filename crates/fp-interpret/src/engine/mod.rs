@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
-use fp_core::ast::Pattern;
+use fp_core::ast::{Pattern, PatternKind};
 use fp_core::ast::{
     AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
     ExprIntrinsicCall,
@@ -30,7 +30,7 @@ use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnO
 use fp_core::package::graph::PackageGraph;
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
-use fp_typing::AstTypeInferencer;
+use fp_typing::{AstTypeInferencer, TypeResolutionHook};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
 use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
@@ -89,6 +89,21 @@ enum ProcMacroKind {
 struct ProcMacroDefinition {
     kind: ProcMacroKind,
     function: ItemDefFunction,
+}
+
+struct InterpreterTypeHook<'ctx> {
+    interpreter: *mut AstInterpreter<'ctx>,
+}
+
+impl<'ctx> TypeResolutionHook for InterpreterTypeHook<'ctx> {
+    fn resolve_symbol(&mut self, name: &str) -> bool {
+        unsafe {
+            self.interpreter
+                .as_mut()
+                .map(|interpreter| interpreter.materialize_symbol(name))
+                .unwrap_or(false)
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -348,6 +363,9 @@ pub struct AstInterpreter<'ctx> {
     loop_depth: usize,
     function_depth: usize,
     current_span: Option<Span>,
+    lazy_evaluated: HashSet<String>,
+    item_scopes: Vec<*mut Vec<Item>>,
+    root_items: Option<*mut Vec<Item>>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -401,6 +419,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             loop_depth: 0,
             function_depth: 0,
             current_span: None,
+            lazy_evaluated: HashSet::new(),
+            item_scopes: Vec::new(),
+            root_items: None,
         }
     }
 
@@ -408,12 +429,34 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.typer = Some(typer);
     }
 
+    pub fn enable_incremental_typing(&mut self, ast: &Node) {
+        let mut typer = AstTypeInferencer::new().with_context(self.ctx);
+        typer.initialize_from_node(ast);
+        typer.initialize_imports_from_node(ast);
+        typer.set_resolution_hook(Box::new(InterpreterTypeHook {
+            interpreter: self as *mut _,
+        }));
+        self.typer = Some(typer);
+    }
+
     pub fn interpret(&mut self, node: &mut Node) {
         match node.kind_mut() {
             NodeKind::File(file) => {
+                let root_ptr = &mut file.items as *mut Vec<Item>;
+                self.root_items = Some(root_ptr);
+                self.push_item_scope(&mut file.items);
                 self.pending_items.push(Vec::new());
+                if let Some(typer) = self.typer.as_mut() {
+                    for item in &file.items {
+                        typer.initialize_from_item(item);
+                    }
+                }
                 let mut idx = 0;
                 while idx < file.items.len() {
+                    if self.should_skip_lazy_item(&file.items[idx]) {
+                        idx += 1;
+                        continue;
+                    }
                     self.evaluate_item(&mut file.items[idx]);
                     if matches!(self.mode, InterpreterMode::CompileTime)
                         && matches!(
@@ -450,6 +493,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     idx += 1;
                 }
                 self.pending_items.pop();
+                self.pop_item_scope();
             }
             NodeKind::Item(item) => self.evaluate_item(item),
             NodeKind::Expr(expr) => {
@@ -511,10 +555,684 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn append_pending_items(&mut self, items: Vec<Item>) {
+        self.register_items_with_typer(&items);
         if let Some(scope_pending) = self.pending_items.last_mut() {
             scope_pending.extend(items);
         } else {
             self.pending_items.push(items);
+        }
+        self.invalidate_all_types();
+    }
+
+    fn register_items_with_typer(&mut self, items: &[Item]) {
+        if let Some(typer) = self.typer.as_mut() {
+            for item in items {
+                typer.initialize_from_item(item);
+            }
+        }
+    }
+
+    fn push_item_scope(&mut self, items: &mut Vec<Item>) {
+        let ptr = items as *mut Vec<Item>;
+        self.item_scopes.push(ptr);
+    }
+
+    fn pop_item_scope(&mut self) {
+        self.item_scopes.pop();
+    }
+
+    fn ensure_expr_typed(&mut self, expr: &mut Expr) {
+        let has_type = expr
+            .ty()
+            .map(|ty| !self.is_unknown(ty))
+            .unwrap_or(false);
+        if has_type {
+            return;
+        }
+        let Some(typer) = self.typer.as_mut() else {
+            return;
+        };
+        if let Err(err) = typer.infer_expression(expr) {
+            self.emit_error_at(expr.span, err.to_string());
+        }
+    }
+
+    fn symbol_available(&self, name: &str) -> bool {
+        if self.lookup_value(name).is_some() {
+            return true;
+        }
+        if self.lookup_type(name).is_some() {
+            return true;
+        }
+        if self.functions.contains_key(name) || self.generic_functions.contains_key(name) {
+            return true;
+        }
+        false
+    }
+
+    fn materialize_symbol(&mut self, name: &str) -> bool {
+        if !matches!(self.mode, InterpreterMode::CompileTime) {
+            return false;
+        }
+        if self.symbol_available(name) {
+            return true;
+        }
+        if self.imported_symbols.contains_key(name) {
+            if let Some(typer) = self.typer.as_mut() {
+                typer.bind_variable(name, Ty::Any(TypeAny));
+            }
+            return true;
+        }
+        let segments: Vec<&str> = name.split("::").filter(|seg| !seg.is_empty()).collect();
+        let simple = segments.last().copied().unwrap_or(name);
+        if segments.len() > 1 {
+            if let Some(root) = self.root_items {
+                if let Some(item_ptr) = self.find_item_by_path_mut(root, &segments) {
+                    let qualified = segments.join("::");
+                    if !self.lazy_evaluated.contains(&qualified) {
+                        unsafe {
+                            self.evaluate_item(&mut *item_ptr);
+                        }
+                        self.lazy_evaluated.insert(qualified.clone());
+                        unsafe {
+                            self.register_items_with_typer(std::slice::from_ref(&*item_ptr));
+                        }
+                        self.invalidate_all_types();
+                    }
+                    return self.symbol_available(name) || self.symbol_available(simple);
+                }
+            }
+        }
+        let mut materialized = false;
+        let scopes = self.item_scopes.clone();
+        for scope_ptr in scopes.into_iter().rev() {
+            let items = unsafe { &mut *scope_ptr };
+            for item in items.iter_mut() {
+                let item_name = match item.kind() {
+                    ItemKind::DefStruct(def) => Some(def.name.as_str().to_string()),
+                    ItemKind::DefStructural(def) => Some(def.name.as_str().to_string()),
+                    ItemKind::DefEnum(def) => Some(def.name.as_str().to_string()),
+                    ItemKind::DefType(def) => Some(def.name.as_str().to_string()),
+                    ItemKind::DefConst(def) => Some(def.name.as_str().to_string()),
+                    ItemKind::DefStatic(def) => Some(def.name.as_str().to_string()),
+                    ItemKind::DefFunction(def) => Some(def.name.as_str().to_string()),
+                    _ => None,
+                };
+                let Some(item_name) = item_name else {
+                    continue;
+                };
+                let qualified = self.qualified_name(&item_name);
+                if self.lazy_evaluated.contains(&qualified) {
+                    continue;
+                }
+                if item_name == simple || qualified == name {
+                    self.evaluate_item(item);
+                    self.lazy_evaluated.insert(qualified.clone());
+                    self.register_items_with_typer(std::slice::from_ref(item));
+                    self.invalidate_all_types();
+                    materialized = self.symbol_available(name)
+                        || self.symbol_available(&item_name)
+                        || self.symbol_available(&qualified);
+                    if materialized {
+                        return true;
+                    }
+                }
+            }
+        }
+        materialized
+    }
+
+    fn should_skip_lazy_item(&self, item: &Item) -> bool {
+        let Some(qualified) = self.item_qualified_name(item) else {
+            return false;
+        };
+        self.lazy_evaluated.contains(&qualified)
+    }
+
+    fn item_qualified_name(&self, item: &Item) -> Option<String> {
+        let name = match item.kind() {
+            ItemKind::DefStruct(def) => Some(def.name.as_str()),
+            ItemKind::DefStructural(def) => Some(def.name.as_str()),
+            ItemKind::DefEnum(def) => Some(def.name.as_str()),
+            ItemKind::DefType(def) => Some(def.name.as_str()),
+            ItemKind::DefConst(def) => Some(def.name.as_str()),
+            ItemKind::DefStatic(def) => Some(def.name.as_str()),
+            ItemKind::DefFunction(def) => Some(def.name.as_str()),
+            _ => None,
+        };
+        name.map(|name| self.qualified_name(name))
+    }
+
+    fn find_item_by_path_mut(
+        &self,
+        items_ptr: *mut Vec<Item>,
+        path: &[&str],
+    ) -> Option<*mut Item> {
+        if path.is_empty() {
+            return None;
+        }
+        unsafe {
+            let items = &mut *items_ptr;
+            if path.len() == 1 {
+                for item in items.iter_mut() {
+                    let name = match item.kind() {
+                        ItemKind::DefStruct(def) => Some(def.name.as_str()),
+                        ItemKind::DefStructural(def) => Some(def.name.as_str()),
+                        ItemKind::DefEnum(def) => Some(def.name.as_str()),
+                        ItemKind::DefType(def) => Some(def.name.as_str()),
+                        ItemKind::DefConst(def) => Some(def.name.as_str()),
+                        ItemKind::DefStatic(def) => Some(def.name.as_str()),
+                        ItemKind::DefFunction(def) => Some(def.name.as_str()),
+                        ItemKind::Module(def) => Some(def.name.as_str()),
+                        _ => None,
+                    };
+                    if name == Some(path[0]) {
+                        return Some(item as *mut Item);
+                    }
+                }
+                return None;
+            }
+            for item in items.iter_mut() {
+                if let ItemKind::Module(module) = item.kind_mut() {
+                    if module.name.as_str() == path[0] {
+                        return self.find_item_by_path_mut(&mut module.items as *mut Vec<Item>, &path[1..]);
+                    }
+                }
+            }
+            None
+        }
+    }
+
+    fn invalidate_all_types(&mut self) {
+        if self.typer.is_none() {
+            return;
+        }
+        let Some(root) = self.root_items else {
+            return;
+        };
+        unsafe {
+            let items = &mut *root;
+            for item in items.iter_mut() {
+                self.clear_item_types(item);
+            }
+        }
+    }
+
+    fn clear_item_types(&mut self, item: &mut Item) {
+        match item.kind_mut() {
+            ItemKind::DefFunction(func) => {
+                *func.ty_annotation_mut() = None;
+                if let Some(ret_ty) = func.sig.ret_ty.as_mut() {
+                    self.clear_ty(ret_ty);
+                }
+                for param in &mut func.sig.params {
+                    *param.ty_annotation_mut() = None;
+                    self.clear_ty(&mut param.ty);
+                    if let Some(default) = param.default.as_mut() {
+                        self.clear_value_types(default);
+                    }
+                }
+                self.clear_expr_types(func.body.as_mut());
+            }
+            ItemKind::DefConst(def) => {
+                if let Some(ty) = def.ty.as_mut() {
+                    self.clear_ty(ty);
+                }
+                if let Some(ty) = def.ty_annotation_mut().as_mut() {
+                    self.clear_ty(ty);
+                }
+                self.clear_expr_types(def.value.as_mut());
+            }
+            ItemKind::DefStatic(def) => {
+                self.clear_ty(&mut def.ty);
+                if let Some(ty) = def.ty_annotation_mut().as_mut() {
+                    self.clear_ty(ty);
+                }
+                self.clear_expr_types(def.value.as_mut());
+            }
+            ItemKind::DefStruct(def) => {
+                for field in &mut def.value.fields {
+                    self.clear_ty(&mut field.value);
+                }
+            }
+            ItemKind::DefStructural(def) => {
+                for field in &mut def.value.fields {
+                    self.clear_ty(&mut field.value);
+                }
+            }
+            ItemKind::DefEnum(def) => {
+                for variant in &mut def.value.variants {
+                    self.clear_ty(&mut variant.value);
+                    if let Some(expr) = variant.discriminant.as_mut() {
+                        self.clear_expr_types(expr.as_mut());
+                    }
+                }
+            }
+            ItemKind::DefType(def) => {
+                self.clear_ty(&mut def.value);
+            }
+            ItemKind::DefTrait(def) => {
+                for member in &mut def.items {
+                    self.clear_item_types(member);
+                }
+            }
+            ItemKind::Impl(impl_block) => {
+                self.clear_expr_types(&mut impl_block.self_ty);
+                if let Some(trait_ty) = impl_block.trait_ty.as_mut() {
+                    self.clear_locator_types(trait_ty);
+                }
+                for item in &mut impl_block.items {
+                    self.clear_item_types(item);
+                }
+            }
+            ItemKind::Module(module) => {
+                for item in &mut module.items {
+                    self.clear_item_types(item);
+                }
+            }
+            ItemKind::Expr(expr) => {
+                self.clear_expr_types(expr);
+            }
+            ItemKind::Import(_) | ItemKind::Macro(_) | ItemKind::DeclConst(_)
+            | ItemKind::DeclStatic(_) | ItemKind::DeclFunction(_) | ItemKind::DeclType(_)
+            | ItemKind::Any(_) => {}
+        }
+    }
+
+    fn clear_expr_types(&mut self, expr: &mut Expr) {
+        *expr.ty_mut() = None;
+        match expr.kind_mut() {
+            ExprKind::Block(block) => {
+                for stmt in &mut block.stmts {
+                    self.clear_stmt_types(stmt);
+                }
+            }
+            ExprKind::Match(expr_match) => {
+                if let Some(scrutinee) = expr_match.scrutinee.as_mut() {
+                    self.clear_expr_types(scrutinee.as_mut());
+                }
+                for case in &mut expr_match.cases {
+                    if let Some(pat) = case.pat.as_mut() {
+                        self.clear_pattern_types(pat.as_mut());
+                    }
+                    self.clear_expr_types(case.cond.as_mut());
+                    if let Some(guard) = case.guard.as_mut() {
+                        self.clear_expr_types(guard.as_mut());
+                    }
+                    self.clear_expr_types(case.body.as_mut());
+                }
+            }
+            ExprKind::If(expr_if) => {
+                self.clear_expr_types(expr_if.cond.as_mut());
+                self.clear_expr_types(expr_if.then.as_mut());
+                if let Some(elze) = expr_if.elze.as_mut() {
+                    self.clear_expr_types(elze.as_mut());
+                }
+            }
+            ExprKind::Loop(expr_loop) => {
+                self.clear_expr_types(expr_loop.body.as_mut());
+            }
+            ExprKind::While(expr_while) => {
+                self.clear_expr_types(expr_while.cond.as_mut());
+                self.clear_expr_types(expr_while.body.as_mut());
+            }
+            ExprKind::Return(expr_return) => {
+                if let Some(value) = expr_return.value.as_mut() {
+                    self.clear_expr_types(value.as_mut());
+                }
+            }
+            ExprKind::Break(expr_break) => {
+                if let Some(value) = expr_break.value.as_mut() {
+                    self.clear_expr_types(value.as_mut());
+                }
+            }
+            ExprKind::Invoke(invoke) => {
+                match &mut invoke.target {
+                    ExprInvokeTarget::Function(locator) => {
+                        self.clear_locator_types(locator);
+                    }
+                    ExprInvokeTarget::Type(ty) => {
+                        self.clear_ty(ty);
+                    }
+                    ExprInvokeTarget::Method(select) => {
+                        self.clear_expr_types(select.obj.as_mut());
+                    }
+                    ExprInvokeTarget::Expr(expr) => {
+                        self.clear_expr_types(expr.as_mut());
+                    }
+                    ExprInvokeTarget::Closure(_) | ExprInvokeTarget::BinOp(_) => {}
+                }
+                for arg in &mut invoke.args {
+                    self.clear_expr_types(arg);
+                }
+            }
+            ExprKind::BinOp(binop) => {
+                self.clear_expr_types(binop.lhs.as_mut());
+                self.clear_expr_types(binop.rhs.as_mut());
+            }
+            ExprKind::UnOp(unop) => {
+                self.clear_expr_types(unop.val.as_mut());
+            }
+            ExprKind::Assign(assign) => {
+                self.clear_expr_types(assign.target.as_mut());
+                self.clear_expr_types(assign.value.as_mut());
+            }
+            ExprKind::Select(select) => {
+                self.clear_expr_types(select.obj.as_mut());
+            }
+            ExprKind::Index(index) => {
+                self.clear_expr_types(index.obj.as_mut());
+                self.clear_expr_types(index.index.as_mut());
+            }
+            ExprKind::Struct(struct_expr) => {
+                self.clear_expr_types(struct_expr.name.as_mut());
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.clear_expr_types(value);
+                    }
+                }
+                if let Some(update) = struct_expr.update.as_mut() {
+                    self.clear_expr_types(update.as_mut());
+                }
+            }
+            ExprKind::Structural(struct_expr) => {
+                for field in &mut struct_expr.fields {
+                    if let Some(value) = field.value.as_mut() {
+                        self.clear_expr_types(value);
+                    }
+                }
+            }
+            ExprKind::Cast(cast) => {
+                self.clear_expr_types(cast.expr.as_mut());
+                self.clear_ty(&mut cast.ty);
+            }
+            ExprKind::Reference(reference) => {
+                self.clear_expr_types(reference.referee.as_mut());
+            }
+            ExprKind::Dereference(deref) => {
+                self.clear_expr_types(deref.referee.as_mut());
+            }
+            ExprKind::Tuple(tuple) => {
+                for value in &mut tuple.values {
+                    self.clear_expr_types(value);
+                }
+            }
+            ExprKind::Try(expr_try) => {
+                self.clear_expr_types(expr_try.expr.as_mut());
+            }
+            ExprKind::For(expr_for) => {
+                self.clear_pattern_types(expr_for.pat.as_mut());
+                self.clear_expr_types(expr_for.iter.as_mut());
+                self.clear_expr_types(expr_for.body.as_mut());
+            }
+            ExprKind::Async(expr_async) => {
+                self.clear_expr_types(expr_async.expr.as_mut());
+            }
+            ExprKind::Let(expr_let) => {
+                self.clear_pattern_types(expr_let.pat.as_mut());
+                self.clear_expr_types(expr_let.expr.as_mut());
+            }
+            ExprKind::Closure(closure) => {
+                for param in &mut closure.params {
+                    self.clear_pattern_types(param);
+                }
+                if let Some(ret_ty) = closure.ret_ty.as_mut() {
+                    self.clear_ty(ret_ty.as_mut());
+                }
+                self.clear_expr_types(closure.body.as_mut());
+            }
+            ExprKind::Array(array) => {
+                for value in &mut array.values {
+                    self.clear_expr_types(value);
+                }
+            }
+            ExprKind::ArrayRepeat(repeat) => {
+                self.clear_expr_types(repeat.elem.as_mut());
+                self.clear_expr_types(repeat.len.as_mut());
+            }
+            ExprKind::ConstBlock(block) => {
+                self.clear_expr_types(block.expr.as_mut());
+            }
+            ExprKind::IntrinsicContainer(container) => {
+                container.for_each_expr_mut(|expr| self.clear_expr_types(expr));
+            }
+            ExprKind::IntrinsicCall(call) => {
+                for arg in &mut call.args {
+                    self.clear_expr_types(arg);
+                }
+                for kwarg in &mut call.kwargs {
+                    self.clear_expr_types(&mut kwarg.value);
+                }
+            }
+            ExprKind::Quote(quote) => {
+                for stmt in &mut quote.block.stmts {
+                    self.clear_stmt_types(stmt);
+                }
+            }
+            ExprKind::Splice(splice) => {
+                self.clear_expr_types(splice.token.as_mut());
+            }
+            ExprKind::Closured(closured) => {
+                self.clear_expr_types(closured.expr.as_mut());
+            }
+            ExprKind::Await(await_expr) => {
+                self.clear_expr_types(await_expr.base.as_mut());
+            }
+            ExprKind::Paren(paren) => {
+                self.clear_expr_types(paren.expr.as_mut());
+            }
+            ExprKind::Range(range) => {
+                if let Some(start) = range.start.as_mut() {
+                    self.clear_expr_types(start.as_mut());
+                }
+                if let Some(end) = range.end.as_mut() {
+                    self.clear_expr_types(end.as_mut());
+                }
+                if let Some(step) = range.step.as_mut() {
+                    self.clear_expr_types(step.as_mut());
+                }
+            }
+            ExprKind::FormatString(template) => {
+                let _ = template;
+            }
+            ExprKind::Splat(splat) => {
+                self.clear_expr_types(splat.iter.as_mut());
+            }
+            ExprKind::SplatDict(splat) => {
+                self.clear_expr_types(splat.dict.as_mut());
+            }
+            ExprKind::Item(item) => {
+                self.clear_item_types(item.as_mut());
+            }
+            ExprKind::Value(value) => {
+                self.clear_value_types(value.as_mut());
+            }
+            ExprKind::Macro(_) | ExprKind::Any(_) | ExprKind::Id(_) | ExprKind::Locator(_) => {}
+            ExprKind::Continue(_) => {}
+        }
+    }
+
+    fn clear_stmt_types(&mut self, stmt: &mut BlockStmt) {
+        match stmt {
+            BlockStmt::Item(item) => self.clear_item_types(item.as_mut()),
+            BlockStmt::Let(stmt_let) => {
+                self.clear_pattern_types(&mut stmt_let.pat);
+                if let Some(init) = stmt_let.init.as_mut() {
+                    self.clear_expr_types(init);
+                }
+                if let Some(diverge) = stmt_let.diverge.as_mut() {
+                    self.clear_expr_types(diverge);
+                }
+            }
+            BlockStmt::Expr(expr) => self.clear_expr_types(expr.expr.as_mut()),
+            BlockStmt::Noop | BlockStmt::Any(_) => {}
+        }
+    }
+
+    fn clear_pattern_types(&mut self, pattern: &mut Pattern) {
+        *pattern.ty_mut() = None;
+        match pattern.kind_mut() {
+            PatternKind::Bind(bind) => {
+                self.clear_pattern_types(bind.pattern.as_mut());
+            }
+            PatternKind::Tuple(tuple) => {
+                for pat in &mut tuple.patterns {
+                    self.clear_pattern_types(pat);
+                }
+            }
+            PatternKind::TupleStruct(tuple) => {
+                for pat in &mut tuple.patterns {
+                    self.clear_pattern_types(pat);
+                }
+            }
+            PatternKind::Struct(struct_pat) => {
+                for field in &mut struct_pat.fields {
+                    if let Some(pat) = field.rename.as_mut() {
+                        self.clear_pattern_types(pat);
+                    }
+                }
+            }
+            PatternKind::Structural(struct_pat) => {
+                for field in &mut struct_pat.fields {
+                    if let Some(pat) = field.rename.as_mut() {
+                        self.clear_pattern_types(pat);
+                    }
+                }
+            }
+            PatternKind::Box(boxed) => {
+                self.clear_pattern_types(boxed.pattern.as_mut());
+            }
+            PatternKind::Variant(variant) => {
+                self.clear_expr_types(&mut variant.name);
+                if let Some(pat) = variant.pattern.as_mut() {
+                    self.clear_pattern_types(pat);
+                }
+            }
+            PatternKind::Quote(quote) => {
+                for field in &mut quote.fields {
+                    if let Some(pat) = field.rename.as_mut() {
+                        self.clear_pattern_types(pat);
+                    }
+                }
+            }
+            PatternKind::QuotePlural(plural) => {
+                for pat in &mut plural.patterns {
+                    self.clear_pattern_types(pat);
+                }
+            }
+            PatternKind::Type(typed) => {
+                self.clear_pattern_types(typed.pat.as_mut());
+                self.clear_ty(&mut typed.ty);
+            }
+            PatternKind::Ident(_) | PatternKind::Wildcard(_) => {}
+        }
+    }
+
+    fn clear_ty(&mut self, ty: &mut Ty) {
+        match ty {
+            Ty::Tuple(tuple) => {
+                for ty in &mut tuple.types {
+                    self.clear_ty(ty);
+                }
+            }
+            Ty::Array(array) => {
+                self.clear_ty(array.elem.as_mut());
+                self.clear_expr_types(array.len.as_mut());
+            }
+            Ty::Slice(slice) => self.clear_ty(&mut slice.elem),
+            Ty::Vec(vec) => self.clear_ty(&mut vec.ty),
+            Ty::Reference(reference) => self.clear_ty(&mut reference.ty),
+            Ty::Type(_) => {}
+            Ty::Struct(def) => {
+                for field in &mut def.fields {
+                    self.clear_ty(&mut field.value);
+                }
+            }
+            Ty::Structural(def) => {
+                for field in &mut def.fields {
+                    self.clear_ty(&mut field.value);
+                }
+            }
+            Ty::Enum(def) => {
+                for variant in &mut def.variants {
+                    self.clear_ty(&mut variant.value);
+                    if let Some(expr) = variant.discriminant.as_mut() {
+                        self.clear_expr_types(expr.as_mut());
+                    }
+                }
+            }
+            Ty::Function(func) => {
+                for param in &mut func.params {
+                    self.clear_ty(param);
+                }
+                if let Some(ret) = func.ret_ty.as_mut() {
+                    self.clear_ty(ret.as_mut());
+                }
+            }
+            Ty::Expr(expr) => {
+                self.clear_expr_types(expr.as_mut());
+            }
+            Ty::Quote(quote) => {
+                if let Some(inner) = quote.inner.as_mut() {
+                    self.clear_ty(inner.as_mut());
+                }
+            }
+            Ty::TypeBinaryOp(op) => {
+                self.clear_ty(&mut op.lhs);
+                self.clear_ty(&mut op.rhs);
+            }
+            Ty::TypeBounds(bounds) => {
+                for expr in &mut bounds.bounds {
+                    self.clear_expr_types(expr);
+                }
+            }
+            Ty::Primitive(_) | Ty::Unit(_) | Ty::Unknown(_) | Ty::Any(_) | Ty::TokenStream(_)
+            | Ty::ImplTraits(_) | Ty::Value(_) | Ty::Nothing(_) | Ty::AnyBox(_) => {}
+        }
+    }
+
+    fn clear_locator_types(&mut self, _locator: &mut Locator) {}
+
+    fn clear_value_types(&mut self, value: &mut Value) {
+        match value {
+            Value::Expr(expr) => self.clear_expr_types(expr.as_mut()),
+            Value::List(list) => {
+                for value in &mut list.values {
+                    self.clear_value_types(value);
+                }
+            }
+            Value::Tuple(tuple) => {
+                for value in &mut tuple.values {
+                    self.clear_value_types(value);
+                }
+            }
+            Value::Struct(struct_value) => {
+                for field in &mut struct_value.structural.fields {
+                    self.clear_value_types(&mut field.value);
+                }
+            }
+            Value::Structural(struct_value) => {
+                for field in &mut struct_value.fields {
+                    self.clear_value_types(&mut field.value);
+                }
+            }
+            Value::QuoteToken(token) => {
+                match &mut token.value {
+                    QuoteTokenValue::Expr(expr) => self.clear_expr_types(expr),
+                    QuoteTokenValue::Stmts(stmts) => {
+                        for stmt in stmts {
+                            self.clear_stmt_types(stmt);
+                        }
+                    }
+                    QuoteTokenValue::Items(items) => {
+                        for item in items {
+                            self.clear_item_types(item);
+                        }
+                    }
+                    QuoteTokenValue::Type(ty) => self.clear_ty(ty),
+                }
+            }
+            _ => {}
         }
     }
 
@@ -1224,9 +1942,19 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Module(module) => {
                 self.module_stack.push(module.name.as_str().to_string());
                 self.push_scope();
+                self.push_item_scope(&mut module.items);
                 self.pending_items.push(Vec::new());
+                if let Some(typer) = self.typer.as_mut() {
+                    for item in &module.items {
+                        typer.initialize_from_item(item);
+                    }
+                }
                 let mut idx = 0;
                 while idx < module.items.len() {
+                    if self.should_skip_lazy_item(&module.items[idx]) {
+                        idx += 1;
+                        continue;
+                    }
                     self.evaluate_item(&mut module.items[idx]);
                     if matches!(self.mode, InterpreterMode::CompileTime)
                         && matches!(
@@ -1263,6 +1991,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     idx += 1;
                 }
                 self.pending_items.pop();
+                self.pop_item_scope();
                 self.pop_scope();
                 self.module_stack.pop();
             }
@@ -4182,6 +4911,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
                     return placeholder;
                 }
+                return value;
+            }
+        }
+        if matches!(self.mode, InterpreterMode::CompileTime) && self.materialize_symbol(&symbol) {
+            if let Some(value) = self.evaluated_constants.get(&symbol) {
+                return value.clone();
+            }
+            if let Some(ty) = self.resolve_type_binding(&symbol) {
+                return Value::Type(ty);
+            }
+            if let Some(value) = self.lookup_value(&symbol) {
                 return value;
             }
         }

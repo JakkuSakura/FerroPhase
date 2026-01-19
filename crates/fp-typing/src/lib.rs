@@ -22,6 +22,10 @@ fn detect_lossy_mode() -> bool {
     config::lossy_mode()
 }
 
+pub trait TypeResolutionHook {
+    fn resolve_symbol(&mut self, name: &str) -> bool;
+}
+
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
 
 // TypeScheme moved to typing/scheme.rs
@@ -121,6 +125,7 @@ pub struct AstTypeInferencer<'ctx> {
     lossy_mode: bool,
     hashmap_args: HashMap<TypeVarId, (TypeVarId, TypeVarId)>,
     current_span: Option<Span>,
+    resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -188,12 +193,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             lossy_mode: detect_lossy_mode(),
             hashmap_args: HashMap::new(),
             current_span: None,
+            resolution_hook: None,
         }
     }
 
     pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
         self.ctx = Some(ctx);
         self
+    }
+
+    pub fn set_resolution_hook(&mut self, hook: Box<dyn TypeResolutionHook + 'ctx>) {
+        self.resolution_hook = Some(hook);
     }
 
     fn record_hashmap_args(
@@ -283,6 +293,45 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             NodeKind::Workspace(_) => {}
         }
+    }
+
+    /// Initialize import aliases without running full inference.
+    pub fn initialize_imports_from_node(&mut self, node: &Node) {
+        match node.kind() {
+            NodeKind::File(file) => {
+                self.register_import_aliases_for_items(&file.items);
+            }
+            NodeKind::Item(item) => {
+                self.register_import_aliases_for_item(item);
+            }
+            NodeKind::Expr(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
+            }
+        }
+    }
+
+    fn register_import_aliases_for_items(&mut self, items: &[Item]) {
+        for item in items {
+            self.register_import_aliases_for_item(item);
+        }
+    }
+
+    fn register_import_aliases_for_item(&mut self, item: &Item) {
+        match item.kind() {
+            ItemKind::Import(import) => self.register_import_aliases(import),
+            ItemKind::Module(module) => self.register_import_aliases_for_items(&module.items),
+            ItemKind::Impl(impl_block) => {
+                self.register_import_aliases_for_items(&impl_block.items);
+            }
+            ItemKind::DefTrait(def) => {
+                self.register_import_aliases_for_items(&def.items);
+            }
+            _ => {}
+        }
+    }
+
+    /// Initialize the typer with a single item for incremental typing.
+    pub fn initialize_from_item(&mut self, item: &Item) {
+        self.predeclare_item(item);
     }
 
     fn finish(&mut self) -> TypingOutcome {
@@ -1988,6 +2037,21 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lookup_env_var(&mut self, name: &str) -> Option<TypeVarId> {
+        if let Some(var) = self.lookup_env_var_direct(name) {
+            return Some(var);
+        }
+        let should_retry = self
+            .resolution_hook
+            .as_mut()
+            .map(|hook| hook.resolve_symbol(name))
+            .unwrap_or(false);
+        if should_retry {
+            return self.lookup_env_var_direct(name);
+        }
+        None
+    }
+
+    fn lookup_env_var_direct(&mut self, name: &str) -> Option<TypeVarId> {
         for scope in self.env.iter().rev() {
             if let Some(entry) = scope.get(name) {
                 return Some(match entry {

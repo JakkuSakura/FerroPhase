@@ -500,10 +500,6 @@ impl Pipeline {
             self.last_const_eval = Some(outcome.clone());
         }
 
-        if stage_enabled(&pipeline_options, STAGE_TYPE_ENRICH) {
-            self.stage_type_check(ast, STAGE_TYPE_ENRICH, &pipeline_options)?;
-        }
-
         if options.run_const_eval && stage_enabled(&pipeline_options, STAGE_CONST_EVAL) {
             if options.save_intermediates {
                 if let Some(base_path) = pipeline_options.base_path.as_ref() {
@@ -527,10 +523,6 @@ impl Pipeline {
 
         if stage_enabled(options, STAGE_CONST_EVAL) {
             self.stage_const_eval(&mut ast, options)?;
-        }
-
-        if stage_enabled(options, STAGE_TYPE_ENRICH) {
-            self.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, options)?;
         }
         let runtime = if options.runtime.runtime_type.is_empty() {
             self.default_runtime.clone()
@@ -609,14 +601,7 @@ impl Pipeline {
         }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
-            let stage_started = std::time::Instant::now();
-            info!("pipeline: start {}", STAGE_TYPE_ENRICH);
-            self.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, options)?;
-            info!(
-                "pipeline: finished {} in {:.2?}",
-                STAGE_TYPE_ENRICH,
-                stage_started.elapsed()
-            );
+            info!("pipeline: skip {}", STAGE_TYPE_ENRICH);
         }
 
         if options.save_intermediates {
@@ -640,14 +625,7 @@ impl Pipeline {
         }
 
         if stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
-            let stage_started = std::time::Instant::now();
-            info!("pipeline: start {}", STAGE_TYPE_POST_MATERIALIZE);
-            self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, options)?;
-            info!(
-                "pipeline: finished {} in {:.2?}",
-                STAGE_TYPE_POST_MATERIALIZE,
-                stage_started.elapsed()
-            );
+            info!("pipeline: skip {}", STAGE_TYPE_POST_MATERIALIZE);
         }
 
         let output = if matches!(target, BackendKind::Rust) {
@@ -953,6 +931,7 @@ impl Pipeline {
             macro_parser: self.macro_parser.clone(),
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
+        interpreter.enable_incremental_typing(&working_ast);
 
         let value = match working_ast.kind_mut() {
             NodeKind::File(_) => {

@@ -28,14 +28,16 @@ pub struct ConstEvalOutcome {
 
 /// Const-evaluation orchestrator that operates directly on the typed AST.
 pub struct ConstEvaluationOrchestrator {
+    serializer: Arc<dyn AstSerializer>,
     diagnostics: Option<Arc<fp_core::diagnostics::DiagnosticManager>>,
     debug_assertions: bool,
     execute_main: bool,
 }
 
 impl ConstEvaluationOrchestrator {
-    pub fn new(_serializer: Arc<dyn AstSerializer>) -> Self {
+    pub fn new(serializer: Arc<dyn AstSerializer>) -> Self {
         Self {
+            serializer,
             diagnostics: None,
             debug_assertions: false,
             execute_main: false,
@@ -64,6 +66,7 @@ impl ConstEvaluationOrchestrator {
         ctx: &SharedScopedContext,
         macro_parser: Option<Arc<dyn MacroExpansionParser>>,
     ) -> CoreResult<ConstEvalOutcome> {
+        register_threadlocal_serializer(self.serializer.clone());
         let options = InterpreterOptions {
             mode: InterpreterMode::CompileTime,
             debug_assertions: self.debug_assertions,
@@ -74,6 +77,7 @@ impl ConstEvaluationOrchestrator {
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
+        interpreter.enable_incremental_typing(ast);
 
         interpreter.interpret(ast);
 
