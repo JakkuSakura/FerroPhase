@@ -49,7 +49,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn ensure_integer(&mut self, var: TypeVarId, context: &str) -> Result<()> {
         let root = self.find(var);
         match self.type_vars[root].kind.clone() {
-            TypeVarKind::Unbound { .. } => {
+            TypeVarKind::Unbound { .. }
+            | TypeVarKind::Bound(TypeTerm::Any)
+            | TypeVarKind::Bound(TypeTerm::Unknown) => {
                 self.type_vars[root].kind =
                     TypeVarKind::Bound(TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)));
                 Ok(())

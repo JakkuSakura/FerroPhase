@@ -1351,8 +1351,9 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
 
     let stmt = match (ty, init_expr) {
         (Some(ty), Some(init)) => {
-            if let PatternKind::Ident(id) = pat.kind().clone() {
-                StmtLet::new_typed(id.ident, ty, init)
+            if let PatternKind::Ident(_) = pat.kind() {
+                let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
+                StmtLet::new(typed_pat, Some(init), None)
             } else {
                 StmtLet::new(pat, Some(init), None)
             }

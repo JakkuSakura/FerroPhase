@@ -32,7 +32,7 @@ fn run_benches() -> BenchReport {
         let warmup_deadline = warmup_start + warmup_secs;
         let mut warmup_iters = 0;
         while std::time::now() < warmup_deadline {
-            let warm_ok = catch_unwind(|| (bench.run)());
+            let warm_ok = catch_unwind(bench.run);
             if !warm_ok {
                 ok = false;
                 break;
@@ -45,7 +45,7 @@ fn run_benches() -> BenchReport {
         let mut measure_iters = 0;
         if ok {
             while std::time::now() < measure_deadline || measure_iters == 0 {
-                let run_ok = catch_unwind(|| (bench.run)());
+                let run_ok = catch_unwind(bench.run);
                 if !run_ok {
                     ok = false;
                     break;

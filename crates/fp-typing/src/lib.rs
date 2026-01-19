@@ -773,7 +773,67 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 } else {
                     self.symbol_var(&def.name)
                 };
-                self.prebind_function_signature(def, fn_var);
+                if def.sig.generics_params.is_empty() {
+                    self.prebind_function_signature(def, fn_var);
+                } else {
+                    let fn_key = self
+                        .impl_stack
+                        .last()
+                        .cloned()
+                        .flatten()
+                        .map(|ctx| format!("{}::{}", ctx.struct_name, def.name.as_str()));
+                    self.enter_scope();
+                    for param in &def.sig.generics_params {
+                        let var = self.register_generic_param(param.name.as_str());
+                        let bounds = Self::extract_trait_bounds(&param.bounds);
+                        if !bounds.is_empty() {
+                            self.generic_trait_bounds.insert(var, bounds);
+                        }
+                    }
+                    let mut ok = true;
+                    let mut param_vars = Vec::new();
+                    for param in &def.sig.params {
+                        match self.type_from_ast_ty(&param.ty) {
+                            Ok(var) => param_vars.push(var),
+                            Err(_) => {
+                                ok = false;
+                                break;
+                            }
+                        }
+                    }
+                    let ret_var = if ok {
+                        if let Some(ret_ty) = def.sig.ret_ty.as_ref() {
+                            self.type_from_ast_ty(ret_ty).ok()
+                        } else {
+                            Some(self.unit_type_var())
+                        }
+                    } else {
+                        None
+                    };
+                    if ok {
+                        if let Some(ret_var) = ret_var {
+                            self.bind(
+                                fn_var,
+                                TypeTerm::Function(FunctionTerm {
+                                    params: param_vars,
+                                    ret: ret_var,
+                                }),
+                            );
+                        } else {
+                            ok = false;
+                        }
+                    }
+                    self.exit_scope();
+                    if ok {
+                        if let Ok(scheme) = self.generalize(fn_var) {
+                            if let Some(key) = fn_key.as_ref() {
+                                self.replace_env_entry(key.as_str(), EnvEntry::Poly(scheme));
+                            } else {
+                                self.replace_env_entry(def.name.as_str(), EnvEntry::Poly(scheme));
+                            }
+                        }
+                    }
+                }
             }
             ItemKind::DeclFunction(decl) => {
                 self.register_symbol(&decl.name);

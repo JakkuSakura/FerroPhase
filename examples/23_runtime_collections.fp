@@ -3,7 +3,6 @@
 //! Demonstrates list indexing, map lookup, and len() in runtime code.
 
 use std::collections::HashMap;
-use std::collections::HashMapEntry;
 
 fn main() {
     println!("📘 Tutorial: 23_runtime_collections.fp");
@@ -19,9 +18,9 @@ fn main() {
     println!("numbers.len = {}", numbers.len());
 
     let statuses: HashMap<&'static str, i64> = HashMap::from([
-        HashMapEntry { key: "ok", value: 200 },
-        HashMapEntry { key: "accepted", value: 202 },
-        HashMapEntry { key: "nope", value: 404 },
+        ("ok", 200),
+        ("accepted", 202),
+        ("nope", 404),
     ]);
     let key = "accepted";
     println!("statuses[{}] = {}", key, statuses[key]);

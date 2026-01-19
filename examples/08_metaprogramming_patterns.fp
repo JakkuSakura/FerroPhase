@@ -14,13 +14,25 @@ type LabeledPoint = const {
     t
 };
 
-// Emit a compile-time method stub for illustrative codegen.
-const _GENERATED: () = const {
-    generate_method!("describe", quote<item> {
-        fn describe(&self) -> &'static str {
-            "generated"
-        }
-    });
+const SCORE_EXPR: expr = quote<expr> { (2 + 3) * 4 };
+
+const FN_GROUP: [item] = quote<[item]> {
+    fn alpha() {}
+    fn beta(x: i64) -> i64 { x + 1 }
+};
+
+const FN_COUNT: i64 = FN_GROUP.len();
+
+const STEP_STMT: stmt = quote<stmt> {
+    let step = 7 * 3;
+    println!("stmt splice => step={}", step);
+};
+
+const BANNER_ITEM: item = quote<item> {
+    struct Banner {
+        title: &'static str,
+        rank: i64,
+    }
 };
 
 fn main() {
@@ -56,45 +68,14 @@ fn main() {
 
     println!("");
     println!("=== Part 2: Execute Quoted Code ===");
-    let score = splice(quote<expr> { (2 + 3) * 4 });
+    let score = splice(SCORE_EXPR);
     println!("expr splice => {}", score);
 
-    const fn_token: fn = quote<fn> {
-        fn inspected() {
-            // placeholder body for inspection
-        }
+    println!("quote<[item]> count => {}", FN_COUNT);
 
-    };
-    const fn_name = match fn_token {
-        fn { name, .. } => name,
-        _ => "<unknown>",
-    };
-    println!("quote<fn> inspect => name={}", fn_name);
+    splice(STEP_STMT);
 
-    const fn_group: [item] = quote<[item]> {
-        fn alpha() {}
-        fn beta(x: i64) -> i64 { x + 1 }
-    };
-    const fn_count = fn_group.len();
-    println!("quote<[item]> count => {}", fn_count);
-
-    let fn_name = match quote<item> { fn splice(name)(i: i32) } {
-        quote { fn splice(name)(i: i32) } => name,
-        _ => "<unknown>",
-    };
-    println!("quote { fn splice(name)(i: i32) } => name={}", fn_name);
-
-    splice(quote<stmt> {
-        let step = 7 * 3;
-        println!("stmt splice => step={}", step);
-    });
-
-    splice(quote<item> {
-        struct Banner {
-            title: &'static str,
-            rank: i64,
-        }
-    });
+    splice(BANNER_ITEM);
     let banner = Banner { title: "metaprogramming", rank: score };
     println!("item splice => {} #{}", banner.title, banner.rank);
 }

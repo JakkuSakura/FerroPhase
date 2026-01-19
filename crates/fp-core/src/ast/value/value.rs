@@ -179,10 +179,24 @@ plain_value! {
     ValueChar: char
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ValueString {
     pub value: String,
     pub owned: bool,
+}
+
+impl PartialEq for ValueString {
+    fn eq(&self, other: &Self) -> bool {
+        self.value == other.value
+    }
+}
+
+impl Eq for ValueString {}
+
+impl Hash for ValueString {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.value.hash(state);
+    }
 }
 
 impl ValueString {

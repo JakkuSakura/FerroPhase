@@ -1,5 +1,5 @@
 use super::super::*;
-use fp_core::ast::Node;
+use fp_core::ast::{ItemKind, Node, NodeKind};
 use fp_core::config;
 use fp_interpret::const_eval::{
     ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
@@ -14,7 +14,12 @@ impl Pipeline {
     ) -> Result<ConstEvalOutcome, CliError> {
         let tolerate_errors = options.error_tolerance.enabled || config::lossy_mode();
         let mut std_modules = Vec::new();
-        if !matches!(options.target, BackendKind::Interpret) {
+        let include_std = if matches!(options.target, BackendKind::Interpret) {
+            !ast_has_std(ast)
+        } else {
+            true
+        };
+        if include_std {
             for std_path in runtime_std_paths() {
                 let source = match fs::read_to_string(&std_path) {
                     Ok(source) => source,
@@ -73,4 +78,16 @@ impl Pipeline {
             }
         }
     }
+}
+
+fn ast_has_std(ast: &Node) -> bool {
+    let NodeKind::File(file) = ast.kind() else {
+        return false;
+    };
+    file.items.iter().any(|item| {
+        matches!(
+            item.kind(),
+            ItemKind::Module(module) if module.name.as_str() == "std"
+        )
+    })
 }

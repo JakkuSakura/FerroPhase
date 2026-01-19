@@ -210,8 +210,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
 
                 let mut evaluated = Vec::with_capacity(call.args.len() + call.kwargs.len());
-                for arg in call.args.iter_mut() {
-                    evaluated.push(self.eval_expr(arg));
+                for (idx, arg) in call.args.iter_mut().enumerate() {
+                    let mode = self.intrinsic_type_arg_mode(call.kind, idx);
+                    let value = match mode {
+                        TypeArgMode::Required => self.eval_intrinsic_type_arg(arg),
+                        TypeArgMode::Fallback => {
+                            let value = self.eval_expr(arg);
+                            if matches!(value, Value::Undefined(_)) {
+                                self.eval_intrinsic_type_arg(arg)
+                            } else {
+                                self.materialize_type_value(value)
+                            }
+                        }
+                        TypeArgMode::None => self.eval_expr(arg),
+                    };
+                    evaluated.push(value);
                 }
                 for kwarg in call.kwargs.iter_mut() {
                     evaluated.push(self.eval_expr(&mut kwarg.value));
@@ -238,6 +251,179 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+        }
+    }
+
+    fn eval_intrinsic_type_arg(&mut self, expr: &mut Expr) -> Value {
+        if let Some(value) = self.eval_type_value_from_expr(expr) {
+            return value;
+        }
+        self.eval_expr(expr)
+    }
+
+    fn eval_type_value_from_expr(&mut self, expr: &mut Expr) -> Option<Value> {
+        match expr.kind_mut() {
+            ExprKind::Value(value) => match value.as_ref() {
+                Value::Type(ty) => Some(Value::Type(self.materialize_type(ty.clone()))),
+                _ => None,
+            },
+            ExprKind::BinOp(binop) => {
+                let lhs = self.eval_type_value_from_expr(binop.lhs.as_mut());
+                let rhs = self.eval_type_value_from_expr(binop.rhs.as_mut());
+                match (lhs, rhs) {
+                    (Some(Value::Type(lhs_ty)), Some(Value::Type(rhs_ty))) => {
+                        let kind = match binop.kind {
+                            BinOpKind::Add | BinOpKind::AddTrait => TypeBinaryOpKind::Add,
+                            BinOpKind::Sub => TypeBinaryOpKind::Subtract,
+                            BinOpKind::And | BinOpKind::BitAnd => TypeBinaryOpKind::Intersect,
+                            BinOpKind::Or | BinOpKind::BitOr => TypeBinaryOpKind::Union,
+                            _ => return None,
+                        };
+                        Some(Value::Type(Ty::TypeBinaryOp(
+                            fp_core::ast::TypeBinaryOp {
+                                kind,
+                                lhs: Box::new(lhs_ty),
+                                rhs: Box::new(rhs_ty),
+                            }
+                            .into(),
+                        )))
+                    }
+                    _ => None,
+                }
+            }
+            ExprKind::Reference(reference) => {
+                if let ExprKind::Locator(locator) = reference.referee.kind() {
+                    let key = Self::locator_base_name(locator);
+                    if let Some((lifetime, base_name)) =
+                        Self::split_static_lifetime_name(key.as_str())
+                    {
+                        if let Some(base_ty) = self.resolve_type_from_name(base_name) {
+                            let ty = Ty::Reference(TypeReference {
+                                ty: base_ty.into(),
+                                mutability: reference.mutable,
+                                lifetime: Some(Ident::new(lifetime)),
+                            });
+                            return Some(Value::Type(ty));
+                        }
+                    }
+                }
+                let mut base_expr = reference.referee.as_mut().clone();
+                if let Some(Value::Type(base_ty)) = self.eval_type_value_from_expr(&mut base_expr) {
+                    let ty = Ty::Reference(TypeReference {
+                        ty: base_ty.into(),
+                        mutability: reference.mutable,
+                        lifetime: None,
+                    });
+                    Some(Value::Type(ty))
+                } else {
+                    None
+                }
+            }
+            ExprKind::Locator(locator) => {
+                if let Some(ident) = locator.as_ident() {
+                    if let Some(ty) = self.resolve_type_binding(ident.as_str()) {
+                        return Some(Value::Type(ty));
+                    }
+                }
+                let value = self.resolve_qualified(locator.to_string());
+                if matches!(value, Value::Type(_)) {
+                    Some(self.materialize_type_value(value))
+                } else {
+                    None
+                }
+            }
+            ExprKind::ConstBlock(_) | ExprKind::Macro(_) => {
+                let value = self.eval_expr(expr);
+                if matches!(value, Value::Type(_)) {
+                    Some(self.materialize_type_value(value))
+                } else {
+                    None
+                }
+            }
+            _ => {
+                let value = self.eval_expr(expr);
+                if matches!(value, Value::Type(_)) {
+                    Some(self.materialize_type_value(value))
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn materialize_type_value(&mut self, value: Value) -> Value {
+        match value {
+            Value::Type(ty) => Value::Type(self.materialize_type(ty)),
+            other => other,
+        }
+    }
+
+    fn materialize_type(&mut self, mut ty: Ty) -> Ty {
+        self.evaluate_ty(&mut ty);
+        match ty {
+            Ty::Expr(expr) => {
+                if let ExprKind::Locator(locator) = expr.kind() {
+                    let key = Self::locator_base_name(locator);
+                    if let Some(resolved) = self.resolve_type_binding(&key) {
+                        return resolved;
+                    }
+                }
+                self.materialize_const_type(Ty::Expr(expr))
+            }
+            other => other,
+        }
+    }
+
+    fn resolve_type_from_name(&mut self, name: &str) -> Option<Ty> {
+        if let Some(ty) = self.resolve_type_binding(name) {
+            return Some(ty);
+        }
+        if let Some(primitive) = Self::primitive_type_from_name(name) {
+            return Some(Ty::Primitive(primitive));
+        }
+        None
+    }
+
+    fn split_static_lifetime_name(name: &str) -> Option<(&'static str, &str)> {
+        let remainder = name.strip_prefix("'static")?;
+        if remainder.is_empty() {
+            None
+        } else {
+            Some(("static", remainder))
+        }
+    }
+
+    fn intrinsic_type_arg_mode(&self, kind: IntrinsicCallKind, idx: usize) -> TypeArgMode {
+        match kind {
+            IntrinsicCallKind::AddField => {
+                if idx == 0 || idx == 2 {
+                    TypeArgMode::Required
+                } else {
+                    TypeArgMode::None
+                }
+            }
+            IntrinsicCallKind::SizeOf
+            | IntrinsicCallKind::ReflectFields
+            | IntrinsicCallKind::HasMethod
+            | IntrinsicCallKind::TypeName
+            | IntrinsicCallKind::FieldType => {
+                if idx == 0 {
+                    TypeArgMode::Required
+                } else {
+                    TypeArgMode::None
+                }
+            }
+            IntrinsicCallKind::HasField
+            | IntrinsicCallKind::FieldCount
+            | IntrinsicCallKind::MethodCount
+            | IntrinsicCallKind::StructSize => {
+                if idx == 0 {
+                    TypeArgMode::Fallback
+                } else {
+                    TypeArgMode::None
+                }
+            }
+            _ => TypeArgMode::None,
         }
     }
 
@@ -487,6 +673,13 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         Ok(output)
     }
+}
+
+#[derive(Clone, Copy)]
+enum TypeArgMode {
+    Required,
+    Fallback,
+    None,
 }
 
 fn token_stream_to_string(tokens: &[MacroTokenTree]) -> String {

@@ -59,6 +59,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 other => RuntimeFlow::Value(other.clone()),
             },
             ExprKind::Locator(locator) => {
+                self.apply_local_import_alias(locator);
                 if let Some(variant) = self.resolve_enum_variant(locator) {
                     return RuntimeFlow::Value(variant);
                 }
@@ -296,6 +297,48 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Value(self.evaluate_select(target, &select.field.name))
             }
             ExprKind::Index(index_expr) => {
+                if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                    let target = match self.eval_value_runtime(index_expr.obj.as_mut()) {
+                        Ok(value) => value,
+                        Err(flow) => return flow,
+                    };
+                    let start = match range.start.as_mut() {
+                        Some(expr) => match self.eval_value_runtime(expr) {
+                            Ok(value) => Some(value),
+                            Err(flow) => return flow,
+                        },
+                        None => None,
+                    };
+                    let end = match range.end.as_mut() {
+                        Some(expr) => match self.eval_value_runtime(expr) {
+                            Ok(value) => Some(value),
+                            Err(flow) => return flow,
+                        },
+                        None => None,
+                    };
+                    let start_idx = match start {
+                        Some(value) => match self.numeric_to_non_negative_usize(&value, "range start")
+                        {
+                            Some(value) => Some(value),
+                            None => return RuntimeFlow::Value(Value::undefined()),
+                        },
+                        None => None,
+                    };
+                    let end_idx = match end {
+                        Some(value) => match self.numeric_to_non_negative_usize(&value, "range end") {
+                            Some(value) => Some(value),
+                            None => return RuntimeFlow::Value(Value::undefined()),
+                        },
+                        None => None,
+                    };
+                    return RuntimeFlow::Value(self.evaluate_range_index_slices(
+                        target,
+                        start_idx,
+                        end_idx,
+                        matches!(range.limit, ExprRangeLimit::Inclusive),
+                    ));
+                }
+
                 let target = match self.eval_value_runtime(index_expr.obj.as_mut()) {
                     Ok(value) => value,
                     Err(flow) => return flow,
@@ -307,7 +350,55 @@ impl<'ctx> AstInterpreter<'ctx> {
                 RuntimeFlow::Value(self.evaluate_index(target, index_value))
             }
             ExprKind::IntrinsicCall(call) => self.eval_intrinsic_runtime(call),
-            ExprKind::Reference(reference) => self.eval_expr_runtime(reference.referee.as_mut()),
+            ExprKind::Reference(reference) => {
+                if reference.mutable.unwrap_or(false) {
+                    if let ExprKind::Locator(locator) = reference.referee.kind() {
+                        if let Some(ident) = locator.as_ident() {
+                            if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                if let Some(shared) = stored.shared_handle() {
+                                    return RuntimeFlow::Value(Value::Any(AnyBox::new(RuntimeRef {
+                                        shared,
+                                    })));
+                                }
+                                self.emit_error(format!(
+                                    "mutable reference requires mutable binding for '{}'",
+                                    ident.as_str()
+                                ));
+                                return RuntimeFlow::Value(Value::undefined());
+                            }
+                        }
+                    }
+                    self.emit_error("mutable reference target must be a named binding");
+                    RuntimeFlow::Value(Value::undefined())
+                } else {
+                    self.eval_expr_runtime(reference.referee.as_mut())
+                }
+            }
+            ExprKind::Dereference(deref) => {
+                if let ExprKind::Locator(locator) = deref.referee.kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                            return RuntimeFlow::Value(stored.value());
+                        }
+                    }
+                }
+                let target = match self.eval_expr_runtime(deref.referee.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                if let Value::Any(any) = target {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        let value = runtime_ref
+                            .shared
+                            .lock()
+                            .map(|value| value.clone())
+                            .unwrap_or_else(|err| err.into_inner().clone());
+                        return RuntimeFlow::Value(value);
+                    }
+                }
+                self.emit_error("cannot dereference non-reference value");
+                RuntimeFlow::Value(Value::undefined())
+            }
             ExprKind::Paren(paren) => self.eval_expr_runtime(paren.expr.as_mut()),
             ExprKind::Assign(assign) => self.eval_assign_runtime(assign),
             ExprKind::Let(expr_let) => {
@@ -477,6 +568,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 other => other.clone(),
             },
             ExprKind::Locator(locator) => {
+                self.apply_local_import_alias(locator);
                 // First, try to specialize generic function reference if we have type info
                 if should_specialize_fn_ref {
                     if let Some(expected_ty) = &expr_ty_snapshot {
@@ -713,7 +805,49 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 value
             }
-            ExprKind::Reference(reference) => self.eval_expr(reference.referee.as_mut()),
+            ExprKind::Reference(reference) => {
+                if reference.mutable.unwrap_or(false) {
+                    if let ExprKind::Locator(locator) = reference.referee.kind() {
+                        if let Some(ident) = locator.as_ident() {
+                            if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                                if let Some(shared) = stored.shared_handle() {
+                                    return Value::Any(AnyBox::new(RuntimeRef { shared }));
+                                }
+                                self.emit_error(format!(
+                                    "mutable reference requires mutable binding for '{}'",
+                                    ident.as_str()
+                                ));
+                                return Value::undefined();
+                            }
+                        }
+                    }
+                    self.emit_error("mutable reference target must be a named binding");
+                    Value::undefined()
+                } else {
+                    self.eval_expr(reference.referee.as_mut())
+                }
+            }
+            ExprKind::Dereference(deref) => {
+                if let ExprKind::Locator(locator) = deref.referee.kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                            return stored.value();
+                        }
+                    }
+                }
+                let target = self.eval_expr(deref.referee.as_mut());
+                if let Value::Any(any) = target {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        return runtime_ref
+                            .shared
+                            .lock()
+                            .map(|value| value.clone())
+                            .unwrap_or_else(|err| err.into_inner().clone());
+                    }
+                }
+                self.emit_error("cannot dereference non-reference value");
+                Value::undefined()
+            }
             ExprKind::Paren(paren) => self.eval_expr(paren.expr.as_mut()),
             ExprKind::Assign(assign) => {
                 let flow = self.eval_assign_runtime(assign);
@@ -1284,8 +1418,23 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                     if let Some(context) = impl_context {
                         self.impl_stack.push(context);
-                        let flow = self.call_function_runtime(function, args);
+                        let flow = if let Some(stack) = Self::module_stack_from_locator(locator) {
+                            let saved = std::mem::take(&mut self.module_stack);
+                            self.module_stack = stack;
+                            let flow = self.call_function_runtime(function, args);
+                            self.module_stack = saved;
+                            flow
+                        } else {
+                            self.call_function_runtime(function, args)
+                        };
                         self.impl_stack.pop();
+                        return flow;
+                    }
+                    if let Some(stack) = Self::module_stack_from_locator(locator) {
+                        let saved = std::mem::take(&mut self.module_stack);
+                        self.module_stack = stack;
+                        let flow = self.call_function_runtime(function, args);
+                        self.module_stack = saved;
                         return flow;
                     }
                     return self.call_function_runtime(function, args);
@@ -1297,6 +1446,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 for name in candidate_names {
                     if let Some(template) = self.generic_functions.get(&name) {
+                        if let Some(stack) = Self::module_stack_from_locator(locator) {
+                            let saved = std::mem::take(&mut self.module_stack);
+                            self.module_stack = stack;
+                            let flow = self.call_function_runtime(template.function.clone(), args);
+                            self.module_stack = saved;
+                            return flow;
+                        }
                         return self.call_function_runtime(template.function.clone(), args);
                     }
                 }
@@ -1475,6 +1631,34 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
 
+        if method_name == "push" && args.len() == 1 {
+            let value = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            let Some(shared) = receiver.shared else {
+                self.emit_error("push requires a mutable receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let mut guard = match shared.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+            match &mut *guard {
+                Value::List(list) => {
+                    list.values.push(value);
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                other => {
+                    self.emit_error(format!(
+                        "'push' is only supported on Vec values, found {:?}",
+                        other
+                    ));
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            }
+        }
+
         let Some(function) = self.resolve_method_function(&receiver, &method_name, args) else {
             self.emit_error(format!("cannot resolve method '{}'", method_name));
             return RuntimeFlow::Value(Value::undefined());
@@ -1508,6 +1692,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         args: &mut [Expr],
         mode: ResolutionMode,
     ) -> Option<ItemDefFunction> {
+        self.apply_local_import_alias(locator);
         if matches!(mode, ResolutionMode::Attribute) && !Self::locator_is_qualified(locator) {
             return None;
         }
@@ -1556,6 +1741,69 @@ impl<'ctx> AstInterpreter<'ctx> {
             Locator::Ident(_) => false,
             Locator::Path(path) => path.segments.len() > 1,
             Locator::ParameterPath(path) => path.segments.len() > 1,
+        }
+    }
+
+    fn apply_local_import_alias(&mut self, locator: &mut Locator) -> bool {
+        match locator {
+            Locator::Ident(ident) => {
+                let Some(target) = self.local_imports.get(ident.as_str()) else {
+                    return false;
+                };
+                let Some(new_locator) = Self::locator_from_import_target(target) else {
+                    return false;
+                };
+                *locator = new_locator;
+                true
+            }
+            Locator::Path(path) => {
+                let Some(first) = path.segments.first() else {
+                    return false;
+                };
+                let Some(target) = self.local_imports.get(first.as_str()) else {
+                    return false;
+                };
+                let Some(mut segments) = Self::import_target_segments(target) else {
+                    return false;
+                };
+                segments.extend(path.segments.iter().skip(1).cloned());
+                *locator = Locator::path(Path::new(segments));
+                true
+            }
+            Locator::ParameterPath(param_path) => {
+                let Some(first) = param_path.segments.first() else {
+                    return false;
+                };
+                let Some(target) = self.local_imports.get(first.ident.as_str()) else {
+                    return false;
+                };
+                let Some(mut segments) = Self::import_target_segments(target) else {
+                    return false;
+                };
+                for segment in param_path.segments.iter().skip(1) {
+                    segments.push(segment.ident.clone());
+                }
+                *locator = Locator::path(Path::new(segments));
+                true
+            }
+        }
+    }
+
+    fn locator_from_import_target(target: &str) -> Option<Locator> {
+        let segments = Self::import_target_segments(target)?;
+        Some(Locator::path(Path::new(segments)))
+    }
+
+    fn import_target_segments(target: &str) -> Option<Vec<Ident>> {
+        let segments: Vec<Ident> = target
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .map(Ident::new)
+            .collect();
+        if segments.is_empty() {
+            None
+        } else {
+            Some(segments)
         }
     }
 

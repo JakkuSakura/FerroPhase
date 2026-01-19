@@ -164,6 +164,17 @@ enum StoredValue {
     Shared(Arc<Mutex<Value>>),
 }
 
+#[derive(Debug, Clone)]
+struct RuntimeRef {
+    shared: Arc<Mutex<Value>>,
+}
+
+impl PartialEq for RuntimeRef {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.shared, &other.shared)
+    }
+}
+
 impl StoredValue {
     fn value(&self) -> Value {
         match self {
@@ -360,6 +371,7 @@ pub struct AstInterpreter<'ctx> {
     imported_modules: HashMap<String, ModuleId>,
     imported_symbols: HashMap<String, SymbolDescriptor>,
     imported_types: HashSet<String>,
+    local_imports: HashMap<String, String>,
     loop_depth: usize,
     function_depth: usize,
     current_span: Option<Span>,
@@ -416,6 +428,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             imported_modules: HashMap::new(),
             imported_symbols: HashMap::new(),
             imported_types: HashSet::new(),
+            local_imports: HashMap::new(),
             loop_depth: 0,
             function_depth: 0,
             current_span: None,
@@ -594,6 +607,15 @@ impl<'ctx> AstInterpreter<'ctx> {
         };
         if let Err(err) = typer.infer_expression(expr) {
             self.emit_error_at(expr.span, err.to_string());
+        }
+    }
+
+    fn bind_typer_symbol(&mut self, name: &str, ty: &Ty) {
+        if self.is_unknown(ty) {
+            return;
+        }
+        if let Some(typer) = self.typer.as_mut() {
+            typer.bind_variable(name, ty.clone());
         }
     }
 
@@ -1839,6 +1861,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let expr_ref = def.value.as_mut();
                     self.eval_expr(expr_ref)
                 };
+                let inferred_ty = def
+                    .ty_annotation()
+                    .cloned()
+                    .or_else(|| def.ty.clone())
+                    .or_else(|| def.value.ty().cloned());
+                if let Some(ty) = inferred_ty.as_ref() {
+                    if def.ty_annotation().is_none() && !self.is_unknown(ty) {
+                        def.ty_annotation = Some(ty.clone());
+                    }
+                    if def.ty.is_none() && !self.is_unknown(ty) {
+                        def.ty = Some(ty.clone());
+                    }
+                    self.bind_typer_symbol(def.name.as_str(), ty);
+                }
                 if self.pending_closure.is_some() {
                     let mut function_ty = {
                         let expr_ref = def.value.as_mut();
@@ -1912,6 +1948,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let expr_ref = def.value.as_mut();
                     self.eval_expr(expr_ref)
                 };
+                let inferred_ty = def
+                    .ty_annotation()
+                    .cloned()
+                    .or_else(|| Some(def.ty.clone()))
+                    .or_else(|| def.value.ty().cloned());
+                if let Some(ty) = inferred_ty.as_ref() {
+                    if def.ty_annotation().is_none() && !self.is_unknown(ty) {
+                        def.ty_annotation = Some(ty.clone());
+                    }
+                    self.bind_typer_symbol(def.name.as_str(), ty);
+                }
                 if self.pending_closure.is_some() {
                     let mut function_ty = {
                         let expr_ref = def.value.as_mut();
@@ -2390,6 +2437,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     /// Helper to annotate a slice of arguments
     fn annotate_invoke_args_slice(&mut self, args: &mut [Expr], params: &[FunctionParam]) {
         for (arg, param) in args.iter_mut().zip(params.iter()) {
+            let force_annotation = self.should_force_generic_annotation(arg, &param.ty);
             let should_annotate = match arg.ty() {
                 None => true,
                 Some(Ty::Unknown(_)) => true,
@@ -2404,10 +2452,29 @@ impl<'ctx> AstInterpreter<'ctx> {
                 _ => false,
             };
 
-            if should_annotate {
+            if should_annotate || force_annotation {
                 arg.set_ty(param.ty.clone());
             }
         }
+    }
+
+    fn should_force_generic_annotation(&self, arg: &Expr, expected: &Ty) -> bool {
+        if !matches!(expected, Ty::Function(_)) {
+            return false;
+        }
+        let ExprKind::Locator(locator) = arg.kind() else {
+            return false;
+        };
+        self.locator_is_generic_function(locator)
+    }
+
+    fn locator_is_generic_function(&self, locator: &Locator) -> bool {
+        let key = Self::locator_key(locator);
+        if self.generic_functions.contains_key(&key) {
+            return true;
+        }
+        let base = Self::locator_base_name(locator);
+        self.generic_functions.contains_key(&base)
     }
 
     // removed unused apply_callable (no callers)
@@ -2691,6 +2758,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                 continue;
             };
             if !self.match_type(&param.ty, &arg_ty, &generics_set, &mut subst) {
+                if matches!(param.ty, Ty::Function(_)) {
+                    if let ExprKind::Locator(locator) = arg.kind() {
+                        if self.locator_is_generic_function(locator) {
+                            continue;
+                        }
+                    }
+                }
                 return None;
             }
         }
@@ -3473,9 +3547,113 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.emit_error("cannot assign to field on non-mutable target");
                 RuntimeFlow::Value(Value::undefined())
             }
+            ExprKind::Dereference(deref) => {
+                if let ExprKind::Locator(locator) = deref.referee.kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        if let Some(stored) = self.lookup_stored_value_mut(ident.as_str()) {
+                            if stored.assign(value.clone()) {
+                                return RuntimeFlow::Value(value);
+                            }
+                        }
+                    }
+                }
+                let target = match self.eval_expr_runtime(deref.referee.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                if let Value::Any(any) = target {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        match runtime_ref.shared.lock() {
+                            Ok(mut guard) => {
+                                *guard = value.clone();
+                                return RuntimeFlow::Value(value);
+                            }
+                            Err(err) => {
+                                *err.into_inner() = value.clone();
+                                return RuntimeFlow::Value(value);
+                            }
+                        }
+                    }
+                }
+                self.emit_error("cannot assign through non-mutable reference");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            ExprKind::Index(index_expr) => {
+                let index_value = match self.eval_expr_runtime(index_expr.index.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                let idx = match self.numeric_to_non_negative_usize(&index_value, "index") {
+                    Some(value) => value,
+                    None => return RuntimeFlow::Value(Value::undefined()),
+                };
+
+                if let ExprKind::Locator(locator) = index_expr.obj.kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        let shared_handle = match self.lookup_stored_value_mut(ident.as_str()) {
+                            Some(StoredValue::Shared(shared)) => Some(Arc::clone(shared)),
+                            _ => None,
+                        };
+                        if let Some(shared) = shared_handle {
+                            if self.assign_index_shared(&shared, idx, value.clone()) {
+                                return RuntimeFlow::Value(value);
+                            }
+                        }
+                    }
+                }
+
+                let target = match self.eval_expr_runtime(index_expr.obj.as_mut()) {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                if let Value::Any(any) = target {
+                    if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                        if self.assign_index_shared(&runtime_ref.shared, idx, value.clone()) {
+                            return RuntimeFlow::Value(value);
+                        }
+                    }
+                }
+
+                self.emit_error("index assignment requires a mutable list binding");
+                RuntimeFlow::Value(Value::undefined())
+            }
             _ => {
                 self.emit_error("unsupported assignment target in runtime mode");
                 RuntimeFlow::Value(Value::undefined())
+            }
+        }
+    }
+
+    fn assign_index_shared(
+        &mut self,
+        shared: &Arc<Mutex<Value>>,
+        idx: usize,
+        value: Value,
+    ) -> bool {
+        let mut guard = match shared.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
+        match &mut *guard {
+            Value::List(list) => {
+                if idx >= list.values.len() {
+                    self.emit_error("index out of bounds for list");
+                    return false;
+                }
+                list.values[idx] = value;
+                true
+            }
+            Value::Tuple(tuple) => {
+                if idx >= tuple.values.len() {
+                    self.emit_error("index out of bounds for tuple");
+                    return false;
+                }
+                tuple.values[idx] = value;
+                true
+            }
+            _ => {
+                self.emit_error("index assignment requires list or tuple");
+                false
             }
         }
     }
@@ -3623,9 +3801,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         if let ExprKind::Locator(locator) = struct_expr.name.kind_mut() {
             if let Some(info) = self.lookup_enum_variant(locator) {
                 if let EnumVariantPayload::Struct(field_names) = &info.payload {
+                    let mut update_fields = HashMap::new();
                     let fields = self.build_struct_literal_fields_runtime(
                         Some(field_names),
                         &mut struct_expr.fields,
+                        &mut update_fields,
                     );
                     return self.build_enum_value(
                         &info,
@@ -3647,6 +3827,34 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         };
 
+        let mut update_fields: HashMap<String, Value> = HashMap::new();
+        if let Some(update_expr) = struct_expr.update.as_mut() {
+            let update_value = match self.eval_expr_runtime(update_expr.as_mut()) {
+                RuntimeFlow::Value(value) => value,
+                other => return self.finish_runtime_flow(other),
+            };
+            match update_value {
+                Value::Struct(value_struct) => {
+                    for field in value_struct.structural.fields {
+                        update_fields
+                            .insert(field.name.as_str().to_string(), field.value);
+                    }
+                }
+                Value::Structural(structural) => {
+                    for field in structural.fields {
+                        update_fields
+                            .insert(field.name.as_str().to_string(), field.value);
+                    }
+                }
+                other => {
+                    self.emit_error(format!(
+                        "struct update must be a struct or structural value, found {}",
+                        other
+                    ));
+                }
+            }
+        }
+
         let expected_names = match &struct_ty {
             StructLiteralType::Struct(struct_ty) => Some(
                 struct_ty
@@ -3666,6 +3874,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let fields = self.build_struct_literal_fields_runtime(
             expected_names.as_deref(),
             &mut struct_expr.fields,
+            &mut update_fields,
         );
 
         match struct_ty {
@@ -3680,6 +3889,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         &mut self,
         expected_names: Option<&[Ident]>,
         fields: &mut [ExprField],
+        update_fields: &mut HashMap<String, Value>,
     ) -> Vec<ValueField> {
         let mut value_fields = Vec::new();
         if let Some(expected) = expected_names {
@@ -3706,6 +3916,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 other => self.finish_runtime_flow(other),
                             }
                         })
+                        .or_else(|| update_fields.remove(field.name.as_str()))
                         .unwrap_or_else(|| {
                             self.emit_error(format!(
                                 "missing initializer for field '{}' in struct literal",
@@ -3715,11 +3926,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                         });
                     value_fields.push(ValueField::new(field.name.clone(), value));
                 } else {
-                    self.emit_error(format!(
-                        "missing initializer for field '{}' in struct literal",
-                        expected_name
-                    ));
-                    value_fields.push(ValueField::new(expected_name.clone(), Value::undefined()));
+                    let value = update_fields
+                        .remove(expected_name.as_str())
+                        .unwrap_or_else(|| {
+                            self.emit_error(format!(
+                                "missing initializer for field '{}' in struct literal",
+                                expected_name
+                            ));
+                            Value::undefined()
+                        });
+                    value_fields.push(ValueField::new(expected_name.clone(), value));
                 }
             }
             for field in fields.iter() {
@@ -3727,6 +3943,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error(format!(
                         "field '{}' does not exist on this struct",
                         field.name
+                    ));
+                }
+            }
+            for update_field in update_fields.keys() {
+                if !expected.iter().any(|name| name.as_str() == update_field.as_str()) {
+                    self.emit_error(format!(
+                        "field '{}' does not exist on this struct",
+                        update_field
                     ));
                 }
             }
@@ -3741,6 +3965,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let flow = self.eval_expr_runtime(expr);
                     self.finish_runtime_flow(flow)
                 })
+                .or_else(|| update_fields.remove(field.name.as_str()))
                 .unwrap_or_else(|| {
                     self.lookup_value(field.name.as_str()).unwrap_or_else(|| {
                         self.emit_error(format!(
@@ -3753,12 +3978,28 @@ impl<'ctx> AstInterpreter<'ctx> {
             value_fields.push(ValueField::new(field.name.clone(), value));
         }
 
+        for (name, value) in update_fields.drain() {
+            value_fields.push(ValueField::new(Ident::new(name), value));
+        }
+
         value_fields
     }
 
     // Evaluate indexing on list/tuple values.
     fn evaluate_index(&mut self, target: Value, index: Value) -> Value {
         match target {
+            Value::Any(any) => {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    let shared_value = runtime_ref
+                        .shared
+                        .lock()
+                        .map(|value| value.clone())
+                        .unwrap_or_else(|err| err.into_inner().clone());
+                    return self.evaluate_index(shared_value, index);
+                }
+                self.emit_error("cannot index into non-collection reference");
+                Value::undefined()
+            }
             Value::List(list) => {
                 let idx = match self.numeric_to_non_negative_usize(&index, "index") {
                     Some(value) => value,
@@ -3815,14 +4056,40 @@ impl<'ctx> AstInterpreter<'ctx> {
             },
             None => None,
         };
+        self.evaluate_range_index_slices(
+            target,
+            start,
+            end,
+            matches!(range.limit, ExprRangeLimit::Inclusive),
+        )
+    }
 
+    fn evaluate_range_index_slices(
+        &mut self,
+        target: Value,
+        start: Option<usize>,
+        end: Option<usize>,
+        inclusive: bool,
+    ) -> Value {
         match target {
+            Value::Any(any) => {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    let shared_value = runtime_ref
+                        .shared
+                        .lock()
+                        .map(|value| value.clone())
+                        .unwrap_or_else(|err| err.into_inner().clone());
+                    return self.evaluate_range_index_slices(shared_value, start, end, inclusive);
+                }
+                self.emit_error("cannot slice non-collection reference");
+                Value::undefined()
+            }
             Value::String(text) => {
                 let chars: Vec<char> = text.value.chars().collect();
                 let len = chars.len();
                 let start_idx = start.unwrap_or(0);
                 let mut end_idx = end.unwrap_or(len);
-                if matches!(range.limit, ExprRangeLimit::Inclusive) {
+                if inclusive {
                     end_idx = end_idx.saturating_add(1);
                 }
                 if start_idx > end_idx || end_idx > len {
@@ -3836,7 +4103,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let len = list.values.len();
                 let start_idx = start.unwrap_or(0);
                 let mut end_idx = end.unwrap_or(len);
-                if matches!(range.limit, ExprRangeLimit::Inclusive) {
+                if inclusive {
                     end_idx = end_idx.saturating_add(1);
                 }
                 if start_idx > end_idx || end_idx > len {
@@ -3888,6 +4155,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         let mut candidates = vec![locator.to_string()];
         if let Some(ident) = locator.as_ident() {
             candidates.push(ident.as_str().to_string());
+        }
+        if !self.module_stack.is_empty() {
+            let locator_name = locator.to_string();
+            let qualified_prefix = self.module_stack.join("::");
+            if !locator_name.starts_with(&qualified_prefix) {
+                candidates.push(self.qualified_name(&locator_name));
+            }
         }
         for candidate in candidates {
             if let Some(info) = self.enum_variants.get(&candidate) {
@@ -4018,6 +4292,31 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         };
 
+        let mut update_fields: HashMap<String, Value> = HashMap::new();
+        if let Some(update_expr) = struct_expr.update.as_mut() {
+            let update_value = self.eval_expr(update_expr.as_mut());
+            match update_value {
+                Value::Struct(value_struct) => {
+                    for field in value_struct.structural.fields {
+                        update_fields
+                            .insert(field.name.as_str().to_string(), field.value);
+                    }
+                }
+                Value::Structural(structural) => {
+                    for field in structural.fields {
+                        update_fields
+                            .insert(field.name.as_str().to_string(), field.value);
+                    }
+                }
+                other => {
+                    self.emit_error(format!(
+                        "struct update must be a struct or structural value, found {}",
+                        other
+                    ));
+                }
+            }
+        }
+
         let mut fields = Vec::new();
         for field in &mut struct_expr.fields {
             let value = field
@@ -4025,15 +4324,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                 .as_mut()
                 .map(|expr| self.eval_expr(expr))
                 .unwrap_or_else(|| {
-                    self.lookup_value(field.name.as_str()).unwrap_or_else(|| {
-                        self.emit_error(format!(
-                            "missing initializer for field '{}' in struct literal",
-                            field.name
-                        ));
-                        Value::undefined()
-                    })
+                    update_fields
+                        .remove(field.name.as_str())
+                        .or_else(|| self.lookup_value(field.name.as_str()))
+                        .unwrap_or_else(|| {
+                            self.emit_error(format!(
+                                "missing initializer for field '{}' in struct literal",
+                                field.name
+                            ));
+                            Value::undefined()
+                        })
                 });
             fields.push(ValueField::new(field.name.clone(), value));
+        }
+
+        for (name, value) in update_fields {
+            fields.push(ValueField::new(Ident::new(name), value));
         }
 
         match struct_ty {
@@ -4545,8 +4851,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let context = match self.module_resolution.clone() {
             Some(context) => context,
             None => {
-                // Imports are resolved during later lowering stages; const-eval ignores them
-                // when no module graph is available.
+                self.handle_local_import(import);
                 return;
             }
         };
@@ -4626,6 +4931,76 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
         }
+    }
+
+    fn handle_local_import(&mut self, import: &ItemImport) {
+        for directive in self.expand_import_tree(&import.tree) {
+            match directive.binding {
+                ImportBinding::Module { alias } => {
+                    if let Some(alias) = alias {
+                        self.local_imports
+                            .insert(alias, directive.module_spec.clone());
+                    }
+                }
+                ImportBinding::Symbol { name, alias } => {
+                    let binding = alias.unwrap_or_else(|| name.clone());
+                    let target = if directive.module_spec.is_empty() {
+                        name
+                    } else {
+                        format!("{}::{}", directive.module_spec, name)
+                    };
+                    self.local_imports.insert(binding, target);
+                }
+                ImportBinding::Glob => {
+                    let Some(exports) = self.local_module_exports(&directive.module_spec) else {
+                        continue;
+                    };
+                    for name in exports {
+                        let target = if directive.module_spec.is_empty() {
+                            name.clone()
+                        } else {
+                            format!("{}::{}", directive.module_spec, name)
+                        };
+                        self.local_imports.insert(name, target);
+                    }
+                }
+            }
+        }
+    }
+
+    fn local_module_exports(&self, module_spec: &str) -> Option<Vec<String>> {
+        let root = self.root_items?;
+        let segments: Vec<&str> = module_spec
+            .split("::")
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        if segments.is_empty() {
+            return None;
+        }
+        let item_ptr = self.find_item_by_path_mut(root, &segments)?;
+        let item = unsafe { &*item_ptr };
+        let ItemKind::Module(module) = item.kind() else {
+            return None;
+        };
+        let mut exports = Vec::new();
+        for item in &module.items {
+            let name = match item.kind() {
+                ItemKind::DefStruct(def) => Some(def.name.as_str()),
+                ItemKind::DefStructural(def) => Some(def.name.as_str()),
+                ItemKind::DefEnum(def) => Some(def.name.as_str()),
+                ItemKind::DefType(def) => Some(def.name.as_str()),
+                ItemKind::DefConst(def) => Some(def.name.as_str()),
+                ItemKind::DefStatic(def) => Some(def.name.as_str()),
+                ItemKind::DefFunction(def) => Some(def.name.as_str()),
+                ItemKind::DefTrait(def) => Some(def.name.as_str()),
+                ItemKind::Module(def) => Some(def.name.as_str()),
+                _ => None,
+            };
+            if let Some(name) = name {
+                exports.push(name.to_string());
+            }
+        }
+        Some(exports)
     }
 
     fn expand_import_tree(&mut self, tree: &ItemImportTree) -> Vec<ImportDirective> {
@@ -4918,12 +5293,20 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Some(value) = self.evaluated_constants.get(&symbol) {
                 return value.clone();
             }
+            let qualified = self.qualified_name(&symbol);
+            if let Some(value) = self.evaluated_constants.get(&qualified) {
+                return value.clone();
+            }
             if let Some(ty) = self.resolve_type_binding(&symbol) {
                 return Value::Type(ty);
             }
             if let Some(value) = self.lookup_value(&symbol) {
                 return value;
             }
+        }
+        let qualified = self.qualified_name(&symbol);
+        if let Some(value) = self.evaluated_constants.get(&qualified) {
+            return value.clone();
         }
         self.emit_error(format!(
             "unresolved symbol '{}' in const evaluation",

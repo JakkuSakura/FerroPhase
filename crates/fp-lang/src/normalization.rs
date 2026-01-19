@@ -1,7 +1,7 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprKind,
     ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
-    Ident, StmtLet, Value,
+    Ident, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
@@ -25,12 +25,18 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         };
 
         if let Some(name) = macro_expr.invocation.path.segments.last() {
-            if name.as_str() == "t" {
+            let macro_name = name.as_str().trim_end_matches('!');
+            if macro_name == "t" {
                 let ty = parse_type_macro_tokens(&macro_expr.invocation.tokens)?;
                 let replacement = Expr::value(Value::Type(ty)).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "assert" {
+            if macro_name == "vec" {
+                let expr = parse_vec_macro_tokens(&macro_expr.invocation.tokens)?;
+                let replacement = expr.with_ty_slot(ty_slot);
+                return Ok(NormalizeOutcome::Normalized(replacement));
+            }
+            if macro_name == "assert" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 if args.len() != 1 {
                     return Err(fp_core::error::Error::from(
@@ -42,7 +48,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                         .with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "assert_eq" {
+            if macro_name == "assert_eq" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 if args.len() != 2 {
                     return Err(fp_core::error::Error::from(
@@ -58,7 +64,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 .with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "assert_ne" {
+            if macro_name == "assert_ne" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 if args.len() != 2 {
                     return Err(fp_core::error::Error::from(
@@ -74,7 +80,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 .with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "panic" {
+            if macro_name == "panic" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 if args.len() > 1 {
                     return Err(fp_core::error::Error::from(
@@ -84,7 +90,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 let replacement = panic_macro(args).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "format" {
+            if macro_name == "format" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 if args.is_empty() {
                     return Err(fp_core::error::Error::from(
@@ -126,7 +132,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "type_of" || name.as_str() == "typeof" {
+            if macro_name == "type_of" || macro_name == "typeof" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 if args.len() != 1 {
                     return Err(fp_core::error::Error::from(
@@ -143,9 +149,9 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if name.as_str() == "print" || name.as_str() == "println" {
+            if macro_name == "print" || macro_name == "println" {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
-                let kind = if name.as_str() == "println" {
+                let kind = if macro_name == "println" {
                     IntrinsicCallKind::Println
                 } else {
                     IntrinsicCallKind::Print
@@ -156,12 +162,59 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
+            if macro_name == "addfield" {
+                let args = parse_macro_tokens_with_type_args(
+                    &macro_expr.invocation.tokens,
+                    &[2],
+                )?;
+                let replacement = Expr::from_parts(
+                    ty_slot.clone(),
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        IntrinsicCallKind::AddField,
+                        args,
+                        Vec::new(),
+                    )),
+                );
+                return Ok(NormalizeOutcome::Normalized(replacement));
+            }
+            if let Some(kind) = intrinsic_macro_kind(macro_name) {
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let replacement = Expr::from_parts(
+                    ty_slot.clone(),
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, args, Vec::new())),
+                );
+                return Ok(NormalizeOutcome::Normalized(replacement));
+            }
         }
 
-        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-            ty_slot,
-            ExprKind::Macro(macro_expr),
-        )))
+    Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+        ty_slot,
+        ExprKind::Macro(macro_expr),
+    )))
+}
+}
+
+fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
+    match name {
+        "sizeof" => Some(IntrinsicCallKind::SizeOf),
+        "reflect_fields" => Some(IntrinsicCallKind::ReflectFields),
+        "hasmethod" => Some(IntrinsicCallKind::HasMethod),
+        "type_name" => Some(IntrinsicCallKind::TypeName),
+        "type_info" => Some(IntrinsicCallKind::TypeOf),
+        "type_of" => Some(IntrinsicCallKind::TypeOf),
+        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
+        "clone_struct" => Some(IntrinsicCallKind::CloneStruct),
+        "addfield" => Some(IntrinsicCallKind::AddField),
+        "hasfield" => Some(IntrinsicCallKind::HasField),
+        "count_fields" => Some(IntrinsicCallKind::FieldCount),
+        "field_count" => Some(IntrinsicCallKind::FieldCount),
+        "method_count" => Some(IntrinsicCallKind::MethodCount),
+        "field_type" => Some(IntrinsicCallKind::FieldType),
+        "struct_size" => Some(IntrinsicCallKind::StructSize),
+        "generate_method" => Some(IntrinsicCallKind::GenerateMethod),
+        "compile_error" => Some(IntrinsicCallKind::CompileError),
+        "compile_warning" => Some(IntrinsicCallKind::CompileWarning),
+        _ => None,
     }
 }
 
@@ -207,6 +260,78 @@ fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
             .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
         args.push(expr);
         idx += consumed;
+    }
+    Ok(args)
+}
+
+fn parse_vec_macro_tokens(tokens: &str) -> Result<Expr> {
+    let text = format!("[{}]", tokens);
+    let lexemes =
+        lex_lexemes(&text).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+    let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, 0)
+        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+    if lexemes[consumed..]
+        .iter()
+        .any(|lex| lex.kind == LexemeKind::Token)
+    {
+        return Err(fp_core::error::Error::from(
+            "vec! macro tokens contain trailing input",
+        ));
+    }
+    lower_expr_from_cst(&expr_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
+}
+
+fn parse_macro_tokens_with_type_args(tokens: &str, type_positions: &[usize]) -> Result<Vec<Expr>> {
+    let lexemes =
+        lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+    let mut idx = 0;
+    let mut args = Vec::new();
+    let mut arg_index = 0;
+    while idx < lexemes.len() {
+        while idx < lexemes.len() && lexemes[idx].kind != LexemeKind::Token {
+            idx += 1;
+        }
+        if idx >= lexemes.len() {
+            break;
+        }
+        if lexemes[idx].text == "," {
+            idx += 1;
+            continue;
+        }
+        let is_type = type_positions.iter().any(|pos| *pos == arg_index);
+        if is_type {
+            match parse_type_lexemes_prefix_to_cst(&lexemes[idx..], 0, &[","]) {
+                Ok((ty_cst, consumed)) => {
+                    let ty = lower_type_from_cst(&ty_cst)
+                        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+                    args.push(Expr::value(Value::Type(ty)));
+                    idx += consumed;
+                }
+                Err(_) => {
+                    let (expr_cst, consumed) =
+                        parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], 0).map_err(|err| {
+                            fp_core::error::Error::from(format!(
+                                "assert macro parse error: {}",
+                                err
+                            ))
+                        })?;
+                    let expr = lower_expr_from_cst(&expr_cst)
+                        .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+                    args.push(Expr::value(Value::Type(Ty::Expr(expr.into()))));
+                    idx += consumed;
+                }
+            }
+        } else {
+            let (expr_cst, consumed) =
+                parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], 0).map_err(|err| {
+                    fp_core::error::Error::from(format!("assert macro parse error: {}", err))
+                })?;
+            let expr = lower_expr_from_cst(&expr_cst)
+                .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+            args.push(expr);
+            idx += consumed;
+        }
+        arg_index += 1;
     }
     Ok(args)
 }

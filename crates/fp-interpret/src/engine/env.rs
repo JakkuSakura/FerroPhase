@@ -92,6 +92,74 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            PatternKind::Struct(pattern_struct) => match value {
+                Value::Struct(struct_value) => {
+                    for field in &pattern_struct.fields {
+                        if let Some(existing) = struct_value
+                            .structural
+                            .fields
+                            .iter()
+                            .find(|existing| existing.name.as_str() == field.name.as_str())
+                        {
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.bind_pattern(rename, existing.value.clone());
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                            }
+                        }
+                    }
+                }
+                Value::Structural(structural) => {
+                    for field in &pattern_struct.fields {
+                        if let Some(existing) = structural
+                            .fields
+                            .iter()
+                            .find(|existing| existing.name.as_str() == field.name.as_str())
+                        {
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.bind_pattern(rename, existing.value.clone());
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            PatternKind::Structural(pattern_struct) => match value {
+                Value::Structural(structural) => {
+                    for field in &pattern_struct.fields {
+                        if let Some(existing) = structural
+                            .fields
+                            .iter()
+                            .find(|existing| existing.name.as_str() == field.name.as_str())
+                        {
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.bind_pattern(rename, existing.value.clone());
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                            }
+                        }
+                    }
+                }
+                Value::Struct(struct_value) => {
+                    for field in &pattern_struct.fields {
+                        if let Some(existing) = struct_value
+                            .structural
+                            .fields
+                            .iter()
+                            .find(|existing| existing.name.as_str() == field.name.as_str())
+                        {
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.bind_pattern(rename, existing.value.clone());
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
             _ => {
                 // Best-effort; other pattern kinds are not yet supported by the const evaluator.
             }
@@ -167,11 +235,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                         .iter()
                         .find(|existing| existing.name.as_str() == field.name.as_str())
                         .map(|existing| {
-                            field
-                                .rename
-                                .as_ref()
-                                .map(|pat| self.pattern_matches(pat, &existing.value))
-                                .unwrap_or(true)
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.pattern_matches(rename, &existing.value)
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                                true
+                            }
                         })
                         .unwrap_or(false)
                 }),
@@ -181,11 +250,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                         .iter()
                         .find(|existing| existing.name.as_str() == field.name.as_str())
                         .map(|existing| {
-                            field
-                                .rename
-                                .as_ref()
-                                .map(|pat| self.pattern_matches(pat, &existing.value))
-                                .unwrap_or(true)
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.pattern_matches(rename, &existing.value)
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                                true
+                            }
                         })
                         .unwrap_or(false)
                 }),
@@ -198,11 +268,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                         .iter()
                         .find(|existing| existing.name.as_str() == field.name.as_str())
                         .map(|existing| {
-                            field
-                                .rename
-                                .as_ref()
-                                .map(|pat| self.pattern_matches(pat, &existing.value))
-                                .unwrap_or(true)
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.pattern_matches(rename, &existing.value)
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                                true
+                            }
                         })
                         .unwrap_or(false)
                 }),
@@ -213,11 +284,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                         .iter()
                         .find(|existing| existing.name.as_str() == field.name.as_str())
                         .map(|existing| {
-                            field
-                                .rename
-                                .as_ref()
-                                .map(|pat| self.pattern_matches(pat, &existing.value))
-                                .unwrap_or(true)
+                            if let Some(rename) = field.rename.as_ref() {
+                                self.pattern_matches(rename, &existing.value)
+                            } else {
+                                self.insert_value(field.name.as_str(), existing.value.clone());
+                                true
+                            }
                         })
                         .unwrap_or(false)
                 }),

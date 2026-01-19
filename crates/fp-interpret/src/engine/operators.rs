@@ -32,6 +32,14 @@ impl<'ctx> AstInterpreter<'ctx> {
             (Value::String(l), Value::String(r)) => {
                 Ok(Value::string(format!("{}{}", l.value, r.value)))
             }
+            (Value::Type(lhs_ty), Value::Type(rhs_ty)) => Ok(Value::Type(Ty::TypeBinaryOp(
+                fp_core::ast::TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Add,
+                    lhs: Box::new(lhs_ty),
+                    rhs: Box::new(rhs_ty),
+                }
+                .into(),
+            ))),
             other => Err(interpretation_error(format!(
                 "unsupported operands for '+': {:?}",
                 other
@@ -46,6 +54,14 @@ impl<'ctx> AstInterpreter<'ctx> {
             (Value::BigDecimal(l), Value::BigDecimal(r)) => {
                 Ok(Value::big_decimal(l.value - r.value))
             }
+            (Value::Type(lhs_ty), Value::Type(rhs_ty)) => Ok(Value::Type(Ty::TypeBinaryOp(
+                fp_core::ast::TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Subtract,
+                    lhs: Box::new(lhs_ty),
+                    rhs: Box::new(rhs_ty),
+                }
+                .into(),
+            ))),
             other => Err(interpretation_error(format!(
                 "unsupported operands for '-': {:?}",
                 other
@@ -183,6 +199,26 @@ impl<'ctx> AstInterpreter<'ctx> {
                     _ => unreachable!(),
                 };
                 Ok(Value::big_int(result))
+            }
+            (Value::Type(lhs_ty), Value::Type(rhs_ty)) => {
+                let kind = match op {
+                    BinOpKind::BitAnd => TypeBinaryOpKind::Intersect,
+                    BinOpKind::BitOr => TypeBinaryOpKind::Union,
+                    _ => {
+                        return Err(interpretation_error(format!(
+                            "unsupported operands for bitwise: {:?}",
+                            (op, Value::Type(lhs_ty), Value::Type(rhs_ty))
+                        )))
+                    }
+                };
+                Ok(Value::Type(Ty::TypeBinaryOp(
+                    fp_core::ast::TypeBinaryOp {
+                        kind,
+                        lhs: Box::new(lhs_ty),
+                        rhs: Box::new(rhs_ty),
+                    }
+                    .into(),
+                )))
             }
             other => Err(interpretation_error(format!(
                 "bitwise operators require integers, found {:?}",

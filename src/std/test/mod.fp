@@ -24,7 +24,7 @@ fn run_tests() -> TestReport {
     let mut idx = 0;
     while idx < tests.len() {
         let test = tests[idx];
-        let ok = catch_unwind(|| (test.run)());
+        let ok = catch_unwind(test.run);
         if ok {
             passed = passed + 1;
             println("  {} ... ok", test.name);

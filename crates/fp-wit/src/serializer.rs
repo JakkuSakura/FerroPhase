@@ -611,6 +611,7 @@ impl InterfaceBuilder {
                 current_package,
                 receiver_ctx,
             ),
+            Ty::TokenStream(_) => "json".to_string(),
             Ty::Tuple(tuple) => {
                 let mut parts = Vec::new();
                 for (idx, inner) in tuple.types.iter().enumerate() {
@@ -1461,6 +1462,7 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
             let inner = ty_to_wit_with_self(vec_ty.ty.as_ref(), self_name);
             format!("list<{inner}>")
         }
+        Ty::TokenStream(_) => "json".to_string(),
         Ty::Quote(_) => "json".to_string(),
         Ty::Array(array) => {
             let inner = ty_to_wit_with_self(array.elem.as_ref(), self_name);

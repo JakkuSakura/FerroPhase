@@ -1,4 +1,5 @@
 use super::*;
+use std::sync::Arc;
 
 impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn annotate_expr_closure(closure: &mut ExprClosure, fn_sig: &TypeFunction) {
@@ -209,7 +210,13 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Some(scope) = self.type_env.last_mut() {
                 scope.insert(param.name.as_str().to_string(), param.ty.clone());
             }
-            self.insert_value(param.name.as_str(), value);
+            if let Value::Any(any) = &value {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    self.insert_shared_value(param.name.as_str(), Arc::clone(&runtime_ref.shared));
+                    continue;
+                }
+            }
+            self.insert_mutable_value(param.name.as_str(), value);
         }
         let mut body = function.body.as_ref().clone();
         let flow = self.eval_expr_runtime(&mut body);
@@ -332,7 +339,13 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Some(scope) = self.type_env.last_mut() {
                 scope.insert(param.name.as_str().to_string(), param.ty.clone());
             }
-            self.insert_value(param.name.as_str(), value);
+            if let Value::Any(any) = &value {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    self.insert_shared_value(param.name.as_str(), Arc::clone(&runtime_ref.shared));
+                    continue;
+                }
+            }
+            self.insert_mutable_value(param.name.as_str(), value);
         }
         let mut body = function.body.as_ref().clone();
         let flow = self.eval_expr_runtime(&mut body);
