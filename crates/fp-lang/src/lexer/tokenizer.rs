@@ -116,8 +116,23 @@ pub enum TokenKind {
 
 #[derive(Debug, Error)]
 pub enum LexerError {
-    #[error("lexer error: {0}")]
-    Message(String),
+    #[error("lexer error: {message}")]
+    Message { message: String, span: Option<Span> },
+}
+
+impl LexerError {
+    pub fn span(&self) -> Option<Span> {
+        match self {
+            LexerError::Message { span, .. } => *span,
+        }
+    }
+
+    fn with_span(message: String, span: Span) -> Self {
+        LexerError::Message {
+            message,
+            span: Some(span),
+        }
+    }
 }
 
 // Strip a type suffix from a number lexeme (e.g., "10i64" -> "10", "1.2f32" -> "1.2").
@@ -191,7 +206,10 @@ pub(crate) fn classify_and_normalize_lexeme(lexeme: &str) -> Option<(TokenKind, 
 
 impl From<ContextError> for LexerError {
     fn from(err: ContextError) -> Self {
-        LexerError::Message(err.to_string())
+        LexerError::Message {
+            message: err.to_string(),
+            span: None,
+        }
     }
 }
 
@@ -199,7 +217,10 @@ impl From<ErrMode<ContextError>> for LexerError {
     fn from(err: ErrMode<ContextError>) -> Self {
         match err {
             ErrMode::Backtrack(ctx) | ErrMode::Cut(ctx) => LexerError::from(ctx),
-            ErrMode::Incomplete(_) => LexerError::Message("incomplete input".to_string()),
+            ErrMode::Incomplete(_) => LexerError::Message {
+                message: "incomplete input".to_string(),
+                span: None,
+            },
         }
     }
 }
@@ -215,7 +236,13 @@ pub fn lex(source: &str) -> Result<Vec<Token>, LexerError> {
         let start = source.len() - input.len();
         let kind = match token_parser().parse_next(&mut input) {
             Ok(kind) => kind,
-            Err(err) => return Err(LexerError::from(err)),
+            Err(err) => {
+                let span = Span {
+                    start,
+                    end: (start + 1).min(source.len()),
+                };
+                return Err(LexerError::with_span(err.to_string(), span));
+            }
         };
         let end = source.len() - input.len();
         let mut lexeme = source[start..end].to_string();
@@ -275,7 +302,13 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
 
         token_parser()
             .parse_next(&mut input)
-            .map_err(LexerError::from)?;
+            .map_err(|err| {
+                let span = Span {
+                    start,
+                    end: (start + 1).min(source.len()),
+                };
+                LexerError::with_span(err.to_string(), span)
+            })?;
         let end = source.len() - input.len();
         out.push(Lexeme::token(
             source[start..end].to_string(),

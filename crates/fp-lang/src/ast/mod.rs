@@ -65,7 +65,12 @@ impl FerroPhaseParser {
 
     pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
         let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
-            self.record_error(format!("failed to lex expression: {err}"));
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex expression: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex expression: {err}"));
+            }
             eyre::eyre!(err)
         })?;
         let (cst, idx) =
@@ -125,7 +130,12 @@ impl FerroPhaseParser {
         file: FileId,
     ) -> Result<Vec<fp_core::ast::Item>> {
         let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
-            self.record_error(format!("failed to lex items: {err}"));
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex items: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex items: {err}"));
+            }
             eyre::eyre!(err)
         })?;
         let tokens = crate::tokens::rewrite::lower_tokens(tokens).map_err(|err| {
