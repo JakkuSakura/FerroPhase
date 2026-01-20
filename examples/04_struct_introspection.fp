@@ -22,24 +22,24 @@ fn main() {
     // Introspection capabilities
     const POINT_SIZE: usize = sizeof!(Point);
     const COLOR_SIZE: usize = sizeof!(Color);
-    const POINT_FIELDS: usize = field_count!(Point);
-    const COLOR_FIELDS: usize = field_count!(Color);
-    const POINT_HAS_X: bool = hasfield!(Point, "x");
-    const POINT_HAS_Z: bool = hasfield!(Point, "z");
-    const POINT_METHODS: usize = method_count!(Point);
-    const COLOR_METHODS: usize = method_count!(Color);
+    const POINT_FIELDS: i64 = type(Point).fields.len();
+    const COLOR_FIELDS: i64 = type(Color).fields.len();
+    const POINT_HAS_X: bool = type(Point).fields.contains("x");
+    const POINT_HAS_Z: bool = type(Point).fields.contains("z");
+    const POINT_METHODS: i64 = type(Point).methods.len();
+    const COLOR_METHODS: i64 = type(Color).methods.len();
     
     println!("=== Struct Introspection ===");
     
     // Direct introspection calls to test evaluation
     println!("Point size: {} bytes", sizeof!(Point));
     println!("Color size: {} bytes", sizeof!(Color));
-    println!("Point fields: {}", field_count!(Point));
-    println!("Color fields: {}", field_count!(Color));
-    println!("Point has x: {}", hasfield!(Point, "x"));
-    println!("Point has z: {}", hasfield!(Point, "z"));
-    println!("Point methods: {}", method_count!(Point));
-    println!("Color methods: {}", method_count!(Color));
+    println!("Point fields: {}", type(Point).fields.len());
+    println!("Color fields: {}", type(Color).fields.len());
+    println!("Point has x: {}", type(Point).fields.contains("x"));
+    println!("Point has z: {}", type(Point).fields.contains("z"));
+    println!("Point methods: {}", type(Point).methods.len());
+    println!("Color methods: {}", type(Color).methods.len());
     
     println!("\n✓ Introspection completed!");
 

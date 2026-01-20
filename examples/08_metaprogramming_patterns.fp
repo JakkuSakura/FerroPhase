@@ -1,6 +1,8 @@
 #!/usr/bin/env fp run
 //! Metaprogramming: const metadata + quote/splice execution
 
+use std::meta::TypeBuilder;
+
 struct Point3D {
     x: i64,
     y: i64,
@@ -9,9 +11,9 @@ struct Point3D {
 
 // Build a derived type by cloning and adding fields.
 type LabeledPoint = const {
-    let mut t = clone_struct!(Point3D);
-    addfield!(t, "label", &'static str);
-    t
+    TypeBuilder::from(Point3D)
+        .with_field("label", &'static str)
+        .build()
 };
 
 const SCORE_EXPR: expr = quote<expr> { (2 + 3) * 4 };
@@ -42,17 +44,17 @@ fn main() {
     println!("✅ Expectation: outputs match labels");
     println!("");
     println!("=== Part 1: Const Metadata ===");
-    const FIELD_COUNT: i64 = field_count!(Point3D);
-    const POINT_NAME: &str = type_name!(Point3D);
-    const SIZE: i64 = struct_size!(Point3D);
-    const FIELDS = reflect_fields!(Point3D);
-    const X_TYPE: &str = type_name!(field_type!(Point3D, "x"));
+    const FIELD_COUNT: i64 = type(Point3D).fields.len();
+    const POINT_NAME: &str = type(Point3D).name;
+    const SIZE: i64 = type(Point3D).size;
+    const FIELDS = type(Point3D).fields;
+    const X_TYPE: &str = type(Point3D).field_type("x").name;
 
     println!("{} has {} fields (size={})", POINT_NAME, FIELD_COUNT, SIZE);
     println!("x type: {}", X_TYPE);
     println!("fields:");
     for field in FIELDS.iter() {
-        println!("  {}: {}", field.name, field.type_name);
+        println!("  {}: {}", field.name, field.ty.name);
     }
 
     let p = Point3D { x: 1, y: 2, z: 3 };

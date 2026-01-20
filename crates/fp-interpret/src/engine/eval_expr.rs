@@ -984,6 +984,45 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
         if let ExprInvokeTarget::Method(select) = &mut invoke.target {
+            let method_name = select.field.name.as_str();
+            if matches!(
+                method_name,
+                "has_field"
+                    | "has_method"
+                    | "fields"
+                    | "method_count"
+                    | "field_name_at"
+                    | "field_type"
+                    | "type_name"
+                    | "struct_size"
+            ) {
+                let receiver_value = self.eval_expr(select.obj.as_mut());
+                let args = self.evaluate_args(&mut invoke.args);
+                if let Some(value) = self.eval_type_method_call(receiver_value, method_name, args)
+                {
+                    return value;
+                }
+            }
+            if method_name == "contains" && invoke.args.len() == 1 {
+                let receiver_value = self.eval_expr(select.obj.as_mut());
+                let needle = self.eval_expr(&mut invoke.args[0]);
+                let Value::List(list) = receiver_value else {
+                    self.emit_error("contains expects a list receiver");
+                    return Value::undefined();
+                };
+                let found = list.values.iter().any(|value| match value {
+                    Value::Structural(structural) => {
+                        if let Some(field) = structural.get_field(&Ident::new("name".to_string()))
+                        {
+                            field.value == needle
+                        } else {
+                            *value == needle
+                        }
+                    }
+                    _ => *value == needle,
+                });
+                return Value::bool(found);
+            }
             if select.field.name.as_str() == "push" && invoke.args.len() == 1 {
                 let value = self.eval_expr(&mut invoke.args[0]);
                 if let ExprKind::Locator(locator) = select.obj.kind() {
@@ -1184,6 +1223,19 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => {
+                if let Some(ident) = locator.as_ident() {
+                    if ident.as_str() == "type" {
+                        if invoke.args.len() != 1 {
+                            self.emit_error("type expects exactly one argument");
+                            return Value::undefined();
+                        }
+                        let value = self.eval_expr(&mut invoke.args[0]);
+                        return match value {
+                            Value::Type(ty) => Value::Type(self.materialize_type(ty)),
+                            other => Value::Type(self.type_from_value(&other)),
+                        };
+                    }
+                }
                 if invoke.args.is_empty() {
                     if let Some(value) = self.try_eval_method_chain(locator) {
                         return value;
@@ -1338,6 +1390,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return self.eval_method_call_runtime(select, &mut invoke.args);
             }
             ExprInvokeTarget::Function(locator) => {
+                if let Some(ident) = locator.as_ident() {
+                    if ident.as_str() == "type" {
+                        if invoke.args.len() != 1 {
+                            self.emit_error("type expects exactly one argument");
+                            return RuntimeFlow::Value(Value::undefined());
+                        }
+                        let flow = self.eval_expr_runtime(&mut invoke.args[0]);
+                        let value = self.finish_runtime_flow(flow);
+                        let output = match value {
+                            Value::Type(ty) => Value::Type(self.materialize_type(ty)),
+                            other => Value::Type(self.type_from_value(&other)),
+                        };
+                        return RuntimeFlow::Value(output);
+                    }
+                }
                 if let Some(info) = self.lookup_enum_variant(locator) {
                     if let EnumVariantPayload::Tuple(arity) = info.payload {
                         let args = match self.evaluate_args_runtime(&mut invoke.args) {
@@ -1549,6 +1616,49 @@ impl<'ctx> AstInterpreter<'ctx> {
         let receiver = self.resolve_receiver_binding(select.obj.as_mut());
         let method_name = select.field.name.as_str().to_string();
 
+        if matches!(
+            method_name.as_str(),
+            "has_field"
+                | "has_method"
+                | "fields"
+                | "method_count"
+                | "field_name_at"
+                | "field_type"
+                | "type_name"
+                | "struct_size"
+        ) {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            if let Some(value) =
+                self.eval_type_method_call(receiver.value.clone(), method_name.as_str(), arg_values)
+            {
+                return RuntimeFlow::Value(value);
+            }
+        }
+        if method_name.as_str() == "contains" && args.len() == 1 {
+            let Value::List(list) = &receiver.value else {
+                self.emit_error("contains expects a list receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+            let needle = match self.evaluate_args_runtime(args) {
+                Ok(values) => values.into_iter().next().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            let found = list.values.iter().any(|value| match value {
+                Value::Structural(structural) => {
+                    if let Some(field) = structural.get_field(&Ident::new("name".to_string())) {
+                        field.value == needle
+                    } else {
+                        *value == needle
+                    }
+                }
+                _ => *value == needle,
+            });
+            return RuntimeFlow::Value(Value::bool(found));
+        }
+
         if args.is_empty() {
             match method_name.as_str() {
                 "len" => match receiver.value {
@@ -1707,6 +1817,30 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let simple = ident.as_str().to_string();
                 if !candidate_names.contains(&simple) {
                     candidate_names.push(simple);
+                }
+            }
+            if let Locator::Path(path) = locator {
+                if path.segments.len() >= 2 {
+                    let type_name = path.segments[path.segments.len() - 2].as_str();
+                    let func_name = path.segments[path.segments.len() - 1].as_str();
+                    let short = format!("{}::{}", type_name, func_name);
+                    if !candidate_names.contains(&short) {
+                        candidate_names.push(short);
+                    }
+                }
+            }
+            if let Locator::ParameterPath(path) = locator {
+                if path.segments.len() >= 2 {
+                    let type_name = path.segments[path.segments.len() - 2]
+                        .ident
+                        .as_str();
+                    let func_name = path.segments[path.segments.len() - 1]
+                        .ident
+                        .as_str();
+                    let short = format!("{}::{}", type_name, func_name);
+                    if !candidate_names.contains(&short) {
+                        candidate_names.push(short);
+                    }
                 }
             }
         }

@@ -887,6 +887,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
         | IntrinsicCallKind::FieldCount
         | IntrinsicCallKind::MethodCount
         | IntrinsicCallKind::FieldType
+        | IntrinsicCallKind::VecType
         | IntrinsicCallKind::FieldNameAt
         | IntrinsicCallKind::StructSize
         | IntrinsicCallKind::GenerateMethod

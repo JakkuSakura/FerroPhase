@@ -22,12 +22,12 @@ fn main() {
 
     // Introspection macros
     const DATA_SIZE: usize = sizeof!(Data);
-    const DATA_FIELDS: usize = field_count!(Data);
-    const DATA_HAS_A: bool = hasfield!(Data, "a");
-    const DATA_HAS_X: bool = hasfield!(Data, "x");
+    const DATA_FIELDS: i64 = type(Data).fields.len();
+    const DATA_HAS_A: bool = type(Data).fields.contains("a");
+    const DATA_HAS_X: bool = type(Data).fields.contains("x");
     const HEADER_SIZE: usize = sizeof!(Header);
-    const HEADER_FIELDS: usize = field_count!(Header);
-    const HEADER_HAS_VERSION: bool = hasfield!(Header, "version");
+    const HEADER_FIELDS: i64 = type(Header).fields.len();
+    const HEADER_HAS_VERSION: bool = type(Header).fields.contains("version");
 
     println!("data: sizeof={}, fields={}", DATA_SIZE, DATA_FIELDS);
     println!("data: has_a={}, has_x={}", DATA_HAS_A, DATA_HAS_X);
@@ -37,10 +37,10 @@ fn main() {
     );
 
     // Type queries at compile time
-    const DATA_TYPE_NAME: &str = type_name!(Data);
-    const DATA_FIELD_A_TYPE: &str = type_name!(field_type!(Data, "a"));
-    const HEADER_FIELD_VERSION_TYPE: &str = type_name!(field_type!(Header, "version"));
-    const HAS_TO_STRING: bool = hasmethod!(Data, "to_string");
+    const DATA_TYPE_NAME: &str = type(Data).name;
+    const DATA_FIELD_A_TYPE: &str = type(Data).field_type("a").name;
+    const HEADER_FIELD_VERSION_TYPE: &str = type(Header).field_type("version").name;
+    const HAS_TO_STRING: bool = type(Data).has_method("to_string");
 
     println!(
         "types: data='{}' a='{}' version='{}'",

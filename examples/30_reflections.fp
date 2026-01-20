@@ -2,7 +2,8 @@
 struct S { a: i32, b: f64 }
 
 fn count_fields_plus_n(_s: &S, i: i32) -> usize {
-    field_count!(S) + i as usize
+    let base = type(S).fields.len() as usize;
+    base + i as usize
 }
 fn count_fields_plus_1(s: &S) -> usize {
     const N: i32 = 1;
@@ -12,7 +13,8 @@ const fn const_count_fields_plus_1() -> usize {
     const N: i32 = 1;
     // it will be specialized automatically
     // this time, it's automatically a const fn
-    field_count!(S) + N as usize
+    let base = type(S).fields.len() as usize;
+    base + N as usize
 }
 
 fn main() {

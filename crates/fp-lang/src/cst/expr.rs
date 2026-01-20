@@ -233,6 +233,9 @@ impl Parser {
         &mut self,
         allow_struct_literal: bool,
     ) -> Result<SyntaxNode, ExprCstParseError> {
+        if self.looks_like_ref_type_literal() {
+            return self.parse_type_literal_expr();
+        }
         if self.peek_non_trivia_normalized() == Some("await") {
             let mut children = Vec::new();
             let start_span = self
@@ -305,6 +308,14 @@ impl Parser {
         }
     }
 
+    fn parse_type_literal_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        let ty = self.parse_type_node()?;
+        children.push(SyntaxElement::Node(Box::new(ty)));
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::ExprType, children, span))
+    }
+
     fn parse_postfix(
         &mut self,
         mut base: SyntaxNode,
@@ -373,6 +384,7 @@ impl Parser {
                                 | crate::lexer::Keyword::Super
                                 | crate::lexer::Keyword::Emit
                                 | crate::lexer::Keyword::Fn
+                                | crate::lexer::Keyword::Type
                         ) =>
                     {
                         self.parse_name_or_path()
@@ -2056,6 +2068,23 @@ impl Parser {
             i += 1;
         }
         None
+    }
+
+    fn looks_like_ref_type_literal(&self) -> bool {
+        if self.peek_non_trivia_raw() != Some("&") {
+            return false;
+        }
+        let Some(second) = self.peek_nth_non_trivia(2) else {
+            return false;
+        };
+        if !second.raw.starts_with('\'') {
+            return false;
+        }
+        let Some(third) = self.peek_nth_non_trivia(3) else {
+            return false;
+        };
+        matches!(third.kind, TokenKind::Ident | TokenKind::Keyword(_))
+            || matches!(third.raw.as_str(), "(" | "[" | "&")
     }
 
     fn peek_nth_non_trivia_token_kind(&self, n: usize) -> Option<TokenKind> {

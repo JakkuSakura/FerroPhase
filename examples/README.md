@@ -25,7 +25,7 @@ fp run examples/01_const_eval_basics.fp
 | `01_const_eval_basics.fp`    | Const evaluation           | Arithmetic, const blocks, struct defaults             |
 | `02_string_processing.fp`    | String processing           | Const string intrinsics and slicing                   |
 | `03_control_flow.fp`         | Control flow               | Nested if/else, boolean logic, runtime conditions     |
-| `04_struct_introspection.fp` | Type introspection         | `sizeof!`, `field_count!`, `hasfield!`, transpilation |
+| `04_struct_introspection.fp` | Type introspection         | `sizeof!`, `field_count!`, `type(T).has_field`, transpilation |
 | `05_struct_generation.fp`    | Config-driven structs      | Const toggles, conditional defaults                   |
 | `06_struct_methods.fp`       | Struct methods             | `impl` blocks, methods, field access                  |
 | `25_module_imports.fp`       | Modules and imports         | `mod`, `use`, aliasing, std traits, external modules  |

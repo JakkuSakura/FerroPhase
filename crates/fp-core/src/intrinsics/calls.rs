@@ -47,6 +47,8 @@ pub enum IntrinsicCallKind {
     MethodCount,
     /// `field_type!` - get the type of a specific field
     FieldType,
+    /// `vec_type!` - build a Vec type from a type argument
+    VecType,
     /// `field_name_at!` - get the field name at an index
     FieldNameAt,
     /// `struct_size!` - get the size of a struct in bytes

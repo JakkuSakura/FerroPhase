@@ -4200,6 +4200,239 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn eval_type_method_call(
+        &mut self,
+        receiver: Value,
+        method: &str,
+        args: Vec<Value>,
+    ) -> Option<Value> {
+        let Value::Type(raw_ty) = receiver else {
+            return None;
+        };
+        let ty = self.materialize_type(raw_ty);
+
+        let mut expect_no_args = |name: &str| {
+            if !args.is_empty() {
+                self.emit_error(format!("{} expects no arguments", name));
+                Some(Value::undefined())
+            } else {
+                None
+            }
+        };
+
+        match method {
+            "has_field" => {
+                if args.len() != 1 {
+                    self.emit_error("has_field expects exactly one argument");
+                    return Some(Value::undefined());
+                }
+                let Value::String(name) = &args[0] else {
+                    self.emit_error("has_field expects a string field name");
+                    return Some(Value::undefined());
+                };
+                let fields = match &ty {
+                    Ty::Struct(struct_ty) => struct_ty.fields.clone(),
+                    Ty::Structural(structural) => structural.fields.clone(),
+                    _ => {
+                        self.emit_error("has_field expects a struct type");
+                        return Some(Value::undefined());
+                    }
+                };
+                let has = fields.iter().any(|field| field.name.name == name.value);
+                Some(Value::bool(has))
+            }
+            "fields" => {
+                if let Some(value) = expect_no_args("fields") {
+                    return Some(value);
+                }
+                let fields = match &ty {
+                    Ty::Struct(struct_ty) => struct_ty.fields.clone(),
+                    Ty::Structural(structural) => structural.fields.clone(),
+                    _ => {
+                        self.emit_error("fields expects a struct type");
+                        return Some(Value::undefined());
+                    }
+                };
+                let values = fields
+                    .iter()
+                    .map(|field| {
+                        Value::Structural(ValueStructural::new(vec![
+                            ValueField::new(
+                                Ident::new("name".to_string()),
+                                Value::string(field.name.name.clone()),
+                            ),
+                            ValueField::new(
+                                Ident::new("ty".to_string()),
+                                Value::Type(self.materialize_type(field.value.clone())),
+                            ),
+                        ]))
+                    })
+                    .collect();
+                Some(Value::List(ValueList::new(values)))
+            }
+            "method_count" => {
+                if let Some(value) = expect_no_args("method_count") {
+                    return Some(value);
+                }
+                Some(Value::int(0))
+            }
+            "field_name_at" => {
+                if args.len() != 1 {
+                    self.emit_error("field_name_at expects exactly one argument");
+                    return Some(Value::undefined());
+                }
+                let fields = match &ty {
+                    Ty::Struct(struct_ty) => struct_ty.fields.clone(),
+                    Ty::Structural(structural) => structural.fields.clone(),
+                    _ => {
+                        self.emit_error("field_name_at expects a struct type");
+                        return Some(Value::undefined());
+                    }
+                };
+                let idx = match &args[0] {
+                    Value::Int(int_val) if int_val.value >= 0 => int_val.value as usize,
+                    _ => {
+                        self.emit_error("field_name_at expects a non-negative integer index");
+                        return Some(Value::undefined());
+                    }
+                };
+                let field = match fields.get(idx) {
+                    Some(field) => field,
+                    None => {
+                        self.emit_error(format!(
+                            "field_name_at index {} out of bounds ({} fields)",
+                            idx,
+                            fields.len()
+                        ));
+                        return Some(Value::undefined());
+                    }
+                };
+                Some(Value::string(field.name.name.clone()))
+            }
+            "field_type" => {
+                if args.len() != 1 {
+                    self.emit_error("field_type expects exactly one argument");
+                    return Some(Value::undefined());
+                }
+                let Value::String(name) = &args[0] else {
+                    self.emit_error("field_type expects a string field name");
+                    return Some(Value::undefined());
+                };
+                let fields = match &ty {
+                    Ty::Struct(struct_ty) => struct_ty.fields.clone(),
+                    Ty::Structural(structural) => structural.fields.clone(),
+                    _ => {
+                        self.emit_error("field_type expects a struct type");
+                        return Some(Value::undefined());
+                    }
+                };
+                let field = match fields.iter().find(|field| field.name.name == name.value) {
+                    Some(field) => field,
+                    None => {
+                        self.emit_error(format!("field '{}' not found on struct", name.value));
+                        return Some(Value::undefined());
+                    }
+                };
+                Some(Value::Type(self.materialize_type(field.value.clone())))
+            }
+            "has_method" => {
+                if args.len() != 1 {
+                    self.emit_error("has_method expects exactly one argument");
+                    return Some(Value::undefined());
+                }
+                let Value::String(name) = &args[0] else {
+                    self.emit_error("has_method expects a string method name");
+                    return Some(Value::undefined());
+                };
+                let has_method = matches!(name.value.as_str(), "to_string");
+                Some(Value::bool(has_method))
+            }
+            "type_name" => {
+                if let Some(value) = expect_no_args("type_name") {
+                    return Some(value);
+                }
+                let name = match &ty {
+                    Ty::Struct(struct_ty) => format!("struct {}", struct_ty.name),
+                    Ty::Enum(enum_ty) => format!("enum {}", enum_ty.name),
+                    Ty::Expr(expr) => match expr.kind() {
+                        ExprKind::Locator(locator) => locator.to_string(),
+                        _ => format!("{}", ty),
+                    },
+                    _ => format!("{}", ty),
+                };
+                Some(Value::string(name))
+            }
+            "struct_size" => {
+                if let Some(value) = expect_no_args("struct_size") {
+                    return Some(value);
+                }
+                let fields = match &ty {
+                    Ty::Struct(struct_ty) => struct_ty.fields.clone(),
+                    Ty::Structural(structural) => structural.fields.clone(),
+                    _ => {
+                        self.emit_error("struct_size expects a struct type");
+                        return Some(Value::undefined());
+                    }
+                };
+                let size = fields
+                    .iter()
+                    .map(|field| self.calculate_field_size(&field.value))
+                    .sum::<usize>();
+                Some(Value::int(size as i64))
+            }
+            _ => None,
+        }
+    }
+
+    fn calculate_field_size(&self, ty: &Ty) -> usize {
+        match ty {
+            Ty::Expr(expr) => {
+                if let ExprKind::Locator(locator) = expr.as_ref().kind() {
+                    if let Some(ident) = locator.as_ident() {
+                        match ident.name.as_str() {
+                            "i8" | "u8" => 1,
+                            "i16" | "u16" => 2,
+                            "i32" | "u32" => 4,
+                            "i64" | "u64" => 8,
+                            "f32" => 4,
+                            "f64" => 8,
+                            "bool" => 1,
+                            _ => 8,
+                        }
+                    } else {
+                        8
+                    }
+                } else {
+                    8
+                }
+            }
+            Ty::Primitive(primitive) => match primitive {
+                TypePrimitive::Int(int_ty) => match int_ty {
+                    TypeInt::I8 | TypeInt::U8 => 1,
+                    TypeInt::I16 | TypeInt::U16 => 2,
+                    TypeInt::I32 | TypeInt::U32 => 4,
+                    TypeInt::I64 | TypeInt::U64 => 8,
+                    TypeInt::BigInt => 16,
+                },
+                TypePrimitive::Decimal(decimal_ty) => match decimal_ty {
+                    DecimalType::F32 => 4,
+                    DecimalType::F64 => 8,
+                    DecimalType::BigDecimal => 16,
+                    DecimalType::Decimal { .. } => 16,
+                },
+                TypePrimitive::Bool => 1,
+                TypePrimitive::Char => 4,
+                _ => 8,
+            },
+            Ty::Struct(struct_ty) => struct_ty
+                .fields
+                .iter()
+                .map(|field| self.calculate_field_size(&field.value))
+                .sum(),
+            _ => 8,
+        }
+    }
+
     fn infer_value_ty(&self, value: &Value) -> Option<Ty> {
         match value {
             Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
@@ -4530,6 +4763,23 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn evaluate_select(&mut self, target: Value, field: &str) -> Value {
         match target {
+            Value::Type(_) if field == "fields" => self
+                .eval_type_method_call(target, "fields", Vec::new())
+                .unwrap_or_else(|| Value::undefined()),
+            Value::Type(_) if field == "name" => self
+                .eval_type_method_call(target, "type_name", Vec::new())
+                .unwrap_or_else(|| Value::undefined()),
+            Value::Type(_) if field == "methods" => Value::List(ValueList::new(Vec::new())),
+            Value::Type(_) if field == "size" => self
+                .eval_type_method_call(target, "struct_size", Vec::new())
+                .unwrap_or_else(|| Value::undefined()),
+            Value::Type(_) => {
+                self.emit_error(format!(
+                    "cannot access field '{}' on type values",
+                    field
+                ));
+                Value::undefined()
+            }
             Value::Struct(value_struct) => value_struct
                 .structural
                 .fields
@@ -4814,17 +5064,32 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn resolve_type_binding(&mut self, name: &str) -> Option<Ty> {
+        let base = name.rsplit("::").next().unwrap_or(name);
         for idx in (0..self.type_env.len()).rev() {
             if let Some(ty) = self.type_env[idx].get(name).cloned() {
                 let resolved = self.materialize_const_type(ty);
                 self.type_env[idx].insert(name.to_string(), resolved.clone());
                 return Some(resolved);
             }
+            if base != name {
+                if let Some(ty) = self.type_env[idx].get(base).cloned() {
+                    let resolved = self.materialize_const_type(ty);
+                    self.type_env[idx].insert(base.to_string(), resolved.clone());
+                    return Some(resolved);
+                }
+            }
         }
         if let Some(ty) = self.global_types.get(name).cloned() {
             let resolved = self.materialize_const_type(ty);
             self.global_types.insert(name.to_string(), resolved.clone());
             return Some(resolved);
+        }
+        if base != name {
+            if let Some(ty) = self.global_types.get(base).cloned() {
+                let resolved = self.materialize_const_type(ty);
+                self.global_types.insert(base.to_string(), resolved.clone());
+                return Some(resolved);
+            }
         }
         if self.imported_types.contains(name) {
             self.emit_error(format!(
@@ -5620,6 +5885,7 @@ fn intrinsic_symbol(kind: IntrinsicCallKind) -> Option<&'static str> {
         IntrinsicCallKind::FieldCount => Some("field_count!"),
         IntrinsicCallKind::MethodCount => Some("method_count!"),
         IntrinsicCallKind::FieldType => Some("field_type!"),
+        IntrinsicCallKind::VecType => Some("vec_type!"),
         IntrinsicCallKind::FieldNameAt => Some("field_name_at!"),
         IntrinsicCallKind::StructSize => Some("struct_size!"),
         IntrinsicCallKind::GenerateMethod => Some("generate_method!"),

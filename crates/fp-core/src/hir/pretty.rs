@@ -592,6 +592,7 @@ fn render_intrinsic_kind(kind: IntrinsicCallKind) -> &'static str {
         IntrinsicCallKind::FieldCount => "field_count",
         IntrinsicCallKind::MethodCount => "method_count",
         IntrinsicCallKind::FieldType => "field_type",
+        IntrinsicCallKind::VecType => "vec_type",
         IntrinsicCallKind::FieldNameAt => "field_name_at",
         IntrinsicCallKind::StructSize => "struct_size",
         IntrinsicCallKind::GenerateMethod => "generate_method",

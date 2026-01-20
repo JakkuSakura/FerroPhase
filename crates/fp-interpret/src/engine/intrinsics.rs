@@ -97,6 +97,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             IntrinsicCallKind::SizeOf
                 | IntrinsicCallKind::FieldCount
                 | IntrinsicCallKind::FieldType
+                | IntrinsicCallKind::VecType
                 | IntrinsicCallKind::StructSize
                 | IntrinsicCallKind::TypeName
                 | IntrinsicCallKind::TypeOf
@@ -149,6 +150,24 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 let value = self.eval_expr(target);
                 Value::Type(self.type_from_value(&value))
+            }
+            IntrinsicCallKind::VecType => {
+                if call.args.len() != 1 {
+                    self.emit_error(format!(
+                        "intrinsic {:?} expects 1 argument, found {}",
+                        call.kind,
+                        call.args.len()
+                    ));
+                    return Value::undefined();
+                }
+                let value = self.eval_intrinsic_type_arg(&mut call.args[0]);
+                let Value::Type(ty) = value else {
+                    self.emit_error("vec_type! expects a type argument");
+                    return Value::undefined();
+                };
+                Value::Type(Ty::Vec(TypeVec {
+                    ty: Box::new(self.materialize_type(ty)),
+                }))
             }
             IntrinsicCallKind::ProcMacroTokenStreamFromStr => {
                 if call.args.len() != 1 {
@@ -363,7 +382,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn materialize_type(&mut self, mut ty: Ty) -> Ty {
+    pub(super) fn materialize_type(&mut self, mut ty: Ty) -> Ty {
         self.evaluate_ty(&mut ty);
         match ty {
             Ty::Expr(expr) => {
@@ -412,6 +431,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             | IntrinsicCallKind::HasMethod
             | IntrinsicCallKind::TypeName
             | IntrinsicCallKind::FieldType
+            | IntrinsicCallKind::VecType
             | IntrinsicCallKind::FieldNameAt => {
                 if idx == 0 {
                     TypeArgMode::Required
@@ -452,7 +472,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn type_from_value(&self, value: &Value) -> Ty {
+    pub(super) fn type_from_value(&self, value: &Value) -> Ty {
         match value {
             Value::Int(_) => Ty::Primitive(TypePrimitive::i64()),
             Value::Decimal(_) => Ty::Primitive(TypePrimitive::f64()),

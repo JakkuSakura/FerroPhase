@@ -850,6 +850,22 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
             }
         }
+        SyntaxKind::ExprType => {
+            let ty_node = node
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    crate::syntax::SyntaxElement::Node(n)
+                        if n.kind.category() == CstCategory::Type =>
+                    {
+                        Some(n.as_ref())
+                    }
+                    _ => None,
+                })
+                .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprType))?;
+            let ty = lower_type_from_cst(ty_node)?;
+            Ok(Expr::value(Value::Type(ty)))
+        }
         SyntaxKind::ExprUnary => {
             let op = direct_operator_token_text(node).ok_or(LowerError::MissingOperator)?;
             let expr = last_child_expr(node)?;

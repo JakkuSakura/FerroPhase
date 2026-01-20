@@ -1,6 +1,8 @@
 #!/usr/bin/env fp run
 //! Struct generation with compile-time conditionals
 
+use std::meta::TypeBuilder;
+
 fn main() {
     println!("📘 Tutorial: 05_struct_generation.fp");
     println!("🧭 Focus: Struct generation with compile-time conditionals");
@@ -12,23 +14,23 @@ fn main() {
     const FLAG_B: bool = false;
 
     type Base = const {
-        let mut t = create_struct!("Base");
-        addfield!(t, "id", i64);
-        addfield!(t, "name", &'static str);
-        t
+        TypeBuilder::new("Base")
+            .with_field("id", i64)
+            .with_field("name", &'static str)
+            .build()
     };
 
     type Config = const {
-        let mut t = create_struct!("Config");
-        addfield!(t, "id", i64);
-        addfield!(t, "name", &'static str);
+        let mut builder = TypeBuilder::new("Config");
+        builder = builder.with_field("id", i64);
+        builder = builder.with_field("name", &'static str);
         if FLAG_A {
-            addfield!(t, "mode", &'static str);
+            builder = builder.with_field("mode", &'static str);
         }
         if FLAG_B {
-            addfield!(t, "max_retries", i64);
+            builder = builder.with_field("max_retries", i64);
         }
-        t
+        builder.build()
     };
 
     type ConfigClone = const { clone_struct!(Config) };
@@ -53,9 +55,15 @@ fn main() {
         clone.id, clone.name, clone.mode
     );
 
-    println!("config fields: {}", field_count!(Config));
-    println!("config has mode: {}", hasfield!(Config, "mode"));
-    println!("config has max_retries: {}", hasfield!(Config, "max_retries"));
-    println!("config size: {}", struct_size!(Config));
-    println!("config type: {}", type_name!(Config));
+    println!("config fields: {}", type(Config).fields.len());
+    println!(
+        "config has mode: {}",
+        type(Config).fields.contains("mode")
+    );
+    println!(
+        "config has max_retries: {}",
+        type(Config).fields.contains("max_retries")
+    );
+    println!("config size: {}", type(Config).size);
+    println!("config type: {}", type(Config).name);
 }

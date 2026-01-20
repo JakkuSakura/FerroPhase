@@ -97,6 +97,7 @@ pub enum CstKind {
     ExprPath,
     ExprNumber,
     ExprString,
+    ExprType,
 
     TyUnit,
     TyUnknown,
@@ -185,7 +186,8 @@ impl CstKind {
             | CstKind::ExprName
             | CstKind::ExprPath
             | CstKind::ExprNumber
-            | CstKind::ExprString => CstCategory::Expr,
+            | CstKind::ExprString
+            | CstKind::ExprType => CstCategory::Expr,
 
             CstKind::TyUnit
             | CstKind::TyUnknown

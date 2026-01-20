@@ -1,27 +1,24 @@
 #!/usr/bin/env fp run
 //! AoS -> SoA conversion using const-eval type generation and intrinsics.
 
+use std::meta::TypeBuilder;
+
 struct Point {
     x: i64,
     y: i64,
 }
 
 const fn build_soa(source: type, name: &str) -> type {
-    let mut t = create_struct!(name);
-    let count = field_count!(source) as i64;
-    let mut idx = 0;
-    while idx < count {
-        let field_name = field_name_at!(source, idx);
-        let field_ty = field_type!(source, field_name);
-        t = addfield!(t, field_name, Vec<field_ty>);
-        idx = idx + 1;
+    let mut builder = TypeBuilder::new(name);
+    for field in type(source).fields {
+        builder = builder.with_field(field.name, vec_type!(field.ty));
     }
-    t
+    builder.build()
 }
 
 type PointSoA = const { build_soa(Point, "PointSoA") };
 
-const POINT_FIELDS = reflect_fields!(Point);
+const POINT_FIELDS = type(Point).fields;
 fn aos_to_soa(points: Vec<Point>) -> PointSoA {
     let mut x = Vec::new();
     let mut y = Vec::new();
@@ -50,15 +47,15 @@ fn main() {
     printf("✅ Expectation: SoA lengths match input + appended points\n");
     printf("\n");
 
-    const SOA_FIELDS: usize = field_count!(PointSoA);
-    const SOA_SIZE: i64 = struct_size!(PointSoA);
-    const SOA_NAME: &str = type_name!(PointSoA);
+    const SOA_FIELDS: i64 = type(PointSoA).fields.len();
+    const SOA_SIZE: i64 = type(PointSoA).size;
+    const SOA_NAME: &str = type(PointSoA).name;
     printf("SoA type: {} fields={} size={}\n", SOA_NAME, SOA_FIELDS, SOA_SIZE);
     printf("Point fields:\n");
     let mut meta_idx = 0;
     while meta_idx < POINT_FIELDS.len() {
         let field = POINT_FIELDS[meta_idx];
-        printf("  {}: {}\n", field.name, field.type_name);
+        printf("  {}: {}\n", field.name, field.ty.name);
         meta_idx = meta_idx + 1;
     }
 

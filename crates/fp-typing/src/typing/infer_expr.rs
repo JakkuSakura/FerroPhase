@@ -1105,10 +1105,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             IntrinsicCallKind::CreateStruct
             | IntrinsicCallKind::CloneStruct
             | IntrinsicCallKind::AddField
-            | IntrinsicCallKind::FieldType => {
+            | IntrinsicCallKind::FieldType
+            | IntrinsicCallKind::VecType => {
                 let expected = match call.kind {
                     IntrinsicCallKind::AddField => 3,
                     IntrinsicCallKind::FieldType => 2,
+                    IntrinsicCallKind::VecType => 1,
                     _ => 1,
                 };
                 if arg_vars.len() != expected {
@@ -1198,6 +1200,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if let Some(ident) = locator.as_ident() {
                 if ident.as_str() == "printf" {
                     return self.infer_builtin_printf(invoke);
+                }
+                if ident.as_str() == "type" {
+                    if invoke.args.len() != 1 {
+                        self.emit_error("type() expects exactly one argument");
+                        return Ok(self.error_type_var());
+                    }
+                    let _ = self.infer_expr(&mut invoke.args[0])?;
+                    let type_var = self.fresh_type_var();
+                    self.bind(type_var, TypeTerm::Custom(Ty::Type(TypeType)));
+                    return Ok(type_var);
                 }
             }
         }
@@ -1313,6 +1325,147 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
                             );
                             return Ok(result_var);
+                        }
+                    }
+                }
+                if select.field.name.as_str() == "contains" {
+                    if invoke.args.len() != 1 {
+                        self.emit_error("contains expects exactly one argument");
+                        return Ok(self.error_type_var());
+                    }
+                    let _ = self.infer_expr(&mut invoke.args[0])?;
+                    if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
+                        let peeled = Self::peel_reference(obj_ty);
+                        if !matches!(peeled, Ty::Primitive(TypePrimitive::List))
+                            && !Self::is_collection_with_len(&peeled)
+                        {
+                            self.emit_error("contains expects a list receiver");
+                        }
+                    }
+                    let result_var = self.fresh_type_var();
+                    self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                    return Ok(result_var);
+                }
+
+                if let Ok(obj_ty) = self.resolve_to_ty(obj_var) {
+                    let peeled = Self::peel_reference(obj_ty);
+                    if matches!(peeled, Ty::Type(_)) {
+                        let method = select.field.name.as_str();
+                        match method {
+                            "has_field" => {
+                                if invoke.args.len() != 1 {
+                                    self.emit_error("has_field expects exactly one argument");
+                                    return Ok(self.error_type_var());
+                                }
+                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let string_var = self.fresh_type_var();
+                                self.bind(
+                                    string_var,
+                                    TypeTerm::Primitive(TypePrimitive::String),
+                                );
+                                self.unify(arg_var, string_var)?;
+                                let result_var = self.fresh_type_var();
+                                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                                return Ok(result_var);
+                            }
+                            "has_method" => {
+                                if invoke.args.len() != 1 {
+                                    self.emit_error("has_method expects exactly one argument");
+                                    return Ok(self.error_type_var());
+                                }
+                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let string_var = self.fresh_type_var();
+                                self.bind(
+                                    string_var,
+                                    TypeTerm::Primitive(TypePrimitive::String),
+                                );
+                                self.unify(arg_var, string_var)?;
+                                let result_var = self.fresh_type_var();
+                                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
+                                return Ok(result_var);
+                            }
+                            "struct_size" => {
+                                if !invoke.args.is_empty() {
+                                    self.emit_error(format!(
+                                        "{} expects no arguments",
+                                        method
+                                    ));
+                                    return Ok(self.error_type_var());
+                                }
+                                let result_var = self.fresh_type_var();
+                                self.bind(
+                                    result_var,
+                                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                                );
+                                return Ok(result_var);
+                            }
+                            "method_count" => {
+                                if !invoke.args.is_empty() {
+                                    self.emit_error("method_count expects no arguments");
+                                    return Ok(self.error_type_var());
+                                }
+                                let result_var = self.fresh_type_var();
+                                self.bind(
+                                    result_var,
+                                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                                );
+                                return Ok(result_var);
+                            }
+                            "field_name_at" => {
+                                if invoke.args.len() != 1 {
+                                    self.emit_error("field_name_at expects exactly one argument");
+                                    return Ok(self.error_type_var());
+                                }
+                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let int_var = self.fresh_type_var();
+                                self.bind(
+                                    int_var,
+                                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                                );
+                                self.unify(arg_var, int_var)?;
+                                let result_var = self.fresh_type_var();
+                                self.bind(
+                                    result_var,
+                                    TypeTerm::Primitive(TypePrimitive::String),
+                                );
+                                return Ok(result_var);
+                            }
+                            "field_type" => {
+                                if invoke.args.len() != 1 {
+                                    self.emit_error("field_type expects exactly one argument");
+                                    return Ok(self.error_type_var());
+                                }
+                                let arg_var = self.infer_expr(&mut invoke.args[0])?;
+                                let string_var = self.fresh_type_var();
+                                self.bind(
+                                    string_var,
+                                    TypeTerm::Primitive(TypePrimitive::String),
+                                );
+                                self.unify(arg_var, string_var)?;
+                                let result_var = self.fresh_type_var();
+                                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+                                return Ok(result_var);
+                            }
+                            "fields" => {
+                                if !invoke.args.is_empty() {
+                                    self.emit_error("fields expects no arguments");
+                                    return Ok(self.error_type_var());
+                                }
+                                return self.type_fields_list_var();
+                            }
+                            "type_name" => {
+                                if !invoke.args.is_empty() {
+                                    self.emit_error("type_name expects no arguments");
+                                    return Ok(self.error_type_var());
+                                }
+                                let result_var = self.fresh_type_var();
+                                self.bind(
+                                    result_var,
+                                    TypeTerm::Primitive(TypePrimitive::String),
+                                );
+                                return Ok(result_var);
+                            }
+                            _ => {}
                         }
                     }
                 }
@@ -2388,6 +2541,27 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     Ok(self.error_type_var())
                 }
             },
+            Ty::Type(_) if field.name.as_str() == "fields" => self.type_fields_list_var(),
+            Ty::Type(_) if field.name.as_str() == "name" => {
+                let result_var = self.fresh_type_var();
+                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
+                Ok(result_var)
+            }
+            Ty::Type(_) if field.name.as_str() == "methods" => {
+                let result_var = self.fresh_type_var();
+                let elem_var = self.fresh_type_var();
+                self.bind(elem_var, TypeTerm::Primitive(TypePrimitive::String));
+                self.bind(result_var, TypeTerm::Vec(elem_var));
+                Ok(result_var)
+            }
+            Ty::Type(_) if field.name.as_str() == "size" => {
+                let result_var = self.fresh_type_var();
+                self.bind(
+                    result_var,
+                    TypeTerm::Primitive(TypePrimitive::Int(TypeInt::I64)),
+                );
+                Ok(result_var)
+            }
             Ty::Struct(struct_ty) => {
                 if let Some(def_field) = struct_ty.fields.iter().find(|f| f.name == *field) {
                     let var = self.type_from_ast_ty(&def_field.value)?;
@@ -2498,6 +2672,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.emit_error(format!("unknown struct literal target: {}", struct_name));
             Ok(self.error_type_var())
         }
+    }
+
+    fn type_fields_list_var(&mut self) -> Result<TypeVarId> {
+        let result_var = self.fresh_type_var();
+        let string_ref = Ty::Reference(TypeReference {
+            ty: Box::new(Ty::Primitive(TypePrimitive::String)),
+            mutability: None,
+            lifetime: None,
+        });
+        let fields = vec![
+            StructuralField::new(Ident::new("name".to_string()), string_ref),
+            StructuralField::new(Ident::new("ty".to_string()), Ty::Type(TypeType)),
+        ];
+        let struct_ty = TypeStructural { fields };
+        let elem_var = self.fresh_type_var();
+        self.bind(elem_var, TypeTerm::Structural(struct_ty));
+        self.bind(result_var, TypeTerm::Vec(elem_var));
+        Ok(result_var)
     }
 
     fn resolve_struct_literal_as_enum_variant(
