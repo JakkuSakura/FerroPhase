@@ -1752,9 +1752,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let fn_var = self.type_from_ast_ty(&fn_ty)?;
                 self.unify(var, fn_var)?;
             }
-            Value::Type(ty) => {
-                let ty_var = self.type_from_ast_ty(ty)?;
-                self.unify(var, ty_var)?;
+            Value::Type(_) => {
+                let type_var = self.type_from_ast_ty(&Ty::Type(TypeType))?;
+                self.unify(var, type_var)?;
             }
             Value::QuoteToken(token) => {
                 let quote_ty = match token.kind {

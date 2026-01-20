@@ -1978,6 +1978,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let key = self
             .resolve_alias_locator(locator)
             .unwrap_or_else(|| locator.to_string());
+        if let Some(ident) = locator.as_ident() {
+            let name = ident.as_str();
+            if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::Custom(Ty::Type(TypeType)));
+                return Ok(var);
+            }
+        }
+        if let Locator::Path(path) = locator {
+            if let Some(last) = path.segments.last() {
+                let name = last.as_str();
+                if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
+                    let var = self.fresh_type_var();
+                    self.bind(var, TypeTerm::Custom(Ty::Type(TypeType)));
+                    return Ok(var);
+                }
+            }
+        }
         if let Some(var) = self.lookup_env_var(&key) {
             return Ok(var);
         }

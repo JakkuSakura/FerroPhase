@@ -76,6 +76,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Continue(_) => {}
+            ExprKind::Locator(locator) => {
+                if let Some(ident) = locator.as_ident() {
+                    if let Some(value) = self.lookup_value(ident.as_str()) {
+                        let mut replacement = Expr::value(value);
+                        replacement.ty = expr.ty.clone();
+                        *expr = replacement;
+                        self.mark_mutated();
+                    }
+                }
+            }
             ExprKind::Match(match_expr) => {
                 for case in match_expr.cases.iter_mut() {
                     self.evaluate_function_body(case.cond.as_mut());

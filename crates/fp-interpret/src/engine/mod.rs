@@ -2138,7 +2138,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.functions.insert(base_name, func.clone());
                     self.functions.insert(qualified_name, func.clone());
                     let has_const_params = func.sig.params.iter().any(|param| param.is_const);
-                    if !has_const_params {
+                    if !has_const_params && !func.sig.is_const {
                         self.evaluate_function_body(func.body.as_mut());
                     }
                 } else {
@@ -5620,6 +5620,7 @@ fn intrinsic_symbol(kind: IntrinsicCallKind) -> Option<&'static str> {
         IntrinsicCallKind::FieldCount => Some("field_count!"),
         IntrinsicCallKind::MethodCount => Some("method_count!"),
         IntrinsicCallKind::FieldType => Some("field_type!"),
+        IntrinsicCallKind::FieldNameAt => Some("field_name_at!"),
         IntrinsicCallKind::StructSize => Some("struct_size!"),
         IntrinsicCallKind::GenerateMethod => Some("generate_method!"),
         IntrinsicCallKind::CompileError => Some("compile_error!"),

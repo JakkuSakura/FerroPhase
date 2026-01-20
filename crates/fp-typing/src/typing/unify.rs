@@ -843,6 +843,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 };
                 self.bind(var, term);
             }
+            Ty::Type(_) => {
+                self.bind(var, TypeTerm::Custom(ty.clone()));
+            }
             // No Ty::Custom in current AST types; treat all remaining cases via fallback below
             Ty::Unknown(_) => {}
             Ty::Tuple(tuple) => {

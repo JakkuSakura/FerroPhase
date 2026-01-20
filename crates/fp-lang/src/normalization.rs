@@ -210,6 +210,7 @@ fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
         "field_count" => Some(IntrinsicCallKind::FieldCount),
         "method_count" => Some(IntrinsicCallKind::MethodCount),
         "field_type" => Some(IntrinsicCallKind::FieldType),
+        "field_name_at" => Some(IntrinsicCallKind::FieldNameAt),
         "struct_size" => Some(IntrinsicCallKind::StructSize),
         "generate_method" => Some(IntrinsicCallKind::GenerateMethod),
         "compile_error" => Some(IntrinsicCallKind::CompileError),

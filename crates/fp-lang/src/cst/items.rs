@@ -408,7 +408,7 @@ fn parse_item_cst(
                         lexeme,
                         ..
                     })
-                ) if lexeme == "("
+                ) if lexeme == "(" || lexeme == "<"
             ) {
                 // consume const + fn
                 children.push(SyntaxElement::Token(syntax_token_from_token(

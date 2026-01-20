@@ -18,7 +18,8 @@ use fp_core::ast::{
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
     Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuote,
-    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeVec, Value, ValueNone, ValueString,
+    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone,
+    ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -1989,11 +1990,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::Quote(TypeQuote {
-                kind: QuoteFragmentKind::Type,
-                item: None,
-                inner: None,
-            }))
+            Some(Ty::Type(TypeType))
         }
         "fn" => {
             if !args.is_empty() {
@@ -2105,6 +2102,13 @@ fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
         Ty::Expr(expr) => match expr.kind() {
             ExprKind::Locator(locator) => {
                 let ident = locator.as_ident()?.as_str().to_string();
+                if ident == "type" {
+                    return Some(Ty::Quote(TypeQuote {
+                        kind: QuoteFragmentKind::Type,
+                        item: None,
+                        inner: None,
+                    }));
+                }
                 quote_type_from_ident(&ident, &[])
             }
             _ => None,

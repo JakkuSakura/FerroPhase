@@ -321,6 +321,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Locator(locator) => {
                 if let Some(ident) = locator.as_ident() {
+                    if let Some(value) = self.lookup_value(ident.as_str()) {
+                        if matches!(value, Value::Type(_)) {
+                            return Some(self.materialize_type_value(value));
+                        }
+                    }
                     if let Some(ty) = self.resolve_type_binding(ident.as_str()) {
                         return Some(Value::Type(ty));
                     }
@@ -406,7 +411,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             | IntrinsicCallKind::ReflectFields
             | IntrinsicCallKind::HasMethod
             | IntrinsicCallKind::TypeName
-            | IntrinsicCallKind::FieldType => {
+            | IntrinsicCallKind::FieldType
+            | IntrinsicCallKind::FieldNameAt => {
                 if idx == 0 {
                     TypeArgMode::Required
                 } else {
@@ -418,7 +424,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             | IntrinsicCallKind::MethodCount
             | IntrinsicCallKind::StructSize => {
                 if idx == 0 {
-                    TypeArgMode::Fallback
+                    TypeArgMode::Required
                 } else {
                     TypeArgMode::None
                 }

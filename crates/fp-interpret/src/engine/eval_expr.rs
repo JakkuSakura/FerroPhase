@@ -591,11 +591,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let Some(ident) = locator.as_ident() {
-                    if let Some(value) = self.lookup_value(ident.as_str()) {
+                    if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+                        let value = stored.value();
                         if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
                             return placeholder;
                         }
-                        if matches!(value, Value::List(_) | Value::Map(_)) {
+                        if matches!(value, Value::List(_) | Value::Map(_))
+                            || matches!(stored, StoredValue::Shared(_))
+                            || self.loop_depth > 0
+                        {
                             return value;
                         }
                         let mut replacement = Expr::value(value.clone());

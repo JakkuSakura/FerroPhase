@@ -115,6 +115,7 @@ impl IntrinsicsRegistry {
         self.register("field_count!", intrinsic_field_count());
         self.register("method_count!", intrinsic_method_count());
         self.register("field_type!", intrinsic_field_type());
+        self.register("field_name_at!", intrinsic_field_name_at());
         self.register("struct_size!", intrinsic_struct_size());
 
         // Code generation intrinsics
@@ -292,17 +293,15 @@ pub fn intrinsic_addfield() -> IntrinsicFunction {
             Value::Type(Ty::Struct(type_struct)) => {
                 let mut new_fields = type_struct.fields.clone();
 
-                if new_fields.iter().any(|f| f.name.name == field_name) {
-                    return Err(interpretation_error(format!(
-                        "Field '{}' already exists in struct",
-                        field_name
-                    )));
+                if let Some(existing) = new_fields.iter_mut().find(|f| f.name.name == field_name)
+                {
+                    existing.value = field_type;
+                } else {
+                    new_fields.push(StructuralField {
+                        name: field_name.into(),
+                        value: field_type,
+                    });
                 }
-
-                new_fields.push(StructuralField {
-                    name: field_name.into(),
-                    value: field_type,
-                });
 
                 let modified_struct = TypeStruct {
                     name: type_struct.name.clone(),
@@ -590,6 +589,56 @@ pub fn intrinsic_field_type() -> IntrinsicFunction {
                 args[0]
             ))),
         }
+    })
+}
+
+/// field_name_at! intrinsic - get the field name at an index
+pub fn intrinsic_field_name_at() -> IntrinsicFunction {
+    IntrinsicFunction::new_with_ident("field_name_at!".into(), move |args, _ctx| {
+        if args.len() != 2 {
+            return Err(interpretation_error(format!(
+                "field_name_at! expects 2 arguments (struct_type, index), got: {:?}",
+                args
+            )));
+        }
+
+        let index = match &args[1] {
+            Value::Int(i) => {
+                if i.value < 0 {
+                    return Err(interpretation_error(
+                        "field_name_at! expects a non-negative index",
+                    ));
+                }
+                i.value as usize
+            }
+            _ => {
+                return Err(interpretation_error(format!(
+                    "field_name_at! expects an integer index, got: {:?}",
+                    args[1]
+                )))
+            }
+        };
+
+        let type_struct = match &args[0] {
+            Value::Type(Ty::Struct(type_struct)) => type_struct,
+            Value::Struct(struct_value) => &struct_value.ty,
+            _ => {
+                return Err(interpretation_error(format!(
+                    "field_name_at! expects a struct type or instance, got: {:?}",
+                    args[0]
+                )))
+            }
+        };
+
+        let field = type_struct.fields.get(index).ok_or_else(|| {
+            interpretation_error(format!(
+                "field_name_at! index {} out of bounds ({} fields)",
+                index,
+                type_struct.fields.len()
+            ))
+        })?;
+
+        Ok(Value::string(field.name.name.clone()))
     })
 }
 
