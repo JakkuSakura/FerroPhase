@@ -22,7 +22,6 @@ const fn build_soa(source: type, name: &str) -> type {
 type PointSoA = const { build_soa(Point, "PointSoA") };
 
 const POINT_FIELDS = reflect_fields!(Point);
-
 fn aos_to_soa(points: Vec<Point>) -> PointSoA {
     let mut x = Vec::new();
     let mut y = Vec::new();
@@ -45,24 +44,21 @@ fn push_point(soa: PointSoA, x: i64, y: i64) -> PointSoA {
 }
 
 fn main() {
-    println!("📘 Tutorial: 32_aos_to_soa.fp");
-    println!("🧭 Focus: AoS -> SoA conversion with const-eval types");
-    println!("🧪 What to look for: intrinsic metadata and filled SoA buffers");
-    println!("✅ Expectation: SoA lengths match input + appended points");
-    println!("");
+    printf("📘 Tutorial: 32_aos_to_soa.fp\n");
+    printf("🧭 Focus: AoS -> SoA conversion with const-eval types\n");
+    printf("🧪 What to look for: intrinsic metadata and filled SoA buffers\n");
+    printf("✅ Expectation: SoA lengths match input + appended points\n");
+    printf("\n");
 
     const SOA_FIELDS: usize = field_count!(PointSoA);
     const SOA_SIZE: i64 = struct_size!(PointSoA);
     const SOA_NAME: &str = type_name!(PointSoA);
-    println!(
-        "SoA type: {} fields={} size={}",
-        SOA_NAME, SOA_FIELDS, SOA_SIZE
-    );
-    println!("Point fields:");
+    printf("SoA type: {} fields={} size={}\n", SOA_NAME, SOA_FIELDS, SOA_SIZE);
+    printf("Point fields:\n");
     let mut meta_idx = 0;
     while meta_idx < POINT_FIELDS.len() {
         let field = POINT_FIELDS[meta_idx];
-        println!("  {}: {}", field.name, field.type_name);
+        printf("  {}: {}\n", field.name, field.type_name);
         meta_idx = meta_idx + 1;
     }
 
@@ -73,19 +69,11 @@ fn main() {
     ]);
 
     let mut soa = aos_to_soa(points);
-    println!(
-        "converted: x.len={} y.len={}",
-        soa.x.len(),
-        soa.y.len()
-    );
-    println!("x[0]={} y[0]={}", soa.x[0], soa.y[0]);
+    printf("converted: x.len={} y.len={}\n", soa.x.len(), soa.y.len());
+    printf("x[0]={} y[0]={}\n", soa.x[0], soa.y[0]);
 
     soa = push_point(soa, 7, 8);
     soa = push_point(soa, 9, 10);
-    println!(
-        "after append: x.len={} y.len={}",
-        soa.x.len(),
-        soa.y.len()
-    );
-    println!("x[4]={} y[4]={}", soa.x[4], soa.y[4]);
+    printf("after append: x.len={} y.len={}\n", soa.x.len(), soa.y.len());
+    printf("x[4]={} y[4]={}\n", soa.x[4], soa.y[4]);
 }

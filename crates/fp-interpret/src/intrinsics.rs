@@ -206,7 +206,7 @@ pub fn intrinsic_reflect_fields() -> IntrinsicFunction {
                             },
                             ValueField {
                                 name: "type_name".into(),
-                                value: Value::string(format!("{}", field.value)),
+                                value: Value::string(render_type_name(&field.value)),
                             },
                         ];
                         Value::Structural(ValueStructural { fields })
@@ -380,6 +380,10 @@ fn render_type_name(ty: &Ty) -> String {
     match ty {
         Ty::Struct(struct_ty) => format!("struct {}", struct_ty.name),
         Ty::Enum(enum_ty) => format!("enum {}", enum_ty.name),
+        Ty::Expr(expr) => match expr.kind() {
+            ExprKind::Locator(locator) => locator.to_string(),
+            _ => format!("{}", ty),
+        },
         _ => format!("{}", ty),
     }
 }
