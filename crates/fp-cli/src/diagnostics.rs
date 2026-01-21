@@ -24,6 +24,9 @@ pub fn setup_error_reporting() -> Result<()> {
     }))
     .map_err(|e| crate::CliError::Config(format!("Failed to setup error reporting: {}", e)))?;
 
+    fp_core::diagnostics::set_diagnostics_tracing(false);
+    fp_core::diagnostics::set_diagnostic_renderer(render_core_diagnostic_for_core);
+
     Ok(())
 }
 
@@ -126,7 +129,9 @@ pub fn config_error(message: String) -> FerroPhaseError {
 
 /// Pretty print diagnostics with context
 pub fn print_diagnostic(error: &dyn Diagnostic) {
-    eprintln!("{error:?}");
+    let rendered = format!("{error:?}");
+    let rendered = rendered.trim_end_matches('\n');
+    eprintln!("{rendered}");
 }
 
 pub fn render_cli_error(error: &CliError) -> bool {
@@ -148,9 +153,14 @@ fn render_core_error(error: &CoreError) -> bool {
 }
 
 pub(crate) fn render_core_diagnostic(diag: &CoreDiagnostic) -> bool {
-    let report = core_diagnostic_to_report(diag);
-    eprintln!("{:?}", report);
+    let rendered = format!("{:?}", core_diagnostic_to_report(diag));
+    let rendered = rendered.trim_end_matches('\n');
+    eprintln!("{rendered}");
     true
+}
+
+fn render_core_diagnostic_for_core(diag: &fp_core::diagnostics::Diagnostic<String>) -> bool {
+    render_core_diagnostic(diag)
 }
 
 fn core_diagnostic_to_report(diag: &CoreDiagnostic) -> Report {

@@ -412,6 +412,13 @@ impl Pipeline {
         } = match frontend.parse(source, input_path) {
             Ok(result) => result,
             Err(err) => {
+                if let fp_core::error::Error::Diagnostic(diag) = &err {
+                    let diag = diag
+                        .clone()
+                        .with_source_context(STAGE_FRONTEND.to_string());
+                    diag::emit(&[diag], Some(STAGE_FRONTEND), options);
+                    return Err(Self::stage_failure(STAGE_FRONTEND));
+                }
                 return Err(Self::emit_stage_error(
                     STAGE_FRONTEND,
                     options,

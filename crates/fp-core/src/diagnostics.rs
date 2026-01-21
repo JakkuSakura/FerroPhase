@@ -1,5 +1,6 @@
 use crate::span::Span;
 use once_cell::sync::Lazy;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::fmt::{Display, Formatter};
 use std::sync::{Arc, Mutex};
 
@@ -269,11 +270,16 @@ type DiagnosticRenderer = fn(&Diagnostic<String>) -> bool;
 
 static GLOBAL_DIAGNOSTIC_RENDERER: Lazy<Mutex<Option<DiagnosticRenderer>>> =
     Lazy::new(|| Mutex::new(None));
+static EMIT_TRACING: Lazy<AtomicBool> = Lazy::new(|| AtomicBool::new(true));
 
 pub fn set_diagnostic_renderer(renderer: DiagnosticRenderer) {
     if let Ok(mut guard) = GLOBAL_DIAGNOSTIC_RENDERER.lock() {
         *guard = Some(renderer);
     }
+}
+
+pub fn set_diagnostics_tracing(enabled: bool) {
+    EMIT_TRACING.store(enabled, Ordering::Relaxed);
 }
 
 static GLOBAL_DIAGNOSTIC_MANAGER: Lazy<Arc<DiagnosticManager>> =
@@ -351,6 +357,9 @@ fn report_diagnostic_trace(context: Option<String>, message: String, level: Diag
 }
 
 fn emit_tracing(level: &DiagnosticLevel, context: Option<&str>, message: &str) {
+    if !EMIT_TRACING.load(Ordering::Relaxed) {
+        return;
+    }
     let msg = if let Some(ctx) = context {
         format!("[{}] {}", ctx, message)
     } else {
