@@ -188,8 +188,9 @@ crates/
 - `static` items remain runtime initialised; the interpreter records their
   default expressions for backends that need them (e.g. Python defers
   evaluation until import).
-- Modules can register intrinsic implementations through `#[intrinsic]` blocks;
-  the intrinsic registry uses the module path as the namespacing key.
+- Strict intrinsics are defined in `std::intrinsic` via `#[lang]` items; other
+  intrinsic helpers are normalized to canonical `std` symbols by the frontend
+  and resolved through the shared registry.
 
 ## Best Practices
 

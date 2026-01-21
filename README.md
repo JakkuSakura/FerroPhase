@@ -31,7 +31,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 
 ## Core Capabilities
 
-- Const evaluation with intrinsics like `sizeof!`, `hasfield!`, `implements!`, plus structural editors (`addfield!`, `addmethod!`).
+- Const evaluation with intrinsics like `sizeof!`, `hasfield!`, and `clone_struct!`, plus structural editors built on strict `std::intrinsic` lang items.
 - Declarative type creation (`type T = { ... }`) with conditionals and loops embedded in compile-time blocks.
 - Unified pipeline: CST → LAST → AST → ASTᵗ (typed) → ASTᶜ (const-evaluated) → HIRᵗ → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR, shared by all execution modes.
 - Multi-target outputs: native/LLVM, custom bytecode + VM, high-level Rust transpilation with optional type annotations.
@@ -39,7 +39,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 ## Architecture at a Glance
 
 - Shared frontend normalizes surface languages before const evaluation.
-- Language-specific intrinsic helpers are imported at the LAST layer and immediately re-railed into a canonical, language-agnostic `std` package as part of the LAST → AST conversion so every downstream stage sees the same primitives.
+- Language-specific intrinsic helpers are imported at the LAST layer and immediately re-railed into canonical `std` symbols. Strict intrinsics live under `std::intrinsic` as `#[lang]` items, and std wrappers call them so downstream stages see a consistent vocabulary.
 - Deterministic comptime interpreter produces a canonical EAST snapshot that every backend consumes.
 - Type system phases:
   - `Ty`: canonical AST-level descriptors populated by Algorithm W.
