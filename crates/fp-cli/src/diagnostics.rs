@@ -5,19 +5,11 @@
 use crate::{CliError, Result};
 use fp_core::diagnostics::{Diagnostic as CoreDiagnostic, DiagnosticLevel};
 use fp_core::error::Error as CoreError;
-use fp_core::source_map::{LineSpan, SourceFile};
-use miette::Diagnostic;
-use std::io::IsTerminal;
-use termwiz::caps::Capabilities;
-use termwiz::cell::{AttributeChange, CellAttributes};
-use termwiz::color::{AnsiColor, ColorAttribute};
-use termwiz::surface::Change;
-use termwiz::terminal::{Terminal, new_terminal};
+use miette::{Diagnostic, LabeledSpan, NamedSource, Report, Severity, SourceCode, SourceSpan};
+use std::fmt::{Display, Formatter};
 use thiserror::Error;
 
-type SourceSpan = miette::SourceSpan;
-
-type OptionalSourceSpan = Option<miette::SourceSpan>;
+type OptionalSourceSpan = Option<SourceSpan>;
 
 /// Set up enhanced error reporting with miette
 pub fn setup_error_reporting() -> Result<()> {
@@ -31,8 +23,6 @@ pub fn setup_error_reporting() -> Result<()> {
         )
     }))
     .map_err(|e| crate::CliError::Config(format!("Failed to setup error reporting: {}", e)))?;
-
-    fp_core::diagnostics::set_diagnostic_renderer(render_core_diagnostic_with_source);
 
     Ok(())
 }
@@ -136,7 +126,7 @@ pub fn config_error(message: String) -> FerroPhaseError {
 
 /// Pretty print diagnostics with context
 pub fn print_diagnostic(error: &dyn Diagnostic) {
-    eprintln!("{:?}", error);
+    eprintln!("{error:?}");
 }
 
 pub fn render_cli_error(error: &CliError) -> bool {
@@ -144,10 +134,6 @@ pub fn render_cli_error(error: &CliError) -> bool {
         CliError::Core(core) => render_core_error(core),
         _ => false,
     }
-}
-
-pub fn render_core_diagnostic_with_source(diag: &CoreDiagnostic) -> bool {
-    render_core_diagnostic(diag)
 }
 
 fn render_core_error(error: &CoreError) -> bool {
@@ -161,189 +147,103 @@ fn render_core_error(error: &CoreError) -> bool {
     }
 }
 
-fn render_core_diagnostic(diag: &CoreDiagnostic) -> bool {
-    let Some(span) = diag.span else {
-        return false;
-    };
-    let Some(file) = fp_core::source_map::source_map().file(span.file) else {
-        return false;
-    };
-    let Some(line_span) = file.span_on_line(span) else {
-        return false;
-    };
-    if !std::io::stderr().is_terminal() {
-        render_plain(diag, &file, &line_span);
-        return true;
-    }
-    if let Err(err) = render_with_termwiz(diag, &file, &line_span) {
-        eprintln!("failed to render diagnostic: {err}");
-        render_plain(diag, &file, &line_span);
-    }
+pub(crate) fn render_core_diagnostic(diag: &CoreDiagnostic) -> bool {
+    let report = core_diagnostic_to_report(diag);
+    eprintln!("{:?}", report);
     true
 }
 
-fn render_with_termwiz(
-    diag: &CoreDiagnostic,
-    file: &SourceFile,
-    line_span: &LineSpan,
-) -> termwiz::Result<()> {
-    let caps = Capabilities::new_from_env()?;
-    let mut terminal = new_terminal(caps)?;
-
-    let (line, col) = file.line_col(diag.span.unwrap().lo);
-    let plain_lines = format_rustc_plain(
-        &diag.message.to_string(),
-        &file.path.display().to_string(),
-        line,
-        col,
-        line_span,
-        diag.level,
-    );
-    let mut changes = Vec::new();
-    changes.push(Change::Text("\r".to_string()));
-    changes.push(Change::ClearToEndOfLine(ColorAttribute::Default));
-    changes.push(Change::Text("\r\n".to_string()));
-
-    if let Some(header) = plain_lines.first() {
-        let color = match diag.level {
-            DiagnosticLevel::Error => AnsiColor::Red,
-            DiagnosticLevel::Warning => AnsiColor::Yellow,
-            DiagnosticLevel::Info => AnsiColor::Blue,
-        };
-        changes.push(Change::Attribute(AttributeChange::Foreground(color.into())));
-        changes.push(Change::Text(header.clone()));
-        changes.push(Change::AllAttributes(CellAttributes::default()));
-        changes.push(Change::Text("\r\n".to_string()));
-    }
-
-    if let Some(location) = plain_lines.get(1) {
-        changes.push(Change::Attribute(AttributeChange::Foreground(
-            AnsiColor::Blue.into(),
-        )));
-        changes.push(Change::Text(location.clone()));
-        changes.push(Change::AllAttributes(CellAttributes::default()));
-        changes.push(Change::Text("\r\n".to_string()));
-    }
-
-    for line in plain_lines.iter().skip(2).take(2) {
-        changes.push(Change::Text(line.clone()));
-        changes.push(Change::Text("\r\n".to_string()));
-    }
-
-    if let Some(caret_line) = plain_lines.get(4) {
-        let caret_start = caret_line.find('^').unwrap_or(caret_line.len());
-        let (prefix, rest) = caret_line.split_at(caret_start);
-        let carets = rest.trim_end_matches(' ');
-        let suffix = &rest[carets.len()..];
-        changes.push(Change::Text(prefix.to_string()));
-        changes.push(Change::Attribute(AttributeChange::Foreground(
-            AnsiColor::Red.into(),
-        )));
-        changes.push(Change::Text(carets.to_string()));
-        changes.push(Change::AllAttributes(CellAttributes::default()));
-        changes.push(Change::Text(suffix.to_string()));
-        changes.push(Change::Text("\r\n".to_string()));
-    }
-
-    terminal.render(&changes)?;
-    terminal.flush()?;
-    Ok(())
-}
-
-fn render_plain(diag: &CoreDiagnostic, file: &SourceFile, line_span: &LineSpan) {
-    let (line, col) = file.line_col(diag.span.unwrap().lo);
-    let plain_lines = format_rustc_plain(
-        &diag.message.to_string(),
-        &file.path.display().to_string(),
-        line,
-        col,
-        line_span,
-        diag.level,
-    );
-    for line in plain_lines {
-        eprintln!("{line}");
-    }
-}
-
-fn format_rustc_plain(
-    message: &str,
-    path: &str,
-    line: usize,
-    col: usize,
-    line_span: &LineSpan,
-    level: DiagnosticLevel,
-) -> Vec<String> {
-    let label = match level {
-        DiagnosticLevel::Error => "error",
-        DiagnosticLevel::Warning => "warning",
-        DiagnosticLevel::Info => "info",
+fn core_diagnostic_to_report(diag: &CoreDiagnostic) -> Report {
+    let (source, span) = core_diagnostic_source(diag);
+    let help = diag.suggestions.join("; ").trim().to_string();
+    let message = if let Some(context) = diag.source_context.as_deref() {
+        format!("[{}] {}", context, diag.message)
+    } else {
+        diag.message.to_string()
     };
-    let header = format!("{label}: {message}");
-    let location = format!("  --> {path}:{line}:{col}");
-    let line_no = line_span.line;
-    let gutter_width = line_no.to_string().len();
-    let gutter = " ".repeat(gutter_width);
-    let gutter_bar = format!("{gutter} |");
-    let source_line = format!(
-        " {line_no:>width$} | {}",
-        line_span.text,
-        width = gutter_width
-    );
-    let caret_len = (line_span.col_end.saturating_sub(line_span.col_start)).max(1);
-    let caret_pad = " ".repeat(line_span.col_start.saturating_sub(1));
-    let caret_line = format!("{gutter} | {caret_pad}{}", "^".repeat(caret_len));
-    vec![header, location, gutter_bar, source_line, caret_line]
+
+    let error = CoreMietteDiagnostic {
+        message,
+        code: diag.code.clone(),
+        severity: map_severity(diag.level),
+        source,
+        span,
+        help: if help.is_empty() { None } else { Some(help) },
+    };
+
+    Report::new(error)
+}
+
+fn core_diagnostic_source(diag: &CoreDiagnostic) -> (Option<NamedSource<String>>, Option<SourceSpan>) {
+    let Some(span) = diag.span else {
+        return (None, None);
+    };
+    let Some(file) = fp_core::source_map::source_map().file(span.file) else {
+        return (None, None);
+    };
+    let len = span.hi.saturating_sub(span.lo).max(1);
+    let source_span = SourceSpan::new((span.lo as usize).into(), len as usize);
+    let source = NamedSource::new(file.path.display().to_string(), file.source.to_string());
+    (Some(source), Some(source_span))
+}
+
+fn map_severity(level: DiagnosticLevel) -> Severity {
+    match level {
+        DiagnosticLevel::Error => Severity::Error,
+        DiagnosticLevel::Warning => Severity::Warning,
+        DiagnosticLevel::Info => Severity::Advice,
+    }
+}
+
+#[derive(Debug)]
+struct CoreMietteDiagnostic {
+    message: String,
+    code: Option<String>,
+    severity: Severity,
+    source: Option<NamedSource<String>>,
+    span: Option<SourceSpan>,
+    help: Option<String>,
+}
+
+impl Display for CoreMietteDiagnostic {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+impl std::error::Error for CoreMietteDiagnostic {}
+
+impl Diagnostic for CoreMietteDiagnostic {
+    fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        self.code.as_ref().map(|code| Box::new(code.clone()) as Box<dyn Display>)
+    }
+
+    fn severity(&self) -> Option<Severity> {
+        Some(self.severity)
+    }
+
+    fn help<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
+        self.help
+            .as_ref()
+            .map(|help| Box::new(help.clone()) as Box<dyn Display>)
+    }
+
+    fn source_code(&self) -> Option<&dyn SourceCode> {
+        self.source
+            .as_ref()
+            .map(|source| source as &dyn SourceCode)
+    }
+
+    fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {
+        let span = self.span?;
+        let label = LabeledSpan::new_with_span(Some("here".to_string()), span);
+        Some(Box::new(std::iter::once(label)))
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn rustc_plain_format_has_expected_shape() {
-        let line_span = LineSpan {
-            line: 1,
-            col_start: 14,
-            col_end: 17,
-            text: "macro_rules! opt_bail {".to_string(),
-        };
-        let lines = format_rustc_plain(
-            "failed to parse items (file mode): parse error: expected symbol",
-            "/tmp/error.rs",
-            1,
-            14,
-            &line_span,
-            DiagnosticLevel::Error,
-        );
-        let rendered = lines.join("\n");
-        let expected = "\
-error: failed to parse items (file mode): parse error: expected symbol
-  --> /tmp/error.rs:1:14
-  |
- 1 | macro_rules! opt_bail {
-  |              ^^^";
-        assert_eq!(rendered, expected);
-    }
-
-    #[test]
-    fn rustc_plain_format_handles_single_char_span() {
-        let line_span = LineSpan {
-            line: 42,
-            col_start: 8,
-            col_end: 9,
-            text: "let answer = 42;".to_string(),
-        };
-        let lines =
-            format_rustc_plain("invalid token", "/tmp/sample.fp", 42, 8, &line_span, DiagnosticLevel::Error);
-        let rendered = lines.join("\n");
-        let expected = "\
-error: invalid token
-  --> /tmp/sample.fp:42:8
-   |
- 42 | let answer = 42;
-   |        ^";
-        assert_eq!(rendered, expected);
-    }
 
     #[test]
     fn test_syntax_error_creation() {

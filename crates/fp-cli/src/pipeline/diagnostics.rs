@@ -1,6 +1,5 @@
-use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticManager};
-
-use crate::diagnostics::render_core_diagnostic_with_source;
+use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel};
+use crate::diagnostics::render_core_diagnostic;
 
 use super::PipelineOptions;
 
@@ -16,14 +15,20 @@ pub(crate) fn emit(
     if diagnostics.is_empty() {
         return;
     }
-    let opts = display_options(options);
-    let mut fallback = Vec::new();
+    let verbose_info = options.debug.verbose;
     for diag in diagnostics {
-        if !render_core_diagnostic_with_source(diag) {
-            fallback.push(diag.clone());
+        if matches!(diag.level, DiagnosticLevel::Info) && !verbose_info {
+            continue;
         }
-    }
-    if !fallback.is_empty() {
-        DiagnosticManager::emit(&fallback, stage_context, &opts);
+        let diag = if diag.source_context.is_none() {
+            if let Some(context) = stage_context {
+                diag.clone().with_source_context(context.to_string())
+            } else {
+                diag.clone()
+            }
+        } else {
+            diag.clone()
+        };
+        render_core_diagnostic(&diag);
     }
 }
