@@ -16,6 +16,12 @@ impl LangItemRegistry {
         self.items.insert(name.into(), path);
     }
 
+    pub fn extend(&mut self, other: LangItemRegistry) {
+        for (name, path) in other.items {
+            self.items.insert(name, path);
+        }
+    }
+
     pub fn get_path(&self, name: &str) -> Option<&Path> {
         self.items.get(name)
     }
@@ -79,6 +85,8 @@ pub fn lookup_lang_item_intrinsic(locator: &Locator) -> Option<IntrinsicCallKind
 fn intrinsic_kind_for_lang_item(name: &str) -> Option<IntrinsicCallKind> {
     match name {
         "time_now" => Some(IntrinsicCallKind::TimeNow),
+        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
+        "addfield" => Some(IntrinsicCallKind::AddField),
         _ => None,
     }
 }

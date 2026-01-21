@@ -153,6 +153,13 @@ impl PipelineStage for ConstEvalStage {
         }
         let lang_items = collect_lang_items(&ast);
         register_threadlocal_lang_items(lang_items);
+        fp_core::intrinsics::normalize_intrinsics(&mut ast).map_err(|err| {
+            diagnostics.push(
+                Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
+                    .with_source_context(STAGE_CONST_EVAL),
+            );
+            PipelineError::new(STAGE_CONST_EVAL, "Intrinsic normalization failed")
+        })?;
         let shared_context = SharedScopedContext::new();
         let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
         orchestrator.set_debug_assertions(!context.options.release);

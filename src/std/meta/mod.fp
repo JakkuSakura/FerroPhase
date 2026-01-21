@@ -5,7 +5,7 @@ pub struct TypeBuilder {
 impl TypeBuilder {
     pub const fn new(name: &str) -> TypeBuilder {
         TypeBuilder {
-            ty: create_struct!(name),
+            ty: std::create_struct(name),
         }
     }
 
@@ -14,7 +14,7 @@ impl TypeBuilder {
     }
 
     pub const fn with_field(self, name: &str, field_ty: type) -> TypeBuilder {
-        let ty = addfield!(self.ty, name, field_ty);
+        let ty = std::addfield(self.ty, name, field_ty);
         TypeBuilder { ty }
     }
 

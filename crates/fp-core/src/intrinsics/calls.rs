@@ -33,11 +33,11 @@ pub enum IntrinsicCallKind {
     TypeName,
     /// `type_of!` - get the type of an expression as a type value
     TypeOf,
-    /// `create_struct!` - create a new struct type dynamically
+    /// `create_struct` - create a new struct type dynamically
     CreateStruct,
     /// `clone_struct!` - clone an existing struct type
     CloneStruct,
-    /// `addfield!` - add a field to a struct type
+    /// `addfield` - add a field to a struct type
     AddField,
     /// `hasfield!` - check if a struct has a specific field
     HasField,

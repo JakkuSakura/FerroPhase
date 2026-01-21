@@ -1,5 +1,8 @@
 use super::super::*;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
+use fp_core::ast::{File, ItemKind, Node, NodeKind};
+use std::fs;
+use std::path::Path;
 use std::sync::Arc;
 
 pub(crate) struct NormalizeContext {
@@ -57,10 +60,46 @@ impl PipelineStage for NormalizeStage {
 
 impl Pipeline {
     pub(crate) fn stage_normalize_intrinsics(
-        &self,
+        &mut self,
         ast: &mut Node,
         options: &PipelineOptions,
     ) -> Result<(), CliError> {
+        if !ast_has_std(ast) {
+            let mut diagnostics = PipelineDiagnostics::default();
+            diagnostics.set_display_options(diag::display_options(options));
+            let mut merged = ast.clone();
+            for std_path in runtime_std_paths() {
+                let source = fs::read_to_string(&std_path).map_err(|err| {
+                    CliError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("failed to read std module {}: {err}", std_path.display()),
+                    ))
+                })?;
+                let language = self.resolve_language(options, Some(&std_path));
+                let frontend = self.frontends.get(&language).cloned().ok_or_else(|| {
+                    CliError::Io(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("unsupported source language: {}", language),
+                    ))
+                })?;
+                let mut std_node =
+                    self.parse_with_frontend(&frontend, &source, Some(&std_path), options)?;
+                if let NodeKind::File(file) = std_node.kind().clone() {
+                    let base_dir = std_path.parent().unwrap_or_else(|| Path::new("."));
+                    let mut loader = FileModuleLoader::new(self, options, &frontend);
+                    let items = loader.resolve_items(&file.items, base_dir)?;
+                    std_node = Node::file(File { path: file.path, items });
+                }
+                merged = merge_std_module(
+                    merged,
+                    std_node,
+                    &mut diagnostics,
+                    STAGE_INTRINSIC_NORMALIZE,
+                )
+                .map_err(|_| Self::stage_failure(STAGE_INTRINSIC_NORMALIZE))?;
+            }
+            *ast = merged;
+        }
         let lang_items = fp_core::lang::collect_lang_items(ast);
         fp_core::lang::register_threadlocal_lang_items(lang_items);
         let stage = NormalizeStage;
@@ -73,4 +112,16 @@ impl Pipeline {
         *ast = next_ast;
         Ok(())
     }
+}
+
+fn ast_has_std(ast: &Node) -> bool {
+    let NodeKind::File(file) = ast.kind() else {
+        return false;
+    };
+    file.items.iter().any(|item| {
+        matches!(
+            item.kind(),
+            ItemKind::Module(module) if module.name.as_str() == "std"
+        )
+    })
 }

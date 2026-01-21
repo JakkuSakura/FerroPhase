@@ -162,21 +162,6 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
-            if macro_name == "addfield" {
-                let args = parse_macro_tokens_with_type_args(
-                    &macro_expr.invocation.tokens,
-                    &[2],
-                )?;
-                let replacement = Expr::from_parts(
-                    ty_slot.clone(),
-                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        IntrinsicCallKind::AddField,
-                        args,
-                        Vec::new(),
-                    )),
-                );
-                return Ok(NormalizeOutcome::Normalized(replacement));
-            }
             if let Some(kind) = intrinsic_macro_kind(macro_name) {
                 let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
                 let replacement = Expr::from_parts(
@@ -202,9 +187,7 @@ fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
         "type_name" => Some(IntrinsicCallKind::TypeName),
         "type_info" => Some(IntrinsicCallKind::TypeOf),
         "type_of" => Some(IntrinsicCallKind::TypeOf),
-        "create_struct" => Some(IntrinsicCallKind::CreateStruct),
         "clone_struct" => Some(IntrinsicCallKind::CloneStruct),
-        "addfield" => Some(IntrinsicCallKind::AddField),
         "hasfield" => Some(IntrinsicCallKind::HasField),
         "count_fields" => Some(IntrinsicCallKind::FieldCount),
         "field_count" => Some(IntrinsicCallKind::FieldCount),

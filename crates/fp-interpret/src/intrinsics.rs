@@ -106,9 +106,9 @@ impl IntrinsicsRegistry {
         self.register("type_name!", intrinsic_type_name());
 
         // Struct creation and manipulation intrinsics
-        self.register("create_struct!", intrinsic_create_struct());
+        self.register("create_struct", intrinsic_create_struct());
         self.register("clone_struct!", intrinsic_clone_struct());
-        self.register("addfield!", intrinsic_addfield());
+        self.register("addfield", intrinsic_addfield());
 
         // Struct querying intrinsics
         self.register("hasfield!", intrinsic_hasfield());
@@ -259,12 +259,12 @@ pub fn intrinsic_hasmethod() -> IntrinsicFunction {
     })
 }
 
-/// addfield! intrinsic - add a field to a struct type
+/// addfield intrinsic - add a field to a struct type
 pub fn intrinsic_addfield() -> IntrinsicFunction {
-    IntrinsicFunction::new_with_ident("addfield!".into(), move |args, _ctx| {
+    IntrinsicFunction::new_with_ident("addfield".into(), move |args, _ctx| {
         if args.len() != 3 {
             return Err(interpretation_error(format!(
-                "addfield! expects 3 arguments (struct_type, field_name, field_type), got: {:?}",
+                "addfield expects 3 arguments (struct_type, field_name, field_type), got: {:?}",
                 args
             )));
         }
@@ -273,7 +273,7 @@ pub fn intrinsic_addfield() -> IntrinsicFunction {
             Value::String(s) => s.value.clone(),
             _ => {
                 return Err(interpretation_error(format!(
-                    "addfield! expects a string for field name, got: {:?}",
+                    "addfield expects a string for field name, got: {:?}",
                     args[1]
                 )))
             }
@@ -283,7 +283,7 @@ pub fn intrinsic_addfield() -> IntrinsicFunction {
             Value::Type(ty) => ty.clone(),
             _ => {
                 return Err(interpretation_error(format!(
-                    "addfield! expects a type for field type, got: {:?}",
+                    "addfield expects a type for field type, got: {:?}",
                     args[2]
                 )))
             }
@@ -312,7 +312,7 @@ pub fn intrinsic_addfield() -> IntrinsicFunction {
                 Ok(Value::Type(Ty::Struct(modified_struct)))
             }
             _ => Err(interpretation_error(format!(
-                "addfield! expects a struct type as first argument, got: {:?}",
+                "addfield expects a struct type as first argument, got: {:?}",
                 args[0]
             ))),
         }
@@ -388,12 +388,12 @@ fn render_type_name(ty: &Ty) -> String {
     }
 }
 
-/// create_struct! intrinsic - create a new struct type dynamically
+/// create_struct intrinsic - create a new struct type dynamically
 pub fn intrinsic_create_struct() -> IntrinsicFunction {
-    IntrinsicFunction::new_with_ident("create_struct!".into(), move |args, _ctx| {
+    IntrinsicFunction::new_with_ident("create_struct".into(), move |args, _ctx| {
         if args.len() != 1 {
             return Err(interpretation_error(format!(
-                "create_struct! expects 1 argument (struct_name), got: {:?}",
+                "create_struct expects 1 argument (struct_name), got: {:?}",
                 args
             )));
         }
@@ -402,7 +402,7 @@ pub fn intrinsic_create_struct() -> IntrinsicFunction {
             Value::String(s) => s.value.clone(),
             _ => {
                 return Err(interpretation_error(format!(
-                    "create_struct! expects a string for struct name, got: {:?}",
+                    "create_struct expects a string for struct name, got: {:?}",
                     args[0]
                 )))
             }
