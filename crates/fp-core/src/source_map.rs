@@ -110,6 +110,15 @@ impl SourceMap {
         id
     }
 
+    pub fn register_or_update(&self, path: PathBuf, source: &str) -> FileId {
+        if let Some(existing) = self.file_id(&path) {
+            if existing != 0 {
+                return self.register_source_with_id(existing, path, source);
+            }
+        }
+        self.register_source(path, source)
+    }
+
     pub fn register_source_with_id(&self, id: FileId, path: PathBuf, source: &str) -> FileId {
         let file = SourceFile {
             id,

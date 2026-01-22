@@ -1,9 +1,9 @@
 #[lang = "create_struct"]
-pub fn create_struct(name: &str) -> type {
+pub const fn create_struct(name: &str) -> type {
     compile_error!("create_struct is a compiler intrinsic")
 }
 
 #[lang = "addfield"]
-pub fn addfield(ty: type, name: &str, field_ty: type) -> type {
+pub const fn addfield(ty: type, name: &str, field_ty: type) -> type {
     compile_error!("addfield is a compiler intrinsic")
 }

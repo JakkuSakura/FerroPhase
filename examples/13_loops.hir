@@ -24,13 +24,13 @@ hir::Program {
 
     pub fn std::bench::run_benches() -> BenchReport {
         {
-            let benches = [];
+            let benches: Vec<BenchCase> = [];
             let mut passed = 0;
             let mut failed = 0;
             let mut idx = 0;
             while ((idx < benches.len()))
                 {
-                    let bench = benches[idx];
+                    let bench: BenchCase = benches[idx];
                     let mut ok = true;
                     let warmup_secs = 5;
                     let measure_secs = 15;
@@ -75,12 +75,12 @@ hir::Program {
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
+                            printf(arg0 = "  {} ... FAILED\n", arg1 = bench.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "bench result: {} passed; {} failed; {} total\n", arg1 = passed, arg2 = failed, arg3 = total);
             BenchReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -177,11 +177,11 @@ hir::Program {
                             }
                     }
                 JsonValue::Number(n) =>
-                    std::print(arg0 = format_string("{}"), arg1 = n)
+                    printf(arg0 = "%s", arg1 = n)
                 JsonValue::String(s) =>
                     {
                         printf(arg0 = "\"");
-                        std::print(arg0 = format_string("{}"), arg1 = s);
+                        printf(arg0 = "%s", arg1 = s);
                         printf(arg0 = "\"");
                     }
                 JsonValue::Array(items) =>
@@ -214,7 +214,7 @@ hir::Program {
                                     }
                                 let field = fields[idx];
                                 printf(arg0 = "\"");
-                                std::print(arg0 = format_string("{}"), arg1 = field.key);
+                                printf(arg0 = "%s", arg1 = field.key);
                                 printf(arg0 = "\":");
                                 print_value(arg0 = field.value);
                                 idx = (idx + 1);
@@ -660,28 +660,28 @@ hir::Program {
 
     pub fn std::test::run_tests() -> TestReport {
         {
-            let tests = [];
+            let tests: Vec<TestCase> = [];
             let mut passed = 0;
             let mut failed = 0;
             let mut idx = 0;
             while ((idx < tests.len()))
                 {
-                    let test = tests[idx];
+                    let test: TestCase = tests[idx];
                     let ok = std::catch_unwind(arg0 = test.run);
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                            printf(arg0 = "  {} ... ok\n", arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                            printf(arg0 = "  {} ... FAILED\n", arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "test result: {} passed; {} failed; {} total\n", arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -724,13 +724,13 @@ hir::Program {
 
     pub fn std::bench::run_benches() -> BenchReport {
         {
-            let benches = REGISTRY;
+            let benches: Vec<BenchCase> = REGISTRY;
             let mut passed = 0;
             let mut failed = 0;
             let mut idx = 0;
             while ((idx < benches.len()))
                 {
-                    let bench = benches[idx];
+                    let bench: BenchCase = benches[idx];
                     let mut ok = true;
                     let warmup_secs = 5;
                     let measure_secs = 15;
@@ -775,12 +775,12 @@ hir::Program {
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
+                            printf(arg0 = "  {} ... FAILED\n", arg1 = bench.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "bench result: {} passed; {} failed; {} total\n", arg1 = passed, arg2 = failed, arg3 = total);
             BenchReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -877,11 +877,11 @@ hir::Program {
                             }
                     }
                 JsonValue::Number(n) =>
-                    std::print(arg0 = format_string("{}"), arg1 = n)
+                    printf(arg0 = "%s", arg1 = n)
                 JsonValue::String(s) =>
                     {
                         printf(arg0 = "\"");
-                        std::print(arg0 = format_string("{}"), arg1 = s);
+                        printf(arg0 = "%s", arg1 = s);
                         printf(arg0 = "\"");
                     }
                 JsonValue::Array(items) =>
@@ -914,7 +914,7 @@ hir::Program {
                                     }
                                 let field = fields[idx];
                                 printf(arg0 = "\"");
-                                std::print(arg0 = format_string("{}"), arg1 = field.key);
+                                printf(arg0 = "%s", arg1 = field.key);
                                 printf(arg0 = "\":");
                                 print_value(arg0 = field.value);
                                 idx = (idx + 1);
@@ -1360,28 +1360,28 @@ hir::Program {
 
     pub fn std::test::run_tests() -> TestReport {
         {
-            let tests = REGISTRY;
+            let tests: Vec<TestCase> = REGISTRY;
             let mut passed = 0;
             let mut failed = 0;
             let mut idx = 0;
             while ((idx < tests.len()))
                 {
-                    let test = tests[idx];
+                    let test: TestCase = tests[idx];
                     let ok = std::catch_unwind(arg0 = test.run);
                     if (ok)
                         {
                             passed = (passed + 1);
-                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                            printf(arg0 = "  {} ... ok\n", arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                            printf(arg0 = "  {} ... FAILED\n", arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            printf(arg0 = "test result: {} passed; {} failed; {} total\n", arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -1488,16 +1488,16 @@ hir::Program {
             printf(arg0 = "\n");
             printf(arg0 = "=== Loop Constructs ===\n\n");
             printf(arg0 = "1. While loop - factorial:\n");
-            std::println(arg0 = format_string("  5! = {}"), arg1 = factorial(n = 5));
-            std::println(arg0 = format_string("  7! = {}"), arg1 = factorial(n = 7));
+            printf(arg0 = "  5! = {}\n", arg1 = factorial(n = 5));
+            printf(arg0 = "  7! = {}\n", arg1 = factorial(n = 7));
             printf(arg0 = "\n2. For loop - sum range:\n");
-            std::println(arg0 = format_string("  sum(1..10) = {}"), arg1 = sum_range(start = 1, end = 10));
-            std::println(arg0 = format_string("  sum(5..15) = {}"), arg1 = sum_range(start = 5, end = 15));
+            printf(arg0 = "  sum(1..10) = {}\n", arg1 = sum_range(start = 1, end = 10));
+            printf(arg0 = "  sum(5..15) = {}\n", arg1 = sum_range(start = 5, end = 15));
             printf(arg0 = "\n3. Loop with break expression:\n");
-            std::println(arg0 = format_string("  First divisor of 24: {}"), arg1 = find_first_divisor(n = 24));
-            std::println(arg0 = format_string("  First divisor of 17: {}"), arg1 = find_first_divisor(n = 17));
+            printf(arg0 = "  First divisor of 24: {}\n", arg1 = find_first_divisor(n = 24));
+            printf(arg0 = "  First divisor of 17: {}\n", arg1 = find_first_divisor(n = 17));
             printf(arg0 = "\n4. Loop with continue:\n");
-            std::println(arg0 = format_string("  Sum of even numbers < 10: {}"), arg1 = sum_even_numbers(limit = 10));
+            printf(arg0 = "  Sum of even numbers < 10: {}\n", arg1 = sum_even_numbers(limit = 10));
             printf(arg0 = "\n5. Nested loops:\n");
             let mut count = 0;
             {
@@ -1508,11 +1508,11 @@ hir::Program {
                         i = (i + 1);
                     }
             }
-            std::println(arg0 = format_string("\n  Iterations: {}"), arg1 = count);
+            printf(arg0 = "\n  Iterations: {}\n", arg1 = count);
             printf(arg0 = "\n6. Compile-time recursion:\n");
             pub const FACTORIAL_CONST: i64 =
                 120;
-            std::println(arg0 = format_string("  const_factorial(5) = {}"), arg1 = 120);
+            printf(arg0 = "  const_factorial(5) = {}\n", arg1 = 120);
             printf(arg0 = "\n✓ Loop constructs demonstrated!\n");
         }
     }

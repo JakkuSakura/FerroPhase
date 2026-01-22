@@ -18,12 +18,12 @@ struct TestReport {
 }
 
 fn run_tests() -> TestReport {
-    let tests = REGISTRY;
+    let tests: Vec<TestCase> = REGISTRY;
     let mut passed = 0;
     let mut failed = 0;
     let mut idx = 0;
     while idx < tests.len() {
-        let test = tests[idx];
+        let test: TestCase = tests[idx];
         let ok = catch_unwind(test.run);
         if ok {
             passed = passed + 1;

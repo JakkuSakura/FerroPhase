@@ -8,7 +8,6 @@ use crate::{
 };
 use clap::Args;
 use std::path::{Path, PathBuf};
-use tempfile::TempDir;
 
 /// Arguments for bytecode interpretation.
 #[derive(Debug, Clone, Args)]
@@ -33,12 +32,8 @@ pub async fn interpret_command(args: InterpretArgs, _config: &CliConfig) -> Resu
 }
 
 async fn interpret_source(path: &Path) -> Result<()> {
-    let temp_dir = TempDir::new().map_err(CliError::Io)?;
-    let output = temp_dir.path().join("interpret.fbc");
-
     let mut options = PipelineOptions::default();
-    options.target = BackendKind::Bytecode;
-    options.base_path = Some(output.clone());
+    options.target = BackendKind::Interpret;
     options.save_intermediates = false;
     options.optimization_level = 0;
 
@@ -47,16 +42,12 @@ async fn interpret_source(path: &Path) -> Result<()> {
         .execute_with_options(PipelineInput::File(path.to_path_buf()), options)
         .await?;
 
-    let bytecode_path = match output {
-        PipelineOutput::Binary(path) => path,
-        _ => {
-            return Err(CliError::Compilation(
-                "Expected bytecode output from pipeline".to_string(),
-            ));
-        }
-    };
-
-    interpret_binary_bytecode(&bytecode_path)
+    match output {
+        PipelineOutput::Value(_) | PipelineOutput::RuntimeValue(_) => Ok(()),
+        PipelineOutput::Code(_) | PipelineOutput::Binary(_) => Err(CliError::Compilation(
+            "Expected interpret output from pipeline".to_string(),
+        )),
+    }
 }
 
 fn interpret_text_bytecode(path: &Path) -> Result<()> {

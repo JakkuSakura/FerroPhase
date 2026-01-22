@@ -11,7 +11,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 match self.render_intrinsic_call_runtime(call) {
-                    Ok(output) => {
+                    Ok(mut output) => {
                         if call.kind == IntrinsicCallKind::Print {
                             if let Some(last) = self.stdout.last_mut() {
                                 last.push_str(&output);
@@ -19,6 +19,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 self.stdout.push(output);
                             }
                         } else {
+                            output.push('\n');
                             self.stdout.push(output);
                         }
                     }
@@ -113,7 +114,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 match self.render_intrinsic_call(call) {
-                    Ok(output) => {
+                    Ok(mut output) => {
                         if call.kind == IntrinsicCallKind::Print {
                             if let Some(last) = self.stdout.last_mut() {
                                 last.push_str(&output);
@@ -121,6 +122,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 self.stdout.push(output);
                             }
                         } else {
+                            output.push('\n');
                             self.stdout.push(output);
                         }
                     }

@@ -6,7 +6,7 @@ pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
 
 use crate::typing::scheme::TypeScheme;
 use fp_core::ast::*;
-use fp_core::ast::{Ident, Locator};
+use fp_core::ast::{AttributesExt, Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
@@ -1528,6 +1528,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
+        let is_lang_item = func.attrs.find_by_name("lang").is_some();
         let impl_ctx = self.impl_stack.last().cloned().flatten();
         let fn_key = impl_ctx
             .as_ref()
@@ -1601,7 +1602,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             param_vars.push(var);
         }
 
-        let body_var = if let Some(kind) = func.sig.quote_kind {
+        let body_var = if is_lang_item {
+            if let Some(ret) = &func.sig.ret_ty {
+                self.type_from_ast_ty(ret)?
+            } else {
+                self.fresh_type_var()
+            }
+        } else if let Some(kind) = func.sig.quote_kind {
             let body_block = func.body.as_ref().clone().into_block();
             let mut quote_expr = Expr::from(ExprKind::Quote(ExprQuote {
                 span: Span::null(),

@@ -18,12 +18,12 @@ struct BenchReport {
 }
 
 fn run_benches() -> BenchReport {
-    let benches = REGISTRY;
+    let benches: Vec<BenchCase> = REGISTRY;
     let mut passed = 0;
     let mut failed = 0;
     let mut idx = 0;
     while idx < benches.len() {
-        let bench = benches[idx];
+        let bench: BenchCase = benches[idx];
         let mut ok = true;
         let warmup_secs = 5.0f64;
         let measure_secs = 15.0f64;

@@ -608,7 +608,14 @@ impl Pipeline {
         }
 
         if stage_enabled(options, STAGE_TYPE_ENRICH) {
-            info!("pipeline: skip {}", STAGE_TYPE_ENRICH);
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_TYPE_ENRICH);
+            self.stage_type_check(&mut ast, STAGE_TYPE_ENRICH, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_TYPE_ENRICH,
+                stage_started.elapsed()
+            );
         }
 
         if options.save_intermediates {
@@ -632,7 +639,14 @@ impl Pipeline {
         }
 
         if stage_enabled(options, STAGE_TYPE_POST_MATERIALIZE) {
-            info!("pipeline: skip {}", STAGE_TYPE_POST_MATERIALIZE);
+            let stage_started = std::time::Instant::now();
+            info!("pipeline: start {}", STAGE_TYPE_POST_MATERIALIZE);
+            self.stage_type_check(&mut ast, STAGE_TYPE_POST_MATERIALIZE, options)?;
+            info!(
+                "pipeline: finished {} in {:.2?}",
+                STAGE_TYPE_POST_MATERIALIZE,
+                stage_started.elapsed()
+            );
         }
 
         let output = if matches!(target, BackendKind::Rust) {

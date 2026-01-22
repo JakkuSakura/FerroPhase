@@ -51,7 +51,7 @@ fn print_appends_without_newline_and_println_pushes_new_entry() {
     let outcome = interpreter.take_outcome();
     assert_eq!(
         outcome.stdout,
-        vec!["hello world".to_owned(), "!".to_owned()]
+        vec!["hello world".to_owned(), "!\n".to_owned()]
     );
 }
 
@@ -78,7 +78,7 @@ fn println_renders_format_template_placeholders() {
     interpreter.evaluate_expression(&mut expr);
 
     let outcome = interpreter.take_outcome();
-    assert_eq!(outcome.stdout, vec!["total=42".to_owned()]);
+    assert_eq!(outcome.stdout, vec!["total=42\n".to_owned()]);
     assert!(!outcome.has_errors);
 }
 
@@ -94,7 +94,7 @@ fn println_args_payload_joins_values_with_space() {
     interpreter.evaluate_expression(&mut expr);
 
     let outcome = interpreter.take_outcome();
-    assert_eq!(outcome.stdout, vec!["1 2 3".to_owned()]);
+    assert_eq!(outcome.stdout, vec!["1 2 3\n".to_owned()]);
 }
 
 #[test]

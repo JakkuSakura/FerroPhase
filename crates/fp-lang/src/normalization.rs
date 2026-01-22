@@ -158,9 +158,15 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 } else {
                     IntrinsicCallKind::Print
                 };
+                let (template, skip) = build_print_template_from_args(&args)?;
+                let mut call_args = Vec::with_capacity(1 + args.len().saturating_sub(skip));
+                call_args.push(Expr::new(ExprKind::FormatString(template)));
+                call_args.extend(args[skip..].iter().cloned());
                 let replacement = Expr::from_parts(
                     ty_slot.clone(),
-                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, args, Vec::new())),
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
+                        kind, call_args, Vec::new(),
+                    )),
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
@@ -494,6 +500,84 @@ fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>> {
     }
 
     Ok(parts)
+}
+
+fn build_print_template_from_args(args: &[Expr]) -> Result<(ExprStringTemplate, usize)> {
+    if args.is_empty() {
+        return Ok((
+            ExprStringTemplate {
+                parts: vec![FormatTemplatePart::Literal(String::new())],
+            },
+            0,
+        ));
+    }
+
+    match args[0].kind() {
+        ExprKind::FormatString(format) => Ok((format.clone(), 1)),
+        ExprKind::Value(value) => {
+            if let Value::String(string) = &**value {
+                if args.len() == 1 {
+                    return Ok((
+                        ExprStringTemplate {
+                            parts: vec![FormatTemplatePart::Literal(string.value.clone())],
+                        },
+                        1,
+                    ));
+                }
+
+                let template = string.value.clone();
+                let looks_like_format_template =
+                    template.contains('{') || template.contains('%');
+                if looks_like_format_template {
+                    let parts = parse_format_template(&template)?;
+                    return Ok((ExprStringTemplate { parts }, 1));
+                }
+
+                let mut parts = vec![FormatTemplatePart::Literal(template)];
+                if !matches!(
+                    parts.last(),
+                    Some(FormatTemplatePart::Literal(lit)) if lit.is_empty()
+                ) {
+                    parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                }
+                for (idx, _arg) in args[1..].iter().enumerate() {
+                    parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                        arg_ref: FormatArgRef::Implicit,
+                        format_spec: None,
+                    }));
+                    if idx + 1 < args.len() - 1 {
+                        parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                    }
+                }
+                Ok((ExprStringTemplate { parts }, 1))
+            } else {
+                let mut parts = Vec::new();
+                for idx in 0..args.len() {
+                    parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                        arg_ref: FormatArgRef::Implicit,
+                        format_spec: None,
+                    }));
+                    if idx + 1 < args.len() {
+                        parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                    }
+                }
+                Ok((ExprStringTemplate { parts }, 0))
+            }
+        }
+        _ => {
+            let mut parts = Vec::new();
+            for idx in 0..args.len() {
+                parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                    arg_ref: FormatArgRef::Implicit,
+                    format_spec: None,
+                }));
+                if idx + 1 < args.len() {
+                    parts.push(FormatTemplatePart::Literal(" ".to_string()));
+                }
+            }
+            Ok((ExprStringTemplate { parts }, 0))
+        }
+    }
 }
 
 fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder> {

@@ -382,10 +382,23 @@ plain_type! { TypeTokenStream }
 plain_type! { TypeUnit }
 plain_type! { TypeUnknown }
 plain_type! { TypeNothing }
-common_struct! {
-    pub struct TypeType {
-        #[serde(default)]
-        pub span: Span,
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct TypeType {
+    #[serde(default)]
+    pub span: Span,
+}
+
+impl PartialEq for TypeType {
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for TypeType {}
+
+impl std::hash::Hash for TypeType {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        0u8.hash(state);
     }
 }
 impl TypeType {

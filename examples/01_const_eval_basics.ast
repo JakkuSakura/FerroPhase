@@ -1551,14 +1551,14 @@ ast::File {
                     value false
       }
       pub module intrinsic {
-        pub [attrs] fn create_struct(name: &Expr(str)) -> type
+        pub [attrs] const fn create_struct(name: &Expr(str)) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
                 args:
                   value "create_struct is a compiler intrinsic"
                 kwargs: []
-        pub [attrs] fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
+        pub [attrs] const fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
@@ -3384,14 +3384,14 @@ ast::File {
                     value false
       }
       pub module intrinsic {
-        pub [attrs] fn create_struct(name: &Expr(str)) -> type
+        pub [attrs] const fn create_struct(name: &Expr(str)) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
                 args:
                   value "create_struct is a compiler intrinsic"
                 kwargs: []
-        pub [attrs] fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
+        pub [attrs] const fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error

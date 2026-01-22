@@ -825,8 +825,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
 
     match kind {
         IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-            let newline = matches!(kind, IntrinsicCallKind::Println);
-            let (template, skip) = build_string_template_from_args(&invoke.args, newline)?;
+            let (template, skip) = build_string_template_from_args(&invoke.args, invoke.kwargs.len())?;
             let mut args = Vec::with_capacity(1 + invoke.args.len().saturating_sub(skip));
             args.push(Expr::new(ExprKind::FormatString(template)));
             args.extend(invoke.args.iter().skip(skip).cloned());
@@ -964,7 +963,7 @@ fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
 
 fn build_string_template_from_args(
     args: &[Expr],
-    _newline: bool,
+    kwargs_len: usize,
 ) -> Option<(ExprStringTemplate, usize)> {
     if args.is_empty() {
         return Some((
@@ -979,7 +978,7 @@ fn build_string_template_from_args(
         ExprKind::FormatString(fmt) => Some((fmt.clone(), 1)),
         ExprKind::Value(value) => {
             if let Value::String(str_val) = &**value {
-                if args.len() == 1 {
+                if args.len() == 1 && kwargs_len == 0 {
                     return Some((
                         ExprStringTemplate {
                             parts: vec![FormatTemplatePart::Literal(str_val.value.clone())],
@@ -991,12 +990,11 @@ fn build_string_template_from_args(
                 // When extra args are provided, decide whether the first string literal
                 // is intended as a Rust-style format template.
                 let template = str_val.value.clone();
-                let looks_like_format_template = template.contains('{');
+                let looks_like_format_template = template.contains('{') || template.contains('%');
                 if looks_like_format_template {
-                    let format = ExprStringTemplate {
-                        parts: vec![FormatTemplatePart::Literal(template)],
-                    };
-                    return Some((format, 1));
+                    if let Ok(parts) = parse_format_template(&template) {
+                        return Some((ExprStringTemplate { parts }, 1));
+                    }
                 }
 
                 // Otherwise treat it like a multi-arg print: prefix + placeholders.
@@ -1036,6 +1034,127 @@ fn build_string_template_from_args(
             }
             Some((ExprStringTemplate { parts }, 0))
         }
+    }
+}
+
+fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>, String> {
+    let mut parts = Vec::new();
+    let mut current_literal = String::new();
+    let mut chars = template.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '{' {
+            if matches!(chars.peek(), Some('{')) {
+                chars.next();
+                current_literal.push('{');
+                continue;
+            }
+            if !current_literal.is_empty() {
+                parts.push(FormatTemplatePart::Literal(current_literal.clone()));
+                current_literal.clear();
+            }
+            if matches!(chars.peek(), Some('}')) {
+                chars.next();
+                parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                    arg_ref: FormatArgRef::Implicit,
+                    format_spec: None,
+                }));
+                continue;
+            }
+            let mut placeholder_content = String::new();
+            while let Some(inner_ch) = chars.next() {
+                if inner_ch == '}' {
+                    break;
+                }
+                placeholder_content.push(inner_ch);
+            }
+            let placeholder = parse_placeholder_content(&placeholder_content)?;
+            parts.push(FormatTemplatePart::Placeholder(placeholder));
+            continue;
+        }
+        if ch == '}' {
+            if matches!(chars.peek(), Some('}')) {
+                chars.next();
+                current_literal.push('}');
+                continue;
+            }
+            current_literal.push('}');
+            continue;
+        }
+        if ch == '%' {
+            if matches!(chars.peek(), Some('%')) {
+                chars.next();
+                current_literal.push('%');
+                continue;
+            }
+
+            if !current_literal.is_empty() {
+                parts.push(FormatTemplatePart::Literal(current_literal.clone()));
+                current_literal.clear();
+            }
+
+            let mut spec = String::new();
+            while let Some(&next) = chars.peek() {
+                spec.push(next);
+                chars.next();
+                if next.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            if spec.is_empty() {
+                spec.push('s');
+            }
+            parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
+                arg_ref: FormatArgRef::Implicit,
+                format_spec: Some(FormatSpec::parse(&format!("%{}", spec))?),
+            }));
+            continue;
+        }
+
+        current_literal.push(ch);
+    }
+
+    if !current_literal.is_empty() {
+        parts.push(FormatTemplatePart::Literal(current_literal));
+    }
+
+    Ok(parts)
+}
+
+fn parse_placeholder_content(content: &str) -> Result<FormatPlaceholder, String> {
+    if content.is_empty() {
+        return Ok(FormatPlaceholder {
+            arg_ref: FormatArgRef::Implicit,
+            format_spec: None,
+        });
+    }
+
+    if let Some(colon_pos) = content.find(':') {
+        let arg_part = &content[..colon_pos];
+        let format_spec = &content[colon_pos + 1..];
+
+        let arg_ref = if arg_part.is_empty() {
+            FormatArgRef::Implicit
+        } else if let Ok(index) = arg_part.parse::<usize>() {
+            FormatArgRef::Positional(index)
+        } else {
+            FormatArgRef::Named(arg_part.to_string())
+        };
+
+        Ok(FormatPlaceholder {
+            arg_ref,
+            format_spec: Some(FormatSpec::parse(format_spec)?),
+        })
+    } else if let Ok(index) = content.parse::<usize>() {
+        Ok(FormatPlaceholder {
+            arg_ref: FormatArgRef::Positional(index),
+            format_spec: None,
+        })
+    } else {
+        Ok(FormatPlaceholder {
+            arg_ref: FormatArgRef::Named(content.to_string()),
+            format_spec: None,
+        })
     }
 }
 
