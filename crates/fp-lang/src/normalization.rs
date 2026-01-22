@@ -1,16 +1,17 @@
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBinOp, ExprBlock, ExprIf, ExprIntrinsicCall, ExprKind,
     ExprStringTemplate, ExprUnOp, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
-    Ident, StmtLet, Ty, Value,
+    Ident, MacroDelimiter, MacroTokenTree, StmtLet, Ty, Value,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer, NormalizeOutcome};
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::span::Span;
 
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
-use crate::lexer::lexeme::LexemeKind;
-use crate::lexer::tokenizer::lex_lexemes;
+use crate::lexer::lexeme::{Lexeme, LexemeKind};
+use crate::lexer::tokenizer::Span as LexSpan;
 
 /// FerroPhase intrinsic normalizer that adds `t!` macro lowering for type expressions,
 /// delegating all other macros to the Rust normalizer.
@@ -27,17 +28,18 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
         if let Some(name) = macro_expr.invocation.path.segments.last() {
             let macro_name = name.as_str().trim_end_matches('!');
             if macro_name == "t" {
-                let ty = parse_type_macro_tokens(&macro_expr.invocation.tokens)?;
+                let ty = parse_type_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let replacement = Expr::value(Value::Type(ty)).with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "vec" {
-                let expr = parse_vec_macro_tokens(&macro_expr.invocation.tokens)?;
+                let expr =
+                    parse_vec_macro_tokens(&macro_expr.invocation.token_trees, macro_expr.span())?;
                 let replacement = expr.with_ty_slot(ty_slot);
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() != 1 {
                     return Err(fp_core::error::Error::from(
                         "assert! requires exactly one argument",
@@ -49,7 +51,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_eq" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() != 2 {
                     return Err(fp_core::error::Error::from(
                         "assert_eq! requires exactly two arguments",
@@ -65,7 +67,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "assert_ne" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() != 2 {
                     return Err(fp_core::error::Error::from(
                         "assert_ne! requires exactly two arguments",
@@ -81,7 +83,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "panic" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() > 1 {
                     return Err(fp_core::error::Error::from(
                         "panic! accepts at most one argument",
@@ -91,7 +93,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "format" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.is_empty() {
                     return Err(fp_core::error::Error::from(
                         "format! requires at least one argument",
@@ -133,7 +135,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "type_of" || macro_name == "typeof" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 if args.len() != 1 {
                     return Err(fp_core::error::Error::from(
                         "type_of! requires exactly one argument",
@@ -150,7 +152,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if macro_name == "print" || macro_name == "println" {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let kind = if macro_name == "println" {
                     IntrinsicCallKind::Println
                 } else {
@@ -163,7 +165,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
             if let Some(kind) = intrinsic_macro_kind(macro_name) {
-                let args = parse_expr_macro_tokens(&macro_expr.invocation.tokens)?;
+                let args = parse_expr_macro_tokens(&macro_expr.invocation.token_trees)?;
                 let replacement = Expr::from_parts(
                     ty_slot.clone(),
                     ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, args, Vec::new())),
@@ -203,10 +205,10 @@ fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
     }
 }
 
-fn parse_type_macro_tokens(tokens: &str) -> Result<fp_core::ast::Ty> {
-    let lexemes =
-        lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-    let (ty_cst, consumed) = parse_type_lexemes_prefix_to_cst(&lexemes, 0, &[])
+fn parse_type_macro_tokens(tokens: &[MacroTokenTree]) -> Result<fp_core::ast::Ty> {
+    let lexemes = macro_token_trees_to_lexemes(tokens);
+    let file_id = macro_tokens_file_id(tokens);
+    let (ty_cst, consumed) = parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
         .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
 
     if lexemes[consumed..]
@@ -221,9 +223,9 @@ fn parse_type_macro_tokens(tokens: &str) -> Result<fp_core::ast::Ty> {
     lower_type_from_cst(&ty_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
 }
 
-fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
-    let lexemes =
-        lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+fn parse_expr_macro_tokens(tokens: &[MacroTokenTree]) -> Result<Vec<Expr>> {
+    let lexemes = macro_token_trees_to_lexemes(tokens);
+    let file_id = macro_tokens_file_id(tokens);
     let mut idx = 0;
     let mut args = Vec::new();
     while idx < lexemes.len() {
@@ -238,7 +240,7 @@ fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
             continue;
         }
         let (expr_cst, consumed) =
-            parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], 0).map_err(|err| {
+            parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id).map_err(|err| {
                 fp_core::error::Error::from(format!("assert macro parse error: {}", err))
             })?;
         let expr = lower_expr_from_cst(&expr_cst)
@@ -249,11 +251,13 @@ fn parse_expr_macro_tokens(tokens: &str) -> Result<Vec<Expr>> {
     Ok(args)
 }
 
-fn parse_vec_macro_tokens(tokens: &str) -> Result<Expr> {
-    let text = format!("[{}]", tokens);
-    let lexemes =
-        lex_lexemes(&text).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-    let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, 0)
+fn parse_vec_macro_tokens(tokens: &[MacroTokenTree], span: Span) -> Result<Expr> {
+    let mut lexemes = macro_token_trees_to_lexemes(tokens);
+    let file_id = macro_tokens_file_id(tokens);
+    let (open_span, close_span) = lex_spans_for_group(span);
+    lexemes.insert(0, Lexeme::token("[".to_string(), open_span));
+    lexemes.push(Lexeme::token("]".to_string(), close_span));
+    let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, file_id)
         .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
     if lexemes[consumed..]
         .iter()
@@ -266,9 +270,12 @@ fn parse_vec_macro_tokens(tokens: &str) -> Result<Expr> {
     lower_expr_from_cst(&expr_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
 }
 
-fn parse_macro_tokens_with_type_args(tokens: &str, type_positions: &[usize]) -> Result<Vec<Expr>> {
-    let lexemes =
-        lex_lexemes(tokens).map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+fn parse_macro_tokens_with_type_args(
+    tokens: &[MacroTokenTree],
+    type_positions: &[usize],
+) -> Result<Vec<Expr>> {
+    let lexemes = macro_token_trees_to_lexemes(tokens);
+    let file_id = macro_tokens_file_id(tokens);
     let mut idx = 0;
     let mut args = Vec::new();
     let mut arg_index = 0;
@@ -285,7 +292,7 @@ fn parse_macro_tokens_with_type_args(tokens: &str, type_positions: &[usize]) -> 
         }
         let is_type = type_positions.iter().any(|pos| *pos == arg_index);
         if is_type {
-            match parse_type_lexemes_prefix_to_cst(&lexemes[idx..], 0, &[","]) {
+            match parse_type_lexemes_prefix_to_cst(&lexemes[idx..], file_id, &[","]) {
                 Ok((ty_cst, consumed)) => {
                     let ty = lower_type_from_cst(&ty_cst)
                         .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
@@ -294,7 +301,7 @@ fn parse_macro_tokens_with_type_args(tokens: &str, type_positions: &[usize]) -> 
                 }
                 Err(_) => {
                     let (expr_cst, consumed) =
-                        parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], 0).map_err(|err| {
+                        parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id).map_err(|err| {
                             fp_core::error::Error::from(format!(
                                 "assert macro parse error: {}",
                                 err
@@ -308,7 +315,7 @@ fn parse_macro_tokens_with_type_args(tokens: &str, type_positions: &[usize]) -> 
             }
         } else {
             let (expr_cst, consumed) =
-                parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], 0).map_err(|err| {
+                parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id).map_err(|err| {
                     fp_core::error::Error::from(format!("assert macro parse error: {}", err))
                 })?;
             let expr = lower_expr_from_cst(&expr_cst)
@@ -319,6 +326,87 @@ fn parse_macro_tokens_with_type_args(tokens: &str, type_positions: &[usize]) -> 
         arg_index += 1;
     }
     Ok(args)
+}
+
+fn macro_token_trees_to_lexemes(tokens: &[MacroTokenTree]) -> Vec<Lexeme> {
+    let mut out = Vec::new();
+    append_macro_lexemes(tokens, &mut out);
+    out
+}
+
+fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
+    for token in tokens {
+        match token {
+            MacroTokenTree::Token(tok) => {
+                out.push(Lexeme::token(tok.text.clone(), lex_span_from_span(tok.span)));
+            }
+            MacroTokenTree::Group(group) => {
+                let (open, close) = match group.delimiter {
+                    MacroDelimiter::Parenthesis => ("(", ")"),
+                    MacroDelimiter::Bracket => ("[", "]"),
+                    MacroDelimiter::Brace => ("{", "}"),
+                };
+                let (open_span, close_span) = lex_spans_for_group(group.span);
+                out.push(Lexeme::token(open.to_string(), open_span));
+                append_macro_lexemes(&group.tokens, out);
+                out.push(Lexeme::token(close.to_string(), close_span));
+            }
+        }
+    }
+}
+
+fn macro_tokens_file_id(tokens: &[MacroTokenTree]) -> u64 {
+    for tree in tokens {
+        if let Some(file) = token_tree_file(tree) {
+            return file;
+        }
+    }
+    0
+}
+
+fn token_tree_file(tree: &MacroTokenTree) -> Option<u64> {
+    match tree {
+        MacroTokenTree::Token(tok) => Some(tok.span.file),
+        MacroTokenTree::Group(group) => {
+            if group.span.file != 0 {
+                return Some(group.span.file);
+            }
+            for inner in &group.tokens {
+                if let Some(file) = token_tree_file(inner) {
+                    return Some(file);
+                }
+            }
+            None
+        }
+    }
+}
+
+fn lex_span_from_span(span: Span) -> LexSpan {
+    LexSpan {
+        start: span.lo as usize,
+        end: span.hi as usize,
+    }
+}
+
+fn lex_spans_for_group(span: Span) -> (LexSpan, LexSpan) {
+    let open_start = span.lo;
+    let open_end = if span.hi > span.lo {
+        span.lo.saturating_add(1)
+    } else {
+        span.lo
+    };
+    let close_start = span.hi.saturating_sub(1);
+    let close_end = span.hi;
+    (
+        LexSpan {
+            start: open_start as usize,
+            end: open_end as usize,
+        },
+        LexSpan {
+            start: close_start as usize,
+            end: close_end as usize,
+        },
+    )
 }
 
 fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>> {

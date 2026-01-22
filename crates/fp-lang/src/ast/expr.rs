@@ -1,7 +1,8 @@
 use crate::ast::items::LowerItemsError;
 use crate::cst::parse_expr_lexemes_prefix_to_cst;
-use crate::lexer::lexeme::LexemeKind;
+use crate::lexer::lexeme::{Lexeme, LexemeKind};
 use crate::lexer::tokenizer::lex_lexemes;
+use crate::lexer::tokenizer::Span as LexSpan;
 use crate::lexer::tokenizer::strip_number_suffix;
 use bigdecimal::BigDecimal;
 use num_bigint::BigInt;
@@ -13,7 +14,8 @@ use fp_core::ast::{
     ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprSelectType,
     ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
     FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits, Locator,
-    MacroInvocation, ParameterPath, ParameterPathSegment, Path, Pattern,
+    MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment, Path,
+    Pattern,
     PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
@@ -840,7 +842,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprString))?;
             if raw.starts_with("f\"") {
-                parse_f_string_literal(&raw)
+                parse_f_string_literal(&raw, node.span.file)
             } else if raw.starts_with("t\"") {
                 let decoded = decode_string_literal(&raw).unwrap_or(raw);
                 Ok(Expr::value(Value::String(ValueString::new_ref(decoded))))
@@ -1702,13 +1704,13 @@ fn parse_numeric_literal(raw: &str) -> Result<Value, LowerError> {
     }
 }
 
-fn parse_f_string_literal(raw: &str) -> Result<Expr, LowerError> {
+fn parse_f_string_literal(raw: &str, file: fp_core::span::FileId) -> Result<Expr, LowerError> {
     let Some(decoded) = strip_string_prefix(raw, "f") else {
         return Err(LowerError::Unsupported(
             "invalid f-string literal".to_string(),
         ));
     };
-    let (template, args) = parse_f_string_template(&decoded)?;
+    let (template, args) = parse_f_string_template(&decoded, file)?;
     let mut call_args = Vec::with_capacity(1 + args.len());
     call_args.push(Expr::new(ExprKind::FormatString(template)));
     call_args.extend(args);
@@ -1728,7 +1730,10 @@ fn strip_string_prefix(raw: &str, prefix: &str) -> Option<String> {
     decode_string_literal(rest)
 }
 
-fn parse_f_string_template(input: &str) -> Result<(ExprStringTemplate, Vec<Expr>), LowerError> {
+fn parse_f_string_template(
+    input: &str,
+    file: fp_core::span::FileId,
+) -> Result<(ExprStringTemplate, Vec<Expr>), LowerError> {
     let mut parts = Vec::new();
     let mut args = Vec::new();
     let mut current_literal = String::new();
@@ -1771,7 +1776,7 @@ fn parse_f_string_template(input: &str) -> Result<(ExprStringTemplate, Vec<Expr>
                 Some((expr_part, spec_part)) => (expr_part.trim(), Some(spec_part.trim())),
                 None => (trimmed, None),
             };
-            let expr = parse_f_string_expr(expr_src)?;
+            let expr = parse_f_string_expr(expr_src, file)?;
             args.push(expr);
             parts.push(FormatTemplatePart::Placeholder(FormatPlaceholder {
                 arg_ref: FormatArgRef::Implicit,
@@ -1806,11 +1811,11 @@ fn parse_f_string_template(input: &str) -> Result<(ExprStringTemplate, Vec<Expr>
     Ok((ExprStringTemplate { parts }, args))
 }
 
-fn parse_f_string_expr(src: &str) -> Result<Expr, LowerError> {
+fn parse_f_string_expr(src: &str, file: fp_core::span::FileId) -> Result<Expr, LowerError> {
     let lexemes = lex_lexemes(src).map_err(|err| {
         LowerError::Unsupported(format!("failed to tokenize f-string expression: {err}"))
     })?;
-    let (cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
+    let (cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, file).map_err(|err| {
         LowerError::Unsupported(format!("failed to parse f-string expression: {}", err))
     })?;
     if lexemes[consumed..]
@@ -1937,9 +1942,10 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     // `t! { ... }` is used as a type-level quoting wrapper in existing examples; lower it by
     // parsing the inner token stream as a type expression.
     if segments.len() == 1 && segments[0].as_str() == "t" {
-        let lexemes = crate::lexer::tokenizer::lex_lexemes(&macro_tokens.text)
-            .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
-        let (ty_cst, consumed) = crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, 0, &[])
+        let lexemes = macro_token_trees_to_lexemes(&macro_tokens.token_trees);
+        let file_id = node.span.file;
+        let (ty_cst, consumed) =
+            crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
             .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
         if lexemes[consumed..]
             .iter()
@@ -1958,6 +1964,61 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     ))
     .into();
     Ok(Ty::expr(expr))
+}
+
+fn macro_token_trees_to_lexemes(tokens: &[MacroTokenTree]) -> Vec<Lexeme> {
+    let mut out = Vec::new();
+    append_macro_lexemes(tokens, &mut out);
+    out
+}
+
+fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
+    for token in tokens {
+        match token {
+            MacroTokenTree::Token(tok) => {
+                out.push(Lexeme::token(tok.text.clone(), lex_span_from_span(tok.span)));
+            }
+            MacroTokenTree::Group(group) => {
+                let (open, close) = match group.delimiter {
+                    MacroDelimiter::Parenthesis => ("(", ")"),
+                    MacroDelimiter::Bracket => ("[", "]"),
+                    MacroDelimiter::Brace => ("{", "}"),
+                };
+                let (open_span, close_span) = lex_spans_for_group(group.span);
+                out.push(Lexeme::token(open.to_string(), open_span));
+                append_macro_lexemes(&group.tokens, out);
+                out.push(Lexeme::token(close.to_string(), close_span));
+            }
+        }
+    }
+}
+
+fn lex_span_from_span(span: fp_core::span::Span) -> LexSpan {
+    LexSpan {
+        start: span.lo as usize,
+        end: span.hi as usize,
+    }
+}
+
+fn lex_spans_for_group(span: fp_core::span::Span) -> (LexSpan, LexSpan) {
+    let open_start = span.lo;
+    let open_end = if span.hi > span.lo {
+        span.lo.saturating_add(1)
+    } else {
+        span.lo
+    };
+    let close_start = span.hi.saturating_sub(1);
+    let close_end = span.hi;
+    (
+        LexSpan {
+            start: open_start as usize,
+            end: open_end as usize,
+        },
+        LexSpan {
+            start: close_start as usize,
+            end: close_end as usize,
+        },
+    )
 }
 
 fn node_children_types<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a SyntaxNode> {

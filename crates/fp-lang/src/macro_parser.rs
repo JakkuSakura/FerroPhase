@@ -1,80 +1,51 @@
-use std::sync::Arc;
-
 use fp_core::ast::{Expr, MacroExpansionParser, MacroTokenTree, Ty};
 use fp_core::error::Result;
-use crate::ast::FerroPhaseParser;
-use crate::lexer::tokenizer::lex_lexemes;
+
+use crate::ast::{lower_expr_from_cst, lower_items_from_cst};
+use crate::cst::{parse_expr_lexemes_prefix_to_cst, parse_type_lexemes_prefix_to_cst};
+use crate::lexer::lexeme::{Lexeme, LexemeKind};
+use crate::lexer::tokenizer::{classify_and_normalize_lexeme, Span as TokSpan, Token, TokenKind};
 
 #[derive(Clone)]
 pub struct FerroMacroExpansionParser {
-    parser: Arc<FerroPhaseParser>,
 }
 
 impl FerroMacroExpansionParser {
-    pub fn new(parser: Arc<FerroPhaseParser>) -> Self {
-        Self { parser }
-    }
-
-    fn tokens_to_string(tokens: &[MacroTokenTree]) -> String {
-        fn is_ident_like(text: &str) -> bool {
-            text.chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')
-        }
-        fn needs_space(prev: &str, next: &str) -> bool {
-            is_ident_like(prev) && is_ident_like(next)
-        }
-
-        let mut out = String::new();
-        let mut prev_text: Option<String> = None;
-        for tok in flatten_token_trees(tokens) {
-            if let Some(prev) = prev_text.as_deref() {
-                if needs_space(prev, tok.as_str()) {
-                    out.push(' ');
-                }
-            }
-            out.push_str(&tok);
-            prev_text = Some(tok);
-        }
-        out
-    }
-
-    fn tokens_file_id(tokens: &[MacroTokenTree]) -> u64 {
-        for tree in tokens {
-            if let Some(file) = token_tree_file(tree) {
-                return file;
-            }
-        }
-        0
+    pub fn new() -> Self {
+        Self {}
     }
 }
 
 impl MacroExpansionParser for FerroMacroExpansionParser {
     fn parse_items(&self, tokens: &[MacroTokenTree]) -> Result<Vec<fp_core::ast::Item>> {
-        let source = Self::tokens_to_string(tokens);
-        let file_id = Self::tokens_file_id(tokens);
-        let items = self.parser.parse_items_ast_with_file(&source, file_id)?;
-        Ok(items)
+        let file_id = macro_tokens_file_id(tokens);
+        let tokens = macro_token_trees_to_tokens(tokens);
+        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file_id)
+            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+        lower_items_from_cst(&cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
     }
 
     fn parse_expr(&self, tokens: &[MacroTokenTree]) -> Result<Expr> {
-        let source = Self::tokens_to_string(tokens);
-        let file_id = Self::tokens_file_id(tokens);
-        let expr = self.parser.parse_expr_ast_with_file(&source, file_id)?;
-        Ok(expr)
+        let file_id = macro_tokens_file_id(tokens);
+        let lexemes = macro_token_trees_to_lexemes(tokens);
+        let (cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes, file_id)
+            .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
+        if lexemes[consumed..].iter().any(|lex| !lex.is_trivia()) {
+            return Err(fp_core::error::Error::from(
+                "macro expression tokens contain trailing input",
+            ));
+        }
+        lower_expr_from_cst(&cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
     }
 
     fn parse_type(&self, tokens: &[MacroTokenTree]) -> Result<Ty> {
-        let source = Self::tokens_to_string(tokens);
-        let file_id = Self::tokens_file_id(tokens);
-        let lexemes = lex_lexemes(&source)
+        let file_id = macro_tokens_file_id(tokens);
+        let lexemes = macro_token_trees_to_lexemes(tokens);
+        let (cst, consumed) = parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
             .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
-        let (cst, consumed) =
-            crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
-                .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
         if lexemes[consumed..]
             .iter()
-            .any(|lex| lex.kind == crate::lexer::lexeme::LexemeKind::Token)
+            .any(|lex| lex.kind == LexemeKind::Token)
         {
             return Err(fp_core::error::Error::from(
                 "macro type expansion has trailing input",
@@ -85,24 +56,112 @@ impl MacroExpansionParser for FerroMacroExpansionParser {
     }
 }
 
-fn flatten_token_trees(tokens: &[MacroTokenTree]) -> Vec<String> {
+fn macro_token_trees_to_tokens(tokens: &[MacroTokenTree]) -> Vec<Token> {
     let mut out = Vec::new();
-    for tree in tokens {
-        match tree {
-            MacroTokenTree::Token(tok) => out.push(tok.text.clone()),
+    append_macro_tokens(tokens, &mut out);
+    out
+}
+
+fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
+    for token in tokens {
+        match token {
+            MacroTokenTree::Token(tok) => {
+                let (kind, lexeme) =
+                    classify_and_normalize_lexeme(&tok.text).unwrap_or((
+                        TokenKind::Symbol,
+                        tok.text.clone(),
+                    ));
+                out.push(Token {
+                    kind,
+                    lexeme,
+                    span: token_span_from_span(tok.span),
+                });
+            }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {
                     fp_core::ast::MacroDelimiter::Parenthesis => ("(", ")"),
                     fp_core::ast::MacroDelimiter::Bracket => ("[", "]"),
                     fp_core::ast::MacroDelimiter::Brace => ("{", "}"),
                 };
-                out.push(open.to_string());
-                out.extend(flatten_token_trees(&group.tokens));
-                out.push(close.to_string());
+                let (open_span, close_span) = token_spans_for_group(group.span);
+                out.push(Token {
+                    kind: TokenKind::Symbol,
+                    lexeme: open.to_string(),
+                    span: open_span,
+                });
+                append_macro_tokens(&group.tokens, out);
+                out.push(Token {
+                    kind: TokenKind::Symbol,
+                    lexeme: close.to_string(),
+                    span: close_span,
+                });
             }
         }
     }
+}
+
+fn macro_token_trees_to_lexemes(tokens: &[MacroTokenTree]) -> Vec<Lexeme> {
+    let mut out = Vec::new();
+    append_macro_lexemes(tokens, &mut out);
     out
+}
+
+fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
+    for token in tokens {
+        match token {
+            MacroTokenTree::Token(tok) => {
+                out.push(Lexeme::token(tok.text.clone(), token_span_from_span(tok.span)));
+            }
+            MacroTokenTree::Group(group) => {
+                let (open, close) = match group.delimiter {
+                    fp_core::ast::MacroDelimiter::Parenthesis => ("(", ")"),
+                    fp_core::ast::MacroDelimiter::Bracket => ("[", "]"),
+                    fp_core::ast::MacroDelimiter::Brace => ("{", "}"),
+                };
+                let (open_span, close_span) = token_spans_for_group(group.span);
+                out.push(Lexeme::token(open.to_string(), open_span));
+                append_macro_lexemes(&group.tokens, out);
+                out.push(Lexeme::token(close.to_string(), close_span));
+            }
+        }
+    }
+}
+
+fn token_span_from_span(span: fp_core::span::Span) -> TokSpan {
+    TokSpan {
+        start: span.lo as usize,
+        end: span.hi as usize,
+    }
+}
+
+fn token_spans_for_group(span: fp_core::span::Span) -> (TokSpan, TokSpan) {
+    let open_start = span.lo;
+    let open_end = if span.hi > span.lo {
+        span.lo.saturating_add(1)
+    } else {
+        span.lo
+    };
+    let close_start = span.hi.saturating_sub(1);
+    let close_end = span.hi;
+    (
+        TokSpan {
+            start: open_start as usize,
+            end: open_end as usize,
+        },
+        TokSpan {
+            start: close_start as usize,
+            end: close_end as usize,
+        },
+    )
+}
+
+fn macro_tokens_file_id(tokens: &[MacroTokenTree]) -> u64 {
+    for tree in tokens {
+        if let Some(file) = token_tree_file(tree) {
+            return file;
+        }
+    }
+    0
 }
 
 fn token_tree_file(tree: &MacroTokenTree) -> Option<u64> {

@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
@@ -61,20 +61,20 @@ impl LanguageFrontend for FerroFrontend {
         let serializer = Arc::new(PrettyAstSerializer::new());
         let intrinsic_normalizer: Arc<dyn IntrinsicNormalizer> =
             Arc::new(FerroIntrinsicNormalizer::default());
-        let macro_parser = Arc::new(FerroMacroExpansionParser::new(Arc::new(
-            FerroPhaseParser::new(),
-        )));
-        let file_id = fp_core::source_map::register_source(
-            path.unwrap_or_else(|| Path::new("<expr>")),
-            &cleaned,
-        );
+        let macro_parser = Arc::new(FerroMacroExpansionParser::new());
+        let source_path = match path {
+            Some(path) => path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
+            None => PathBuf::from("<expr>"),
+        };
+        let source_path_display = source_path.clone();
+        let file_id = fp_core::source_map::register_source(&source_path, &cleaned);
 
-        if let Some(path) = path {
+        if path.is_some() {
             self.ferro.clear_diagnostics();
             match self.ferro.parse_items_ast_with_file(&cleaned, file_id) {
                 Ok(items) => {
                     let file = fp_core::ast::File {
-                        path: path.to_path_buf(),
+                        path: source_path.clone(),
                         items,
                     };
                     let diagnostics = self.ferro.diagnostics();
@@ -90,7 +90,7 @@ impl LanguageFrontend for FerroFrontend {
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                     let snapshot = FrontendSnapshot {
                         language: self.language().to_string(),
-                        description: format!("FerroPhase LAST for {}", path.display()),
+                        description: format!("FerroPhase LAST for {}", source_path_display.display()),
                         serialized: None,
                     };
 

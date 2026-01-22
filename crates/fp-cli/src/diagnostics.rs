@@ -191,9 +191,23 @@ fn core_diagnostic_source(diag: &CoreDiagnostic) -> (Option<NamedSource<String>>
     let Some(file) = fp_core::source_map::source_map().file(span.file) else {
         return (None, None);
     };
-    let len = span.hi.saturating_sub(span.lo).max(1);
-    let source_span = SourceSpan::new((span.lo as usize).into(), len as usize);
-    let source = NamedSource::new(file.path.display().to_string(), file.source.to_string());
+    let source_text = file.source.as_ref();
+    let source_len = source_text.len() as u32;
+    let source = NamedSource::new(file.path.display().to_string(), source_text.to_string());
+    if source_len == 0 {
+        return (Some(source), None);
+    }
+
+    let lo = span.lo.min(source_len);
+    let mut hi = span.hi.min(source_len);
+    if lo >= source_len {
+        return (Some(source), None);
+    }
+    if hi <= lo {
+        hi = (lo + 1).min(source_len);
+    }
+    let len = hi.saturating_sub(lo).max(1);
+    let source_span = SourceSpan::new((lo as usize).into(), len as usize);
     (Some(source), Some(source_span))
 }
 

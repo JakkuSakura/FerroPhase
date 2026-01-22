@@ -1033,7 +1033,8 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) = cst::parse_expr_lexemes_prefix_to_cst(&lexemes, 0).map_err(|err| {
+    let (node, consumed) =
+        cst::parse_expr_lexemes_prefix_to_cst(&lexemes, current_items_file()).map_err(|err| {
         ErrMode::Cut(
             <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
                 &lexemes,
@@ -1049,11 +1050,15 @@ fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
     let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) =
-        cst::parse_type_lexemes_prefix_to_cst(&lexemes, 0, stops).map_err(|err| {
-            ErrMode::Cut(
-                <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
-                    &lexemes,
+    let (node, consumed) = cst::parse_type_lexemes_prefix_to_cst(
+        &lexemes,
+        current_items_file(),
+        stops,
+    )
+    .map_err(|err| {
+        ErrMode::Cut(
+            <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+                &lexemes,
                     ErrorKind::Fail,
                     err,
                 ),
