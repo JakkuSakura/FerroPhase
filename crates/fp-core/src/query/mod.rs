@@ -15,6 +15,7 @@ use std::fmt::{self, Display, Formatter};
 common_enum! {
     pub enum SqlDialect {
         Generic,
+        ClickHouse,
         Postgres,
         Mysql,
         Sqlite,
@@ -34,6 +35,7 @@ impl Display for SqlDialect {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             SqlDialect::Generic => "generic",
+            SqlDialect::ClickHouse => "clickhouse",
             SqlDialect::Postgres => "postgres",
             SqlDialect::Mysql => "mysql",
             SqlDialect::Sqlite => "sqlite",

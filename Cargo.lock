@@ -1377,6 +1377,7 @@ name = "fp-sql"
 version = "0.1.0"
 dependencies = [
  "fp-core",
+ "sqlparser",
 ]
 
 [[package]]
@@ -3277,6 +3278,15 @@ checksum = "17129e116933cf371d018bb80ae557e889637989d8638274fb25622827b03881"
 dependencies = [
  "libc",
  "windows-sys 0.60.2",
+]
+
+[[package]]
+name = "sqlparser"
+version = "0.41.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cc2c25a6c66789625ef164b4c7d2e548d627902280c13710d33da8222169964"
+dependencies = [
+ "log",
 ]
 
 [[package]]

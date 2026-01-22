@@ -21,12 +21,23 @@ pub const PRQL: &str = "prql";
 #[derive(Debug, Default, Clone)]
 pub struct PrqlFrontend;
 
+#[derive(Debug, Clone)]
+pub struct PrqlCompileResult {
+    pub target: Option<SqlDialect>,
+    pub statements: Vec<String>,
+}
+
 impl PrqlFrontend {
     pub fn new() -> Self {
         Self
     }
 
-    fn build_document(&self, source: &str, path: Option<&Path>) -> QueryDocument {
+    fn build_document(
+        &self,
+        source: &str,
+        path: Option<&Path>,
+        target_override: Option<SqlDialect>,
+    ) -> QueryDocument {
         let mut document = QueryDocument::prql(source.to_string());
 
         if let Some(path) = path {
@@ -36,8 +47,9 @@ impl PrqlFrontend {
         }
 
         if let QueryKind::Prql(prql) = &mut document.kind {
-            if let Some(target) = detect_target_dialect(source) {
-                prql.target = Some(target.clone());
+            let target = target_override.or_else(|| detect_target_dialect(source));
+            if let Some(target) = target {
+                prql.target = Some(target);
             }
 
             if let Some(compiled_sql) = naive_prql_to_sql(source) {
@@ -53,6 +65,27 @@ impl PrqlFrontend {
 
         document
     }
+
+    pub fn compile(
+        &self,
+        source: &str,
+        target_override: Option<SqlDialect>,
+    ) -> CoreResult<PrqlCompileResult> {
+        let document = self.build_document(source, None, target_override);
+        let mut target = None;
+        let mut statements = Vec::new();
+
+        if let QueryKind::Prql(prql) = &document.kind {
+            target = prql.target.clone();
+            statements = prql
+                .compiled
+                .iter()
+                .map(|stmt| stmt.text.clone())
+                .collect();
+        }
+
+        Ok(PrqlCompileResult { target, statements })
+    }
 }
 
 impl LanguageFrontend for PrqlFrontend {
@@ -66,7 +99,7 @@ impl LanguageFrontend for PrqlFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let diagnostics = Arc::new(DiagnosticManager::new());
-        let document = self.build_document(source, path);
+        let document = self.build_document(source, path, None);
 
         if document.is_empty() {
             diagnostics.add_diagnostic(
@@ -115,7 +148,9 @@ fn detect_target_dialect(source: &str) -> Option<SqlDialect> {
 
 fn map_target(value: &str) -> Option<SqlDialect> {
     let lowered = value.to_ascii_lowercase();
-    if lowered.contains("postgres") {
+    if lowered.contains("clickhouse") || lowered.contains("ch") {
+        Some(SqlDialect::ClickHouse)
+    } else if lowered.contains("postgres") {
         Some(SqlDialect::Postgres)
     } else if lowered.contains("mysql") {
         Some(SqlDialect::Mysql)
