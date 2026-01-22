@@ -1969,7 +1969,7 @@ fn node_children_types<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a Syn
     })
 }
 
-fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
+fn quote_type_from_ident(name: &str, args: &[Ty], span: fp_core::span::Span) -> Option<Ty> {
     match name {
         "expr" => {
             if args.len() > 1 {
@@ -1977,6 +1977,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
             }
             let inner = args.get(0).cloned().map(Box::new);
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Expr,
                 item: None,
                 inner,
@@ -1987,6 +1988,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Stmt,
                 item: None,
                 inner: None,
@@ -1997,6 +1999,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: None,
                 inner: None,
@@ -2006,13 +2009,14 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
             if !args.is_empty() {
                 return None;
             }
-            Some(Ty::Type(TypeType))
+            Some(Ty::Type(TypeType::new(span)))
         }
         "fn" => {
             if !args.is_empty() {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Function),
                 inner: None,
@@ -2023,6 +2027,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Struct),
                 inner: None,
@@ -2033,6 +2038,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Enum),
                 inner: None,
@@ -2043,6 +2049,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Trait),
                 inner: None,
@@ -2053,6 +2060,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Impl),
                 inner: None,
@@ -2063,6 +2071,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Const),
                 inner: None,
@@ -2073,6 +2082,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Static),
                 inner: None,
@@ -2083,6 +2093,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Module),
                 inner: None,
@@ -2093,6 +2104,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Use),
                 inner: None,
@@ -2103,6 +2115,7 @@ fn quote_type_from_ident(name: &str, args: &[Ty]) -> Option<Ty> {
                 return None;
             }
             Some(Ty::Quote(TypeQuote {
+                span,
                 kind: QuoteFragmentKind::Item,
                 item: Some(QuoteItemKind::Macro),
                 inner: None,
@@ -2120,12 +2133,13 @@ fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
                 let ident = locator.as_ident()?.as_str().to_string();
                 if ident == "type" {
                     return Some(Ty::Quote(TypeQuote {
+                        span: expr.span(),
                         kind: QuoteFragmentKind::Type,
                         item: None,
                         inner: None,
                     }));
                 }
-                quote_type_from_ident(&ident, &[])
+                quote_type_from_ident(&ident, &[], expr.span())
             }
             _ => None,
         },
@@ -2176,7 +2190,7 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     if segments.len() == 1 {
-        if let Some(quote_ty) = quote_type_from_ident(segments[0].as_str(), &args) {
+        if let Some(quote_ty) = quote_type_from_ident(segments[0].as_str(), &args, node.span) {
             return Ok(quote_ty);
         }
     }

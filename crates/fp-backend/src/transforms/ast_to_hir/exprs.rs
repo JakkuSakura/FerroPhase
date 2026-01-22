@@ -13,9 +13,27 @@ struct IterLoopSpec {
 }
 
 impl HirGenerator {
+    fn empty_block_expr_kind(&mut self) -> hir::ExprKind {
+        hir::ExprKind::Block(hir::Block {
+            hir_id: self.next_id(),
+            stmts: Vec::new(),
+            expr: None,
+        })
+    }
+
+    fn error_expr_kind(&mut self, message: impl Into<String>, span: Span) -> hir::ExprKind {
+        self.add_error(
+            Diagnostic::error(message.into())
+                .with_source_context(DIAGNOSTIC_CONTEXT)
+                .with_span(span),
+        );
+        self.empty_block_expr_kind()
+    }
     /// Transform an AST expression to HIR expression
     pub(super) fn transform_expr_to_hir(&mut self, ast_expr: &ast::Expr) -> Result<hir::Expr> {
         use ast::ExprKind;
+
+        let expr_span = ast_expr.span();
 
         let span = self.create_span(1); // Create a span for this expression
         let hir_id = self.next_id();
@@ -43,23 +61,21 @@ impl HirGenerator {
                 self.transform_array_repeat_to_hir(array_repeat)?
             }
             ExprKind::Range(_range) => {
-                if self.error_tolerance {
-                    self.add_warning(Diagnostic::warning(
-                        "range expressions are only supported in for loops and slicing; treating as empty array".to_string(),
-                    ));
-                    hir::ExprKind::Array(Vec::new())
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "range expressions are only supported in for loops and slicing",
-                    ));
-                }
+                self.add_warning(
+                    Diagnostic::warning(
+                        "range expressions are only supported in for loops and slicing; treating as empty array"
+                            .to_string(),
+                    )
+                    .with_span(expr_span),
+                );
+                hir::ExprKind::Array(Vec::new())
             }
             ExprKind::Index(index_expr) => {
                 if let ast::ExprKind::Range(range) = index_expr.index.kind() {
                     if range.step.is_some() {
                         self.add_warning(Diagnostic::warning(
                             "range steps are not supported in slicing; ignoring step".to_string(),
-                        ));
+                        ).with_span(expr_span));
                     }
                     let base_expr = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
                     let start_expr = match range.start.as_ref() {
@@ -127,90 +143,90 @@ impl HirGenerator {
                 }
             }
             ExprKind::Quote(_quote) => {
-                return Err(crate::error::optimization_error(
-                    "quote expressions should be removed by const-eval",
-                ));
+                self.add_error(
+                    Diagnostic::error("quote expressions should be removed by const-eval".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
             ExprKind::Splice(_splice) => {
-                if self.error_tolerance {
-                    let block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    hir::ExprKind::Block(block)
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "splice expressions should be removed by const-eval",
-                    ));
-                }
+                self.add_error(
+                    Diagnostic::error("splice expressions should be removed by const-eval".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
-                if self.error_tolerance {
-                    return Ok(hir::Expr {
-                        hir_id,
-                        kind: inner_expr.kind,
-                        span,
-                    });
-                }
-                return Err(crate::error::optimization_error(
-                    "`?` operator lowering not implemented",
-                ));
+                self.add_error(
+                    Diagnostic::error("`?` operator lowering not implemented".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                );
+                return Ok(hir::Expr {
+                    hir_id,
+                    kind: inner_expr.kind,
+                    span,
+                });
             }
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
-                if self.error_tolerance {
-                    return Ok(hir::Expr {
-                        hir_id,
-                        kind: inner_expr.kind,
-                        span,
-                    });
-                }
-                return Err(crate::error::optimization_error(
-                    "`await` lowering not implemented",
-                ));
+                self.add_error(
+                    Diagnostic::error("`await` lowering not implemented".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                );
+                return Ok(hir::Expr {
+                    hir_id,
+                    kind: inner_expr.kind,
+                    span,
+                });
             }
             ExprKind::Async(async_expr) => {
                 let inner_expr = self.transform_expr_to_hir(async_expr.expr.as_ref())?;
-                if self.error_tolerance {
-                    return Ok(hir::Expr {
-                        hir_id,
-                        kind: inner_expr.kind,
-                        span,
-                    });
-                }
-                return Err(crate::error::optimization_error(
-                    "`async` lowering not implemented",
-                ));
+                self.add_error(
+                    Diagnostic::error("`async` lowering not implemented".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                );
+                return Ok(hir::Expr {
+                    hir_id,
+                    kind: inner_expr.kind,
+                    span,
+                });
             }
             ExprKind::For(for_expr) => {
                 let kind = self.transform_for_to_hir(for_expr)?;
                 return Ok(hir::Expr { hir_id, kind, span });
             }
             ExprKind::Closure(_closure) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "closure lowering is not supported; substituting unit".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    let block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    return Ok(hir::Expr {
-                        hir_id,
-                        kind: hir::ExprKind::Block(block),
-                        span,
-                    });
-                } else {
-                    return Err(crate::error::optimization_error(
-                        "closure lowering not implemented",
-                    ));
-                }
+                self.add_error(
+                    Diagnostic::error("closure lowering not implemented".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                return Ok(hir::Expr {
+                    hir_id,
+                    kind: hir::ExprKind::Block(block),
+                    span,
+                });
             }
             ExprKind::Cast(cast_expr) => {
                 let operand = self.transform_expr_to_hir(cast_expr.expr.as_ref())?;
@@ -225,33 +241,37 @@ impl HirGenerator {
                     let boxed: ast::BValue = Box::new(value.clone());
                     self.transform_value_to_hir(&boxed)?
                 } else {
-                    if self.error_tolerance {
-                        self.add_warning(
-                            Diagnostic::warning(
-                                "unsupported dynamic expression payload for `Any` node; substituting unit"
-                                    .to_string(),
-                            )
-                            .with_source_context(DIAGNOSTIC_CONTEXT),
-                        );
-                        let block = hir::Block {
-                            hir_id: self.next_id(),
-                            stmts: Vec::new(),
-                            expr: None,
-                        };
-                        hir::ExprKind::Block(block)
-                    } else {
-                        return Err(crate::error::optimization_error(
-                            "unsupported dynamic expression payload for `Any` node",
-                        ));
-                    }
+                    self.add_error(
+                        Diagnostic::error(
+                            "unsupported dynamic expression payload for `Any` node".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(expr_span),
+                    );
+                    let block = hir::Block {
+                        hir_id: self.next_id(),
+                        stmts: Vec::new(),
+                        expr: None,
+                    };
+                    hir::ExprKind::Block(block)
                 }
             }
             ExprKind::Macro(mac) => {
                 // Hard error: macros must be lowered during normalization.
-                return Err(crate::error::optimization_error(format!(
-                    "macro `{}` was not lowered during normalization",
-                    mac.invocation.path
-                )));
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "macro `{}` was not lowered during normalization",
+                        mac.invocation.path
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(expr_span),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
             ExprKind::FormatString(format_str) => {
                 self.transform_format_string_to_hir(format_str)?
@@ -276,9 +296,19 @@ impl HirGenerator {
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
             ExprKind::ConstBlock(_const_block) => {
-                return Err(crate::error::optimization_error(
-                    "const block must be evaluated before AST→HIR lowering",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "const block must be evaluated before AST→HIR lowering".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(self.normalize_span(expr_span)),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
             ExprKind::IntrinsicContainer(container) => {
                 self.transform_intrinsic_container_to_hir(container)?
@@ -292,10 +322,20 @@ impl HirGenerator {
                 hir::ExprKind::Unary(hir::UnOp::Deref, Box::new(inner))
             }
             _ => {
-                return Err(crate::error::optimization_error(format!(
-                    "Unimplemented AST expression type for HIR transformation: {:?}",
-                    ast_expr
-                )));
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "Unimplemented AST expression type for HIR transformation: {:?}",
+                        ast_expr
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(expr_span),
+                );
+                let block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                hir::ExprKind::Block(block)
             }
         };
 
@@ -437,20 +477,28 @@ impl HirGenerator {
             }
             Value::Expr(expr) => self.transform_expr_to_hir(expr).map(|e| e.kind),
             Value::Function(func) => {
-                let name = func.sig.name.clone().ok_or_else(|| {
-                    crate::error::optimization_error(
-                        "function value must have a name for HIR lowering",
-                    )
-                })?;
+                let name = func.sig.name.clone().unwrap_or_else(|| {
+                    self.add_error(
+                        Diagnostic::error(
+                            "function value must have a name for HIR lowering".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(value.span()),
+                    );
+                    ast::Ident::new("__fp_error".to_string())
+                });
                 let locator = Locator::Ident(name);
                 let path =
                     self.locator_to_hir_path_with_scope(&locator, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
             }
-            _ => Err(crate::error::optimization_error(format!(
-                "Unimplemented AST value type for HIR transformation: {:?}",
-                std::mem::discriminant(value.as_ref())
-            ))),
+            _ => Ok(self.error_expr_kind(
+                format!(
+                    "Unimplemented AST value type for HIR transformation: {:?}",
+                    std::mem::discriminant(value.as_ref())
+                ),
+                value.span(),
+            )),
         }
     }
 
@@ -519,7 +567,7 @@ impl HirGenerator {
     /// Transform unary operation to HIR
     pub(super) fn transform_unop_to_hir(&mut self, unop: &ast::ExprUnOp) -> Result<hir::ExprKind> {
         let operand = Box::new(self.transform_expr_to_hir(&unop.val)?);
-        let op = self.convert_unop_kind(&unop.op)?;
+        let op = self.convert_unop_kind(&unop.op, unop.span())?;
 
         Ok(hir::ExprKind::Unary(op, operand))
     }
@@ -560,10 +608,13 @@ impl HirGenerator {
                 Ok(hir::ExprKind::Call(Box::new(func_expr), args))
             }
 
-            _ => Err(crate::error::optimization_error(format!(
-                "Unimplemented invoke target type for HIR transformation: {:?}",
-                invoke.target
-            ))),
+            _ => Ok(self.error_expr_kind(
+                format!(
+                    "Unimplemented invoke target type for HIR transformation: {:?}",
+                    invoke.target
+                ),
+                invoke.span(),
+            )),
         }
     }
 
@@ -585,6 +636,7 @@ impl HirGenerator {
     ) -> Result<hir::ExprKind> {
         let path =
             self.ast_expr_to_hir_path(struct_expr.name.as_ref(), PathResolutionScope::Type)?;
+        let struct_span = struct_expr.span();
 
         let mut explicit_names = std::collections::HashSet::new();
         let fields = struct_expr
@@ -626,27 +678,37 @@ impl HirGenerator {
         // once and then fills missing fields from it, so later MIR lowering
         // only sees a plain struct literal.
         let struct_fields = match path.res {
-            Some(hir::Res::Def(def_id)) => self
-                .struct_field_defs
-                .get(&def_id)
-                .cloned()
-                .ok_or_else(|| {
-                    crate::error::optimization_error(
-                        "struct update requires a known struct field layout",
-                    )
-                })?,
+            Some(hir::Res::Def(def_id)) => {
+                if let Some(fields) = self.struct_field_defs.get(&def_id).cloned() {
+                    fields
+                } else {
+                    self.add_error(
+                        Diagnostic::error(
+                            "struct update requires a known struct field layout".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(struct_span),
+                    );
+                    return Ok(hir::ExprKind::Struct(path, fields));
+                }
+            }
             _ => {
                 let segments = path
                     .segments
                     .iter()
                     .map(|seg| seg.name.as_str().to_string())
                     .collect::<Vec<_>>();
-                let alias = self.lookup_type_alias(&segments).cloned().ok_or_else(|| {
-                    crate::error::optimization_error(
-                        "struct update requires a resolved struct definition",
-                    )
-                })?;
-                self.struct_fields_from_type(&alias, Span::new(self.current_file, 0, 0))?
+                let Some(alias) = self.lookup_type_alias(&segments).cloned() else {
+                    self.add_error(
+                        Diagnostic::error(
+                            "struct update requires a resolved struct definition".to_string(),
+                        )
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(struct_span),
+                    );
+                    return Ok(hir::ExprKind::Struct(path, fields));
+                };
+                self.struct_fields_from_type(&alias, struct_span)?
             }
         };
 
@@ -788,9 +850,18 @@ impl HirGenerator {
         let scrutinee = match scrutinee {
             Some(expr) => expr,
             None => {
-                return Err(crate::error::optimization_error(
-                    "match expressions without scrutinee are not supported",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "match expressions without scrutinee are not supported".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(match_expr.span()),
+                );
+                hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: self.empty_block_expr_kind(),
+                    span: self.create_span(1),
+                }
             }
         };
 
@@ -878,18 +949,27 @@ impl HirGenerator {
             if let Some(iter_spec) = self.extract_iter_loop_spec(for_expr)? {
                 return self.lower_iter_for_loop(for_expr, iter_spec);
             }
-            return Err(crate::error::optimization_error(
-                "`for` loop lowering only supports range iterators, iter(), and enumerate()",
-            ));
+            self.add_error(
+                Diagnostic::error(
+                    "`for` loop lowering only supports range iterators, iter(), and enumerate()"
+                        .to_string(),
+                )
+                .with_source_context(DIAGNOSTIC_CONTEXT)
+                .with_span(for_expr.span()),
+            );
+            return Ok(self.empty_block_expr_kind());
         }
 
         let (mut pat, _ty, _) = self.transform_pattern_with_metadata(&for_expr.pat)?;
         let (loop_name, loop_res) = match &mut pat.kind {
             hir::PatKind::Binding { name, .. } => (name.clone(), Some(hir::Res::Local(pat.hir_id))),
             _ => {
-                return Err(crate::error::optimization_error(
-                    "`for` loop pattern must be a simple binding",
-                ));
+                self.add_error(
+                    Diagnostic::error("`for` loop pattern must be a simple binding".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(for_expr.span()),
+                );
+                return Ok(self.empty_block_expr_kind());
             }
         };
         if let hir::PatKind::Binding { mutable, .. } = &mut pat.kind {
@@ -917,9 +997,14 @@ impl HirGenerator {
                 (start, end, step, inclusive)
             }
             _ => {
-                return Err(crate::error::optimization_error(
-                    "`for` loop lowering currently only supports range iterators",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "`for` loop lowering currently only supports range iterators".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+                );
+                return Ok(self.empty_block_expr_kind());
             }
         };
 
@@ -953,9 +1038,21 @@ impl HirGenerator {
             span: Span::new(self.current_file, 0, 0),
         };
 
-        let end_expr = end_expr.ok_or_else(|| {
-            crate::error::optimization_error("`for` loop range missing end expression")
-        })?;
+        let end_expr = match end_expr {
+            Some(expr) => expr,
+            None => {
+                self.add_error(
+                    Diagnostic::error("`for` loop range missing end expression".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(for_expr.span()),
+                );
+                hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Literal(hir::Lit::Integer(0)),
+                    span: Span::new(self.current_file, 0, 0),
+                }
+            }
+        };
 
         let cmp_op = if inclusive {
             hir::BinOp::Le
@@ -1079,39 +1176,62 @@ impl HirGenerator {
 
         let base_segments = segments[..segments.len() - 2].to_vec();
         if base_segments.is_empty() {
-            return Err(crate::error::optimization_error(
-                "enumerate() base path is empty",
-            ));
+            self.add_error(
+                Diagnostic::error("enumerate() base path is empty".to_string())
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+            );
+            return Ok(None);
         }
 
         let tuple = match for_expr.pat.kind() {
             ast::PatternKind::Tuple(tuple) => tuple,
             _ => {
-                return Err(crate::error::optimization_error(
-                    "enumerate() loop pattern must be a tuple of bindings",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "enumerate() loop pattern must be a tuple of bindings".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+                );
+                return Ok(None);
             }
         };
         if tuple.patterns.len() != 2 {
-            return Err(crate::error::optimization_error(
-                "enumerate() loop pattern must bind (index, value)",
-            ));
+            self.add_error(
+                Diagnostic::error(
+                    "enumerate() loop pattern must bind (index, value)".to_string(),
+                )
+                .with_source_context(DIAGNOSTIC_CONTEXT)
+                .with_span(for_expr.span()),
+            );
+            return Ok(None);
         }
 
         let index_ident = match tuple.patterns.get(0).and_then(|pat| pat.as_ident()) {
             Some(ident) => ident.clone(),
             None => {
-                return Err(crate::error::optimization_error(
-                    "enumerate() loop index must be a simple binding",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "enumerate() loop index must be a simple binding".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+                );
+                return Ok(None);
             }
         };
         let value_ident = match tuple.patterns.get(1).and_then(|pat| pat.as_ident()) {
             Some(ident) => ident.clone(),
             None => {
-                return Err(crate::error::optimization_error(
-                    "enumerate() loop value must be a simple binding",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "enumerate() loop value must be a simple binding".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+                );
+                return Ok(None);
             }
         };
 
@@ -1162,17 +1282,25 @@ impl HirGenerator {
 
         let base_segments = segments[..segments.len() - 1].to_vec();
         if base_segments.is_empty() {
-            return Err(crate::error::optimization_error(
-                "iter() base path is empty",
-            ));
+            self.add_error(
+                Diagnostic::error("iter() base path is empty".to_string())
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+            );
+            return Ok(None);
         }
 
         let value_ident = match for_expr.pat.as_ident() {
             Some(ident) => ident.clone(),
             None => {
-                return Err(crate::error::optimization_error(
-                    "iter() loop pattern must be a simple binding",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "iter() loop pattern must be a simple binding".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
+                );
+                return Ok(None);
             }
         };
 
@@ -1645,10 +1773,18 @@ impl HirGenerator {
                 self.transform_item_to_hir_stmt(item)?
             }
             _ => {
-                return Err(crate::error::optimization_error(format!(
-                    "Unimplemented block statement type for HIR transformation: {:?}",
-                    stmt
-                )));
+                let expr_kind = self.error_expr_kind(
+                    format!(
+                        "Unimplemented block statement type for HIR transformation: {:?}",
+                        stmt
+                    ),
+                    stmt.span(),
+                );
+                hir::StmtKind::Expr(hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: expr_kind,
+                    span: self.create_span(1),
+                })
             }
         };
 
@@ -1683,15 +1819,22 @@ impl HirGenerator {
     }
 
     /// Convert AST unary operator to HIR
-    pub(super) fn convert_unop_kind(&self, op: &UnOpKind) -> Result<hir::UnOp> {
+    pub(super) fn convert_unop_kind(&mut self, op: &UnOpKind, span: Span) -> Result<hir::UnOp> {
         match op {
             UnOpKind::Neg => Ok(hir::UnOp::Neg),
             UnOpKind::Not => Ok(hir::UnOp::Not),
             UnOpKind::Deref => Ok(hir::UnOp::Deref),
-            UnOpKind::Any(kind) => Err(crate::error::optimization_error(format!(
-                "Unsupported unary operator variant encountered during AST→HIR lowering: {:?}",
-                kind
-            ))),
+            UnOpKind::Any(kind) => {
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "Unsupported unary operator variant encountered during AST→HIR lowering: {:?}",
+                        kind
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(span),
+                );
+                Ok(hir::UnOp::Not)
+            }
         }
     }
 
@@ -1789,9 +1932,25 @@ impl HirGenerator {
         };
 
         if values.len() != param_names.len() {
-            return Err(crate::error::optimization_error(
-                "call arguments do not match function parameter count",
-            ));
+            let span = args
+                .first()
+                .map(|arg| arg.span())
+                .unwrap_or_else(Span::null);
+            self.add_error(
+                Diagnostic::error(
+                    "call arguments do not match function parameter count".to_string(),
+                )
+                .with_source_context(DIAGNOSTIC_CONTEXT)
+                .with_span(span),
+            );
+            return Ok(values
+                .into_iter()
+                .enumerate()
+                .map(|(index, value)| hir::CallArg {
+                    name: hir::Symbol::new(format!("arg{}", index)),
+                    value,
+                })
+                .collect());
         }
 
         Ok(values
@@ -1911,9 +2070,16 @@ impl HirGenerator {
                     ast::TypeBinaryOpKind::Add => self.merge_struct_fields(lhs, rhs),
                     ast::TypeBinaryOpKind::Intersect => self.intersect_struct_fields(lhs, rhs),
                     ast::TypeBinaryOpKind::Subtract => self.subtract_struct_fields(lhs, rhs),
-                    ast::TypeBinaryOpKind::Union => Err(crate::error::optimization_error(
-                        "struct update does not support union type operands",
-                    )),
+                    ast::TypeBinaryOpKind::Union => {
+                        self.add_error(
+                            Diagnostic::error(
+                                "struct update does not support union type operands".to_string(),
+                            )
+                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                            .with_span(span),
+                        );
+                        Ok(Vec::new())
+                    }
                 }
             }
             ast::Ty::Expr(expr) => {
@@ -1928,13 +2094,25 @@ impl HirGenerator {
                         return self.struct_fields_from_type(&alias, span);
                     }
                 }
-                Err(crate::error::optimization_error(
-                    "struct update requires a resolved struct definition",
-                ))
+                self.add_error(
+                    Diagnostic::error(
+                        "struct update requires a resolved struct definition".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(span),
+                );
+                Ok(Vec::new())
             }
-            _ => Err(crate::error::optimization_error(
-                "struct update requires a resolved struct definition",
-            )),
+            _ => {
+                self.add_error(
+                    Diagnostic::error(
+                        "struct update requires a resolved struct definition".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(span),
+                );
+                Ok(Vec::new())
+            }
         }
     }
 
@@ -1952,10 +2130,15 @@ impl HirGenerator {
         for field in rhs {
             if let Some(existing) = seen.get(&field.name.name) {
                 if existing != &field.value {
-                    return Err(crate::error::optimization_error(format!(
-                        "conflicting field types for `{}` in structural merge",
-                        field.name.name
-                    )));
+                    self.add_error(
+                        Diagnostic::error(format!(
+                            "conflicting field types for `{}` in structural merge",
+                            field.name.name
+                        ))
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(Span::union([field.value.span(), existing.span()])),
+                    );
+                    continue;
                 }
                 continue;
             }
@@ -1978,10 +2161,15 @@ impl HirGenerator {
         for field in lhs {
             if let Some(rhs_ty) = rhs_map.get(&field.name.name) {
                 if rhs_ty != &field.value {
-                    return Err(crate::error::optimization_error(format!(
-                        "conflicting field types for `{}` in structural intersect",
-                        field.name.name
-                    )));
+                    self.add_error(
+                        Diagnostic::error(format!(
+                            "conflicting field types for `{}` in structural intersect",
+                            field.name.name
+                        ))
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(Span::union([field.value.span(), rhs_ty.span()])),
+                    );
+                    continue;
                 }
                 result.push(field);
             }

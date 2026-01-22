@@ -141,10 +141,18 @@ impl HirGenerator {
                         base
                     }
                     other => {
-                        return Err(crate::error::optimization_error(format!(
-                            "expected path-like expression for type path, found {:?}",
-                            other
-                        )));
+                        self.add_error(
+                            Diagnostic::error(format!(
+                                "expected path-like expression for type path, found {:?}",
+                                other
+                            ))
+                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                            .with_span(expr.span()),
+                        );
+                        hir::Path {
+                            segments: vec![self.make_path_segment("__fp_error", None)],
+                            res: None,
+                        }
                     }
                 };
 
@@ -170,10 +178,20 @@ impl HirGenerator {
 
                 Ok(base)
             }
-            other => Err(crate::error::optimization_error(format!(
-                "expected path-like expression for type path, found {:?}",
-                other
-            ))),
+            other => {
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "expected path-like expression for type path, found {:?}",
+                        other
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(expr.span()),
+                );
+                Ok(hir::Path {
+                    segments: vec![self.make_path_segment("__fp_error", None)],
+                    res: None,
+                })
+            }
         }
     }
 

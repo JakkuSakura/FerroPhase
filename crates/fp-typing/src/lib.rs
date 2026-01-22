@@ -1982,7 +1982,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             let name = ident.as_str();
             if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
                 let var = self.fresh_type_var();
-                self.bind(var, TypeTerm::Custom(Ty::Type(TypeType)));
+                self.bind(var, TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))));
                 return Ok(var);
             }
         }
@@ -1991,7 +1991,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let name = last.as_str();
                 if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
                     let var = self.fresh_type_var();
-                    self.bind(var, TypeTerm::Custom(Ty::Type(TypeType)));
+                    self.bind(var, TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))));
                     return Ok(var);
                 }
             }

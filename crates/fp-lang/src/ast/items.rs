@@ -430,6 +430,7 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
             _ => None,
         });
         sig.ret_ty = Some(Ty::Quote(TypeQuote {
+            span: node.span,
             kind,
             item: None,
             inner: inner.map(Box::new),

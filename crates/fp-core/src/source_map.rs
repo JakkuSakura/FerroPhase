@@ -118,6 +118,13 @@ impl SourceMap {
             .ok()
             .and_then(|files| files.get(&id).cloned())
     }
+
+    pub fn file_id(&self, path: &Path) -> Option<FileId> {
+        self.paths
+            .read()
+            .ok()
+            .and_then(|paths| paths.get(path).copied())
+    }
 }
 
 fn compute_line_starts(source: &str) -> Vec<usize> {

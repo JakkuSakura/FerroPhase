@@ -13,6 +13,8 @@ common_struct! {
     /// - `item` refines item fragments (fn/struct/enum/...) when present.
     /// - `inner` may carry the inner expression/type when applicable (e.g., expr quoting).
     pub struct TypeQuote {
+        #[serde(default)]
+        pub span: Span,
         pub kind: QuoteFragmentKind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub item: Option<QuoteItemKind>,
@@ -167,6 +169,7 @@ impl Ty {
             Ty::Tuple(ty) => ty.span(),
             Ty::Vec(ty) => ty.span(),
             Ty::Array(ty) => ty.span(),
+            Ty::Type(ty) => ty.span(),
             Ty::Reference(ty) => ty.span(),
             Ty::Slice(ty) => ty.span(),
             Ty::Expr(expr) => expr.span(),
@@ -379,7 +382,21 @@ plain_type! { TypeTokenStream }
 plain_type! { TypeUnit }
 plain_type! { TypeUnknown }
 plain_type! { TypeNothing }
-plain_type! { TypeType }
+common_struct! {
+    pub struct TypeType {
+        #[serde(default)]
+        pub span: Span,
+    }
+}
+impl TypeType {
+    pub fn new(span: Span) -> Self {
+        Self { span }
+    }
+
+    pub fn span(&self) -> Span {
+        self.span
+    }
+}
 
 common_struct! {
     pub struct TypeReference {
@@ -509,7 +526,7 @@ impl TypeFunction {
 
 impl TypeQuote {
     pub fn span(&self) -> Span {
-        Span::union(self.inner.as_ref().map(|ty| ty.span()))
+        self.span.or(Span::union(self.inner.as_ref().map(|ty| ty.span())))
     }
 }
 

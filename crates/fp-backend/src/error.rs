@@ -15,8 +15,8 @@ pub fn optimization_error_with_code(message: impl Into<String>, code: impl Into<
 
 /// Create an optimization error with a specific span
 pub fn optimization_error_with_span(message: impl Into<String>, span: Span) -> Error {
-    let msg = format!("{} [span {}:{}]", message.into(), span.lo, span.hi);
-    report_error(msg)
+    let diagnostic = fp_core::diagnostics::Diagnostic::error(message.into()).with_span(span);
+    fp_core::error::Error::diagnostic(diagnostic)
 }
 
 /// Create a generic error (when we don't have specific error information)

@@ -1,5 +1,6 @@
 use super::*;
 use fp_core::ast::ExprKwArg;
+use fp_core::span::Span;
 use proc_macro2::TokenStream as ProcMacroTokenStream;
 use std::str::FromStr;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -480,7 +481,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
             Value::String(_) => Ty::Primitive(TypePrimitive::String),
             Value::Unit(_) => Ty::Unit(TypeUnit),
-            Value::Type(_) => Ty::Type(TypeType),
+            Value::Type(_) => Ty::Type(TypeType::new(Span::null())),
             Value::Struct(value_struct) => Ty::Struct(value_struct.ty.clone()),
             Value::Tuple(tuple) => Ty::Tuple(TypeTuple {
                 types: tuple

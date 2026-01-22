@@ -4,6 +4,7 @@ use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
+use fp_core::span::Span;
 
 /// Infer the fragment kind for an unkinded quote based on its block shape.
 /// - Single trailing expression and no statements => Expr
@@ -44,56 +45,67 @@ fn quote_item_type_from_items(items: &[&Item]) -> Option<Ty> {
 fn quote_item_type_from_item(item: &Item) -> Option<Ty> {
     match item.kind() {
         ItemKind::DefFunction(_) | ItemKind::DeclFunction(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Function),
             inner: None,
         })),
         ItemKind::DefStruct(_) | ItemKind::DefStructural(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Struct),
             inner: None,
         })),
         ItemKind::DefEnum(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Enum),
             inner: None,
         })),
         ItemKind::DefTrait(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Trait),
             inner: None,
         })),
         ItemKind::Impl(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Impl),
             inner: None,
         })),
         ItemKind::DefConst(_) | ItemKind::DeclConst(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Const),
             inner: None,
         })),
         ItemKind::DefStatic(_) | ItemKind::DeclStatic(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Static),
             inner: None,
         })),
         ItemKind::Module(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Module),
             inner: None,
         })),
         ItemKind::Import(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Use),
             inner: None,
         })),
         ItemKind::Macro(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Macro),
             inner: None,
         })),
         ItemKind::DefType(_) | ItemKind::DeclType(_) => Some(Ty::Quote(TypeQuote {
+            span: Span::null(),
             kind: QuoteFragmentKind::Item,
             item: Some(QuoteItemKind::Type),
             inner: None,
@@ -104,6 +116,7 @@ fn quote_item_type_from_item(item: &Item) -> Option<Ty> {
 
 fn quote_ty_from_fragment(kind: QuoteFragmentKind, inner: Option<Ty>) -> Ty {
     Ty::Quote(TypeQuote {
+        span: Span::null(),
         kind,
         item: None,
         inner: inner.map(Box::new),
@@ -224,6 +237,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             let elem_ty = quote_item_type_from_items(&items).unwrap_or_else(|| {
                                 if items.is_empty() {
                                     Ty::Quote(TypeQuote {
+                                        span: Span::null(),
                                         kind: QuoteFragmentKind::Item,
                                         item: None,
                                         inner: None,
@@ -233,6 +247,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "quote<item> contains multiple item kinds; using item type",
                                     );
                                     Ty::Quote(TypeQuote {
+                                        span: Span::null(),
                                         kind: QuoteFragmentKind::Item,
                                         item: None,
                                         inner: None,
@@ -1078,7 +1093,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         arg_vars.len()
                     ));
                 }
-                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+                self.bind(
+                    result_var,
+                    TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                );
             }
             IntrinsicCallKind::ReflectFields => {
                 if arg_vars.len() != 1 {
@@ -1121,7 +1139,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         arg_vars.len()
                     ));
                 }
-                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+                self.bind(
+                    result_var,
+                    TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                );
             }
             IntrinsicCallKind::GenerateMethod => {
                 if arg_vars.len() != 2 {
@@ -1208,7 +1229,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     let _ = self.infer_expr(&mut invoke.args[0])?;
                     let type_var = self.fresh_type_var();
-                    self.bind(type_var, TypeTerm::Custom(Ty::Type(TypeType)));
+                    self.bind(
+                        type_var,
+                        TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                    );
                     return Ok(type_var);
                 }
             }
@@ -1443,7 +1467,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 );
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
-                                self.bind(result_var, TypeTerm::Custom(Ty::Type(TypeType)));
+                                self.bind(
+                                    result_var,
+                                    TypeTerm::Custom(Ty::Type(TypeType::new(Span::null()))),
+                                );
                                 return Ok(result_var);
                             }
                             "fields" => {
@@ -1906,7 +1933,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.unify(var, fn_var)?;
             }
             Value::Type(_) => {
-                let type_var = self.type_from_ast_ty(&Ty::Type(TypeType))?;
+                let type_var = self.type_from_ast_ty(&Ty::Type(TypeType::new(Span::null())))?;
                 self.unify(var, type_var)?;
             }
             Value::QuoteToken(token) => {
@@ -1924,6 +1951,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                         "quote<item> contains multiple item kinds; using item type",
                                     );
                                     Ty::Quote(TypeQuote {
+                                        span: Span::null(),
                                         kind: QuoteFragmentKind::Item,
                                         item: None,
                                         inner: None,
@@ -1986,6 +2014,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             PatternKind::Quote(quote) => {
                 let quote_ty = match quote.item {
                     Some(item) => Ty::Quote(TypeQuote {
+                        span: Span::null(),
                         kind: QuoteFragmentKind::Item,
                         item: Some(item),
                         inner: None,
@@ -2683,7 +2712,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         });
         let fields = vec![
             StructuralField::new(Ident::new("name".to_string()), string_ref),
-            StructuralField::new(Ident::new("ty".to_string()), Ty::Type(TypeType)),
+            StructuralField::new(
+                Ident::new("ty".to_string()),
+                Ty::Type(TypeType::new(Span::null())),
+            ),
         ];
         let struct_ty = TypeStructural { fields };
         let elem_var = self.fresh_type_var();

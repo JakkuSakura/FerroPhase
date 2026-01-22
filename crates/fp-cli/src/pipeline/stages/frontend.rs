@@ -1,6 +1,5 @@
 use super::super::*;
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
-use fp_core::config;
 use tracing::warn;
 
 pub(crate) struct FrontendContext {
@@ -30,10 +29,6 @@ impl PipelineStage for FrontendStage {
             None => HirGenerator::new(),
         };
 
-        if context.options.error_tolerance.enabled {
-            generator.enable_error_tolerance(context.options.error_tolerance.max_errors);
-        }
-
         if matches!(
             context.ast.kind(),
             NodeKind::Item(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_)
@@ -41,7 +36,11 @@ impl PipelineStage for FrontendStage {
             let message = "Top-level items are not supported; provide a file or expression";
             diagnostics
                 .push(Diagnostic::error(message.to_string()).with_source_context(STAGE_AST_TO_HIR));
-            return Err(PipelineError::new(STAGE_AST_TO_HIR, message));
+            return Ok(hir::Program {
+                items: Vec::new(),
+                def_map: std::collections::HashMap::new(),
+                next_hir_id: 0,
+            });
         }
 
         let result = match context.ast.kind() {
@@ -62,10 +61,11 @@ impl PipelineStage for FrontendStage {
                     Diagnostic::error(format!("AST→HIR transformation failed: {}", err))
                         .with_source_context(STAGE_AST_TO_HIR),
                 );
-                return Err(PipelineError::new(
-                    STAGE_AST_TO_HIR,
-                    "AST→HIR transformation failed",
-                ));
+                return Ok(hir::Program {
+                    items: Vec::new(),
+                    def_map: std::collections::HashMap::new(),
+                    next_hir_id: 0,
+                });
             }
         };
 
@@ -90,7 +90,6 @@ impl Pipeline {
         file_path: Option<&Path>,
         base_path: &Path,
     ) -> Result<hir::Program, CliError> {
-        let tolerate_errors = options.error_tolerance.enabled || config::lossy_mode();
         let stage = FrontendStage;
         let context = FrontendContext {
             ast: ast.clone(),
@@ -98,24 +97,6 @@ impl Pipeline {
             file_path: file_path.map(Path::to_path_buf),
             base_path: base_path.to_path_buf(),
         };
-        match self.run_pipeline_stage(STAGE_AST_TO_HIR, stage, context, options) {
-            Ok(program) => Ok(program),
-            Err(err) => {
-                if tolerate_errors {
-                    let diagnostic = Diagnostic::warning(
-                        "AST→HIR failed; continuing due to error tolerance".to_string(),
-                    )
-                    .with_source_context(STAGE_AST_TO_HIR);
-                    diag::emit(&[diagnostic], Some(STAGE_AST_TO_HIR), options);
-                    Ok(hir::Program {
-                        items: Vec::new(),
-                        def_map: std::collections::HashMap::new(),
-                        next_hir_id: 0,
-                    })
-                } else {
-                    Err(err)
-                }
-            }
-        }
+        self.run_pipeline_stage(STAGE_AST_TO_HIR, stage, context, options)
     }
 }

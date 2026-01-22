@@ -3049,6 +3049,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }),
             Ty::Expr(_) => ty.clone(),
             Ty::Quote(quote) => Ty::Quote(TypeQuote {
+                span: quote.span,
                 kind: quote.kind,
                 item: quote.item,
                 inner: quote

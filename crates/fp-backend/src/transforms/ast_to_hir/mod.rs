@@ -50,8 +50,6 @@ pub struct HirGenerator {
     pub errors: Vec<Diagnostic>,
     /// Collected warnings during transformation
     pub warnings: Vec<Diagnostic>,
-    /// Whether error recovery should be attempted
-    pub error_tolerance: bool,
     /// Maximum number of errors to collect before giving up
     pub max_errors: usize,
 }
@@ -122,6 +120,14 @@ impl HirGenerator {
 
     fn add_warning(&mut self, diag: Diagnostic) {
         self.warnings.push(diag);
+    }
+
+    fn normalize_span(&self, span: Span) -> Span {
+        if span.file == 0 && !span.is_null() && self.current_file != 0 {
+            Span::new(self.current_file, span.lo, span.hi)
+        } else {
+            span
+        }
     }
 
     fn handle_import(&mut self, _import: &ast::ItemImport) -> Result<()> {
@@ -261,7 +267,6 @@ impl HirGenerator {
     }
 
     pub fn enable_error_tolerance(&mut self, max_errors: usize) {
-        self.error_tolerance = true;
         self.max_errors = max_errors;
     }
 
@@ -299,18 +304,14 @@ impl HirGenerator {
             // Initialize error tolerance support
             errors: Vec::new(),
             warnings: Vec::new(),
-            error_tolerance: false,
             max_errors: 10,
         }
     }
 
     fn reset_file_context<P: AsRef<Path>>(&mut self, file_path: P) {
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = DefaultHasher::new();
-        file_path.as_ref().hash(&mut hasher);
-        self.current_file = hasher.finish();
+        self.current_file = fp_core::source_map::source_map()
+            .file_id(file_path.as_ref())
+            .unwrap_or(0);
         self.current_position = 0;
         self.type_scopes.clear();
         self.type_scopes.push(HashMap::new());
@@ -689,7 +690,8 @@ impl HirGenerator {
     /// Transform a parsed AST file into HIR
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
         let mut lowered = file.clone();
-        lower_closures_in_file(&mut lowered)?;
+        let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
+        self.errors.extend(closure_diagnostics);
         self.transform_file_inner(&lowered)
     }
 
@@ -750,35 +752,25 @@ impl HirGenerator {
                         return Ok(());
                     }
                 }
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "dropping unsupported module-level expression item".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    return Ok(());
-                }
-                Err(crate::error::optimization_error(format!(
-                    "Unimplemented AST item type for HIR transformation: {:?}",
-                    item
-                )))
+                self.add_warning(
+                    Diagnostic::warning(
+                        "dropping unsupported module-level expression item".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(item.span()),
+                );
+                Ok(())
             }
             ItemKind::DeclFunction(_) => Ok(()),
             ItemKind::Macro(_) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "dropping macro item during AST→HIR in lossy mode".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    return Ok(());
-                }
-                Err(crate::error::optimization_error(format!(
-                    "Unimplemented AST item type for HIR transformation: {:?}",
-                    item
-                )))
+                self.add_warning(
+                    Diagnostic::warning(
+                        "dropping macro item during AST→HIR in lossy mode".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(item.span()),
+                );
+                Ok(())
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item)?;
@@ -828,30 +820,24 @@ impl HirGenerator {
                 }
             }
             ItemKind::Macro(_) => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(
-                            "dropping macro item in statement position during AST→HIR".to_string(),
-                        )
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                    let unit_block = hir::Block {
-                        hir_id: self.next_id(),
-                        stmts: Vec::new(),
-                        expr: None,
-                    };
-                    let unit_expr = hir::Expr {
-                        hir_id: self.next_id(),
-                        kind: hir::ExprKind::Block(unit_block),
-                        span: self.create_span(1),
-                    };
-                    Ok(hir::StmtKind::Expr(unit_expr))
-                } else {
-                    Err(crate::error::optimization_error(format!(
-                        "Unimplemented AST item type for HIR transformation: {:?}",
-                        item
-                    )))
-                }
+                self.add_warning(
+                    Diagnostic::warning(
+                        "dropping macro item in statement position during AST→HIR".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(item.span()),
+                );
+                let unit_block = hir::Block {
+                    hir_id: self.next_id(),
+                    stmts: Vec::new(),
+                    expr: None,
+                };
+                let unit_expr = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Block(unit_block),
+                    span: self.create_span(1),
+                };
+                Ok(hir::StmtKind::Expr(unit_expr))
             }
             _ => {
                 let hir_item = self.transform_item_to_hir(item.as_ref())?;
@@ -1059,10 +1045,36 @@ impl HirGenerator {
                 )
             }
             _ => {
-                return Err(crate::error::optimization_error(format!(
-                    "Unimplemented AST item type for HIR transformation: {:?}",
-                    item
-                )));
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "Unimplemented AST item type for HIR transformation: {:?}",
+                        item
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(item.span()),
+                );
+                let unit_expr = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Literal(hir::Lit::Bool(false)),
+                    span: self.create_span(1),
+                };
+                let body = hir::Body {
+                    hir_id: self.next_id(),
+                    params: Vec::new(),
+                    value: unit_expr,
+                };
+                let konst = hir::Const {
+                    name: hir::Symbol::new(format!("__fp_error_{def_id}")),
+                    ty: self.create_simple_type("bool"),
+                    body,
+                };
+                return Ok(hir::Item {
+                    hir_id,
+                    def_id,
+                    visibility: hir::Visibility::Private,
+                    kind: hir::ItemKind::Const(konst),
+                    span,
+                });
             }
         };
 
@@ -1275,10 +1287,19 @@ impl HirGenerator {
                         return self.transform_type_to_hir(ty);
                     }
                     other => {
-                        return Err(crate::error::optimization_error(format!(
-                            "unsupported literal type in AST→HIR lowering: {:?}",
-                            other
-                        )));
+                        self.add_error(
+                            Diagnostic::error(format!(
+                                "unsupported literal type in AST→HIR lowering: {:?}",
+                                other
+                            ))
+                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                            .with_span(ty.span()),
+                        );
+                        return Ok(hir::TypeExpr::new(
+                            self.next_id(),
+                            hir::TypeExprKind::Error,
+                            Span::new(self.current_file, 0, 0),
+                        ));
                     }
                 };
                 Ok(expr)
@@ -1288,7 +1309,8 @@ impl HirGenerator {
                     Diagnostic::error(
                         "quote token types should be removed by const-eval".to_string(),
                     )
-                    .with_source_context(DIAGNOSTIC_CONTEXT),
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(self.normalize_span(ty.span())),
                 );
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
@@ -1363,20 +1385,14 @@ impl HirGenerator {
                 ))
             }
             unsupported => {
-                if self.error_tolerance {
-                    self.add_warning(
-                        Diagnostic::warning(format!(
-                            "unsupported type in AST→HIR lowering: {:?}",
-                            unsupported
-                        ))
-                        .with_source_context(DIAGNOSTIC_CONTEXT),
-                    );
-                } else {
-                    self.add_error(Diagnostic::error(format!(
+                self.add_warning(
+                    Diagnostic::warning(format!(
                         "unsupported type in AST→HIR lowering: {:?}",
                         unsupported
-                    )));
-                }
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(self.normalize_span(unsupported.span())),
+                );
                 Ok(hir::TypeExpr::new(
                     self.next_id(),
                     hir::TypeExprKind::Error,
@@ -1481,24 +1497,26 @@ impl HirGenerator {
         }
     }
 
-    fn structural_field_value_to_ty(&self, value: &ast::Value) -> Result<ast::Ty> {
+    fn structural_field_value_to_ty(&mut self, value: &ast::Value) -> ast::Ty {
         if let ast::Value::Type(ty) = value {
-            return Ok(ty.clone());
+            return ty.clone();
         }
-        let ty = self
-            .literal_type_kind_from_value(value)
-            .and_then(|kind| match kind {
-                LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
-                LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
-                LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
-            })
-            .ok_or_else(|| {
-                crate::error::optimization_error(format!(
-                    "unsupported structural field value type: {:?}",
-                    value
-                ))
-            })?;
-        Ok(ty)
+        if let Some(ty) = self.literal_type_kind_from_value(value).and_then(|kind| match kind {
+            LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
+            LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
+            LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
+        }) {
+            return ty;
+        }
+        self.add_error(
+            Diagnostic::error(format!(
+                "unsupported structural field value type: {:?}",
+                value
+            ))
+            .with_source_context(DIAGNOSTIC_CONTEXT)
+            .with_span(value.span()),
+        );
+        ast::Ty::Unknown(ast::TypeUnknown)
     }
 
     fn structural_specs_compatible(
@@ -1611,25 +1629,31 @@ impl HirGenerator {
     }
 
     fn structural_fields_from_value(
-        &self,
+        &mut self,
         structural: &ast::ValueStructural,
-    ) -> Result<Vec<StructuralFieldSpec>> {
+    ) -> Vec<StructuralFieldSpec> {
         structural
             .fields
             .iter()
             .map(|field| {
-                let ty = self
-                    .literal_type_kind_from_value(&field.value)
-                    .ok_or_else(|| {
-                        crate::error::optimization_error(format!(
-                            "unsupported structural field value for HIR materialization: {:?}",
-                            field.value
-                        ))
-                    })?;
-                Ok(StructuralFieldSpec {
+                let ty = match self.literal_type_kind_from_value(&field.value) {
+                    Some(ty) => ty,
+                    None => {
+                        self.add_error(
+                            Diagnostic::error(format!(
+                                "unsupported structural field value for HIR materialization: {:?}",
+                                field.value
+                            ))
+                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                            .with_span(field.value.span()),
+                        );
+                        LiteralTypeKind::Null
+                    }
+                };
+                StructuralFieldSpec {
                     name: field.name.name.clone(),
                     ty,
-                })
+                }
             })
             .collect()
     }
@@ -1674,10 +1698,19 @@ impl HirGenerator {
             }
             ast::Value::Type(ty) => return self.transform_type_to_hir(ty),
             other => {
-                return Err(crate::error::optimization_error(format!(
-                    "unsupported structural field value type: {:?}",
-                    other
-                )));
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "unsupported structural field value type: {:?}",
+                        other
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(value.span()),
+                );
+                return Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Error,
+                    span,
+                ));
             }
         };
         Ok(expr)
@@ -1687,7 +1720,7 @@ impl HirGenerator {
         &mut self,
         structural: &ast::ValueStructural,
     ) -> Result<StructuralValueDef> {
-        let specs = self.structural_fields_from_value(structural)?;
+        let specs = self.structural_fields_from_value(structural);
         if let Some(def) = self.find_compatible_structural_value_def(&specs) {
             if self.should_update_structural_def(def.def_id) {
                 let hir_fields = structural
@@ -1707,7 +1740,7 @@ impl HirGenerator {
                     .fields
                     .iter()
                     .map(|field| {
-                        let ty = self.structural_field_value_to_ty(&field.value)?;
+                        let ty = self.structural_field_value_to_ty(&field.value);
                         Ok(ast::StructuralField::new(field.name.clone(), ty))
                     })
                     .collect::<Result<Vec<_>>>()?;
@@ -1739,19 +1772,7 @@ impl HirGenerator {
             .fields
             .iter()
             .map(|field| {
-                let ty = self
-                    .literal_type_kind_from_value(&field.value)
-                    .and_then(|kind| match kind {
-                        LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
-                        LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
-                        LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
-                    })
-                    .ok_or_else(|| {
-                        crate::error::optimization_error(format!(
-                            "unsupported structural field value type: {:?}",
-                            field.value
-                        ))
-                    })?;
+                let ty = self.structural_field_value_to_ty(&field.value);
                 Ok(ast::StructuralField::new(field.name.clone(), ty))
             })
             .collect::<Result<Vec<_>>>()?;
@@ -1940,7 +1961,7 @@ impl Default for HirGenerator {
     }
 }
 
-fn lower_closures_in_file(file: &mut ast::File) -> Result<()> {
+fn lower_closures_in_file(file: &mut ast::File) -> Result<Vec<Diagnostic>> {
     let mut pass = ClosureLowering::new();
     pass.find_and_transform_functions(&mut file.items)?;
     pass.rewrite_usage(&mut file.items)?;
@@ -1950,7 +1971,7 @@ fn lower_closures_in_file(file: &mut ast::File) -> Result<()> {
         new_items.append(&mut file.items);
         file.items = new_items;
     }
-    Ok(())
+    Ok(pass.diagnostics)
 }
 
 const DUMMY_CAPTURE_NAME: &str = "__fp_no_capture";
@@ -1985,6 +2006,7 @@ struct ClosureLowering {
     struct_infos: HashMap<String, ClosureInfo>,
     variable_infos: HashMap<String, ClosureInfo>,
     generated_items: Vec<ast::Item>,
+    diagnostics: Vec<Diagnostic>,
 }
 
 impl ClosureLowering {
@@ -1995,7 +2017,12 @@ impl ClosureLowering {
             struct_infos: HashMap::new(),
             variable_infos: HashMap::new(),
             generated_items: Vec::new(),
+            diagnostics: Vec::new(),
         }
+    }
+
+    fn add_error(&mut self, diag: Diagnostic) {
+        self.diagnostics.push(diag);
     }
 
     fn find_and_transform_functions(&mut self, items: &mut [ast::Item]) -> Result<()> {
@@ -2089,9 +2116,14 @@ impl ClosureLowering {
                 param_set.insert(name.clone());
                 param_names.push(name);
             } else {
-                return Err(fp_core::error::Error::from(
-                    "only simple identifier parameters are supported in closures",
-                ));
+                self.add_error(
+                    Diagnostic::error(
+                        "only simple identifier parameters are supported in closures".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(param.span()),
+                );
+                return Ok(None);
             }
         }
 
