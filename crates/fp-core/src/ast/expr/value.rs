@@ -55,6 +55,8 @@ common_struct! {
         pub span: Span,
         pub target: ExprInvokeTarget,
         pub args: Vec<Expr>,
+        #[serde(default)]
+        pub kwargs: Vec<ExprKwArg>,
     }
 }
 
@@ -309,7 +311,8 @@ impl ExprInvoke {
             union_spans(
                 Some(self.target.span())
                     .into_iter()
-                    .chain(self.args.iter().map(Expr::span)),
+                    .chain(self.args.iter().map(Expr::span))
+                    .chain(self.kwargs.iter().map(ExprKwArg::span)),
             ),
         )
     }
@@ -827,7 +830,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             let mut args = Vec::with_capacity(1 + invoke.args.len().saturating_sub(skip));
             args.push(Expr::new(ExprKind::FormatString(template)));
             args.extend(invoke.args.iter().skip(skip).cloned());
-            Some(ExprIntrinsicCall::new(kind, args, Vec::new()))
+            Some(ExprIntrinsicCall::new(kind, args, invoke.kwargs.clone()))
         }
         IntrinsicCallKind::Len => {
             if invoke.args.len() != 1 {
@@ -836,14 +839,18 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             Some(ExprIntrinsicCall::new(
                 kind,
                 vec![invoke.args[0].clone()],
-                Vec::new(),
+                invoke.kwargs.clone(),
             ))
         }
         IntrinsicCallKind::TimeNow => {
             if !invoke.args.is_empty() {
                 return None;
             }
-            Some(ExprIntrinsicCall::new(kind, Vec::new(), Vec::new()))
+            Some(ExprIntrinsicCall::new(
+                kind,
+                Vec::new(),
+                invoke.kwargs.clone(),
+            ))
         }
         IntrinsicCallKind::CreateStruct => {
             if invoke.args.len() != 1 {
@@ -852,7 +859,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             Some(ExprIntrinsicCall::new(
                 kind,
                 vec![invoke.args[0].clone()],
-                Vec::new(),
+                invoke.kwargs.clone(),
             ))
         }
         IntrinsicCallKind::AddField => {
@@ -862,13 +869,13 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             Some(ExprIntrinsicCall::new(
                 kind,
                 invoke.args.clone(),
-                Vec::new(),
+                invoke.kwargs.clone(),
             ))
         }
         IntrinsicCallKind::CatchUnwind => Some(ExprIntrinsicCall::new(
             kind,
             invoke.args.clone(),
-            Vec::new(),
+            invoke.kwargs.clone(),
         )),
         IntrinsicCallKind::ProcMacroTokenStreamFromStr => {
             if invoke.args.len() != 1 {
@@ -877,7 +884,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             Some(ExprIntrinsicCall::new(
                 kind,
                 vec![invoke.args[0].clone()],
-                Vec::new(),
+                invoke.kwargs.clone(),
             ))
         }
         IntrinsicCallKind::ProcMacroTokenStreamToString => {
@@ -887,7 +894,7 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
             Some(ExprIntrinsicCall::new(
                 kind,
                 vec![invoke.args[0].clone()],
-                Vec::new(),
+                invoke.kwargs.clone(),
             ))
         }
         IntrinsicCallKind::Format => None,

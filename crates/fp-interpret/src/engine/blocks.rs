@@ -115,12 +115,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
 
-                if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
-                    if let Some(function) = self.resolve_function_call(
-                        locator,
-                        &mut invoke.args,
-                        ResolutionMode::Default,
-                    ) {
+                if let ExprInvokeTarget::Function(locator) = &invoke.target {
+                    let mut locator = locator.clone();
+                    if let Some(function) =
+                        self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
+                    {
+                        invoke.target = ExprInvokeTarget::Function(locator.clone());
                         let const_params: Vec<_> = function
                             .sig
                             .params
@@ -208,7 +208,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                                     name
                                 };
 
-                                match locator {
+                                match &mut locator {
                                     Locator::Ident(ident) => {
                                         *ident = Ident::new(specialization_name.clone());
                                     }
@@ -224,6 +224,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                         }
                                     }
                                 }
+
+                                invoke.target = ExprInvokeTarget::Function(locator.clone());
 
                                 invoke.args = runtime_args;
                             } else {

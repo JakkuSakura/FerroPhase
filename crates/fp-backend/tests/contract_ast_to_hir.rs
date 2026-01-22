@@ -29,6 +29,7 @@ fn call_expr(path: &[&str], args: Vec<fp_core::ast::Expr>) -> fp_core::ast::Expr
         span: fp_core::span::Span::null(),
         target,
         args,
+        kwargs: Vec::new(),
     }))
 }
 

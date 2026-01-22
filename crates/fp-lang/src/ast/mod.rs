@@ -2,8 +2,59 @@ use eyre::Result;
 use fp_core::ast::Expr;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::span::FileId;
+use std::cell::Cell;
+use std::path::Path;
 
 const FERRO_CONTEXT: &str = "ferrophase.parser";
+
+thread_local! {
+    static CURRENT_FILE_ID: Cell<FileId> = Cell::new(0);
+}
+
+pub(crate) fn with_current_file_id<T>(file: FileId, f: impl FnOnce() -> T) -> T {
+    CURRENT_FILE_ID.with(|cell| {
+        let prev = cell.get();
+        cell.set(file);
+        let out = f();
+        cell.set(prev);
+        out
+    })
+}
+
+fn current_file_id() -> FileId {
+    CURRENT_FILE_ID.with(|cell| cell.get())
+}
+
+fn resolve_file_id(file: FileId, source: &str, source_path: Option<&Path>) -> FileId {
+    if file != 0 {
+        return file;
+    }
+    if let Some(path) = source_path {
+        let source_map = fp_core::source_map::source_map();
+        let mut id = source_map
+            .file_id(path)
+            .unwrap_or_else(|| fp_core::source_map::register_source(path, source));
+        if id == 0 {
+            id = fp_core::source_map::register_source(path, source);
+        }
+        return id;
+    }
+    if file == 0 {
+        current_file_id()
+    } else {
+        file
+    }
+}
+
+pub(crate) fn normalize_span(span: fp_core::span::Span) -> fp_core::span::Span {
+    if span.file == 0 && !span.is_null() {
+        let file = current_file_id();
+        if file != 0 {
+            return fp_core::span::Span::new(file, span.lo, span.hi);
+        }
+    }
+    span
+}
 
 /// Parser for the FerroPhase language.
 pub struct FerroPhaseParser {
@@ -64,6 +115,7 @@ impl FerroPhaseParser {
     }
 
     pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
+        let file = resolve_file_id(file, source, None);
         let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
             if let Some(span) = err.span() {
                 let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
@@ -105,6 +157,7 @@ impl FerroPhaseParser {
         source: &str,
         file: FileId,
     ) -> Result<crate::syntax::SyntaxNode> {
+        let file = resolve_file_id(file, source, None);
         let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
             self.record_error(format!("failed to lex expression: {err}"));
             eyre::eyre!(err)
@@ -121,14 +174,16 @@ impl FerroPhaseParser {
 
     /// Parse a sequence of items into fp-core AST items.
     pub fn parse_items_ast(&self, source: &str) -> Result<Vec<fp_core::ast::Item>> {
-        self.parse_items_ast_with_file(source, 0)
+        self.parse_items_ast_with_file(source, 0, None)
     }
 
     pub fn parse_items_ast_with_file(
         &self,
         source: &str,
         file: FileId,
+        source_path: Option<&Path>,
     ) -> Result<Vec<fp_core::ast::Item>> {
+        let file = resolve_file_id(file, source, source_path);
         let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
             if let Some(span) = err.span() {
                 let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);

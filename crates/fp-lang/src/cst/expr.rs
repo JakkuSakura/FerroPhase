@@ -1064,8 +1064,13 @@ impl Parser {
         self.bump_trivia_into(&mut children);
 
         if self.peek_non_trivia_raw() != Some(")") {
+            let mut saw_kwarg = false;
             loop {
-                let arg = self.parse_expr_bp(0)?;
+                let (arg, is_kwarg) = self.parse_call_arg()?;
+                if saw_kwarg && !is_kwarg {
+                    return Err(self.error("positional argument after keyword argument"));
+                }
+                saw_kwarg |= is_kwarg;
                 children.push(SyntaxElement::Node(Box::new(arg)));
                 self.bump_trivia_into(&mut children);
                 if self.peek_non_trivia_raw() == Some(",") {
@@ -1086,6 +1091,26 @@ impl Parser {
         self.bump_token_into(&mut children);
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::ExprCall, children, span))
+    }
+
+    fn parse_call_arg(&mut self) -> Result<(SyntaxNode, bool), ExprCstParseError> {
+        if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident)
+            && self.peek_nth_non_trivia(2).is_some_and(|tok| tok.raw.as_str() == "=")
+        {
+            let mut children = Vec::new();
+            self.bump_trivia_into(&mut children);
+            self.bump_token_into(&mut children); // name
+            self.bump_trivia_into(&mut children);
+            self.bump_token_into(&mut children); // '='
+            self.bump_trivia_into(&mut children);
+            let value = self.parse_expr_bp(0)?;
+            children.push(SyntaxElement::Node(Box::new(value)));
+            let span = span_for_children(&children);
+            return Ok((SyntaxNode::new(SyntaxKind::ExprKwArg, children, span), true));
+        }
+
+        let expr = self.parse_expr_bp(0)?;
+        Ok((expr, false))
     }
 
     fn parse_index(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {

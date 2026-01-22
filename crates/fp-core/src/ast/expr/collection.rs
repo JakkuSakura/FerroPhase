@@ -218,6 +218,7 @@ fn make_function_call(path: &[&str], args: Vec<Expr>) -> Expr {
         span: Span::null(),
         target: ExprInvokeTarget::Function(locator),
         args,
+        kwargs: Vec::new(),
     })
     .into()
 }
@@ -257,6 +258,7 @@ mod tests {
             span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["Vec", "new"])),
             args: vec![],
+            kwargs: Vec::new(),
         };
         let got = ExprIntrinsicContainer::from_invoke(&invoke);
         match got {
@@ -275,6 +277,7 @@ mod tests {
             span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["Vec", "from"])),
             args: vec![ExprKind::Array(array).into()],
+            kwargs: Vec::new(),
         };
         let got = ExprIntrinsicContainer::from_invoke(&invoke);
         match got {
@@ -294,6 +297,7 @@ mod tests {
             span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["Vec", "from"])),
             args: vec![ExprKind::ArrayRepeat(repeat.clone()).into()],
+            kwargs: Vec::new(),
         };
         let got = ExprIntrinsicContainer::from_invoke(&invoke);
         match got {
@@ -322,6 +326,7 @@ mod tests {
             span: Span::null(),
             target: ExprInvokeTarget::Function(ident_path(["HashMap", "from"])),
             args: vec![ExprKind::Array(array).into()],
+            kwargs: Vec::new(),
         };
         let got = ExprIntrinsicContainer::from_invoke(&invoke);
         match got {

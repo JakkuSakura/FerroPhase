@@ -152,6 +152,7 @@ fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
         span: Span::null(),
         target,
         args: vec![arg],
+        kwargs: Vec::new(),
     };
     let ty = ast::Ty::expr(ast::Expr::from(ast::ExprKind::Invoke(invoke)));
     let lowered = generator.transform_type_to_hir(&ty)?;

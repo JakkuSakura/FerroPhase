@@ -1415,21 +1415,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                 span: Span::null(),
                 target: ExprInvokeTarget::Function(locator.clone()),
                 args: vec![expr],
+                kwargs: Vec::new(),
             };
-            let function = if let Some(function) = self.resolve_function_call(
-                &mut locator,
-                &mut invoke.args,
-                ResolutionMode::Attribute,
-            ) {
+            let function = if let Some(function) =
+                self.resolve_function_call(&mut locator, &mut invoke, ResolutionMode::Attribute)
+            {
                 Some(function)
             } else if let Some(fallback) = self.fallback_attr_locator(&locator) {
                 locator = fallback;
                 invoke.target = ExprInvokeTarget::Function(locator.clone());
-                self.resolve_function_call(
-                    &mut locator,
-                    &mut invoke.args,
-                    ResolutionMode::Attribute,
-                )
+                self.resolve_function_call(&mut locator, &mut invoke, ResolutionMode::Attribute)
             } else {
                 None
             };

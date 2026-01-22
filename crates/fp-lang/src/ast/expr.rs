@@ -10,12 +10,12 @@ use crate::syntax::{SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
     ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor, ExprIf,
-    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprLoop, ExprMatch,
-    ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect, ExprSelectType,
-    ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple, ExprWhile,
-    FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits, Locator,
-    MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment, Path,
-    Pattern,
+    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg, ExprLoop,
+    ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
+    ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple,
+    ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits,
+    Locator, MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment,
+    Path, Pattern,
     PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
@@ -1025,10 +1025,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 .next()
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprCall))?;
             let callee = lower_expr_from_cst(callee)?;
-            let mut args = Vec::new();
-            for arg in nodes {
-                args.push(lower_expr_from_cst(arg)?);
-            }
+            let (args, kwargs) = lower_call_args_from_cst(nodes)?;
 
             let target = match callee.kind() {
                 ExprKind::Locator(locator) => ExprInvokeTarget::Function(locator.clone()),
@@ -1040,6 +1037,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 span: node.span,
                 target,
                 args,
+                kwargs,
             })
             .into())
         }
@@ -1452,7 +1450,17 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 ExprKind::Locator(locator) => locator.clone(),
                 _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprCall)),
             };
-            let patterns = exprs
+            let mut pattern_nodes = Vec::new();
+            for node in exprs {
+                if node.kind == SyntaxKind::ExprKwArg {
+                    return Err(LowerError::Unsupported(
+                        "keyword arguments are not allowed in patterns".to_string(),
+                    ));
+                }
+                pattern_nodes.push(node);
+            }
+            let patterns = pattern_nodes
+                .into_iter()
                 .map(lower_match_pattern_from_cst)
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(Pattern::new(PatternKind::TupleStruct(PatternTupleStruct {
@@ -1908,6 +1916,7 @@ fn lower_ty_expr(node: &SyntaxNode) -> Result<Ty, LowerError> {
 }
 
 fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let span = crate::ast::normalize_span(node.span);
     let mut segments: Vec<Ident> = Vec::new();
     for child in &node.children {
         let crate::syntax::SyntaxElement::Token(tok) = child else {
@@ -1943,7 +1952,7 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     // parsing the inner token stream as a type expression.
     if segments.len() == 1 && segments[0].as_str() == "t" {
         let lexemes = macro_token_trees_to_lexemes(&macro_tokens.token_trees);
-        let file_id = node.span.file;
+        let file_id = macro_tokens_file_id(&macro_tokens.token_trees);
         let (ty_cst, consumed) =
             crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
             .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
@@ -1960,7 +1969,7 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
     let expr: Expr = ExprKind::Macro(fp_core::ast::ExprMacro::new(
         MacroInvocation::new(path, macro_tokens.delimiter, macro_tokens.text)
             .with_token_trees(macro_tokens.token_trees)
-            .with_span(node.span),
+            .with_span(span),
     ))
     .into();
     Ok(Ty::expr(expr))
@@ -1989,6 +1998,32 @@ fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
                 append_macro_lexemes(&group.tokens, out);
                 out.push(Lexeme::token(close.to_string(), close_span));
             }
+        }
+    }
+}
+
+fn macro_tokens_file_id(tokens: &[MacroTokenTree]) -> u64 {
+    for tree in tokens {
+        if let Some(file) = token_tree_file(tree) {
+            return file;
+        }
+    }
+    0
+}
+
+fn token_tree_file(tree: &MacroTokenTree) -> Option<u64> {
+    match tree {
+        MacroTokenTree::Token(tok) => Some(tok.span.file),
+        MacroTokenTree::Group(group) => {
+            if group.span.file != 0 {
+                return Some(group.span.file);
+            }
+            for inner in &group.tokens {
+                if let Some(file) = token_tree_file(inner) {
+                    return Some(file);
+                }
+            }
+            None
         }
     }
 }
@@ -2209,6 +2244,7 @@ fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
 }
 
 fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let span = crate::ast::normalize_span(node.span);
     let mut segments: Vec<Ident> = Vec::new();
     let mut saw_generic_start = false;
     for child in &node.children {
@@ -2251,7 +2287,7 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     if segments.len() == 1 {
-        if let Some(quote_ty) = quote_type_from_ident(segments[0].as_str(), &args, node.span) {
+        if let Some(quote_ty) = quote_type_from_ident(segments[0].as_str(), &args, span) {
             return Ok(quote_ty);
         }
     }
@@ -2263,7 +2299,7 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     if !saw_generic_start || args.is_empty() {
-        return Ok(Ty::expr(Expr::path(path).with_span(node.span)));
+        return Ok(Ty::expr(Expr::path(path).with_span(span)));
     }
 
     let mut param_segments: Vec<ParameterPathSegment> = segments
@@ -2555,6 +2591,48 @@ fn last_child_expr(node: &SyntaxNode) -> Result<&SyntaxNode, LowerError> {
     node_children_exprs(node)
         .last()
         .ok_or(LowerError::UnexpectedNode(node.kind))
+}
+
+fn lower_call_args_from_cst<'a>(
+    nodes: impl Iterator<Item = &'a SyntaxNode>,
+) -> Result<(Vec<Expr>, Vec<ExprKwArg>), LowerError> {
+    let mut args = Vec::new();
+    let mut kwargs: Vec<ExprKwArg> = Vec::new();
+    let mut saw_kwarg = false;
+
+    for node in nodes {
+        if node.kind == SyntaxKind::ExprKwArg {
+            let kwarg = lower_kwarg_from_cst(node)?;
+            if kwargs.iter().any(|existing| existing.name == kwarg.name) {
+                return Err(LowerError::Unsupported(format!(
+                    "duplicate keyword argument '{}'",
+                    kwarg.name
+                )));
+            }
+            kwargs.push(kwarg);
+            saw_kwarg = true;
+            continue;
+        }
+
+        if saw_kwarg {
+            return Err(LowerError::Unsupported(
+                "positional argument after keyword argument".to_string(),
+            ));
+        }
+        args.push(lower_expr_from_cst(node)?);
+    }
+
+    Ok((args, kwargs))
+}
+
+fn lower_kwarg_from_cst(node: &SyntaxNode) -> Result<ExprKwArg, LowerError> {
+    let name = direct_first_non_trivia_token_text(node)
+        .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprKwArg))?;
+    let value_node = node_children_exprs(node)
+        .next()
+        .ok_or(LowerError::UnexpectedNode(SyntaxKind::ExprKwArg))?;
+    let value = lower_expr_from_cst(value_node)?;
+    Ok(ExprKwArg { name, value })
 }
 
 fn node_children_exprs<'a>(node: &'a SyntaxNode) -> impl Iterator<Item = &'a SyntaxNode> {

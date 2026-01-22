@@ -101,6 +101,15 @@ impl PrettyPrintable for ast::Expr {
                             Ok(())
                         })?;
                     }
+                    if !invoke.kwargs.is_empty() {
+                        ctx.writeln(f, "kwargs:")?;
+                        ctx.with_indent(|ctx| {
+                            for arg in &invoke.kwargs {
+                                ctx.writeln(f, format!("{}", arg))?;
+                            }
+                            Ok(())
+                        })?;
+                    }
                     Ok(())
                 })
             }
@@ -1243,13 +1252,22 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             render_expr_inline(index.index.as_ref())
         ),
         ast::ExprKind::Invoke(invoke) => {
-            let args = invoke
+            let mut parts: Vec<String> = invoke
                 .args
                 .iter()
                 .map(render_expr_inline)
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!("{}({})", render_invoke_target(&invoke.target), args)
+                .collect();
+            parts.extend(
+                invoke
+                    .kwargs
+                    .iter()
+                    .map(|kw| format!("{}={}", kw.name, render_expr_inline(&kw.value))),
+            );
+            format!(
+                "{}({})",
+                render_invoke_target(&invoke.target),
+                parts.join(", ")
+            )
         }
         ast::ExprKind::Struct(expr_struct) => {
             let update = if expr_struct.update.is_some() {

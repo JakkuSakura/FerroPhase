@@ -6,18 +6,38 @@ ast::File {
           name: Expr(str)
           run: fn() -> ()
         }
-        pub const REGISTRY: Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+        pub const REGISTRY: Vec<Expr(BenchCase)>
           value [0 values]
+        pub const fn bench(item: Quote<item>) -> Quote<item>
+          block (3 stmts)
+            let name
+              init:
+                select .name [unknown]
+                  object:
+                    locator item
+            expr_stmt ;
+              invoke
+                target: REGISTRY.push
+                args:
+                  struct BenchCase
+                    name:
+                      locator name
+                    run:
+                      select .value [unknown]
+                        object:
+                          locator item
+            expr_stmt (value)
+              locator item
         pub struct BenchReport {
           total: Expr(i64)
           passed: Expr(i64)
           failed: Expr(i64)
         }
-        pub fn run_benches() -> Expr(BenchReport) : fn() -> BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run_benches() -> Expr(BenchReport)
           block (8 stmts)
             let benches
               init:
-                locator REGISTRY
+                value [0 values]
             let mut passed
               init:
                 value 0
@@ -85,9 +105,9 @@ ast::File {
                               init:
                                 intrinsic catch_unwind
                                   args:
-                                    closure ()
-                                      invoke
-                                        target: bench.run
+                                    select .run [unknown]
+                                      object:
+                                        locator bench
                                   kwargs: []
                             expr_stmt (value)
                               if
@@ -160,9 +180,9 @@ ast::File {
                                       init:
                                         intrinsic catch_unwind
                                           args:
-                                            closure ()
-                                              invoke
-                                                target: bench.run
+                                            select .run [unknown]
+                                              object:
+                                                locator bench
                                           kwargs: []
                                     expr_stmt (value)
                                       if
@@ -251,7 +271,7 @@ ast::File {
                               intrinsic println
                                 args:
                                   format_string "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"
-                                  select .name [field]
+                                  select .name [unknown]
                                     object:
                                       locator bench
                                   locator measure_iters
@@ -274,7 +294,7 @@ ast::File {
                               intrinsic println
                                 args:
                                   format_string "  {} ... FAILED"
-                                  select .name [field]
+                                  select .name [unknown]
                                     object:
                                       locator bench
                                 kwargs: []
@@ -318,31 +338,21 @@ ast::File {
           value: Expr(V)
         }
         pub struct HashMap {
-          entries: Vec<Expr(HashMapEntry<K
-, V
->)>
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<K
-, V
-> {
-          pub fn from(entries: Vec<Expr(HashMapEntry<K
-, V
->)>) -> Expr(HashMap<K
-, V
->) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<K
-, V
->)>}
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)
             block (1 stmt)
               expr_stmt (value)
                 struct HashMap
                   entries:
                     locator entries
-          pub fn len(&self) -> Expr(i64) : fn() -> i64
+          pub fn len(&self) -> Expr(i64)
             block (1 stmt)
               expr_stmt (value)
                 invoke
                   target: self.entries.len
-          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V)
             block (3 stmts)
               let mut idx
                 init:
@@ -399,23 +409,1300 @@ ast::File {
                   block (0 stmts)
         }
       }
+      pub module json {
+        pub struct JsonField {
+          key: &Expr(str)
+          value: Expr(JsonValue)
+        }
+        pub enum JsonValue {
+          Null: ()
+          Bool: (Expr(bool))
+          Number: (&Expr(str))
+          String: (&Expr(str))
+          Array: (Vec<Expr(JsonValue)>)
+          Object: (Vec<Expr(JsonField)>)
+        }
+        pub fn parse(input: &Expr(str)) -> Expr(JsonValue)
+          block (2 stmts)
+            let mut parser
+              init:
+                invoke
+                  target: Parser::new
+                  args:
+                    locator input
+            expr_stmt (value)
+              invoke
+                target: parser.parse_value
+        pub fn print(value: Expr(JsonValue))
+          block (1 stmt)
+            expr_stmt ;
+              invoke
+                target: print_value
+                args:
+                  reference (mutable: unspecified)
+                    locator value
+        pub fn print_value(value: &Expr(JsonValue))
+          block (1 stmt)
+            expr_stmt (value)
+              match
+                case #0
+                  cond:
+                    value true
+                  body:
+                    intrinsic print
+                      args:
+                        format_string "null"
+                      kwargs: []
+                case #1
+                  cond:
+                    value true
+                  body:
+                    block (1 stmt)
+                      expr_stmt (value)
+                        if
+                          cond:
+                            locator b
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "true"
+                                  kwargs: []
+                          else:
+                            block (1 stmt)
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "false"
+                                  kwargs: []
+                case #2
+                  cond:
+                    value true
+                  body:
+                    intrinsic print
+                      args:
+                        format_string "{}"
+                        locator n
+                      kwargs: []
+                case #3
+                  cond:
+                    value true
+                  body:
+                    block (3 stmts)
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "\""
+                          kwargs: []
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "{}"
+                            locator s
+                          kwargs: []
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "\""
+                          kwargs: []
+                case #4
+                  cond:
+                    value true
+                  body:
+                    block (5 stmts)
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "["
+                          kwargs: []
+                      let mut idx
+                        init:
+                          value 0
+                      let items_len
+                        init:
+                          invoke
+                            target: items.len
+                      expr_stmt (value)
+                        while
+                          cond:
+                            binop <
+                              lhs:
+                                locator idx
+                              rhs:
+                                locator items_len
+                          body:
+                            block (4 stmts)
+                              expr_stmt (value)
+                                if
+                                  cond:
+                                    binop >
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 0
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt ;
+                                        intrinsic print
+                                          args:
+                                            format_string ","
+                                          kwargs: []
+                              let item
+                                init:
+                                  index
+                                    value:
+                                      locator items
+                                    index:
+                                      locator idx
+                              expr_stmt ;
+                                invoke
+                                  target: print_value
+                                  args:
+                                    reference (mutable: unspecified)
+                                      locator item
+                              expr_stmt ;
+                                assign
+                                  target:
+                                    locator idx
+                                  value:
+                                    binop +
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 1
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "]"
+                          kwargs: []
+                case #5
+                  cond:
+                    value true
+                  body:
+                    block (5 stmts)
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "{"
+                          kwargs: []
+                      let mut idx
+                        init:
+                          value 0
+                      let fields_len
+                        init:
+                          invoke
+                            target: fields.len
+                      expr_stmt (value)
+                        while
+                          cond:
+                            binop <
+                              lhs:
+                                locator idx
+                              rhs:
+                                locator fields_len
+                          body:
+                            block (7 stmts)
+                              expr_stmt (value)
+                                if
+                                  cond:
+                                    binop >
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 0
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt ;
+                                        intrinsic print
+                                          args:
+                                            format_string ","
+                                          kwargs: []
+                              let field
+                                init:
+                                  index
+                                    value:
+                                      locator fields
+                                    index:
+                                      locator idx
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "\""
+                                  kwargs: []
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "{}"
+                                    select .key [unknown]
+                                      object:
+                                        locator field
+                                  kwargs: []
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "\":"
+                                  kwargs: []
+                              expr_stmt ;
+                                invoke
+                                  target: print_value
+                                  args:
+                                    reference (mutable: unspecified)
+                                      select .value [unknown]
+                                        object:
+                                          locator field
+                              expr_stmt ;
+                                assign
+                                  target:
+                                    locator idx
+                                  value:
+                                    binop +
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 1
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "}"
+                          kwargs: []
+        pub struct Parser {
+          src: Vec<&Expr(str)>
+          pos: Expr(i64)
+        }
+        impl Parser {
+          pub fn new(src: &Expr(str)) -> Expr(Parser)
+            block (5 stmts)
+              let mut chars
+                init:
+                  value [0 values]
+              let mut idx
+                init:
+                  value 0
+              let src_len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: src.len
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        locator src_len
+                  body:
+                    block (4 stmts)
+                      let offset
+                        init:
+                          cast -> Expr(usize)
+                            locator idx
+                      let ch
+                        init:
+                          index
+                            value:
+                              locator src
+                            index:
+                              range [exclusive]
+                                start:
+                                  locator offset
+                                end:
+                                  binop +
+                                    lhs:
+                                      locator offset
+                                    rhs:
+                                      value 1
+                      expr_stmt ;
+                        invoke
+                          target: chars.push
+                          args:
+                            locator ch
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                struct Parser
+                  src:
+                    locator chars
+                  pos:
+                    value 0
+          pub fn bump(&mut self, amount: Expr(i64))
+            block (1 stmt)
+              expr_stmt ;
+                assign
+                  target:
+                    select .pos [unknown]
+                      object:
+                        locator self
+                  value:
+                    binop +
+                      lhs:
+                        select .pos [unknown]
+                          object:
+                            locator self
+                      rhs:
+                        locator amount
+          pub fn parse_value(&mut self) -> Expr(JsonValue)
+            block (9 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.skip_ws
+              let ch
+                init:
+                  invoke
+                    target: self.peek
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        locator ch
+                      rhs:
+                        value "{"
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: self.parse_object
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        locator ch
+                      rhs:
+                        value "["
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: self.parse_array
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        locator ch
+                      rhs:
+                        value "\""
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::String
+                            args:
+                              invoke
+                                target: self.parse_string
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.starts_with
+                      args:
+                        value "true"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 4
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Bool
+                            args:
+                              value true
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.starts_with
+                      args:
+                        value "false"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 5
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Bool
+                            args:
+                              value false
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.starts_with
+                      args:
+                        value "null"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 4
+                      expr_stmt ;
+                        return
+                          locator JsonValue::Null
+              expr_stmt (value)
+                invoke
+                  target: JsonValue::Number
+                  args:
+                    invoke
+                      target: self.parse_number
+          pub fn parse_array(&mut self) -> Expr(JsonValue)
+            block (6 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.expect_char
+                  args:
+                    value "["
+              expr_stmt ;
+                invoke
+                  target: self.skip_ws
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        invoke
+                          target: self.peek
+                      rhs:
+                        value "]"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Array
+                            args:
+                              value [0 values]
+              let mut items
+                init:
+                  value [0 values]
+              expr_stmt (value)
+                loop
+                  block (6 stmts)
+                    let value
+                      init:
+                        invoke
+                          target: self.parse_value
+                    expr_stmt ;
+                      invoke
+                        target: items.push
+                        args:
+                          locator value
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    let ch
+                      init:
+                        invoke
+                          target: self.peek
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value ","
+                        then:
+                          block (3 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              invoke
+                                target: self.skip_ws
+                            expr_stmt ;
+                              continue
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value "]"
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              break
+              expr_stmt (value)
+                invoke
+                  target: JsonValue::Array
+                  args:
+                    locator items
+          pub fn parse_object(&mut self) -> Expr(JsonValue)
+            block (6 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.expect_char
+                  args:
+                    value "{"
+              expr_stmt ;
+                invoke
+                  target: self.skip_ws
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        invoke
+                          target: self.peek
+                      rhs:
+                        value "}"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Object
+                            args:
+                              value [0 values]
+              let mut fields
+                init:
+                  value [0 values]
+              expr_stmt (value)
+                loop
+                  block (10 stmts)
+                    let key
+                      init:
+                        invoke
+                          target: self.parse_string
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    expr_stmt ;
+                      invoke
+                        target: self.expect_char
+                        args:
+                          value ":"
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    let value
+                      init:
+                        invoke
+                          target: self.parse_value
+                    expr_stmt ;
+                      invoke
+                        target: fields.push
+                        args:
+                          struct JsonField
+                            key:
+                              locator key
+                            value:
+                              locator value
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    let ch
+                      init:
+                        invoke
+                          target: self.peek
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value ","
+                        then:
+                          block (3 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              invoke
+                                target: self.skip_ws
+                            expr_stmt ;
+                              continue
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value "}"
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              break
+              expr_stmt (value)
+                invoke
+                  target: JsonValue::Object
+                  args:
+                    locator fields
+          pub fn parse_string(&mut self) -> &Expr(str)
+            block (4 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.expect_char
+                  args:
+                    value "\""
+              let start
+                init:
+                  cast -> Expr(usize)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              expr_stmt (value)
+                while
+                  cond:
+                    unop !
+                      value:
+                        invoke
+                          target: self.is_eof
+                  body:
+                    block (4 stmts)
+                      let ch
+                        init:
+                          invoke
+                            target: self.peek
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                locator ch
+                              rhs:
+                                value "\""
+                          then:
+                            block (3 stmts)
+                              let value
+                                init:
+                                  index
+                                    value:
+                                      select .src [unknown]
+                                        object:
+                                          locator self
+                                    index:
+                                      range [exclusive]
+                                        start:
+                                          locator start
+                                        end:
+                                          cast -> Expr(usize)
+                                            select .pos [unknown]
+                                              object:
+                                                locator self
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                              expr_stmt ;
+                                return
+                                  locator value
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                locator ch
+                              rhs:
+                                value "\\"
+                          then:
+                            block (3 stmts)
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                              expr_stmt (value)
+                                if
+                                  cond:
+                                    unop !
+                                      value:
+                                        invoke
+                                          target: self.is_eof
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt ;
+                                        invoke
+                                          target: self.bump
+                                          args:
+                                            value 1
+                              expr_stmt ;
+                                continue
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+              expr_stmt (value)
+                index
+                  value:
+                    select .src [unknown]
+                      object:
+                        locator self
+                  index:
+                    range [exclusive]
+                      start:
+                        locator start
+                      end:
+                        cast -> Expr(usize)
+                          select .pos [unknown]
+                            object:
+                              locator self
+          pub fn parse_number(&mut self) -> &Expr(str)
+            block (3 stmts)
+              let start
+                init:
+                  cast -> Expr(usize)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              expr_stmt (value)
+                while
+                  cond:
+                    unop !
+                      value:
+                        invoke
+                          target: self.is_eof
+                  body:
+                    block (2 stmts)
+                      let ch
+                        init:
+                          invoke
+                            target: self.peek
+                      expr_stmt (value)
+                        if
+                          cond:
+                            invoke
+                              target: is_number_char
+                              args:
+                                locator ch
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                          else:
+                            block (1 stmt)
+                              expr_stmt ;
+                                break
+              expr_stmt (value)
+                index
+                  value:
+                    select .src [unknown]
+                      object:
+                        locator self
+                  index:
+                    range [exclusive]
+                      start:
+                        locator start
+                      end:
+                        cast -> Expr(usize)
+                          select .pos [unknown]
+                            object:
+                              locator self
+          pub fn skip_ws(&mut self)
+            block (1 stmt)
+              expr_stmt (value)
+                while
+                  cond:
+                    unop !
+                      value:
+                        invoke
+                          target: self.is_eof
+                  body:
+                    block (2 stmts)
+                      let ch
+                        init:
+                          invoke
+                            target: self.peek
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ||
+                              lhs:
+                                binop ||
+                                  lhs:
+                                    binop ||
+                                      lhs:
+                                        binop ==
+                                          lhs:
+                                            locator ch
+                                          rhs:
+                                            value " "
+                                      rhs:
+                                        binop ==
+                                          lhs:
+                                            locator ch
+                                          rhs:
+                                            value "\n"
+                                  rhs:
+                                    binop ==
+                                      lhs:
+                                        locator ch
+                                      rhs:
+                                        value "\t"
+                              rhs:
+                                binop ==
+                                  lhs:
+                                    locator ch
+                                  rhs:
+                                    value "\r"
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                          else:
+                            block (1 stmt)
+                              expr_stmt ;
+                                break
+          pub fn expect_char(&mut self, ch: &Expr(str))
+            block (1 stmt)
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        invoke
+                          target: self.peek
+                      rhs:
+                        locator ch
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+          pub fn starts_with(&self, literal: &Expr(str)) -> Expr(bool)
+            block (7 stmts)
+              let pos
+                init:
+                  cast -> Expr(usize)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              let mut idx
+                init:
+                  value 0
+              let literal_len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: literal.len
+              let src_len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: self.src.len
+              let pos_i64
+                init:
+                  cast -> Expr(i64)
+                    locator pos
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        locator literal_len
+                  body:
+                    block (4 stmts)
+                      let offset
+                        init:
+                          cast -> Expr(usize)
+                            locator idx
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop >=
+                              lhs:
+                                binop +
+                                  lhs:
+                                    locator pos_i64
+                                  rhs:
+                                    locator idx
+                              rhs:
+                                locator src_len
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                return
+                                  value false
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop !=
+                              lhs:
+                                index
+                                  value:
+                                    select .src [unknown]
+                                      object:
+                                        locator self
+                                  index:
+                                    binop +
+                                      lhs:
+                                        locator pos
+                                      rhs:
+                                        locator offset
+                              rhs:
+                                index
+                                  value:
+                                    locator literal
+                                  index:
+                                    range [exclusive]
+                                      start:
+                                        locator offset
+                                      end:
+                                        binop +
+                                          lhs:
+                                            locator offset
+                                          rhs:
+                                            value 1
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                return
+                                  value false
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                value true
+          pub fn peek(&self) -> &Expr(str)
+            block (2 stmts)
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.is_eof
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          value ""
+              expr_stmt (value)
+                index
+                  value:
+                    select .src [unknown]
+                      object:
+                        locator self
+                  index:
+                    cast -> Expr(usize)
+                      select .pos [unknown]
+                        object:
+                          locator self
+          pub fn is_eof(&self) -> Expr(bool)
+            block (3 stmts)
+              let pos
+                init:
+                  cast -> Expr(i64)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              let len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: self.src.len
+              expr_stmt (value)
+                binop >=
+                  lhs:
+                    locator pos
+                  rhs:
+                    locator len
+        }
+        pub fn is_number_char(ch: &Expr(str)) -> Expr(bool)
+          block (1 stmt)
+            expr_stmt (value)
+              match
+                case #0
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #1
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #2
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #3
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #4
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #5
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #6
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #7
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #8
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #9
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #10
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #11
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #12
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #13
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #14
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #15
+                  cond:
+                    value true
+                  body:
+                    value false
+      }
+      pub module intrinsic {
+        pub [attrs] fn create_struct(name: &Expr(str)) -> type
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic compile_error
+                args:
+                  value "create_struct is a compiler intrinsic"
+                kwargs: []
+        pub [attrs] fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic compile_error
+                args:
+                  value "addfield is a compiler intrinsic"
+                kwargs: []
+      }
+      pub module meta {
+        pub struct TypeBuilder {
+          ty: type
+        }
+        impl TypeBuilder {
+          pub const fn new(name: &Expr(str)) -> Expr(TypeBuilder)
+            block (1 stmt)
+              expr_stmt (value)
+                struct TypeBuilder
+                  ty:
+                    intrinsic create_struct
+                      args:
+                        locator name
+                      kwargs: []
+          pub const fn from(ty: type) -> Expr(TypeBuilder)
+            block (1 stmt)
+              expr_stmt (value)
+                struct TypeBuilder
+                  ty:
+                    locator ty
+          pub const fn with_field(self, name: &Expr(str), field_ty: type) -> Expr(TypeBuilder)
+            block (2 stmts)
+              let ty
+                init:
+                  intrinsic add_field
+                    args:
+                      select .ty [unknown]
+                        object:
+                          locator self
+                      locator name
+                      locator field_ty
+                    kwargs: []
+              expr_stmt (value)
+                struct TypeBuilder
+                  ty:
+                    locator ty
+          pub const fn build(self) -> type
+            block (1 stmt)
+              expr_stmt (value)
+                select .ty [unknown]
+                  object:
+                    locator self
+        }
+      }
+      pub module proc_macro {
+        pub enum Delimiter {
+          Parenthesis: ()
+          Brace: ()
+          Bracket: ()
+        }
+        pub struct Group {
+          delimiter: Expr(Delimiter)
+          tokens: Vec<Expr(TokenTree)>
+        }
+        pub struct Ident {
+          text: Expr(str)
+        }
+        pub struct Punct {
+          text: Expr(str)
+        }
+        pub struct Literal {
+          text: Expr(str)
+        }
+        pub enum TokenTree {
+          Token: (Expr(str))
+          Group: (Expr(Group))
+        }
+        pub struct TokenStream {
+        }
+        pub const fn token_stream_from_str(text: Expr(str)) -> Expr(TokenStream)
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic token_stream_from_str
+                args:
+                  locator text
+                kwargs: []
+        pub const fn token_stream_to_string(stream: Expr(TokenStream)) -> Expr(str)
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic token_stream_to_string
+                args:
+                  locator stream
+                kwargs: []
+        impl TokenStream {
+          pub fn from_str(text: Expr(str)) -> Expr(TokenStream)
+            block (1 stmt)
+              expr_stmt (value)
+                intrinsic token_stream_from_str
+                  args:
+                    locator text
+                  kwargs: []
+          pub fn to_string(self) -> Expr(str)
+            block (1 stmt)
+              expr_stmt (value)
+                intrinsic token_stream_to_string
+                  args:
+                    locator self
+                  kwargs: []
+        }
+      }
       pub module test {
         pub struct TestCase {
           name: Expr(str)
           run: fn() -> ()
         }
-        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub const REGISTRY: Vec<Expr(TestCase)>
           value [0 values]
+        pub const fn test(item: Quote<item>) -> Quote<item>
+          block (3 stmts)
+            let name
+              init:
+                select .name [unknown]
+                  object:
+                    locator item
+            expr_stmt ;
+              invoke
+                target: REGISTRY.push
+                args:
+                  struct TestCase
+                    name:
+                      locator name
+                    run:
+                      select .value [unknown]
+                        object:
+                          locator item
+            expr_stmt (value)
+              locator item
         pub struct TestReport {
           total: Expr(i64)
           passed: Expr(i64)
           failed: Expr(i64)
         }
-        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run_tests() -> Expr(TestReport)
           block (8 stmts)
             let tests
               init:
-                locator REGISTRY
+                value [0 values]
             let mut passed
               init:
                 value 0
@@ -447,9 +1734,9 @@ ast::File {
                       init:
                         intrinsic catch_unwind
                           args:
-                            closure ()
-                              invoke
-                                target: test.run
+                            select .run [unknown]
+                              object:
+                                locator test
                           kwargs: []
                     expr_stmt (value)
                       if
@@ -471,7 +1758,7 @@ ast::File {
                               intrinsic println
                                 args:
                                   format_string "  {} ... ok"
-                                  select .name [field]
+                                  select .name [unknown]
                                     object:
                                       locator test
                                 kwargs: []
@@ -491,7 +1778,7 @@ ast::File {
                               intrinsic println
                                 args:
                                   format_string "  {} ... FAILED"
-                                  select .name [field]
+                                  select .name [unknown]
                                     object:
                                       locator test
                                 kwargs: []
@@ -528,14 +1815,1847 @@ ast::File {
                   locator passed
                 failed:
                   locator failed
-        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run() -> Expr(TestReport)
           block (1 stmt)
             expr_stmt (value)
               invoke
                 target: run_tests
       }
       pub module time {
-        pub [attrs] fn now() -> Expr(f64) : fn() -> f64
+        pub [attrs] fn now() -> Expr(f64)
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic time_now
+                args: []
+                kwargs: []
+      }
+      pub module bench {
+        pub struct BenchCase {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const mut REGISTRY: Vec<Expr(BenchCase)>
+          intrinsic_container
+            const_block
+              invoke
+                target: Vec::from
+                args:
+                  array (0 values)
+        pub const fn bench(item: Quote<item>) -> Quote<item>
+          block (3 stmts)
+            let name
+              init:
+                select .name [unknown]
+                  object:
+                    locator item
+            expr_stmt ;
+              invoke
+                target: REGISTRY.push
+                args:
+                  struct BenchCase
+                    name:
+                      locator name
+                    run:
+                      select .value [unknown]
+                        object:
+                          locator item
+            expr_stmt (value)
+              locator item
+        pub struct BenchReport {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_benches() -> Expr(BenchReport)
+          block (8 stmts)
+            let benches
+              init:
+                locator REGISTRY
+            let mut passed
+              init:
+                value 0
+            let mut failed
+              init:
+                value 0
+            let mut idx
+              init:
+                value 0
+            expr_stmt (value)
+              while
+                cond:
+                  binop <
+                    lhs:
+                      locator idx
+                    rhs:
+                      invoke
+                        target: benches.len
+                body:
+                  block (16 stmts)
+                    let bench
+                      init:
+                        index
+                          value:
+                            locator benches
+                          index:
+                            locator idx
+                    let mut ok
+                      init:
+                        value true
+                    let warmup_secs
+                      init:
+                        value 5
+                    let measure_secs
+                      init:
+                        value 15
+                    let warmup_start
+                      init:
+                        intrinsic time_now
+                          args: []
+                          kwargs: []
+                    let warmup_deadline
+                      init:
+                        binop +
+                          lhs:
+                            locator warmup_start
+                          rhs:
+                            locator warmup_secs
+                    let mut warmup_iters
+                      init:
+                        value 0
+                    expr_stmt (value)
+                      while
+                        cond:
+                          binop <
+                            lhs:
+                              intrinsic time_now
+                                args: []
+                                kwargs: []
+                            rhs:
+                              locator warmup_deadline
+                        body:
+                          block (3 stmts)
+                            let warm_ok
+                              init:
+                                intrinsic catch_unwind
+                                  args:
+                                    select .run [unknown]
+                                      object:
+                                        locator bench
+                                  kwargs: []
+                            expr_stmt (value)
+                              if
+                                cond:
+                                  unop !
+                                    value:
+                                      locator warm_ok
+                                then:
+                                  block (2 stmts)
+                                    expr_stmt ;
+                                      assign
+                                        target:
+                                          locator ok
+                                        value:
+                                          value false
+                                    expr_stmt ;
+                                      break
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator warmup_iters
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator warmup_iters
+                                    rhs:
+                                      value 1
+                    let measure_start
+                      init:
+                        intrinsic time_now
+                          args: []
+                          kwargs: []
+                    let measure_deadline
+                      init:
+                        binop +
+                          lhs:
+                            locator measure_start
+                          rhs:
+                            locator measure_secs
+                    let mut measure_iters
+                      init:
+                        value 0
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (1 stmt)
+                            expr_stmt (value)
+                              while
+                                cond:
+                                  binop ||
+                                    lhs:
+                                      binop <
+                                        lhs:
+                                          intrinsic time_now
+                                            args: []
+                                            kwargs: []
+                                        rhs:
+                                          locator measure_deadline
+                                    rhs:
+                                      binop ==
+                                        lhs:
+                                          locator measure_iters
+                                        rhs:
+                                          value 0
+                                body:
+                                  block (3 stmts)
+                                    let run_ok
+                                      init:
+                                        intrinsic catch_unwind
+                                          args:
+                                            select .run [unknown]
+                                              object:
+                                                locator bench
+                                          kwargs: []
+                                    expr_stmt (value)
+                                      if
+                                        cond:
+                                          unop !
+                                            value:
+                                              locator run_ok
+                                        then:
+                                          block (2 stmts)
+                                            expr_stmt ;
+                                              assign
+                                                target:
+                                                  locator ok
+                                                value:
+                                                  value false
+                                            expr_stmt ;
+                                              break
+                                    expr_stmt ;
+                                      assign
+                                        target:
+                                          locator measure_iters
+                                        value:
+                                          binop +
+                                            lhs:
+                                              locator measure_iters
+                                            rhs:
+                                              value 1
+                    let measure_end
+                      init:
+                        intrinsic time_now
+                          args: []
+                          kwargs: []
+                    let elapsed
+                      init:
+                        binop -
+                          lhs:
+                            locator measure_end
+                          rhs:
+                            locator measure_start
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (4 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator passed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator passed
+                                    rhs:
+                                      value 1
+                            let iters_f
+                              init:
+                                cast -> Expr(f64)
+                                  locator measure_iters
+                            let ns_per_iter
+                              init:
+                                if
+                                  cond:
+                                    binop >
+                                      lhs:
+                                        locator iters_f
+                                      rhs:
+                                        value 0
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt (value)
+                                        binop *
+                                          lhs:
+                                            binop /
+                                              lhs:
+                                                locator elapsed
+                                              rhs:
+                                                locator iters_f
+                                          rhs:
+                                            value 1000000000
+                                  else:
+                                    block (1 stmt)
+                                      expr_stmt (value)
+                                        value 0
+                            expr_stmt ;
+                              intrinsic println
+                                args:
+                                  format_string "  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"
+                                  select .name [unknown]
+                                    object:
+                                      locator bench
+                                  locator measure_iters
+                                  locator elapsed
+                                  locator ns_per_iter
+                                kwargs: []
+                        else:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator failed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator failed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                args:
+                                  format_string "  {} ... FAILED"
+                                  select .name [unknown]
+                                    object:
+                                      locator bench
+                                kwargs: []
+                    expr_stmt ;
+                      assign
+                        target:
+                          locator idx
+                        value:
+                          binop +
+                            lhs:
+                              locator idx
+                            rhs:
+                              value 1
+            let total
+              init:
+                binop +
+                  lhs:
+                    locator passed
+                  rhs:
+                    locator failed
+            expr_stmt ;
+              intrinsic println
+                args:
+                  format_string "bench result: {} passed; {} failed; {} total"
+                  locator passed
+                  locator failed
+                  locator total
+                kwargs: []
+            expr_stmt (value)
+              struct BenchReport
+                total:
+                  locator total
+                passed:
+                  locator passed
+                failed:
+                  locator failed
+      }
+      pub module collections {
+        pub struct HashMapEntry {
+          key: Expr(K)
+          value: Expr(V)
+        }
+        pub struct HashMap {
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+        }
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)
+            block (1 stmt)
+              expr_stmt (value)
+                struct HashMap
+                  entries:
+                    locator entries
+          pub fn len(&self) -> Expr(i64)
+            block (1 stmt)
+              expr_stmt (value)
+                invoke
+                  target: self.entries.len
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V)
+            block (3 stmts)
+              let mut idx
+                init:
+                  value 0
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        invoke
+                          target: self.entries.len
+                  body:
+                    block (3 stmts)
+                      let entry
+                        init:
+                          index
+                            value:
+                              select .entries [unknown]
+                                object:
+                                  locator self
+                            index:
+                              locator idx
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                select .key [unknown]
+                                  object:
+                                    locator entry
+                              rhs:
+                                locator key
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                return
+                                  select .value [unknown]
+                                    object:
+                                      locator entry
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                loop
+                  block (0 stmts)
+        }
+      }
+      pub module json {
+        pub struct JsonField {
+          key: &Expr(str)
+          value: Expr(JsonValue)
+        }
+        pub enum JsonValue {
+          Null: ()
+          Bool: (Expr(bool))
+          Number: (&Expr(str))
+          String: (&Expr(str))
+          Array: (Vec<Expr(JsonValue)>)
+          Object: (Vec<Expr(JsonField)>)
+        }
+        pub fn parse(input: &Expr(str)) -> Expr(JsonValue)
+          block (2 stmts)
+            let mut parser
+              init:
+                invoke
+                  target: Parser::new
+                  args:
+                    locator input
+            expr_stmt (value)
+              invoke
+                target: parser.parse_value
+        pub fn print(value: Expr(JsonValue))
+          block (1 stmt)
+            expr_stmt ;
+              invoke
+                target: print_value
+                args:
+                  reference (mutable: unspecified)
+                    locator value
+        pub fn print_value(value: &Expr(JsonValue))
+          block (1 stmt)
+            expr_stmt (value)
+              match
+                case #0
+                  cond:
+                    value true
+                  body:
+                    intrinsic print
+                      args:
+                        format_string "null"
+                      kwargs: []
+                case #1
+                  cond:
+                    value true
+                  body:
+                    block (1 stmt)
+                      expr_stmt (value)
+                        if
+                          cond:
+                            locator b
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "true"
+                                  kwargs: []
+                          else:
+                            block (1 stmt)
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "false"
+                                  kwargs: []
+                case #2
+                  cond:
+                    value true
+                  body:
+                    intrinsic print
+                      args:
+                        format_string "{}"
+                        locator n
+                      kwargs: []
+                case #3
+                  cond:
+                    value true
+                  body:
+                    block (3 stmts)
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "\""
+                          kwargs: []
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "{}"
+                            locator s
+                          kwargs: []
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "\""
+                          kwargs: []
+                case #4
+                  cond:
+                    value true
+                  body:
+                    block (5 stmts)
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "["
+                          kwargs: []
+                      let mut idx
+                        init:
+                          value 0
+                      let items_len
+                        init:
+                          invoke
+                            target: items.len
+                      expr_stmt (value)
+                        while
+                          cond:
+                            binop <
+                              lhs:
+                                locator idx
+                              rhs:
+                                locator items_len
+                          body:
+                            block (4 stmts)
+                              expr_stmt (value)
+                                if
+                                  cond:
+                                    binop >
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 0
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt ;
+                                        intrinsic print
+                                          args:
+                                            format_string ","
+                                          kwargs: []
+                              let item
+                                init:
+                                  index
+                                    value:
+                                      locator items
+                                    index:
+                                      locator idx
+                              expr_stmt ;
+                                invoke
+                                  target: print_value
+                                  args:
+                                    reference (mutable: unspecified)
+                                      locator item
+                              expr_stmt ;
+                                assign
+                                  target:
+                                    locator idx
+                                  value:
+                                    binop +
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 1
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "]"
+                          kwargs: []
+                case #5
+                  cond:
+                    value true
+                  body:
+                    block (5 stmts)
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "{"
+                          kwargs: []
+                      let mut idx
+                        init:
+                          value 0
+                      let fields_len
+                        init:
+                          invoke
+                            target: fields.len
+                      expr_stmt (value)
+                        while
+                          cond:
+                            binop <
+                              lhs:
+                                locator idx
+                              rhs:
+                                locator fields_len
+                          body:
+                            block (7 stmts)
+                              expr_stmt (value)
+                                if
+                                  cond:
+                                    binop >
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 0
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt ;
+                                        intrinsic print
+                                          args:
+                                            format_string ","
+                                          kwargs: []
+                              let field
+                                init:
+                                  index
+                                    value:
+                                      locator fields
+                                    index:
+                                      locator idx
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "\""
+                                  kwargs: []
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "{}"
+                                    select .key [unknown]
+                                      object:
+                                        locator field
+                                  kwargs: []
+                              expr_stmt ;
+                                intrinsic print
+                                  args:
+                                    format_string "\":"
+                                  kwargs: []
+                              expr_stmt ;
+                                invoke
+                                  target: print_value
+                                  args:
+                                    reference (mutable: unspecified)
+                                      select .value [unknown]
+                                        object:
+                                          locator field
+                              expr_stmt ;
+                                assign
+                                  target:
+                                    locator idx
+                                  value:
+                                    binop +
+                                      lhs:
+                                        locator idx
+                                      rhs:
+                                        value 1
+                      expr_stmt ;
+                        intrinsic print
+                          args:
+                            format_string "}"
+                          kwargs: []
+        pub struct Parser {
+          src: Vec<&Expr(str)>
+          pos: Expr(i64)
+        }
+        impl Parser {
+          pub fn new(src: &Expr(str)) -> Expr(Parser)
+            block (5 stmts)
+              let mut chars
+                init:
+                  value [0 values]
+              let mut idx
+                init:
+                  value 0
+              let src_len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: src.len
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        locator src_len
+                  body:
+                    block (4 stmts)
+                      let offset
+                        init:
+                          cast -> Expr(usize)
+                            locator idx
+                      let ch
+                        init:
+                          index
+                            value:
+                              locator src
+                            index:
+                              range [exclusive]
+                                start:
+                                  locator offset
+                                end:
+                                  binop +
+                                    lhs:
+                                      locator offset
+                                    rhs:
+                                      value 1
+                      expr_stmt ;
+                        invoke
+                          target: chars.push
+                          args:
+                            locator ch
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                struct Parser
+                  src:
+                    locator chars
+                  pos:
+                    value 0
+          pub fn bump(&mut self, amount: Expr(i64))
+            block (1 stmt)
+              expr_stmt ;
+                assign
+                  target:
+                    select .pos [unknown]
+                      object:
+                        locator self
+                  value:
+                    binop +
+                      lhs:
+                        select .pos [unknown]
+                          object:
+                            locator self
+                      rhs:
+                        locator amount
+          pub fn parse_value(&mut self) -> Expr(JsonValue)
+            block (9 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.skip_ws
+              let ch
+                init:
+                  invoke
+                    target: self.peek
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        locator ch
+                      rhs:
+                        value "{"
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: self.parse_object
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        locator ch
+                      rhs:
+                        value "["
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: self.parse_array
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        locator ch
+                      rhs:
+                        value "\""
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::String
+                            args:
+                              invoke
+                                target: self.parse_string
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.starts_with
+                      args:
+                        value "true"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 4
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Bool
+                            args:
+                              value true
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.starts_with
+                      args:
+                        value "false"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 5
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Bool
+                            args:
+                              value false
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.starts_with
+                      args:
+                        value "null"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 4
+                      expr_stmt ;
+                        return
+                          locator JsonValue::Null
+              expr_stmt (value)
+                invoke
+                  target: JsonValue::Number
+                  args:
+                    invoke
+                      target: self.parse_number
+          pub fn parse_array(&mut self) -> Expr(JsonValue)
+            block (6 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.expect_char
+                  args:
+                    value "["
+              expr_stmt ;
+                invoke
+                  target: self.skip_ws
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        invoke
+                          target: self.peek
+                      rhs:
+                        value "]"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Array
+                            args:
+                              value [0 values]
+              let mut items
+                init:
+                  value [0 values]
+              expr_stmt (value)
+                loop
+                  block (6 stmts)
+                    let value
+                      init:
+                        invoke
+                          target: self.parse_value
+                    expr_stmt ;
+                      invoke
+                        target: items.push
+                        args:
+                          locator value
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    let ch
+                      init:
+                        invoke
+                          target: self.peek
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value ","
+                        then:
+                          block (3 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              invoke
+                                target: self.skip_ws
+                            expr_stmt ;
+                              continue
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value "]"
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              break
+              expr_stmt (value)
+                invoke
+                  target: JsonValue::Array
+                  args:
+                    locator items
+          pub fn parse_object(&mut self) -> Expr(JsonValue)
+            block (6 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.expect_char
+                  args:
+                    value "{"
+              expr_stmt ;
+                invoke
+                  target: self.skip_ws
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        invoke
+                          target: self.peek
+                      rhs:
+                        value "}"
+                  then:
+                    block (2 stmts)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+                      expr_stmt ;
+                        return
+                          invoke
+                            target: JsonValue::Object
+                            args:
+                              value [0 values]
+              let mut fields
+                init:
+                  value [0 values]
+              expr_stmt (value)
+                loop
+                  block (10 stmts)
+                    let key
+                      init:
+                        invoke
+                          target: self.parse_string
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    expr_stmt ;
+                      invoke
+                        target: self.expect_char
+                        args:
+                          value ":"
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    let value
+                      init:
+                        invoke
+                          target: self.parse_value
+                    expr_stmt ;
+                      invoke
+                        target: fields.push
+                        args:
+                          struct JsonField
+                            key:
+                              locator key
+                            value:
+                              locator value
+                    expr_stmt ;
+                      invoke
+                        target: self.skip_ws
+                    let ch
+                      init:
+                        invoke
+                          target: self.peek
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value ","
+                        then:
+                          block (3 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              invoke
+                                target: self.skip_ws
+                            expr_stmt ;
+                              continue
+                    expr_stmt (value)
+                      if
+                        cond:
+                          binop ==
+                            lhs:
+                              locator ch
+                            rhs:
+                              value "}"
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              invoke
+                                target: self.bump
+                                args:
+                                  value 1
+                            expr_stmt ;
+                              break
+              expr_stmt (value)
+                invoke
+                  target: JsonValue::Object
+                  args:
+                    locator fields
+          pub fn parse_string(&mut self) -> &Expr(str)
+            block (4 stmts)
+              expr_stmt ;
+                invoke
+                  target: self.expect_char
+                  args:
+                    value "\""
+              let start
+                init:
+                  cast -> Expr(usize)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              expr_stmt (value)
+                while
+                  cond:
+                    unop !
+                      value:
+                        invoke
+                          target: self.is_eof
+                  body:
+                    block (4 stmts)
+                      let ch
+                        init:
+                          invoke
+                            target: self.peek
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                locator ch
+                              rhs:
+                                value "\""
+                          then:
+                            block (3 stmts)
+                              let value
+                                init:
+                                  index
+                                    value:
+                                      select .src [unknown]
+                                        object:
+                                          locator self
+                                    index:
+                                      range [exclusive]
+                                        start:
+                                          locator start
+                                        end:
+                                          cast -> Expr(usize)
+                                            select .pos [unknown]
+                                              object:
+                                                locator self
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                              expr_stmt ;
+                                return
+                                  locator value
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ==
+                              lhs:
+                                locator ch
+                              rhs:
+                                value "\\"
+                          then:
+                            block (3 stmts)
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                              expr_stmt (value)
+                                if
+                                  cond:
+                                    unop !
+                                      value:
+                                        invoke
+                                          target: self.is_eof
+                                  then:
+                                    block (1 stmt)
+                                      expr_stmt ;
+                                        invoke
+                                          target: self.bump
+                                          args:
+                                            value 1
+                              expr_stmt ;
+                                continue
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+              expr_stmt (value)
+                index
+                  value:
+                    select .src [unknown]
+                      object:
+                        locator self
+                  index:
+                    range [exclusive]
+                      start:
+                        locator start
+                      end:
+                        cast -> Expr(usize)
+                          select .pos [unknown]
+                            object:
+                              locator self
+          pub fn parse_number(&mut self) -> &Expr(str)
+            block (3 stmts)
+              let start
+                init:
+                  cast -> Expr(usize)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              expr_stmt (value)
+                while
+                  cond:
+                    unop !
+                      value:
+                        invoke
+                          target: self.is_eof
+                  body:
+                    block (2 stmts)
+                      let ch
+                        init:
+                          invoke
+                            target: self.peek
+                      expr_stmt (value)
+                        if
+                          cond:
+                            invoke
+                              target: is_number_char
+                              args:
+                                locator ch
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                          else:
+                            block (1 stmt)
+                              expr_stmt ;
+                                break
+              expr_stmt (value)
+                index
+                  value:
+                    select .src [unknown]
+                      object:
+                        locator self
+                  index:
+                    range [exclusive]
+                      start:
+                        locator start
+                      end:
+                        cast -> Expr(usize)
+                          select .pos [unknown]
+                            object:
+                              locator self
+          pub fn skip_ws(&mut self)
+            block (1 stmt)
+              expr_stmt (value)
+                while
+                  cond:
+                    unop !
+                      value:
+                        invoke
+                          target: self.is_eof
+                  body:
+                    block (2 stmts)
+                      let ch
+                        init:
+                          invoke
+                            target: self.peek
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop ||
+                              lhs:
+                                binop ||
+                                  lhs:
+                                    binop ||
+                                      lhs:
+                                        binop ==
+                                          lhs:
+                                            locator ch
+                                          rhs:
+                                            value " "
+                                      rhs:
+                                        binop ==
+                                          lhs:
+                                            locator ch
+                                          rhs:
+                                            value "\n"
+                                  rhs:
+                                    binop ==
+                                      lhs:
+                                        locator ch
+                                      rhs:
+                                        value "\t"
+                              rhs:
+                                binop ==
+                                  lhs:
+                                    locator ch
+                                  rhs:
+                                    value "\r"
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                invoke
+                                  target: self.bump
+                                  args:
+                                    value 1
+                          else:
+                            block (1 stmt)
+                              expr_stmt ;
+                                break
+          pub fn expect_char(&mut self, ch: &Expr(str))
+            block (1 stmt)
+              expr_stmt (value)
+                if
+                  cond:
+                    binop ==
+                      lhs:
+                        invoke
+                          target: self.peek
+                      rhs:
+                        locator ch
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        invoke
+                          target: self.bump
+                          args:
+                            value 1
+          pub fn starts_with(&self, literal: &Expr(str)) -> Expr(bool)
+            block (7 stmts)
+              let pos
+                init:
+                  cast -> Expr(usize)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              let mut idx
+                init:
+                  value 0
+              let literal_len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: literal.len
+              let src_len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: self.src.len
+              let pos_i64
+                init:
+                  cast -> Expr(i64)
+                    locator pos
+              expr_stmt (value)
+                while
+                  cond:
+                    binop <
+                      lhs:
+                        locator idx
+                      rhs:
+                        locator literal_len
+                  body:
+                    block (4 stmts)
+                      let offset
+                        init:
+                          cast -> Expr(usize)
+                            locator idx
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop >=
+                              lhs:
+                                binop +
+                                  lhs:
+                                    locator pos_i64
+                                  rhs:
+                                    locator idx
+                              rhs:
+                                locator src_len
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                return
+                                  value false
+                      expr_stmt (value)
+                        if
+                          cond:
+                            binop !=
+                              lhs:
+                                index
+                                  value:
+                                    select .src [unknown]
+                                      object:
+                                        locator self
+                                  index:
+                                    binop +
+                                      lhs:
+                                        locator pos
+                                      rhs:
+                                        locator offset
+                              rhs:
+                                index
+                                  value:
+                                    locator literal
+                                  index:
+                                    range [exclusive]
+                                      start:
+                                        locator offset
+                                      end:
+                                        binop +
+                                          lhs:
+                                            locator offset
+                                          rhs:
+                                            value 1
+                          then:
+                            block (1 stmt)
+                              expr_stmt ;
+                                return
+                                  value false
+                      expr_stmt ;
+                        assign
+                          target:
+                            locator idx
+                          value:
+                            binop +
+                              lhs:
+                                locator idx
+                              rhs:
+                                value 1
+              expr_stmt (value)
+                value true
+          pub fn peek(&self) -> &Expr(str)
+            block (2 stmts)
+              expr_stmt (value)
+                if
+                  cond:
+                    invoke
+                      target: self.is_eof
+                  then:
+                    block (1 stmt)
+                      expr_stmt ;
+                        return
+                          value ""
+              expr_stmt (value)
+                index
+                  value:
+                    select .src [unknown]
+                      object:
+                        locator self
+                  index:
+                    cast -> Expr(usize)
+                      select .pos [unknown]
+                        object:
+                          locator self
+          pub fn is_eof(&self) -> Expr(bool)
+            block (3 stmts)
+              let pos
+                init:
+                  cast -> Expr(i64)
+                    select .pos [unknown]
+                      object:
+                        locator self
+              let len
+                init:
+                  cast -> Expr(i64)
+                    invoke
+                      target: self.src.len
+              expr_stmt (value)
+                binop >=
+                  lhs:
+                    locator pos
+                  rhs:
+                    locator len
+        }
+        pub fn is_number_char(ch: &Expr(str)) -> Expr(bool)
+          block (1 stmt)
+            expr_stmt (value)
+              match
+                case #0
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #1
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #2
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #3
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #4
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #5
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #6
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #7
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #8
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #9
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #10
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #11
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #12
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #13
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #14
+                  cond:
+                    value true
+                  body:
+                    value true
+                case #15
+                  cond:
+                    value true
+                  body:
+                    value false
+      }
+      pub module intrinsic {
+        pub [attrs] fn create_struct(name: &Expr(str)) -> type
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic compile_error
+                args:
+                  value "create_struct is a compiler intrinsic"
+                kwargs: []
+        pub [attrs] fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic compile_error
+                args:
+                  value "addfield is a compiler intrinsic"
+                kwargs: []
+      }
+      pub module meta {
+        pub struct TypeBuilder {
+          ty: type
+        }
+        impl TypeBuilder {
+          pub const fn new(name: &Expr(str)) -> Expr(TypeBuilder)
+            block (1 stmt)
+              expr_stmt (value)
+                struct TypeBuilder
+                  ty:
+                    intrinsic create_struct
+                      args:
+                        locator name
+                      kwargs: []
+          pub const fn from(ty: type) -> Expr(TypeBuilder)
+            block (1 stmt)
+              expr_stmt (value)
+                struct TypeBuilder
+                  ty:
+                    locator ty
+          pub const fn with_field(self, name: &Expr(str), field_ty: type) -> Expr(TypeBuilder)
+            block (2 stmts)
+              let ty
+                init:
+                  intrinsic add_field
+                    args:
+                      select .ty [unknown]
+                        object:
+                          locator self
+                      locator name
+                      locator field_ty
+                    kwargs: []
+              expr_stmt (value)
+                struct TypeBuilder
+                  ty:
+                    locator ty
+          pub const fn build(self) -> type
+            block (1 stmt)
+              expr_stmt (value)
+                select .ty [unknown]
+                  object:
+                    locator self
+        }
+      }
+      pub module proc_macro {
+        pub enum Delimiter {
+          Parenthesis: ()
+          Brace: ()
+          Bracket: ()
+        }
+        pub struct Group {
+          delimiter: Expr(Delimiter)
+          tokens: Vec<Expr(TokenTree)>
+        }
+        pub struct Ident {
+          text: Expr(str)
+        }
+        pub struct Punct {
+          text: Expr(str)
+        }
+        pub struct Literal {
+          text: Expr(str)
+        }
+        pub enum TokenTree {
+          Token: (Expr(str))
+          Group: (Expr(Group))
+        }
+        pub struct TokenStream {
+        }
+        pub const fn token_stream_from_str(text: Expr(str)) -> Expr(TokenStream)
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic token_stream_from_str
+                args:
+                  locator text
+                kwargs: []
+        pub const fn token_stream_to_string(stream: Expr(TokenStream)) -> Expr(str)
+          block (1 stmt)
+            expr_stmt (value)
+              intrinsic token_stream_to_string
+                args:
+                  locator stream
+                kwargs: []
+        impl TokenStream {
+          pub fn from_str(text: Expr(str)) -> Expr(TokenStream)
+            block (1 stmt)
+              expr_stmt (value)
+                intrinsic token_stream_from_str
+                  args:
+                    locator text
+                  kwargs: []
+          pub fn to_string(self) -> Expr(str)
+            block (1 stmt)
+              expr_stmt (value)
+                intrinsic token_stream_to_string
+                  args:
+                    locator self
+                  kwargs: []
+        }
+      }
+      pub module test {
+        pub struct TestCase {
+          name: Expr(str)
+          run: fn() -> ()
+        }
+        pub const REGISTRY: Vec<Expr(TestCase)>
+          value [0 values]
+        pub const fn test(item: Quote<item>) -> Quote<item>
+          block (3 stmts)
+            let name
+              init:
+                select .name [unknown]
+                  object:
+                    locator item
+            expr_stmt ;
+              invoke
+                target: REGISTRY.push
+                args:
+                  struct TestCase
+                    name:
+                      locator name
+                    run:
+                      select .value [unknown]
+                        object:
+                          locator item
+            expr_stmt (value)
+              locator item
+        pub struct TestReport {
+          total: Expr(i64)
+          passed: Expr(i64)
+          failed: Expr(i64)
+        }
+        pub fn run_tests() -> Expr(TestReport)
+          block (8 stmts)
+            let tests
+              init:
+                locator REGISTRY
+            let mut passed
+              init:
+                value 0
+            let mut failed
+              init:
+                value 0
+            let mut idx
+              init:
+                value 0
+            expr_stmt (value)
+              while
+                cond:
+                  binop <
+                    lhs:
+                      locator idx
+                    rhs:
+                      invoke
+                        target: tests.len
+                body:
+                  block (4 stmts)
+                    let test
+                      init:
+                        index
+                          value:
+                            locator tests
+                          index:
+                            locator idx
+                    let ok
+                      init:
+                        intrinsic catch_unwind
+                          args:
+                            select .run [unknown]
+                              object:
+                                locator test
+                          kwargs: []
+                    expr_stmt (value)
+                      if
+                        cond:
+                          locator ok
+                        then:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator passed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator passed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                args:
+                                  format_string "  {} ... ok"
+                                  select .name [unknown]
+                                    object:
+                                      locator test
+                                kwargs: []
+                        else:
+                          block (2 stmts)
+                            expr_stmt ;
+                              assign
+                                target:
+                                  locator failed
+                                value:
+                                  binop +
+                                    lhs:
+                                      locator failed
+                                    rhs:
+                                      value 1
+                            expr_stmt ;
+                              intrinsic println
+                                args:
+                                  format_string "  {} ... FAILED"
+                                  select .name [unknown]
+                                    object:
+                                      locator test
+                                kwargs: []
+                    expr_stmt ;
+                      assign
+                        target:
+                          locator idx
+                        value:
+                          binop +
+                            lhs:
+                              locator idx
+                            rhs:
+                              value 1
+            let total
+              init:
+                binop +
+                  lhs:
+                    locator passed
+                  rhs:
+                    locator failed
+            expr_stmt ;
+              intrinsic println
+                args:
+                  format_string "test result: {} passed; {} failed; {} total"
+                  locator passed
+                  locator failed
+                  locator total
+                kwargs: []
+            expr_stmt (value)
+              struct TestReport
+                total:
+                  locator total
+                passed:
+                  locator passed
+                failed:
+                  locator failed
+        pub fn run() -> Expr(TestReport)
+          block (1 stmt)
+            expr_stmt (value)
+              invoke
+                target: run_tests
+      }
+      pub module time {
+        pub [attrs] fn now() -> Expr(f64)
           block (1 stmt)
             expr_stmt (value)
               intrinsic time_now
@@ -544,19 +3664,19 @@ ast::File {
       }
     }
     pub module helpers {
-      pub const GREETING: &string
+      pub const GREETING: &Expr(str)
         value "Hello"
-      pub fn greet(name: &Expr(str)) -> () : fn(&string) -> ()
+      pub fn greet(name: &Expr(str))
         block (1 stmt)
           expr_stmt ;
             intrinsic println
               args:
                 format_string "{} {}!"
-                locator GREETING
+                value "Hello"
                 locator name
               kwargs: []
       pub module math {
-        pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64
+        pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64)
           block (1 stmt)
             expr_stmt (value)
               binop +
@@ -569,7 +3689,7 @@ ast::File {
     pub module modules {
       pub module helpers {
         pub module math {
-          pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64) : fn(i64, i64) -> i64
+          pub fn add(a: Expr(i64), b: Expr(i64)) -> Expr(i64)
             block (1 stmt)
               expr_stmt (value)
                 binop +
@@ -578,15 +3698,15 @@ ast::File {
                   rhs:
                     locator b
         }
-        pub const SOURCE: &string
+        pub const SOURCE: &Expr(str)
           value "file module"
-        pub fn greet_from_file(name: &Expr(str)) -> () : fn(&string) -> ()
+        pub fn greet_from_file(name: &Expr(str))
           block (1 stmt)
             expr_stmt ;
               intrinsic println
                 args:
                   format_string "[{}] Hello, {}!"
-                  locator SOURCE
+                  value "file module"
                   locator name
                 kwargs: []
       }
@@ -597,7 +3717,7 @@ ast::File {
     pub import modules::helpers::greet_from_file as file_greet
     pub import modules::helpers::math::add as file_add
     pub import std::fmt::Display
-    pub fn<T: Display> echo(value: Expr(T)) -> () : fn<T: Display>(unknown) -> ()
+    pub fn<T: Display> echo(value: Expr(T))
       block (1 stmt)
         expr_stmt ;
           intrinsic println
@@ -605,7 +3725,7 @@ ast::File {
               format_string "echo: {}"
               locator value
             kwargs: []
-    pub const fn main() -> () : fn() -> ()
+    pub const fn main()
       block (12 stmts)
         expr_stmt ;
           intrinsic println

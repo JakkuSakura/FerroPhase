@@ -123,11 +123,7 @@ impl HirGenerator {
     }
 
     fn normalize_span(&self, span: Span) -> Span {
-        if span.file == 0 && !span.is_null() && self.current_file != 0 {
-            Span::new(self.current_file, span.lo, span.hi)
-        } else {
-            span
-        }
+        span
     }
 
     fn handle_import(&mut self, _import: &ast::ItemImport) -> Result<()> {

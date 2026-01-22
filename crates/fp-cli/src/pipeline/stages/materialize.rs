@@ -499,6 +499,7 @@ fn build_hashmap_get_expr(expr_index: ast::ExprIndex, expr_ty: ast::TySlot) -> a
     let invoke = ast::ExprInvoke {
         target: ast::ExprInvokeTarget::Method(select),
         args: vec![*expr_index.index],
+        kwargs: Vec::new(),
         span: Span::null(),
     };
     ast::Expr::with_ty(ast::ExprKind::Invoke(invoke), expr_ty)
@@ -536,6 +537,7 @@ fn build_hashmap_from_entries(
     let invoke = ast::ExprInvoke {
         target: ast::ExprInvokeTarget::Function(locator),
         args: vec![vec_entries],
+        kwargs: Vec::new(),
         span: Span::null(),
     };
 

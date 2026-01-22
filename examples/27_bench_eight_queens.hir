@@ -1,31 +1,4 @@
 hir::Program {
-    struct __Closure0 {
-        pub bench: BenchCase,
-    }
-
-    fn __closure0_call(__env: __Closure0) -> () {
-        // params: [__env: __Closure0]
-        __env.bench.run()
-    }
-
-    struct __Closure1 {
-        pub bench: BenchCase,
-    }
-
-    fn __closure1_call(__env: __Closure1) -> () {
-        // params: [__env: __Closure1]
-        __env.bench.run()
-    }
-
-    struct __Closure2 {
-        pub test: TestCase,
-    }
-
-    fn __closure2_call(__env: __Closure2) -> () {
-        // params: [__env: __Closure2]
-        __env.test.run()
-    }
-
     pub struct std::bench::BenchCase {
         pub name: str,
         pub run: fn() -> (),
@@ -33,6 +6,15 @@ hir::Program {
 
     pub const std::bench::REGISTRY: [BenchCase; 1] =
         [BenchCase { name: "bench_eight_queens", run: bench_eight_queens }];
+
+    pub fn std::bench::bench(item: <error>) -> <error> {
+        // params: [item: <error>]
+        {
+            let name = item.name;
+            REGISTRY.push(arg0 = BenchCase { name: name, run: item.value });
+            item
+        }
+    }
 
     pub struct std::bench::BenchReport {
         pub total: i64,
@@ -42,7 +24,7 @@ hir::Program {
 
     pub fn std::bench::run_benches() -> BenchReport {
         {
-            let benches = REGISTRY;
+            let benches = [];
             let mut passed = 0;
             let mut failed = 0;
             let mut idx = 0;
@@ -57,7 +39,7 @@ hir::Program {
                     let mut warmup_iters = 0;
                     while ((std::time_now() < warmup_deadline))
                         {
-                            let warm_ok = std::catch_unwind(arg0 = __Closure0 { bench: bench });
+                            let warm_ok = std::catch_unwind(arg0 = bench.run);
                             if ((!warm_ok))
                                 {
                                     ok = false;
@@ -72,7 +54,7 @@ hir::Program {
                         {
                             while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
                                 {
-                                    let run_ok = std::catch_unwind(arg0 = __Closure1 { bench: bench });
+                                    let run_ok = std::catch_unwind(arg0 = bench.run);
                                     if ((!run_ok))
                                         {
                                             ok = false;
@@ -93,12 +75,12 @@ hir::Program {
                     else
                         {
                             failed = (failed + 1);
-                            printf(arg0 = "  %s ... FAILED\n", arg1 = bench.name);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf(arg0 = "bench result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
+            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
             BenchReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -147,6 +129,512 @@ hir::Program {
         }
     }
 
+    pub struct std::json::JsonField {
+        pub key: &str,
+        pub value: JsonValue,
+    }
+
+    pub enum std::json::JsonValue {
+        Null,
+        Bool,
+        Number,
+        String,
+        Array,
+        Object,
+    }
+
+    pub fn std::json::parse(input: &str) -> JsonValue {
+        // params: [input: &str]
+        {
+            let mut parser = Parser::new(arg0 = input);
+            parser.parse_value()
+        }
+    }
+
+    pub fn std::json::print(value: JsonValue) -> () {
+        // params: [value: JsonValue]
+        {
+            print_value(arg0 = value);
+        }
+    }
+
+    pub fn std::json::print_value(value: &JsonValue) -> () {
+        // params: [value: &JsonValue]
+        {
+            match (value)
+            {
+                JsonValue::Null =>
+                    printf(arg0 = "null")
+                JsonValue::Bool(b) =>
+                    {
+                        if (b)
+                            {
+                                printf(arg0 = "true");
+                            }
+                        else
+                            {
+                                printf(arg0 = "false");
+                            }
+                    }
+                JsonValue::Number(n) =>
+                    std::print(arg0 = format_string("{}"), arg1 = n)
+                JsonValue::String(s) =>
+                    {
+                        printf(arg0 = "\"");
+                        std::print(arg0 = format_string("{}"), arg1 = s);
+                        printf(arg0 = "\"");
+                    }
+                JsonValue::Array(items) =>
+                    {
+                        printf(arg0 = "[");
+                        let mut idx = 0;
+                        let items_len = items.len();
+                        while ((idx < items_len))
+                            {
+                                if ((idx > 0))
+                                    {
+                                        printf(arg0 = ",");
+                                    }
+                                let item = items[idx];
+                                print_value(arg0 = item);
+                                idx = (idx + 1);
+                            }
+                        printf(arg0 = "]");
+                    }
+                JsonValue::Object(fields) =>
+                    {
+                        printf(arg0 = "{");
+                        let mut idx = 0;
+                        let fields_len = fields.len();
+                        while ((idx < fields_len))
+                            {
+                                if ((idx > 0))
+                                    {
+                                        printf(arg0 = ",");
+                                    }
+                                let field = fields[idx];
+                                printf(arg0 = "\"");
+                                std::print(arg0 = format_string("{}"), arg1 = field.key);
+                                printf(arg0 = "\":");
+                                print_value(arg0 = field.value);
+                                idx = (idx + 1);
+                            }
+                        printf(arg0 = "}");
+                    }
+            }
+        }
+    }
+
+    pub struct std::json::Parser {
+        pub src: Vec<&str>,
+        pub pos: i64,
+    }
+
+    impl Parser {
+        fn std::json::new(src: &str) -> Parser {
+            // params: [src: &str]
+            {
+                let mut chars = [];
+                let mut idx = 0;
+                let src_len = (src.len() as i64);
+                while ((idx < src_len))
+                    {
+                        let offset = (idx as usize);
+                        let ch = std::slice(base = src, start = offset, end = (offset + 1));
+                        chars.push(arg0 = ch);
+                        idx = (idx + 1);
+                    }
+                Parser { src: chars, pos: 0 }
+            }
+        }
+
+        fn std::json::bump(self: &Parser, amount: i64) -> () {
+            // params: [self: &Parser, amount: i64]
+            {
+                self.pos = (self.pos + amount);
+            }
+        }
+
+        fn std::json::parse_value(self: &Parser) -> JsonValue {
+            // params: [self: &Parser]
+            {
+                self.skip_ws();
+                let ch = self.peek();
+                if ((ch == "{"))
+                    {
+                        return self.parse_object();
+                    }
+                if ((ch == "["))
+                    {
+                        return self.parse_array();
+                    }
+                if ((ch == "\""))
+                    {
+                        return JsonValue::String(arg0 = self.parse_string());
+                    }
+                if (self.starts_with(arg0 = "true"))
+                    {
+                        self.bump(arg0 = 4);
+                        return JsonValue::Bool(arg0 = true);
+                    }
+                if (self.starts_with(arg0 = "false"))
+                    {
+                        self.bump(arg0 = 5);
+                        return JsonValue::Bool(arg0 = false);
+                    }
+                if (self.starts_with(arg0 = "null"))
+                    {
+                        self.bump(arg0 = 4);
+                        return JsonValue::Null;
+                    }
+                JsonValue::Number(arg0 = self.parse_number())
+            }
+        }
+
+        fn std::json::parse_array(self: &Parser) -> JsonValue {
+            // params: [self: &Parser]
+            {
+                self.expect_char(arg0 = "[");
+                self.skip_ws();
+                if ((self.peek() == "]"))
+                    {
+                        self.bump(arg0 = 1);
+                        return JsonValue::Array(arg0 = []);
+                    }
+                let mut items = [];
+                loop
+                    {
+                        let value = self.parse_value();
+                        items.push(arg0 = value);
+                        self.skip_ws();
+                        let ch = self.peek();
+                        if ((ch == ","))
+                            {
+                                self.bump(arg0 = 1);
+                                self.skip_ws();
+                                continue;
+                            }
+                        if ((ch == "]"))
+                            {
+                                self.bump(arg0 = 1);
+                                break;
+                            }
+                    }
+                JsonValue::Array(arg0 = items)
+            }
+        }
+
+        fn std::json::parse_object(self: &Parser) -> JsonValue {
+            // params: [self: &Parser]
+            {
+                self.expect_char(arg0 = "{");
+                self.skip_ws();
+                if ((self.peek() == "}"))
+                    {
+                        self.bump(arg0 = 1);
+                        return JsonValue::Object(arg0 = []);
+                    }
+                let mut fields = [];
+                loop
+                    {
+                        let key = self.parse_string();
+                        self.skip_ws();
+                        self.expect_char(arg0 = ":");
+                        self.skip_ws();
+                        let value = self.parse_value();
+                        fields.push(arg0 = JsonField { key: key, value: value });
+                        self.skip_ws();
+                        let ch = self.peek();
+                        if ((ch == ","))
+                            {
+                                self.bump(arg0 = 1);
+                                self.skip_ws();
+                                continue;
+                            }
+                        if ((ch == "}"))
+                            {
+                                self.bump(arg0 = 1);
+                                break;
+                            }
+                    }
+                JsonValue::Object(arg0 = fields)
+            }
+        }
+
+        fn std::json::parse_string(self: &Parser) -> &str {
+            // params: [self: &Parser]
+            {
+                self.expect_char(arg0 = "\"");
+                let start = (self.pos as usize);
+                while ((!self.is_eof()))
+                    {
+                        let ch = self.peek();
+                        if ((ch == "\""))
+                            {
+                                let value = std::slice(base = self.src, start = start, end = (self.pos as usize));
+                                self.bump(arg0 = 1);
+                                return value;
+                            }
+                        if ((ch == "\\"))
+                            {
+                                self.bump(arg0 = 1);
+                                if ((!self.is_eof()))
+                                    {
+                                        self.bump(arg0 = 1);
+                                    }
+                                continue;
+                            }
+                        self.bump(arg0 = 1);
+                    }
+                std::slice(base = self.src, start = start, end = (self.pos as usize))
+            }
+        }
+
+        fn std::json::parse_number(self: &Parser) -> &str {
+            // params: [self: &Parser]
+            {
+                let start = (self.pos as usize);
+                while ((!self.is_eof()))
+                    {
+                        let ch = self.peek();
+                        if (is_number_char(arg0 = ch))
+                            {
+                                self.bump(arg0 = 1);
+                            }
+                        else
+                            {
+                                break;
+                            }
+                    }
+                std::slice(base = self.src, start = start, end = (self.pos as usize))
+            }
+        }
+
+        fn std::json::skip_ws(self: &Parser) -> () {
+            // params: [self: &Parser]
+            {
+                while ((!self.is_eof()))
+                    {
+                        let ch = self.peek();
+                        if (((((ch == " ") || (ch == "\n")) || (ch == "\t")) || (ch == "\r")))
+                            {
+                                self.bump(arg0 = 1);
+                            }
+                        else
+                            {
+                                break;
+                            }
+                    }
+            }
+        }
+
+        fn std::json::expect_char(self: &Parser, ch: &str) -> () {
+            // params: [self: &Parser, ch: &str]
+            {
+                if ((self.peek() == ch))
+                    {
+                        self.bump(arg0 = 1);
+                    }
+            }
+        }
+
+        fn std::json::starts_with(self: &Parser, literal: &str) -> bool {
+            // params: [self: &Parser, literal: &str]
+            {
+                let pos = (self.pos as usize);
+                let mut idx = 0;
+                let literal_len = (literal.len() as i64);
+                let src_len = (self.src.len() as i64);
+                let pos_i64 = (pos as i64);
+                while ((idx < literal_len))
+                    {
+                        let offset = (idx as usize);
+                        if (((pos_i64 + idx) >= src_len))
+                            {
+                                return false;
+                            }
+                        if ((self.src[(pos + offset)] != std::slice(base = literal, start = offset, end = (offset + 1))))
+                            {
+                                return false;
+                            }
+                        idx = (idx + 1);
+                    }
+                true
+            }
+        }
+
+        fn std::json::peek(self: &Parser) -> &str {
+            // params: [self: &Parser]
+            {
+                if (self.is_eof())
+                    {
+                        return "";
+                    }
+                self.src[(self.pos as usize)]
+            }
+        }
+
+        fn std::json::is_eof(self: &Parser) -> bool {
+            // params: [self: &Parser]
+            {
+                let pos = (self.pos as i64);
+                let len = (self.src.len() as i64);
+                (pos >= len)
+            }
+        }
+    }
+
+    pub fn std::json::is_number_char(ch: &str) -> bool {
+        // params: [ch: &str]
+        {
+            match (ch)
+            {
+                "0" =>
+                    true
+                "1" =>
+                    true
+                "2" =>
+                    true
+                "3" =>
+                    true
+                "4" =>
+                    true
+                "5" =>
+                    true
+                "6" =>
+                    true
+                "7" =>
+                    true
+                "8" =>
+                    true
+                "9" =>
+                    true
+                "-" =>
+                    true
+                "+" =>
+                    true
+                "." =>
+                    true
+                "e" =>
+                    true
+                "E" =>
+                    true
+                _ =>
+                    false
+            }
+        }
+    }
+
+    pub fn std::intrinsic::create_struct(name: &str) -> <error> {
+        // params: [name: &str]
+        {
+            std::compile_error(arg0 = "create_struct is a compiler intrinsic")
+        }
+    }
+
+    pub fn std::intrinsic::addfield(ty: <error>, name: &str, field_ty: <error>) -> <error> {
+        // params: [ty: <error>, name: &str, field_ty: <error>]
+        {
+            std::compile_error(arg0 = "addfield is a compiler intrinsic")
+        }
+    }
+
+    pub struct std::meta::TypeBuilder {
+        pub ty: <error>,
+    }
+
+    impl TypeBuilder {
+        fn std::meta::new(name: &str) -> TypeBuilder {
+            // params: [name: &str]
+            {
+                TypeBuilder { ty: std::create_struct(arg0 = name) }
+            }
+        }
+
+        fn std::meta::from(ty: <error>) -> TypeBuilder {
+            // params: [ty: <error>]
+            {
+                TypeBuilder { ty: ty }
+            }
+        }
+
+        fn std::meta::with_field(self: TypeBuilder, name: &str, field_ty: <error>) -> TypeBuilder {
+            // params: [self: TypeBuilder, name: &str, field_ty: <error>]
+            {
+                let ty = std::add_field(arg0 = self.ty, arg1 = name, arg2 = field_ty);
+                TypeBuilder { ty: ty }
+            }
+        }
+
+        fn std::meta::build(self: TypeBuilder) -> <error> {
+            // params: [self: TypeBuilder]
+            {
+                self.ty
+            }
+        }
+    }
+
+    pub enum std::proc_macro::Delimiter {
+        Parenthesis,
+        Brace,
+        Bracket,
+    }
+
+    pub struct std::proc_macro::Group {
+        pub delimiter: Delimiter,
+        pub tokens: Vec<TokenTree>,
+    }
+
+    pub struct std::proc_macro::Ident {
+        pub text: str,
+    }
+
+    pub struct std::proc_macro::Punct {
+        pub text: str,
+    }
+
+    pub struct std::proc_macro::Literal {
+        pub text: str,
+    }
+
+    pub enum std::proc_macro::TokenTree {
+        Token,
+        Group,
+    }
+
+    pub struct std::proc_macro::TokenStream {
+    }
+
+    pub fn std::proc_macro::token_stream_from_str(text: str) -> TokenStream {
+        // params: [text: str]
+        {
+            std::token_stream_from_str(arg0 = text)
+        }
+    }
+
+    pub fn std::proc_macro::token_stream_to_string(stream: TokenStream) -> str {
+        // params: [stream: TokenStream]
+        {
+            std::token_stream_to_string(arg0 = stream)
+        }
+    }
+
+    impl TokenStream {
+        fn std::proc_macro::from_str(text: str) -> TokenStream {
+            // params: [text: str]
+            {
+                std::token_stream_from_str(arg0 = text)
+            }
+        }
+
+        fn std::proc_macro::to_string(self: TokenStream) -> str {
+            // params: [self: TokenStream]
+            {
+                std::token_stream_to_string(arg0 = self)
+            }
+        }
+    }
+
     pub struct std::test::TestCase {
         pub name: str,
         pub run: fn() -> (),
@@ -154,6 +642,715 @@ hir::Program {
 
     pub const std::test::REGISTRY: [TestCase; 0] =
         [];
+
+    pub fn std::test::test(item: <error>) -> <error> {
+        // params: [item: <error>]
+        {
+            let name = item.name;
+            REGISTRY.push(arg0 = TestCase { name: name, run: item.value });
+            item
+        }
+    }
+
+    pub struct std::test::TestReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::test::run_tests() -> TestReport {
+        {
+            let tests = [];
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < tests.len()))
+                {
+                    let test = tests[idx];
+                    let ok = std::catch_unwind(arg0 = test.run);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            TestReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub fn std::test::run() -> TestReport {
+        {
+            run_tests()
+        }
+    }
+
+    pub fn std::time::now() -> f64 {
+        {
+            std::time_now()
+        }
+    }
+
+    pub struct std::bench::BenchCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::bench::REGISTRY: Vec<BenchCase> =
+        {
+        }
+
+    pub fn std::bench::bench(item: <error>) -> <error> {
+        // params: [item: <error>]
+        {
+            let name = item.name;
+            REGISTRY.push(arg0 = BenchCase { name: name, run: item.value });
+            item
+        }
+    }
+
+    pub struct std::bench::BenchReport {
+        pub total: i64,
+        pub passed: i64,
+        pub failed: i64,
+    }
+
+    pub fn std::bench::run_benches() -> BenchReport {
+        {
+            let benches = REGISTRY;
+            let mut passed = 0;
+            let mut failed = 0;
+            let mut idx = 0;
+            while ((idx < benches.len()))
+                {
+                    let bench = benches[idx];
+                    let mut ok = true;
+                    let warmup_secs = 5;
+                    let measure_secs = 15;
+                    let warmup_start = std::time_now();
+                    let warmup_deadline = (warmup_start + warmup_secs);
+                    let mut warmup_iters = 0;
+                    while ((std::time_now() < warmup_deadline))
+                        {
+                            let warm_ok = std::catch_unwind(arg0 = bench.run);
+                            if ((!warm_ok))
+                                {
+                                    ok = false;
+                                    break;
+                                }
+                            warmup_iters = (warmup_iters + 1);
+                        }
+                    let measure_start = std::time_now();
+                    let measure_deadline = (measure_start + measure_secs);
+                    let mut measure_iters = 0;
+                    if (ok)
+                        {
+                            while (((std::time_now() < measure_deadline) || (measure_iters == 0)))
+                                {
+                                    let run_ok = std::catch_unwind(arg0 = bench.run);
+                                    if ((!run_ok))
+                                        {
+                                            ok = false;
+                                            break;
+                                        }
+                                    measure_iters = (measure_iters + 1);
+                                }
+                        }
+                    let measure_end = std::time_now();
+                    let elapsed = (measure_end - measure_start);
+                    if (ok)
+                        {
+                            passed = (passed + 1);
+                            let iters_f = (measure_iters as f64);
+                            let ns_per_iter = <control-flow>;
+                            std::println(arg0 = format_string("  {} ... ok (iters: {}, time: {:.6}s, ns/iter: {:.2})"), arg1 = bench.name, arg2 = measure_iters, arg3 = elapsed, arg4 = ns_per_iter);
+                        }
+                    else
+                        {
+                            failed = (failed + 1);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = bench.name);
+                        }
+                    idx = (idx + 1);
+                }
+            let total = (passed + failed);
+            std::println(arg0 = format_string("bench result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
+            BenchReport { total: total, passed: passed, failed: failed }
+        }
+    }
+
+    pub struct std::collections::HashMapEntry<K, V> {
+        pub key: K,
+        pub value: V,
+    }
+
+    pub struct std::collections::HashMap<K, V> {
+        pub entries: Vec<HashMapEntry<K, V>>,
+    }
+
+    impl HashMap<K, V> {
+        fn std::collections::from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+            // params: [entries: Vec<HashMapEntry<K, V>>]
+            {
+                HashMap { entries: entries }
+            }
+        }
+
+        fn std::collections::len(self: &HashMap<K, V>) -> i64 {
+            // params: [self: &HashMap<K, V>]
+            {
+                self.entries.len()
+            }
+        }
+
+        fn std::collections::get_unchecked(self: &HashMap<K, V>, key: K) -> V {
+            // params: [self: &HashMap<K, V>, key: K]
+            {
+                let mut idx = 0;
+                while ((idx < self.entries.len()))
+                    {
+                        let entry = self.entries[idx];
+                        if ((entry.key == key))
+                            {
+                                return entry.value;
+                            }
+                        idx = (idx + 1);
+                    }
+                loop
+                    {
+                    }
+            }
+        }
+    }
+
+    pub struct std::json::JsonField {
+        pub key: &str,
+        pub value: JsonValue,
+    }
+
+    pub enum std::json::JsonValue {
+        Null,
+        Bool,
+        Number,
+        String,
+        Array,
+        Object,
+    }
+
+    pub fn std::json::parse(input: &str) -> JsonValue {
+        // params: [input: &str]
+        {
+            let mut parser = Parser::new(arg0 = input);
+            parser.parse_value()
+        }
+    }
+
+    pub fn std::json::print(value: JsonValue) -> () {
+        // params: [value: JsonValue]
+        {
+            print_value(arg0 = value);
+        }
+    }
+
+    pub fn std::json::print_value(value: &JsonValue) -> () {
+        // params: [value: &JsonValue]
+        {
+            match (value)
+            {
+                JsonValue::Null =>
+                    printf(arg0 = "null")
+                JsonValue::Bool(b) =>
+                    {
+                        if (b)
+                            {
+                                printf(arg0 = "true");
+                            }
+                        else
+                            {
+                                printf(arg0 = "false");
+                            }
+                    }
+                JsonValue::Number(n) =>
+                    std::print(arg0 = format_string("{}"), arg1 = n)
+                JsonValue::String(s) =>
+                    {
+                        printf(arg0 = "\"");
+                        std::print(arg0 = format_string("{}"), arg1 = s);
+                        printf(arg0 = "\"");
+                    }
+                JsonValue::Array(items) =>
+                    {
+                        printf(arg0 = "[");
+                        let mut idx = 0;
+                        let items_len = items.len();
+                        while ((idx < items_len))
+                            {
+                                if ((idx > 0))
+                                    {
+                                        printf(arg0 = ",");
+                                    }
+                                let item = items[idx];
+                                print_value(arg0 = item);
+                                idx = (idx + 1);
+                            }
+                        printf(arg0 = "]");
+                    }
+                JsonValue::Object(fields) =>
+                    {
+                        printf(arg0 = "{");
+                        let mut idx = 0;
+                        let fields_len = fields.len();
+                        while ((idx < fields_len))
+                            {
+                                if ((idx > 0))
+                                    {
+                                        printf(arg0 = ",");
+                                    }
+                                let field = fields[idx];
+                                printf(arg0 = "\"");
+                                std::print(arg0 = format_string("{}"), arg1 = field.key);
+                                printf(arg0 = "\":");
+                                print_value(arg0 = field.value);
+                                idx = (idx + 1);
+                            }
+                        printf(arg0 = "}");
+                    }
+            }
+        }
+    }
+
+    pub struct std::json::Parser {
+        pub src: Vec<&str>,
+        pub pos: i64,
+    }
+
+    impl Parser {
+        fn std::json::new(src: &str) -> Parser {
+            // params: [src: &str]
+            {
+                let mut chars = [];
+                let mut idx = 0;
+                let src_len = (src.len() as i64);
+                while ((idx < src_len))
+                    {
+                        let offset = (idx as usize);
+                        let ch = std::slice(base = src, start = offset, end = (offset + 1));
+                        chars.push(arg0 = ch);
+                        idx = (idx + 1);
+                    }
+                Parser { src: chars, pos: 0 }
+            }
+        }
+
+        fn std::json::bump(self: &Parser, amount: i64) -> () {
+            // params: [self: &Parser, amount: i64]
+            {
+                self.pos = (self.pos + amount);
+            }
+        }
+
+        fn std::json::parse_value(self: &Parser) -> JsonValue {
+            // params: [self: &Parser]
+            {
+                self.skip_ws();
+                let ch = self.peek();
+                if ((ch == "{"))
+                    {
+                        return self.parse_object();
+                    }
+                if ((ch == "["))
+                    {
+                        return self.parse_array();
+                    }
+                if ((ch == "\""))
+                    {
+                        return JsonValue::String(arg0 = self.parse_string());
+                    }
+                if (self.starts_with(arg0 = "true"))
+                    {
+                        self.bump(arg0 = 4);
+                        return JsonValue::Bool(arg0 = true);
+                    }
+                if (self.starts_with(arg0 = "false"))
+                    {
+                        self.bump(arg0 = 5);
+                        return JsonValue::Bool(arg0 = false);
+                    }
+                if (self.starts_with(arg0 = "null"))
+                    {
+                        self.bump(arg0 = 4);
+                        return JsonValue::Null;
+                    }
+                JsonValue::Number(arg0 = self.parse_number())
+            }
+        }
+
+        fn std::json::parse_array(self: &Parser) -> JsonValue {
+            // params: [self: &Parser]
+            {
+                self.expect_char(arg0 = "[");
+                self.skip_ws();
+                if ((self.peek() == "]"))
+                    {
+                        self.bump(arg0 = 1);
+                        return JsonValue::Array(arg0 = []);
+                    }
+                let mut items = [];
+                loop
+                    {
+                        let value = self.parse_value();
+                        items.push(arg0 = value);
+                        self.skip_ws();
+                        let ch = self.peek();
+                        if ((ch == ","))
+                            {
+                                self.bump(arg0 = 1);
+                                self.skip_ws();
+                                continue;
+                            }
+                        if ((ch == "]"))
+                            {
+                                self.bump(arg0 = 1);
+                                break;
+                            }
+                    }
+                JsonValue::Array(arg0 = items)
+            }
+        }
+
+        fn std::json::parse_object(self: &Parser) -> JsonValue {
+            // params: [self: &Parser]
+            {
+                self.expect_char(arg0 = "{");
+                self.skip_ws();
+                if ((self.peek() == "}"))
+                    {
+                        self.bump(arg0 = 1);
+                        return JsonValue::Object(arg0 = []);
+                    }
+                let mut fields = [];
+                loop
+                    {
+                        let key = self.parse_string();
+                        self.skip_ws();
+                        self.expect_char(arg0 = ":");
+                        self.skip_ws();
+                        let value = self.parse_value();
+                        fields.push(arg0 = JsonField { key: key, value: value });
+                        self.skip_ws();
+                        let ch = self.peek();
+                        if ((ch == ","))
+                            {
+                                self.bump(arg0 = 1);
+                                self.skip_ws();
+                                continue;
+                            }
+                        if ((ch == "}"))
+                            {
+                                self.bump(arg0 = 1);
+                                break;
+                            }
+                    }
+                JsonValue::Object(arg0 = fields)
+            }
+        }
+
+        fn std::json::parse_string(self: &Parser) -> &str {
+            // params: [self: &Parser]
+            {
+                self.expect_char(arg0 = "\"");
+                let start = (self.pos as usize);
+                while ((!self.is_eof()))
+                    {
+                        let ch = self.peek();
+                        if ((ch == "\""))
+                            {
+                                let value = std::slice(base = self.src, start = start, end = (self.pos as usize));
+                                self.bump(arg0 = 1);
+                                return value;
+                            }
+                        if ((ch == "\\"))
+                            {
+                                self.bump(arg0 = 1);
+                                if ((!self.is_eof()))
+                                    {
+                                        self.bump(arg0 = 1);
+                                    }
+                                continue;
+                            }
+                        self.bump(arg0 = 1);
+                    }
+                std::slice(base = self.src, start = start, end = (self.pos as usize))
+            }
+        }
+
+        fn std::json::parse_number(self: &Parser) -> &str {
+            // params: [self: &Parser]
+            {
+                let start = (self.pos as usize);
+                while ((!self.is_eof()))
+                    {
+                        let ch = self.peek();
+                        if (is_number_char(arg0 = ch))
+                            {
+                                self.bump(arg0 = 1);
+                            }
+                        else
+                            {
+                                break;
+                            }
+                    }
+                std::slice(base = self.src, start = start, end = (self.pos as usize))
+            }
+        }
+
+        fn std::json::skip_ws(self: &Parser) -> () {
+            // params: [self: &Parser]
+            {
+                while ((!self.is_eof()))
+                    {
+                        let ch = self.peek();
+                        if (((((ch == " ") || (ch == "\n")) || (ch == "\t")) || (ch == "\r")))
+                            {
+                                self.bump(arg0 = 1);
+                            }
+                        else
+                            {
+                                break;
+                            }
+                    }
+            }
+        }
+
+        fn std::json::expect_char(self: &Parser, ch: &str) -> () {
+            // params: [self: &Parser, ch: &str]
+            {
+                if ((self.peek() == ch))
+                    {
+                        self.bump(arg0 = 1);
+                    }
+            }
+        }
+
+        fn std::json::starts_with(self: &Parser, literal: &str) -> bool {
+            // params: [self: &Parser, literal: &str]
+            {
+                let pos = (self.pos as usize);
+                let mut idx = 0;
+                let literal_len = (literal.len() as i64);
+                let src_len = (self.src.len() as i64);
+                let pos_i64 = (pos as i64);
+                while ((idx < literal_len))
+                    {
+                        let offset = (idx as usize);
+                        if (((pos_i64 + idx) >= src_len))
+                            {
+                                return false;
+                            }
+                        if ((self.src[(pos + offset)] != std::slice(base = literal, start = offset, end = (offset + 1))))
+                            {
+                                return false;
+                            }
+                        idx = (idx + 1);
+                    }
+                true
+            }
+        }
+
+        fn std::json::peek(self: &Parser) -> &str {
+            // params: [self: &Parser]
+            {
+                if (self.is_eof())
+                    {
+                        return "";
+                    }
+                self.src[(self.pos as usize)]
+            }
+        }
+
+        fn std::json::is_eof(self: &Parser) -> bool {
+            // params: [self: &Parser]
+            {
+                let pos = (self.pos as i64);
+                let len = (self.src.len() as i64);
+                (pos >= len)
+            }
+        }
+    }
+
+    pub fn std::json::is_number_char(ch: &str) -> bool {
+        // params: [ch: &str]
+        {
+            match (ch)
+            {
+                "0" =>
+                    true
+                "1" =>
+                    true
+                "2" =>
+                    true
+                "3" =>
+                    true
+                "4" =>
+                    true
+                "5" =>
+                    true
+                "6" =>
+                    true
+                "7" =>
+                    true
+                "8" =>
+                    true
+                "9" =>
+                    true
+                "-" =>
+                    true
+                "+" =>
+                    true
+                "." =>
+                    true
+                "e" =>
+                    true
+                "E" =>
+                    true
+                _ =>
+                    false
+            }
+        }
+    }
+
+    pub fn std::intrinsic::create_struct(name: &str) -> <error> {
+        // params: [name: &str]
+        {
+            std::compile_error(arg0 = "create_struct is a compiler intrinsic")
+        }
+    }
+
+    pub fn std::intrinsic::addfield(ty: <error>, name: &str, field_ty: <error>) -> <error> {
+        // params: [ty: <error>, name: &str, field_ty: <error>]
+        {
+            std::compile_error(arg0 = "addfield is a compiler intrinsic")
+        }
+    }
+
+    pub struct std::meta::TypeBuilder {
+        pub ty: <error>,
+    }
+
+    impl TypeBuilder {
+        fn std::meta::new(name: &str) -> TypeBuilder {
+            // params: [name: &str]
+            {
+                TypeBuilder { ty: std::create_struct(arg0 = name) }
+            }
+        }
+
+        fn std::meta::from(ty: <error>) -> TypeBuilder {
+            // params: [ty: <error>]
+            {
+                TypeBuilder { ty: ty }
+            }
+        }
+
+        fn std::meta::with_field(self: TypeBuilder, name: &str, field_ty: <error>) -> TypeBuilder {
+            // params: [self: TypeBuilder, name: &str, field_ty: <error>]
+            {
+                let ty = std::add_field(arg0 = self.ty, arg1 = name, arg2 = field_ty);
+                TypeBuilder { ty: ty }
+            }
+        }
+
+        fn std::meta::build(self: TypeBuilder) -> <error> {
+            // params: [self: TypeBuilder]
+            {
+                self.ty
+            }
+        }
+    }
+
+    pub enum std::proc_macro::Delimiter {
+        Parenthesis,
+        Brace,
+        Bracket,
+    }
+
+    pub struct std::proc_macro::Group {
+        pub delimiter: Delimiter,
+        pub tokens: Vec<TokenTree>,
+    }
+
+    pub struct std::proc_macro::Ident {
+        pub text: str,
+    }
+
+    pub struct std::proc_macro::Punct {
+        pub text: str,
+    }
+
+    pub struct std::proc_macro::Literal {
+        pub text: str,
+    }
+
+    pub enum std::proc_macro::TokenTree {
+        Token,
+        Group,
+    }
+
+    pub struct std::proc_macro::TokenStream {
+    }
+
+    pub fn std::proc_macro::token_stream_from_str(text: str) -> TokenStream {
+        // params: [text: str]
+        {
+            std::token_stream_from_str(arg0 = text)
+        }
+    }
+
+    pub fn std::proc_macro::token_stream_to_string(stream: TokenStream) -> str {
+        // params: [stream: TokenStream]
+        {
+            std::token_stream_to_string(arg0 = stream)
+        }
+    }
+
+    impl TokenStream {
+        fn std::proc_macro::from_str(text: str) -> TokenStream {
+            // params: [text: str]
+            {
+                std::token_stream_from_str(arg0 = text)
+            }
+        }
+
+        fn std::proc_macro::to_string(self: TokenStream) -> str {
+            // params: [self: TokenStream]
+            {
+                std::token_stream_to_string(arg0 = self)
+            }
+        }
+    }
+
+    pub struct std::test::TestCase {
+        pub name: str,
+        pub run: fn() -> (),
+    }
+
+    pub const std::test::REGISTRY: [TestCase; 0] =
+        [];
+
+    pub fn std::test::test(item: <error>) -> <error> {
+        // params: [item: <error>]
+        {
+            let name = item.name;
+            REGISTRY.push(arg0 = TestCase { name: name, run: item.value });
+            item
+        }
+    }
 
     pub struct std::test::TestReport {
         pub total: i64,
@@ -170,21 +1367,21 @@ hir::Program {
             while ((idx < tests.len()))
                 {
                     let test = tests[idx];
-                    let ok = std::catch_unwind(arg0 = __Closure2 { test: test });
+                    let ok = std::catch_unwind(arg0 = test.run);
                     if (ok)
                         {
                             passed = (passed + 1);
-                            printf(arg0 = "  %s ... ok\n", arg1 = test.name);
+                            std::println(arg0 = format_string("  {} ... ok"), arg1 = test.name);
                         }
                     else
                         {
                             failed = (failed + 1);
-                            printf(arg0 = "  %s ... FAILED\n", arg1 = test.name);
+                            std::println(arg0 = format_string("  {} ... FAILED"), arg1 = test.name);
                         }
                     idx = (idx + 1);
                 }
             let total = (passed + failed);
-            printf(arg0 = "test result: %lld passed; %lld failed; %lld total\n", arg1 = passed, arg2 = failed, arg3 = total);
+            std::println(arg0 = format_string("test result: {} passed; {} failed; {} total"), arg1 = passed, arg2 = failed, arg3 = total);
             TestReport { total: total, passed: passed, failed: failed }
         }
     }
@@ -225,10 +1422,10 @@ hir::Program {
 
     pub fn run_solver() -> i64 {
         {
-            let cols: [i64; 8] = [0; 8];
-            let diag1: [i64; 15] = [0; 15];
-            let diag2: [i64; 15] = [0; 15];
-            let positions: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
+            let mut cols: [i64; 8] = [0; 8];
+            let mut diag1: [i64; 15] = [0; 15];
+            let mut diag2: [i64; 15] = [0; 15];
+            let mut positions: [i64; 8] = [(-1), (-1), (-1), (-1), (-1), (-1), (-1), (-1)];
             solve(row = 0, cols = cols, diag1 = diag1, diag2 = diag2, positions = positions)
         }
     }
@@ -249,7 +1446,7 @@ hir::Program {
         {
             printf(arg0 = "Running 8-queens benchmark demo\n");
             let report = std::bench::run_benches();
-            printf(arg0 = "Summary: %lld passed, %lld failed, %lld total\n", arg1 = report.passed, arg2 = report.failed, arg3 = report.total);
+            std::println(arg0 = format_string("Summary: {} passed, {} failed, {} total"), arg1 = report.passed, arg2 = report.failed, arg3 = report.total);
         }
     }
 }

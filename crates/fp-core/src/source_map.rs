@@ -79,7 +79,6 @@ pub struct LineSpan {
 pub struct SourceMap {
     files: RwLock<HashMap<FileId, SourceFile>>,
     paths: RwLock<HashMap<PathBuf, FileId>>,
-    next_id: AtomicU64,
 }
 
 impl SourceMap {
@@ -87,12 +86,31 @@ impl SourceMap {
         Self {
             files: RwLock::new(HashMap::new()),
             paths: RwLock::new(HashMap::new()),
-            next_id: AtomicU64::new(1),
         }
     }
 
     pub fn register_source(&self, path: PathBuf, source: &str) -> FileId {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+        let mut id = GLOBAL_FILE_ID.fetch_add(1, Ordering::Relaxed);
+        if id == 0 {
+            // Reserve file id 0 for `Span::null()`.
+            id = GLOBAL_FILE_ID.fetch_add(1, Ordering::Relaxed);
+        }
+        let file = SourceFile {
+            id,
+            path: path.clone(),
+            source: Arc::from(source),
+            line_starts: Arc::new(compute_line_starts(source)),
+        };
+        if let Ok(mut files) = self.files.write() {
+            files.insert(id, file);
+        }
+        if let Ok(mut paths) = self.paths.write() {
+            paths.insert(path, id);
+        }
+        id
+    }
+
+    pub fn register_source_with_id(&self, id: FileId, path: PathBuf, source: &str) -> FileId {
         let file = SourceFile {
             id,
             path: path.clone(),
@@ -138,6 +156,7 @@ fn compute_line_starts(source: &str) -> Vec<usize> {
 }
 
 static GLOBAL_SOURCE_MAP: Lazy<Arc<SourceMap>> = Lazy::new(|| Arc::new(SourceMap::new()));
+static GLOBAL_FILE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn source_map() -> Arc<SourceMap> {
     GLOBAL_SOURCE_MAP.clone()

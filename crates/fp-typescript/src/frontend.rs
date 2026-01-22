@@ -746,6 +746,7 @@ fn option_ty(inner: Ty) -> Ty {
         span: fp_core::span::Span::null(),
         target: ExprInvokeTarget::Function(Locator::ident("option")),
         args: vec![Expr::value(Value::Type(inner))],
+        kwargs: Vec::new(),
     };
     Ty::expr(Expr::new(ExprKind::Invoke(invoke)))
 }

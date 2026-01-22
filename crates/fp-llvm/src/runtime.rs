@@ -81,6 +81,7 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
     let invoke = ExprKind::Invoke(ExprInvoke {
         target,
         args: invoke_args,
+        kwargs: Vec::new(),
         span: Span::null(),
     });
 

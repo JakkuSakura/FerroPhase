@@ -110,6 +110,7 @@ pub struct AstTypeInferencer<'ctx> {
     enum_variants: HashMap<String, Vec<String>>,
     struct_methods: HashMap<String, HashMap<String, MethodRecord>>,
     trait_method_sigs: HashMap<String, HashMap<String, FunctionSignature>>,
+    function_signatures: HashMap<String, FunctionSignature>,
     impl_traits: HashMap<String, HashSet<String>>,
     generic_trait_bounds: HashMap<TypeVarId, Vec<String>>,
     impl_stack: Vec<Option<ImplContext>>,
@@ -178,6 +179,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             enum_variants: HashMap::new(),
             struct_methods: HashMap::new(),
             trait_method_sigs: HashMap::new(),
+            function_signatures: HashMap::new(),
             impl_traits: HashMap::new(),
             generic_trait_bounds: HashMap::new(),
             impl_stack: Vec::new(),
@@ -588,6 +590,51 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         names
     }
 
+    fn record_function_signature(&mut self, name: &Ident, sig: &FunctionSignature) {
+        let mut candidates = vec![name.as_str().to_string()];
+        if !self.module_path.is_empty() {
+            let mut qualified = self.module_path.clone();
+            qualified.push(name.as_str().to_string());
+            candidates.push(qualified.join("::"));
+        }
+        for candidate in candidates {
+            self.function_signatures
+                .entry(candidate)
+                .or_insert_with(|| sig.clone());
+        }
+    }
+
+    fn lookup_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {
+        let mut candidates = Vec::new();
+        if let Some(qualified) = self.resolve_alias_locator(locator) {
+            candidates.push(qualified);
+        }
+        candidates.push(locator.to_string());
+        if let Some(ident) = locator.as_ident() {
+            candidates.push(ident.as_str().to_string());
+        }
+        if let Locator::Path(path) = locator {
+            if path.segments.len() >= 2 {
+                let type_name = path.segments[path.segments.len() - 2].as_str();
+                let func_name = path.segments[path.segments.len() - 1].as_str();
+                candidates.push(format!("{}::{}", type_name, func_name));
+            }
+        }
+        if let Locator::ParameterPath(path) = locator {
+            if path.segments.len() >= 2 {
+                let type_name = path.segments[path.segments.len() - 2].ident.as_str();
+                let func_name = path.segments[path.segments.len() - 1].ident.as_str();
+                candidates.push(format!("{}::{}", type_name, func_name));
+            }
+        }
+        for candidate in candidates {
+            if let Some(sig) = self.function_signatures.get(&candidate) {
+                return Some(sig.clone());
+            }
+        }
+        None
+    }
+
     fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
         match self.struct_name_from_expr(self_ty) {
             Some(name) => {
@@ -761,6 +808,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ItemKind::DefFunction(def) => {
+                self.record_function_signature(&def.name, &def.sig);
                 let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
                     let key = format!("{}::{}", ctx.struct_name, def.name.as_str());
                     if let Some(var) = self.lookup_env_var(&key) {
@@ -836,6 +884,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ItemKind::DeclFunction(decl) => {
+                self.record_function_signature(&decl.name, &decl.sig);
                 self.register_symbol(&decl.name);
             }
             ItemKind::Module(module) => {

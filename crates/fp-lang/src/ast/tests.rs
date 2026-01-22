@@ -237,6 +237,29 @@ fn parse_expr_ast_handles_calls_fields_and_assignments() {
 }
 
 #[test]
+fn parse_expr_ast_handles_keyword_args() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("foo(bar=1, baz=2)").unwrap();
+    match expr.kind() {
+        ExprKind::Invoke(invoke) => {
+            assert!(invoke.args.is_empty());
+            assert_eq!(invoke.kwargs.len(), 2);
+            assert_eq!(invoke.kwargs[0].name, "bar");
+            assert_eq!(invoke.kwargs[1].name, "baz");
+        }
+        other => panic!("expected invoke, got {:?}", other),
+    }
+}
+
+#[test]
+fn parse_expr_ast_rejects_positional_after_keyword_args() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    assert!(parser.parse_expr_ast("foo(bar=1, 2)").is_err());
+}
+
+#[test]
 fn parse_expr_ast_handles_closure() {
     let parser = FerroPhaseParser::new();
     parser.clear_diagnostics();

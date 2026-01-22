@@ -354,6 +354,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         span: Span::null(),
         target: ExprInvokeTarget::Function(Locator::from_ident(Ident::new("build_items"))),
         args: vec![],
+        kwargs: Vec::new(),
     })
     .into();
     let splice_expr: Expr = ExprKind::Splice(ExprSplice {

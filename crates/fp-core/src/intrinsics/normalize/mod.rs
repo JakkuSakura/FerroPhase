@@ -397,6 +397,9 @@ fn normalize_invoke(invoke: &mut ExprInvoke, strategy: &dyn IntrinsicNormalizer)
     for arg in &mut invoke.args {
         normalize_expr(arg, strategy)?;
     }
+    for kwarg in &mut invoke.kwargs {
+        normalize_expr(&mut kwarg.value, strategy)?;
+    }
     Ok(())
 }
 

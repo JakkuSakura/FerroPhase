@@ -179,7 +179,12 @@ fn expr_contains_return(expr: &Expr) -> bool {
                 ExprInvokeTarget::Closure(closure) => expr_contains_return(closure.body.as_ref()),
                 _ => false,
             };
-            target_has_return || invoke.args.iter().any(|arg| expr_contains_return(arg))
+            target_has_return
+                || invoke.args.iter().any(|arg| expr_contains_return(arg))
+                || invoke
+                    .kwargs
+                    .iter()
+                    .any(|arg| expr_contains_return(&arg.value))
         }
         ExprKind::Paren(paren) => expr_contains_return(paren.expr.as_ref()),
         ExprKind::Quote(quote) => block_contains_return(&quote.block),
@@ -1217,6 +1222,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Ok(result);
         }
 
+        if !invoke.kwargs.is_empty() {
+            match &invoke.target {
+                ExprInvokeTarget::Function(locator) => {
+                    let Some(sig) = self.lookup_function_signature(locator) else {
+                        self.emit_error(
+                            "keyword arguments require a known function signature".to_string(),
+                        );
+                        return Ok(self.error_type_var());
+                    };
+                    if !self.apply_kwargs_to_invoke(invoke, &sig) {
+                        return Ok(self.error_type_var());
+                    }
+                }
+                _ => {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return Ok(self.error_type_var());
+                }
+            }
+        }
+
         if let ExprInvokeTarget::Function(locator) = &mut invoke.target {
             if let Some(ident) = locator.as_ident() {
                 if ident.as_str() == "printf" {
@@ -1513,6 +1538,60 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             self.unify(*param_var, arg_var)?;
         }
         Ok(func_info.ret)
+    }
+
+    fn apply_kwargs_to_invoke(&mut self, invoke: &mut ExprInvoke, sig: &FunctionSignature) -> bool {
+        if invoke.kwargs.is_empty() {
+            return true;
+        }
+
+        let mut slots: Vec<Option<Expr>> = vec![None; sig.params.len()];
+        for (idx, arg) in invoke.args.drain(..).enumerate() {
+            if idx >= sig.params.len() {
+                self.emit_error(format!(
+                    "function expects {} arguments, found {}",
+                    sig.params.len(),
+                    idx + 1
+                ));
+                return false;
+            }
+            slots[idx] = Some(arg);
+        }
+
+        for kwarg in invoke.kwargs.drain(..) {
+            let pos = sig
+                .params
+                .iter()
+                .position(|param| param.name.as_str() == kwarg.name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", kwarg.name));
+                return false;
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", kwarg.name));
+                return false;
+            }
+            slots[index] = Some(kwarg.value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(default) = sig.params[idx].default.as_ref() {
+                *slot = Some(Expr::value(default.clone()));
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                sig.params[idx].name.as_str(),
+                idx
+            ));
+            return false;
+        }
+
+        invoke.args = slots.into_iter().map(|slot| slot.unwrap()).collect();
+        true
     }
 
     fn try_infer_field_function_call(

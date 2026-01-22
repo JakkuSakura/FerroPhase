@@ -983,6 +983,15 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke_compile_time(&mut self, invoke: &mut ExprInvoke) -> Value {
+        if !invoke.kwargs.is_empty() {
+            match invoke.target {
+                ExprInvokeTarget::Function(_) => {}
+                _ => {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return Value::undefined();
+                }
+            }
+        }
         if let ExprInvokeTarget::Method(select) = &mut invoke.target {
             let method_name = select.field.name.as_str();
             if matches!(
@@ -1223,6 +1232,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         match &mut invoke.target {
             ExprInvokeTarget::Function(locator) => {
+                let mut locator = locator.clone();
                 if let Some(ident) = locator.as_ident() {
                     if ident.as_str() == "type" {
                         if invoke.args.len() != 1 {
@@ -1237,23 +1247,24 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
                 if invoke.args.is_empty() {
-                    if let Some(value) = self.try_eval_method_chain(locator) {
+                    if let Some(value) = self.try_eval_method_chain(&locator) {
                         return value;
                     }
                 }
 
                 if let Some(value) =
-                    self.try_handle_const_collection_invoke(locator, &mut invoke.args)
+                    self.try_handle_const_collection_invoke(&locator, &mut invoke.args)
                 {
                     return value;
                 }
 
                 if let Some(function) =
-                    self.resolve_function_call(locator, &mut invoke.args, ResolutionMode::Default)
+                    self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
                 {
+                    invoke.target = ExprInvokeTarget::Function(locator.clone());
                     // Call user-defined const function
                     let evaluated = self.evaluate_args(&mut invoke.args);
-                    if let Some(stack) = Self::module_stack_from_locator(locator) {
+                    if let Some(stack) = Self::module_stack_from_locator(&locator) {
                         let saved = std::mem::take(&mut self.module_stack);
                         self.module_stack = stack;
                         let value = self.call_function(function, evaluated);
@@ -1263,7 +1274,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return self.call_function(function, evaluated);
                 }
 
-                if let Some(Value::Function(function)) = self.lookup_callable_value(locator) {
+                if let Some(Value::Function(function)) = self.lookup_callable_value(&locator) {
                     let evaluated = self.evaluate_args(&mut invoke.args);
                     return self.call_value_function(&function, evaluated);
                 }
@@ -1385,11 +1396,21 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_invoke_runtime_flow(&mut self, invoke: &mut ExprInvoke) -> RuntimeFlow {
+        if !invoke.kwargs.is_empty() {
+            match invoke.target {
+                ExprInvokeTarget::Function(_) => {}
+                _ => {
+                    self.emit_error("keyword arguments are only supported on function calls");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+            }
+        }
         match &mut invoke.target {
             ExprInvokeTarget::Method(select) => {
                 return self.eval_method_call_runtime(select, &mut invoke.args);
             }
             ExprInvokeTarget::Function(locator) => {
+                let mut locator = locator.clone();
                 if let Some(ident) = locator.as_ident() {
                     if ident.as_str() == "type" {
                         if invoke.args.len() != 1 {
@@ -1405,7 +1426,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return RuntimeFlow::Value(output);
                     }
                 }
-                if let Some(info) = self.lookup_enum_variant(locator) {
+                if let Some(info) = self.lookup_enum_variant(&locator) {
                     if let EnumVariantPayload::Tuple(arity) = info.payload {
                         let args = match self.evaluate_args_runtime(&mut invoke.args) {
                             Ok(values) => values,
@@ -1452,7 +1473,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let Some(value) =
-                    self.try_handle_const_collection_invoke(locator, &mut invoke.args)
+                    self.try_handle_const_collection_invoke(&locator, &mut invoke.args)
                 {
                     return RuntimeFlow::Value(value);
                 }
@@ -1470,10 +1491,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
 
                 if let Some(function) =
-                    self.resolve_function_call(locator, &mut invoke.args, ResolutionMode::Default)
+                    self.resolve_function_call(&mut locator, invoke, ResolutionMode::Default)
                 {
+                    invoke.target = ExprInvokeTarget::Function(locator.clone());
                     let mut impl_context = None;
-                    let segments = Self::locator_segments(locator);
+                    let segments = Self::locator_segments(&locator);
                     if segments.len() >= 2 {
                         let self_ty = segments[segments.len() - 2].clone();
                         let method_name = segments[segments.len() - 1].as_str();
@@ -1489,7 +1511,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
                     if let Some(context) = impl_context {
                         self.impl_stack.push(context);
-                        let flow = if let Some(stack) = Self::module_stack_from_locator(locator) {
+                        let flow = if let Some(stack) = Self::module_stack_from_locator(&locator) {
                             let saved = std::mem::take(&mut self.module_stack);
                             self.module_stack = stack;
                             let flow = self.call_function_runtime(function, args);
@@ -1501,7 +1523,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         self.impl_stack.pop();
                         return flow;
                     }
-                    if let Some(stack) = Self::module_stack_from_locator(locator) {
+                    if let Some(stack) = Self::module_stack_from_locator(&locator) {
                         let saved = std::mem::take(&mut self.module_stack);
                         self.module_stack = stack;
                         let flow = self.call_function_runtime(function, args);
@@ -1517,7 +1539,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 for name in candidate_names {
                     if let Some(template) = self.generic_functions.get(&name) {
-                        if let Some(stack) = Self::module_stack_from_locator(locator) {
+                        if let Some(stack) = Self::module_stack_from_locator(&locator) {
                             let saved = std::mem::take(&mut self.module_stack);
                             self.module_stack = stack;
                             let flow = self.call_function_runtime(template.function.clone(), args);
@@ -1528,7 +1550,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
 
-                if let Some(value) = self.lookup_callable_value(locator) {
+                if let Some(value) = self.lookup_callable_value(&locator) {
                     match value {
                         Value::Function(function) => {
                             return self.call_value_function_runtime(&function, args);
@@ -1803,7 +1825,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn resolve_function_call(
         &mut self,
         locator: &mut Locator,
-        args: &mut [Expr],
+        invoke: &mut ExprInvoke,
         mode: ResolutionMode,
     ) -> Option<ItemDefFunction> {
         self.apply_local_import_alias(locator);
@@ -1847,19 +1869,25 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for name in &candidate_names {
             if let Some(function) = self.functions.get(name).cloned() {
+                if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
+                    return None;
+                }
                 // Annotate arguments with expected parameter types
-                self.annotate_invoke_args_slice(args, &function.sig.params);
+                self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
                 return Some(function);
             }
         }
 
         for name in &candidate_names {
             if let Some(template) = self.generic_functions.get(name).cloned() {
+                if !self.apply_kwargs_to_invoke(invoke, &template.function.sig.params) {
+                    return None;
+                }
                 if let Some(function) =
-                    self.instantiate_generic_function(name, template, locator, args)
+                    self.instantiate_generic_function(name, template, locator, &mut invoke.args)
                 {
                     // Annotate arguments now that we know the specialized function signature
-                    self.annotate_invoke_args_slice(args, &function.sig.params);
+                    self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
                     return Some(function);
                 }
             }
@@ -1867,11 +1895,67 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         // Fallback: find by fully qualified name
         if let Some(function) = self.functions.get(&locator.to_string()).cloned() {
-            self.annotate_invoke_args_slice(args, &function.sig.params);
+            if !self.apply_kwargs_to_invoke(invoke, &function.sig.params) {
+                return None;
+            }
+            self.annotate_invoke_args_slice(&mut invoke.args, &function.sig.params);
             Some(function)
         } else {
             None
         }
+    }
+
+    fn apply_kwargs_to_invoke(&mut self, invoke: &mut ExprInvoke, params: &[FunctionParam]) -> bool {
+        if invoke.kwargs.is_empty() {
+            return true;
+        }
+
+        let mut slots: Vec<Option<Expr>> = vec![None; params.len()];
+        for (idx, arg) in invoke.args.drain(..).enumerate() {
+            if idx >= params.len() {
+                self.emit_error(format!(
+                    "function expects {} arguments, found {}",
+                    params.len(),
+                    idx + 1
+                ));
+                return false;
+            }
+            slots[idx] = Some(arg);
+        }
+
+        for kwarg in invoke.kwargs.drain(..) {
+            let pos = params
+                .iter()
+                .position(|param| param.name.as_str() == kwarg.name.as_str());
+            let Some(index) = pos else {
+                self.emit_error(format!("unknown keyword argument '{}'", kwarg.name));
+                return false;
+            };
+            if slots[index].is_some() {
+                self.emit_error(format!("duplicate keyword argument '{}'", kwarg.name));
+                return false;
+            }
+            slots[index] = Some(kwarg.value);
+        }
+
+        for (idx, slot) in slots.iter_mut().enumerate() {
+            if slot.is_some() {
+                continue;
+            }
+            if let Some(default) = params[idx].default.as_ref() {
+                *slot = Some(Expr::value(default.clone()));
+                continue;
+            }
+            self.emit_error(format!(
+                "missing argument '{}' at position {}",
+                params[idx].name.as_str(),
+                idx
+            ));
+            return false;
+        }
+
+        invoke.args = slots.into_iter().map(|slot| slot.unwrap()).collect();
+        true
     }
 
     fn locator_is_qualified(locator: &Locator) -> bool {
