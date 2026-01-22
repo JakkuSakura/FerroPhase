@@ -2,58 +2,18 @@ use eyre::Result;
 use fp_core::ast::Expr;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::span::FileId;
-use std::cell::Cell;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const FERRO_CONTEXT: &str = "ferrophase.parser";
-
-thread_local! {
-    static CURRENT_FILE_ID: Cell<FileId> = Cell::new(0);
-}
-
-pub(crate) fn with_current_file_id<T>(file: FileId, f: impl FnOnce() -> T) -> T {
-    CURRENT_FILE_ID.with(|cell| {
-        let prev = cell.get();
-        cell.set(file);
-        let out = f();
-        cell.set(prev);
-        out
-    })
-}
-
-fn current_file_id() -> FileId {
-    CURRENT_FILE_ID.with(|cell| cell.get())
-}
 
 fn resolve_file_id(file: FileId, source: &str, source_path: Option<&Path>) -> FileId {
     if file != 0 {
         return file;
     }
-    if let Some(path) = source_path {
-        let source_map = fp_core::source_map::source_map();
-        let mut id = source_map
-            .file_id(path)
-            .unwrap_or_else(|| fp_core::source_map::register_source(path, source));
-        if id == 0 {
-            id = fp_core::source_map::register_source(path, source);
-        }
-        return id;
-    }
-    if file == 0 {
-        current_file_id()
-    } else {
-        file
-    }
-}
-
-pub(crate) fn normalize_span(span: fp_core::span::Span) -> fp_core::span::Span {
-    if span.file == 0 && !span.is_null() {
-        let file = current_file_id();
-        if file != 0 {
-            return fp_core::span::Span::new(file, span.lo, span.hi);
-        }
-    }
-    span
+    let path = source_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("<expr>"));
+    fp_core::source_map::source_map().register_or_update(path, source)
 }
 
 /// Parser for the FerroPhase language.

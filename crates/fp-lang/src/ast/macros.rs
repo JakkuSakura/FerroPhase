@@ -52,8 +52,7 @@ pub(crate) fn macro_group_tokens(node: &SyntaxNode) -> Option<MacroTokens> {
         .copied()
         .filter(|tok| !tok.is_trivia())
         .collect();
-    let file = node.span.file;
-    let token_trees = parse_token_trees(&inner_tokens, 0, None, file).0;
+    let token_trees = parse_token_trees(&inner_tokens, 0, None).0;
     let text = token_trees_to_text(&token_trees);
 
     Some(MacroTokens {
@@ -67,7 +66,6 @@ fn parse_token_trees(
     tokens: &[&SyntaxToken],
     mut idx: usize,
     stop: Option<&str>,
-    file: fp_core::span::FileId,
 ) -> (Vec<MacroTokenTree>, usize) {
     let mut out = Vec::new();
     while idx < tokens.len() {
@@ -86,12 +84,12 @@ fn parse_token_trees(
                     "[" => (MacroDelimiter::Bracket, "]"),
                     _ => unreachable!(),
                 };
-                let open_span = span_with_file(tok.span, file);
-                let (inner, next_idx) = parse_token_trees(tokens, idx + 1, Some(close), file);
+                let open_span = tok.span;
+                let (inner, next_idx) = parse_token_trees(tokens, idx + 1, Some(close));
                 let close_span = if next_idx > 0 && next_idx - 1 < tokens.len() {
-                    span_with_file(tokens[next_idx - 1].span, file)
+                    tokens[next_idx - 1].span
                 } else {
-                    span_with_file(tok.span, file)
+                    tok.span
                 };
                 let span = Span::union(
                     [open_span, close_span]
@@ -112,7 +110,7 @@ fn parse_token_trees(
             _ => {
                 out.push(MacroTokenTree::Token(MacroToken {
                     text: tok.text.clone(),
-                    span: span_with_file(tok.span, file),
+                    span: tok.span,
                 }));
                 idx += 1;
             }
@@ -169,13 +167,5 @@ fn token_tree_span(tree: &MacroTokenTree) -> Span {
     match tree {
         MacroTokenTree::Token(tok) => tok.span,
         MacroTokenTree::Group(group) => group.span,
-    }
-}
-
-fn span_with_file(span: Span, file: fp_core::span::FileId) -> Span {
-    if span.file == 0 && !span.is_null() && file != 0 {
-        Span::new(file, span.lo, span.hi)
-    } else {
-        span
     }
 }

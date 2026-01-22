@@ -1,5 +1,4 @@
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::ast::FerroPhaseParser;
@@ -24,39 +23,8 @@ pub struct FerroFrontend {
     ferro: FerroPhaseParser,
 }
 
-static FRONTEND_FILE_ID: AtomicU64 = AtomicU64::new(1);
-
-struct SourceContext {
-    source: String,
-    path: PathBuf,
-    file_id: FileId,
-}
-
-impl SourceContext {
-    fn new(source: String, path: PathBuf) -> Self {
-        let file_id = ensure_file_id(&path, &source);
-        Self {
-            source,
-            path,
-            file_id,
-        }
-    }
-}
-
-fn ensure_file_id(path: &Path, source: &str) -> FileId {
-    let source_map = fp_core::source_map::source_map();
-    if let Some(existing) = source_map.file_id(path) {
-        if existing != 0 {
-            return existing;
-        }
-    }
-
-    loop {
-        let candidate = FRONTEND_FILE_ID.fetch_add(1, Ordering::Relaxed).max(1);
-        if source_map.file(candidate).is_none() {
-            return source_map.register_source_with_id(candidate, path.to_path_buf(), source);
-        }
-    }
+fn register_source(path: PathBuf, source: &str) -> FileId {
+    fp_core::source_map::source_map().register_or_update(path, source)
 }
 
 impl FerroFrontend {
@@ -103,21 +71,18 @@ impl LanguageFrontend for FerroFrontend {
             Some(path) => path.canonicalize().unwrap_or_else(|_| path.to_path_buf()),
             None => PathBuf::from("<expr>"),
         };
-        let context = SourceContext::new(cleaned, source_path);
-        let source_path_display = context.path.clone();
-        let file_id = context.file_id;
-        let cleaned = context.source;
+        let file_id = register_source(source_path.clone(), &cleaned);
+        let source_path_display = source_path.clone();
 
         if path.is_some() {
             self.ferro.clear_diagnostics();
-            return crate::ast::with_current_file_id(file_id, || {
-                match self
-                    .ferro
-                    .parse_items_ast_with_file(&cleaned, file_id, Some(&context.path))
-                {
+            return match self
+                .ferro
+                .parse_items_ast_with_file(&cleaned, file_id, Some(&source_path))
+            {
                 Ok(items) => {
                     let file = fp_core::ast::File {
-                        path: context.path.clone(),
+                        path: source_path.clone(),
                         items,
                     };
                     let diagnostics = self.ferro.diagnostics();
@@ -137,7 +102,7 @@ impl LanguageFrontend for FerroFrontend {
                         serialized: None,
                     };
 
-                    return Ok(FrontendResult {
+                    Ok(FrontendResult {
                         last,
                         ast,
                         serializer,
@@ -145,7 +110,7 @@ impl LanguageFrontend for FerroFrontend {
                         macro_parser: Some(macro_parser.clone()),
                         snapshot: Some(snapshot),
                         diagnostics,
-                    });
+                    })
                 }
                 Err(err) => {
                     let mut diagnostic =
@@ -159,18 +124,15 @@ impl LanguageFrontend for FerroFrontend {
                     {
                         diagnostic = diagnostic.with_span(span);
                     }
-                    return Err(fp_core::error::Error::diagnostic(diagnostic));
+                    Err(fp_core::error::Error::diagnostic(diagnostic))
                 }
-                }
-            });
+            };
         }
 
         // Expression-only mode (no resolved file path).
 
         self.ferro.clear_diagnostics();
-        if let Ok(expr) = crate::ast::with_current_file_id(file_id, || {
-            self.ferro.parse_expr_ast_with_file(&cleaned, file_id)
-        }) {
+        if let Ok(expr) = self.ferro.parse_expr_ast_with_file(&cleaned, file_id) {
             let expr = strip_async_block(expr);
             let diagnostics = self.ferro.diagnostics();
             let last = Node::expr(expr.clone());
@@ -188,10 +150,10 @@ impl LanguageFrontend for FerroFrontend {
             });
         }
 
-        match crate::ast::with_current_file_id(file_id, || {
-            self.ferro
-                .parse_items_ast_with_file(&cleaned, file_id, Some(&context.path))
-        }) {
+        match self
+            .ferro
+            .parse_items_ast_with_file(&cleaned, file_id, Some(&source_path))
+        {
             Ok(items) => {
                 let file = fp_core::ast::File {
                     path: Path::new("<expr>").to_path_buf(),

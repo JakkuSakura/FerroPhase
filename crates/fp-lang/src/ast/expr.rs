@@ -1916,7 +1916,7 @@ fn lower_ty_expr(node: &SyntaxNode) -> Result<Ty, LowerError> {
 }
 
 fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let span = crate::ast::normalize_span(node.span);
+    let span = node.span;
     let mut segments: Vec<Ident> = Vec::new();
     for child in &node.children {
         let crate::syntax::SyntaxElement::Token(tok) = child else {
@@ -2244,7 +2244,7 @@ fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
 }
 
 fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let span = crate::ast::normalize_span(node.span);
+    let span = node.span;
     let mut segments: Vec<Ident> = Vec::new();
     let mut saw_generic_start = false;
     for child in &node.children {
