@@ -40,12 +40,12 @@ impl PipelineStage for LinkNativeStage {
     ) -> Result<PathBuf, PipelineError> {
         let binary_path = binary_output_path(&context.base_path, &context.options);
         ensure_output_dir(&binary_path, diagnostics)?;
-        if (context.options.error_tolerance.enabled || config::lossy_mode())
+        if (context.options.lossy.enabled || config::lossy_mode())
             && context.lir_program.functions.is_empty()
         {
             diagnostics.push(
                 Diagnostic::warning(
-                    "error tolerance: skipping native link because the LIR program has no functions"
+                    "lossy mode: skipping native link because the LIR program has no functions"
                         .to_string(),
                 )
                 .with_source_context(STAGE_LINK_BINARY),

@@ -15,14 +15,14 @@ mod patterns; // pattern lowering // shared path/locator helpers
 #[cfg(test)]
 mod tests;
 
-use fp_core::diagnostics::Diagnostic;
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
 /// Generator for transforming AST to HIR (High-level IR)
 ///
 /// NOTE: This is transitioning from stateful to share-nothing architecture.
-/// The generator now supports error tolerance and will gradually become more pure.
+/// The generator now supports lossy mode and will gradually become more pure.
 pub struct HirGenerator {
     next_hir_id: hir::HirId,
     next_def_id: hir::DefId,
@@ -44,14 +44,6 @@ pub struct HirGenerator {
     synthetic_items: Vec<hir::Item>,
     module_defs: HashSet<Vec<String>>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
-
-    // NEW: Error tolerance support
-    /// Collected errors during transformation (non-fatal)
-    pub errors: Vec<Diagnostic>,
-    /// Collected warnings during transformation
-    pub warnings: Vec<Diagnostic>,
-    /// Maximum number of errors to collect before giving up
-    pub max_errors: usize,
 }
 
 enum MaterializedTypeAlias {
@@ -115,11 +107,11 @@ struct ImportBinding {
 
 impl HirGenerator {
     fn add_error(&mut self, diag: Diagnostic) {
-        self.errors.push(diag);
+        diagnostic_manager().add_diagnostic(diag);
     }
 
     fn add_warning(&mut self, diag: Diagnostic) {
-        self.warnings.push(diag);
+        diagnostic_manager().add_diagnostic(diag);
     }
 
     fn normalize_span(&self, span: Span) -> Span {
@@ -262,17 +254,6 @@ impl HirGenerator {
         generator
     }
 
-    pub fn enable_error_tolerance(&mut self, max_errors: usize) {
-        self.max_errors = max_errors;
-    }
-
-    pub fn take_diagnostics(&mut self) -> (Vec<Diagnostic>, Vec<Diagnostic>) {
-        (
-            std::mem::take(&mut self.errors),
-            std::mem::take(&mut self.warnings),
-        )
-    }
-
     /// Create a new HIR generator
     pub fn new() -> Self {
         Self {
@@ -296,11 +277,6 @@ impl HirGenerator {
             synthetic_items: Vec::new(),
             module_defs: HashSet::new(),
             program_def_map: HashMap::new(),
-
-            // Initialize error tolerance support
-            errors: Vec::new(),
-            warnings: Vec::new(),
-            max_errors: 10,
         }
     }
 
@@ -690,7 +666,7 @@ impl HirGenerator {
     pub fn transform_file(&mut self, file: &ast::File) -> Result<hir::Program> {
         let mut lowered = file.clone();
         let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
-        self.errors.extend(closure_diagnostics);
+        diagnostic_manager().add_diagnostics(closure_diagnostics);
         self.transform_file_inner(&lowered)
     }
 

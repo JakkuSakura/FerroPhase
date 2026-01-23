@@ -2,7 +2,7 @@
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::pipeline::{
-    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
+    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
 };
 use crate::{
     CliError, Result,
@@ -98,11 +98,11 @@ pub struct CompileArgs {
     #[arg(long)]
     pub save_intermediates: bool,
 
-    /// Enable error tolerance during compilation
+    /// Enable lossy mode during compilation
     #[arg(long)]
-    pub error_tolerance: bool,
+    pub lossy: bool,
 
-    /// Maximum number of errors to collect when tolerance is enabled (0 = unlimited)
+    /// Maximum number of errors to collect when lossy mode is enabled (0 = unlimited)
     #[arg(long, default_value_t = 50)]
     pub max_errors: usize,
 
@@ -283,8 +283,8 @@ async fn compile_file(
             print_passes: false,
             verbose: args.debug,
         },
-        error_tolerance: ErrorToleranceOptions {
-            enabled: args.error_tolerance || lossy_mode,
+        lossy: LossyOptions {
+            enabled: args.lossy || lossy_mode,
             max_errors: if args.max_errors == 0 {
                 50
             } else {

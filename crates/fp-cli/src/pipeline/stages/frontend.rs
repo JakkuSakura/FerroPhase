@@ -24,6 +24,8 @@ impl PipelineStage for FrontendStage {
         context: FrontendContext,
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<hir::Program, PipelineError> {
+        let diag_manager = fp_core::diagnostics::diagnostic_manager();
+        let diag_snapshot = diag_manager.snapshot();
         let mut generator = match context.file_path.as_deref() {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
@@ -50,9 +52,8 @@ impl PipelineStage for FrontendStage {
             NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => unreachable!(),
         };
 
-        let (errors, warnings) = generator.take_diagnostics();
-        diagnostics.extend(warnings);
-        diagnostics.extend(errors);
+        let new_diagnostics = diag_manager.diagnostics_since(diag_snapshot);
+        diagnostics.extend(new_diagnostics);
 
         let program = match result {
             Ok(program) => program,

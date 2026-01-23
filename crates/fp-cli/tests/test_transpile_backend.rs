@@ -26,7 +26,7 @@ fn main() {
         debug: false,
         release: false,
         save_intermediates: false,
-        error_tolerance: false,
+        lossy: false,
         max_errors: 10,
         source_language: None,
         disable_stage: Vec::new(),

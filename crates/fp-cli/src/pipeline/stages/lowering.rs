@@ -29,18 +29,18 @@ impl PipelineStage for HirToMirStage {
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<MirArtifacts, PipelineError> {
         let mut mir_lowering = MirLowering::new();
-        let tolerate_errors = context.options.error_tolerance.enabled || config::lossy_mode();
-        mir_lowering.set_error_tolerance(tolerate_errors);
+        let lossy_enabled = context.options.lossy.enabled || config::lossy_mode();
+        mir_lowering.set_lossy(lossy_enabled);
         let mir_result = mir_lowering.transform(context.hir_program.as_ref().clone());
         let (mir_diags, mir_had_errors) = mir_lowering.take_diagnostics();
         diagnostics.extend(mir_diags);
         let mut mir_program = match (mir_result, mir_had_errors) {
             (Ok(program), false) => program,
             (Ok(_), true) => {
-                if tolerate_errors {
+                if lossy_enabled {
                     diagnostics.push(
                         Diagnostic::warning(
-                            "HIR→MIR lowering reported errors; continuing due to error tolerance"
+                            "HIR→MIR lowering reported errors; continuing due to lossy mode"
                                 .to_string(),
                         )
                         .with_source_context(STAGE_HIR_TO_MIR),
@@ -58,10 +58,10 @@ impl PipelineStage for HirToMirStage {
                 }
             }
             (Err(err), _) => {
-                if tolerate_errors {
+                if lossy_enabled {
                     diagnostics.push(
                         Diagnostic::warning(format!(
-                            "HIR→MIR lowering failed: {}; continuing due to error tolerance",
+                            "HIR→MIR lowering failed: {}; continuing due to lossy mode",
                             err
                         ))
                         .with_source_context(STAGE_HIR_TO_MIR),

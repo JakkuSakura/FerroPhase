@@ -33,8 +33,8 @@ pub struct PipelineOptions {
     pub base_path: Option<PathBuf>,
     /// Debug options
     pub debug: DebugOptions,
-    /// Error tolerance options
-    pub error_tolerance: ErrorToleranceOptions,
+    /// Lossy mode options
+    pub lossy: LossyOptions,
     /// Whether the current build is in release mode
     pub release: bool,
     /// Execute `main` during const evaluation instead of running backend
@@ -95,10 +95,10 @@ pub struct DebugOptions {
     pub verbose: bool,
 }
 
-/// Error tolerance configuration
+/// Lossy mode configuration
 #[derive(Debug, Clone)]
-pub struct ErrorToleranceOptions {
-    /// Enable error tolerance mode (collect multiple errors instead of early exit)
+pub struct LossyOptions {
+    /// Enable lossy mode (collect multiple errors instead of early exit)
     pub enabled: bool,
     /// Maximum number of errors to collect before giving up (0 = unlimited)
     pub max_errors: usize,
@@ -108,7 +108,7 @@ pub struct ErrorToleranceOptions {
     pub continue_on_error: bool,
 }
 
-impl Default for ErrorToleranceOptions {
+impl Default for LossyOptions {
     fn default() -> Self {
         Self {
             enabled: false,
@@ -143,7 +143,7 @@ impl Default for PipelineOptions {
                 print_passes: false,
                 verbose: false,
             },
-            error_tolerance: ErrorToleranceOptions::default(),
+            lossy: LossyOptions::default(),
             release: false,
             execute_main: false,
             disabled_stages: Vec::new(),

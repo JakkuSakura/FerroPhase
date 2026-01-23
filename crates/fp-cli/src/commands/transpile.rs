@@ -47,11 +47,11 @@ pub struct TranspileArgs {
     #[arg(long)]
     pub save_intermediates: bool,
 
-    /// Enable error tolerance during compilation
+    /// Enable lossy mode during compilation
     #[arg(long)]
-    pub error_tolerance: bool,
+    pub lossy: bool,
 
-    /// Maximum number of errors to collect when tolerance is enabled (0 = unlimited)
+    /// Maximum number of errors to collect when lossy mode is enabled (0 = unlimited)
     #[arg(long, default_value_t = 50)]
     pub max_errors: usize,
 
@@ -84,7 +84,7 @@ pub async fn transpile_command(args: TranspileArgs, config: &CliConfig) -> Resul
         define: Vec::new(),
         exec: false,
         save_intermediates: args.save_intermediates,
-        error_tolerance: args.error_tolerance,
+        lossy: args.lossy,
         max_errors: args.max_errors,
         source_language: args.source_language,
         disable_stage: args.disable_stage,

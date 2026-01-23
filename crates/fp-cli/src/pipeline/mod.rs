@@ -42,7 +42,7 @@ mod stages;
 use self::diagnostics as diag;
 use artifacts::LlvmArtifacts;
 pub use options::{
-    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
+    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
 };
 
 const STAGE_FRONTEND: &str = "frontend";

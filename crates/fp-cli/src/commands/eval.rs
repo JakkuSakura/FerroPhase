@@ -1,7 +1,7 @@
 //! Expression evaluation command implementation
 
 use crate::pipeline::{
-    BackendKind, DebugOptions, ErrorToleranceOptions, PipelineOptions, RuntimeConfig,
+    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
 };
 use crate::{
     CliError, Result,
@@ -127,7 +127,7 @@ fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
             print_passes: args.print_passes,
             verbose: false,
         },
-        error_tolerance: ErrorToleranceOptions::default(),
+        lossy: LossyOptions::default(),
         release: false,
         execute_main: false,
         disabled_stages: Vec::new(),

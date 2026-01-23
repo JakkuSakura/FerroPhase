@@ -294,7 +294,7 @@ impl MirLowering {
                 if let Some(span) = hir_program.items.first().map(|item| item.span) {
                     self.emit_warning(
                         span,
-                        "error tolerance: skipping HIR→MIR lowering for Rust sources",
+                        "lossy mode: skipping HIR→MIR lowering for Rust sources",
                     );
                 }
                 return Ok(mir::Program::new());
@@ -303,7 +303,7 @@ impl MirLowering {
         self.lower_program(&hir_program)
     }
 
-    pub fn set_error_tolerance(&mut self, enabled: bool) {
+    pub fn set_lossy(&mut self, enabled: bool) {
         self.tolerate_errors = enabled;
     }
 

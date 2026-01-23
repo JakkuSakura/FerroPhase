@@ -117,7 +117,7 @@ async fn compile_example_async(example_name: &str) {
         define: Vec::new(),
         exec: false,
         save_intermediates: false,
-        error_tolerance: false,
+        lossy: false,
         max_errors: 0,
         source_language: None,
         disable_stage: Vec::new(),

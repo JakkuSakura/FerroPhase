@@ -85,9 +85,9 @@ impl Pipeline {
                 Ok(())
             }
             Err(err) => {
-                if options.error_tolerance.enabled || config::lossy_mode() {
+                if options.lossy.enabled || config::lossy_mode() {
                     let diagnostic = Diagnostic::warning(format!(
-                        "AST typing failed; continuing due to error tolerance (language={})",
+                        "AST typing failed; continuing due to lossy mode (language={})",
                         self.source_language.as_deref().unwrap_or("unknown")
                     ))
                     .with_source_context(stage_label);
