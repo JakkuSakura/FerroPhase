@@ -1,6 +1,5 @@
 use super::super::*;
 use fp_core::ast::{ItemKind, Node, NodeKind};
-use fp_core::config;
 use fp_interpret::const_eval::{
     ConstEvalContext, ConstEvalOptions, ConstEvalOutcome, ConstEvalResult, ConstEvalStage,
 };
@@ -12,7 +11,6 @@ impl Pipeline {
         ast: &mut Node,
         options: &PipelineOptions,
     ) -> Result<ConstEvalOutcome, CliError> {
-        let tolerate_errors = options.error_tolerance.enabled || config::lossy_mode();
         let mut std_modules = Vec::new();
         let include_std = if matches!(options.target, BackendKind::Interpret) {
             !ast_has_std(ast)
@@ -56,25 +54,28 @@ impl Pipeline {
             macro_parser: self.macro_parser.clone(),
             std_modules,
         };
-        match self.run_pipeline_stage(STAGE_CONST_EVAL, stage, context, options) {
+        let mut diagnostics = PipelineDiagnostics::default();
+        diagnostics.set_display_options(diag::display_options(options));
+        let pipeline = PipelineBuilder::<ConstEvalContext, ConstEvalContext>::new()
+            .add_stage(stage)
+            .build();
+        match pipeline.run(context, &mut diagnostics) {
             Ok(ConstEvalResult {
                 ast: next_ast,
                 outcome,
             }) => {
                 *ast = next_ast;
+                if !diagnostics.items.is_empty() {
+                    diagnostics.emit_stage(STAGE_CONST_EVAL);
+                }
+                if outcome.has_errors {
+                    return Err(Self::stage_failure(STAGE_CONST_EVAL));
+                }
                 Ok(outcome)
             }
-            Err(err) => {
-                if tolerate_errors {
-                    let diagnostic = Diagnostic::warning(
-                        "const-eval failed; continuing due to error tolerance".to_string(),
-                    )
-                    .with_source_context(STAGE_CONST_EVAL);
-                    diag::emit(&[diagnostic], Some(STAGE_CONST_EVAL), options);
-                    Ok(ConstEvalOutcome::default())
-                } else {
-                    Err(err)
-                }
+            Err(_) => {
+                diagnostics.emit_stage(STAGE_CONST_EVAL);
+                Err(Self::stage_failure(STAGE_CONST_EVAL))
             }
         }
     }

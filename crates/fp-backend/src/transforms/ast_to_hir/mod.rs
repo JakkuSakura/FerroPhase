@@ -448,6 +448,9 @@ impl HirGenerator {
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
         for item in items {
+            if should_drop_quote_item(item) {
+                continue;
+            }
             match item.kind() {
                 ItemKind::Module(module) => {
                     self.allocate_def_id_for_item(item);
@@ -719,6 +722,9 @@ impl HirGenerator {
     }
 
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {
+        if should_drop_quote_item(item) {
+            return Ok(());
+        }
         match item.kind() {
             ItemKind::Module(module) => {
                 self.push_module_scope(&module.name.name, &module.visibility);
@@ -782,6 +788,20 @@ impl HirGenerator {
     // Expression lowering helpers live in expressions.rs
     /// Transform an AST item into a HIR statement
     fn transform_item_to_hir_stmt(&mut self, item: &ast::BItem) -> Result<hir::StmtKind> {
+        if should_drop_quote_item(item.as_ref()) {
+            let unit_block = hir::Block {
+                hir_id: self.next_id(),
+                stmts: Vec::new(),
+                expr: None,
+            };
+            let unit_expr = hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Block(unit_block),
+                span: self.create_span(1),
+            };
+            return Ok(hir::StmtKind::Expr(unit_expr));
+        }
+
         match item.as_ref().kind() {
             ItemKind::Import(import) => {
                 self.handle_import(import)?;
@@ -1948,6 +1968,88 @@ impl HirGenerator {
             visibility,
             span,
         }))
+    }
+}
+
+fn should_drop_quote_item(item: &ast::Item) -> bool {
+    match item.kind() {
+        ItemKind::DefFunction(func) => {
+            signature_contains_quote(&func.sig)
+        }
+        ItemKind::DeclFunction(func) => {
+            signature_contains_quote(&func.sig)
+        }
+        ItemKind::DefConst(def) => {
+            def.ty_annotation()
+                .or_else(|| def.ty.as_ref())
+                .is_some_and(ty_contains_quote)
+                || expr_contains_quote_value(def.value.as_ref())
+        }
+        _ => false,
+    }
+}
+
+fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {
+    sig.params.iter().any(|param| ty_contains_quote(&param.ty))
+        || sig.ret_ty.as_ref().is_some_and(ty_contains_quote)
+}
+
+fn ty_contains_quote(ty: &ast::Ty) -> bool {
+    match ty {
+        ast::Ty::Quote(_) => true,
+        ast::Ty::Tuple(tuple) => tuple.types.iter().any(ty_contains_quote),
+        ast::Ty::Array(array) => ty_contains_quote(&array.elem),
+        ast::Ty::Vec(vec) => ty_contains_quote(&vec.ty),
+        ast::Ty::Reference(reference) => ty_contains_quote(&reference.ty),
+        ast::Ty::Slice(slice) => ty_contains_quote(&slice.elem),
+        ast::Ty::Struct(def) => def.fields.iter().any(|field| ty_contains_quote(&field.value)),
+        ast::Ty::Structural(def) => def.fields.iter().any(|field| ty_contains_quote(&field.value)),
+        ast::Ty::Enum(def) => def
+            .variants
+            .iter()
+            .any(|variant| ty_contains_quote(&variant.value)),
+        ast::Ty::Function(func) => func.params.iter().any(ty_contains_quote)
+            || func
+                .ret_ty
+                .as_ref()
+                .is_some_and(|ty| ty_contains_quote(ty.as_ref())),
+        ast::Ty::TypeBinaryOp(op) => {
+            ty_contains_quote(&op.lhs) || ty_contains_quote(&op.rhs)
+        }
+        ast::Ty::TypeBounds(bounds) => bounds
+            .bounds
+            .iter()
+            .any(|expr| expr_contains_quote_value(expr)),
+        ast::Ty::Value(value) => value_contains_quote(value.value.as_ref()),
+        ast::Ty::Expr(expr) => expr_contains_quote_value(expr.as_ref()),
+        ast::Ty::Primitive(_)
+        | ast::Ty::TokenStream(_)
+        | ast::Ty::ImplTraits(_)
+        | ast::Ty::Any(_)
+        | ast::Ty::Unit(_)
+        | ast::Ty::Unknown(_)
+        | ast::Ty::Nothing(_)
+        | ast::Ty::Type(_)
+        | ast::Ty::AnyBox(_) => false,
+    }
+}
+
+fn expr_contains_quote_value(expr: &ast::Expr) -> bool {
+    if let ast::ExprKind::Value(value) = expr.kind() {
+        return value_contains_quote(value.as_ref());
+    }
+    false
+}
+
+fn value_contains_quote(value: &ast::Value) -> bool {
+    match value {
+        ast::Value::QuoteToken(_) => true,
+        ast::Value::List(list) => !list.values.is_empty()
+            && list
+                .values
+                .iter()
+                .all(|value| value_contains_quote(value)),
+        _ => false,
     }
 }
 

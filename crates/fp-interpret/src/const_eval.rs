@@ -180,12 +180,6 @@ impl PipelineStage for ConstEvalStage {
         };
 
         diagnostics.extend(outcome.diagnostics.clone());
-        if outcome.has_errors {
-            return Err(PipelineError::new(
-                STAGE_CONST_EVAL,
-                "Const evaluation reported errors",
-            ));
-        }
 
         Ok(ConstEvalResult { ast, outcome })
     }
