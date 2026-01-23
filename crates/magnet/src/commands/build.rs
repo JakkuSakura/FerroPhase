@@ -70,7 +70,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         offline: options.offline,
         cache_dir: options.cache_dir.clone(),
         include_dependencies: true,
-        include_dev_dependencies: true,
+        include_dev_dependencies: false,
         include_build_dependencies: true,
         include_all_targets: false,
         cargo_fetch: options.fetch,
