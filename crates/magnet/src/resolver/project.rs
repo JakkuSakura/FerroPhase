@@ -39,6 +39,27 @@ pub fn resolve_graph(path: &Path, options: &PackageGraphOptions) -> Result<Packa
     Ok(graph)
 }
 
+pub fn resolve_graph_full(path: &Path, options: &PackageGraphOptions) -> Result<PackageGraph> {
+    let started_at = Instant::now();
+    let root = resolve_root(path);
+    info!("graph: resolve root {}", root.display());
+    info!(
+        "graph: resolve options offline={} registry={} lock={} write-lock={} cargo-fetch={}",
+        options.offline,
+        options.resolve_registry,
+        options.use_lock,
+        options.write_lock,
+        options.cargo_fetch
+    );
+    let graph = PackageGraph::from_path_with_options(path, options)?;
+    info!(
+        "graph: resolved {} package(s) in {:.2?}",
+        graph.packages.len(),
+        started_at.elapsed()
+    );
+    Ok(graph)
+}
+
 pub fn load_lock_index(root: &Path) -> Result<Option<LockIndex>> {
     let lock_path = root.join("Magnet.lock");
     let lock = MagnetLock::read_from_path(&lock_path)?;

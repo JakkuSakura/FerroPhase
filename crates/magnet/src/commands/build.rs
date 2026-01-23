@@ -1,8 +1,8 @@
 //! Command implementation for building FerroPhase code via fp-cli
 
 use crate::configs::ManifestConfig;
-use crate::models::{ManifestModel, PackageGraphOptions, PackageModel};
-use crate::resolver::project::resolve_graph;
+use crate::models::{ManifestModel, PackageGraphOptions, PackageModel, PackageNode};
+use crate::resolver::project::resolve_graph_full;
 use crate::utils::find_furthest_manifest;
 use eyre::{Result, WrapErr, bail};
 use glob::glob;
@@ -96,7 +96,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         info!("build: compiling single entry {}", entry.display());
         return compile_only(
             &fp_bin,
-            &package,
+            &package.root_path,
             &entry,
             &sources,
             &graph_path,
@@ -134,7 +134,7 @@ pub fn build(options: &BuildOptions) -> Result<()> {
 
 fn compile_only(
     fp_bin: &Path,
-    package: &PackageModel,
+    package_root: &Path,
     entry: &Path,
     sources: &[PathBuf],
     graph_path: &Path,
@@ -174,7 +174,7 @@ fn compile_only(
 
     let mut command = Command::new(&fp_bin);
     command.args(&args);
-    command.current_dir(&package.root_path);
+    command.current_dir(package_root);
     command.stdin(Stdio::inherit());
     command.stdout(Stdio::inherit());
     command.stderr(Stdio::inherit());
@@ -321,7 +321,7 @@ fn resolve_run_path(options: &BuildOptions) -> Result<PathBuf> {
 
 struct BuildTask {
     name: String,
-    package: PackageModel,
+    root_path: PathBuf,
     entry: PathBuf,
     sources: Vec<PathBuf>,
     output_dir: PathBuf,
@@ -337,14 +337,22 @@ fn build_packages_with_dependencies(
     fp_bin: &Path,
     jobs: usize,
 ) -> Result<()> {
-    let mut root_to_package = HashMap::new();
+    let mut workspace_root_to_package = HashMap::new();
+    let mut workspace_name_to_root = HashMap::new();
     for package in workspace_packages {
-        root_to_package.insert(package.root_path.clone(), package.clone());
+        workspace_root_to_package.insert(package.root_path.clone(), package.clone());
+        workspace_name_to_root.insert(package.name.clone(), package.root_path.clone());
     }
 
-    let (workspace_nodes, node_by_root, node_by_name) =
-        workspace_nodes(graph, root_to_package.keys().cloned().collect());
-    let (dependencies, dependents) = workspace_edges(graph, &node_by_root, &node_by_name);
+    let nodes = graph.packages.clone();
+    let node_by_root = node_index_by_root(&nodes);
+    let node_by_identity = node_index_by_identity(&nodes);
+    let (dependencies, dependents) = graph_edges(
+        &nodes,
+        &node_by_root,
+        &node_by_identity,
+        &workspace_name_to_root,
+    );
 
     let target_indices = target_packages
         .iter()
@@ -352,30 +360,36 @@ fn build_packages_with_dependencies(
         .collect::<Vec<_>>();
     let required = required_nodes(&dependencies, &target_indices);
 
-    let mut tasks = Vec::with_capacity(workspace_nodes.len());
-    for (idx, node) in workspace_nodes.iter().enumerate() {
+    let mut tasks = Vec::with_capacity(nodes.len());
+    for (idx, node) in nodes.iter().enumerate() {
         if !required.contains(&idx) {
             tasks.push(None);
             continue;
         }
-        let Some(pkg) = root_to_package.get(&node.root) else {
+        if !node.root.exists() {
+            info!(
+                "build: skipping {} (missing root {})",
+                node.name,
+                node.root.display()
+            );
             tasks.push(None);
             continue;
-        };
-        let has_fp = has_fp_sources(&pkg.root_path)?;
+        }
+        let has_fp = has_fp_sources(&node.root)?;
         if !has_fp {
             tasks.push(None);
             continue;
         }
-        let Some(entry) = resolve_package_entry(pkg)? else {
+        let entry = resolve_node_entry(node)?;
+        let Some(entry) = entry else {
             tasks.push(None);
             continue;
         };
-        let sources = collect_sources(pkg, &entry)?;
-        let output_dir = build_output_dir(pkg, profile);
+        let sources = collect_sources_root(&node.root, &entry)?;
+        let output_dir = build_output_dir_root(&node.root, profile);
         tasks.push(Some(BuildTask {
-            name: pkg.name.clone(),
-            package: pkg.clone(),
+            name: node.name.clone(),
+            root_path: node.root.clone(),
             entry,
             sources,
             output_dir,
@@ -384,7 +398,7 @@ fn build_packages_with_dependencies(
 
     if jobs <= 1 {
         build_sequential(
-            &workspace_nodes,
+            &nodes,
             &dependencies,
             &dependents,
             &tasks,
@@ -397,7 +411,7 @@ fn build_packages_with_dependencies(
     }
 
     build_parallel(
-        &workspace_nodes,
+        &nodes,
         &dependencies,
         &dependents,
         tasks,
@@ -409,43 +423,36 @@ fn build_packages_with_dependencies(
     )
 }
 
-fn workspace_nodes(
-    graph: &crate::models::PackageGraph,
-    workspace_roots: HashSet<PathBuf>,
-) -> (Vec<crate::models::PackageNode>, HashMap<PathBuf, usize>, HashMap<String, usize>) {
-    let mut nodes = Vec::new();
+fn node_index_by_root(nodes: &[PackageNode]) -> HashMap<PathBuf, usize> {
     let mut by_root = HashMap::new();
-    let mut name_counts: HashMap<String, usize> = HashMap::new();
-    for node in &graph.packages {
-        if workspace_roots.contains(&node.root) {
-            let idx = nodes.len();
-            nodes.push(node.clone());
-            by_root.insert(node.root.clone(), idx);
-            *name_counts.entry(node.name.clone()).or_default() += 1;
-        }
-    }
-    let mut by_name = HashMap::new();
     for (idx, node) in nodes.iter().enumerate() {
-        if name_counts.get(&node.name).copied().unwrap_or(0) == 1 {
-            by_name.insert(node.name.clone(), idx);
-        }
+        by_root.insert(node.root.clone(), idx);
     }
-    (nodes, by_root, by_name)
+    by_root
 }
 
-fn workspace_edges(
-    graph: &crate::models::PackageGraph,
+fn node_index_by_identity(
+    nodes: &[PackageNode],
+) -> HashMap<(String, String, Option<String>), usize> {
+    let mut by_identity = HashMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        let key = (node.name.clone(), node.version.clone(), node.source.clone());
+        by_identity.entry(key).or_insert(idx);
+    }
+    by_identity
+}
+
+fn graph_edges(
+    nodes: &[PackageNode],
     node_by_root: &HashMap<PathBuf, usize>,
-    node_by_name: &HashMap<String, usize>,
+    node_by_identity: &HashMap<(String, String, Option<String>), usize>,
+    workspace_name_to_root: &HashMap<String, PathBuf>,
 ) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
-    let mut dependencies = vec![Vec::new(); node_by_root.len()];
-    let mut dependents = vec![Vec::new(); node_by_root.len()];
+    let mut dependencies = vec![Vec::new(); nodes.len()];
+    let mut dependents = vec![Vec::new(); nodes.len()];
 
     let canonical_root = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    for node in &graph.packages {
-        let Some(&idx) = node_by_root.get(&node.root) else {
-            continue;
-        };
+    for (idx, node) in nodes.iter().enumerate() {
         let mut deps = Vec::new();
         for edge in &node.dependencies {
             let dep_idx = if let Some(path) = edge.path.as_ref() {
@@ -457,9 +464,25 @@ fn workspace_edges(
                 node_by_root.get(&resolved).copied()
             } else if edge.workspace.unwrap_or(false) {
                 let name = edge.package.as_ref().unwrap_or(&edge.name);
-                node_by_name.get(name).copied()
+                workspace_name_to_root
+                    .get(name)
+                    .and_then(|root| node_by_root.get(root).copied())
             } else {
-                None
+                let name = edge.package.as_ref().unwrap_or(&edge.name);
+                let version = edge
+                    .resolved_version
+                    .as_ref()
+                    .or(edge.version.as_ref())
+                    .cloned()
+                    .unwrap_or_default();
+                let key = (name.to_string(), version, edge.source.clone());
+                node_by_identity
+                    .get(&key)
+                    .copied()
+                    .or_else(|| {
+                        let key = (name.to_string(), key.1.clone(), None);
+                        node_by_identity.get(&key).copied()
+                    })
             };
             if let Some(dep_idx) = dep_idx {
                 if dep_idx != idx && !deps.contains(&dep_idx) {
@@ -513,7 +536,7 @@ fn build_sequential(
             );
             compile_only(
                 fp_bin,
-                &task.package,
+                &task.root_path,
                 &task.entry,
                 &task.sources,
                 graph_path,
@@ -656,7 +679,7 @@ fn build_parallel(
                         );
                         compile_only(
                             &fp_bin,
-                            &task.package,
+                            &task.root_path,
                             &task.entry,
                             &task.sources,
                             &graph_path,
@@ -761,20 +784,29 @@ fn resolve_entry(path: &Path, package: &PackageModel, entry: Option<&Path>) -> R
     Ok(entry_path)
 }
 
-fn resolve_package_entry(package: &PackageModel) -> Result<Option<PathBuf>> {
-    let fp = package.root_path.join("src").join("main.fp");
+fn resolve_node_entry(node: &PackageNode) -> Result<Option<PathBuf>> {
+    if let Some(entry) = node.entry.as_ref() {
+        if entry.exists() {
+            return Ok(Some(entry.clone()));
+        }
+    }
+    resolve_root_entry(&node.root)
+}
+
+fn resolve_root_entry(root: &Path) -> Result<Option<PathBuf>> {
+    let fp = root.join("src").join("main.fp");
     if fp.exists() {
         return Ok(Some(fp));
     }
-    let fp_lib = package.root_path.join("src").join("lib.fp");
+    let fp_lib = root.join("src").join("lib.fp");
     if fp_lib.exists() {
         return Ok(Some(fp_lib));
     }
-    let rs = package.root_path.join("src").join("main.rs");
+    let rs = root.join("src").join("main.rs");
     if rs.exists() {
         return Ok(Some(rs));
     }
-    let rs_lib = package.root_path.join("src").join("lib.rs");
+    let rs_lib = root.join("src").join("lib.rs");
     if rs_lib.exists() {
         return Ok(Some(rs_lib));
     }
@@ -807,14 +839,18 @@ fn find_nearest_package(start_dir: &Path) -> Result<Option<PackageModel>> {
 }
 
 fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Vec<PathBuf>> {
+    collect_sources_root(&package.root_path, entry)
+}
+
+fn collect_sources_root(root: &Path, entry: &Path) -> Result<Vec<PathBuf>> {
     let mut sources = BTreeSet::new();
-    let src_root = package.root_path.join("src");
+    let src_root = root.join("src");
     let include_rs = entry
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| ext == "rs")
         .unwrap_or(false)
-        || has_fp_sources(&package.root_path)?;
+        || has_fp_sources(root)?;
     if src_root.exists() {
         let pattern = format!("{}/**/*.fp", src_root.display());
         for item in glob(&pattern)? {
@@ -835,7 +871,7 @@ fn collect_sources(package: &PackageModel, entry: &Path) -> Result<Vec<PathBuf>>
     if sources.is_empty() {
         bail!(
             "No .fp/.rs sources found under {}",
-            package.root_path.display()
+            root.display()
         );
     }
 
@@ -875,9 +911,11 @@ fn resolve_profile(release: bool, profile: Option<&str>) -> String {
 }
 
 fn build_output_dir(package: &PackageModel, profile: &str) -> PathBuf {
-    package
-        .root_path
-        .join("target")
+    build_output_dir_root(&package.root_path, profile)
+}
+
+fn build_output_dir_root(root: &Path, profile: &str) -> PathBuf {
+    root.join("target")
         .join("magnet")
         .join(profile)
         .join("build")
@@ -1029,7 +1067,7 @@ fn write_workspace_graph(
     graph_options: &PackageGraphOptions,
     profile: &str,
 ) -> Result<(crate::models::PackageGraph, PathBuf)> {
-    let mut graph = resolve_graph(manifest_root, graph_options)?;
+    let mut graph = resolve_graph_full(manifest_root, graph_options)?;
     graph.build_options = build_options;
     let output_dir = manifest_root
         .join("target")
