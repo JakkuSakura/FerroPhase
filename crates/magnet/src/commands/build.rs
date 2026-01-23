@@ -584,6 +584,8 @@ fn build_parallel(
     required: &HashSet<usize>,
     jobs: usize,
 ) -> Result<()> {
+    let _ = topo_order(dependencies, dependents, required)?;
+
     let mut indegree = vec![0usize; dependencies.len()];
     for (idx, deps) in dependencies.iter().enumerate() {
         if !required.contains(&idx) {
