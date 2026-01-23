@@ -449,7 +449,11 @@ fn workspace_edges(
         let mut deps = Vec::new();
         for edge in &node.dependencies {
             let dep_idx = if let Some(path) = edge.path.as_ref() {
-                let resolved = canonical_root(path);
+                let resolved = if path.is_absolute() {
+                    canonical_root(path)
+                } else {
+                    canonical_root(&node.root.join(path))
+                };
                 node_by_root.get(&resolved).copied()
             } else if edge.workspace.unwrap_or(false) {
                 let name = edge.package.as_ref().unwrap_or(&edge.name);
