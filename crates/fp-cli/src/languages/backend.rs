@@ -8,6 +8,7 @@ pub enum LanguageTarget {
     CSharp,
     Python,
     Zig,
+    Sycl,
     Rust,
     Wit,
 }
@@ -21,6 +22,7 @@ pub fn parse_language_target(s: &str) -> Result<LanguageTarget> {
         "csharp" | "cs" | "c#" => LanguageTarget::CSharp,
         "python" | "py" => LanguageTarget::Python,
         "zig" => LanguageTarget::Zig,
+        "sycl" => LanguageTarget::Sycl,
         "rust" | "rs" => LanguageTarget::Rust,
         "wit" => LanguageTarget::Wit,
         _ => {
@@ -38,6 +40,7 @@ pub fn output_extension_for(target: LanguageTarget) -> &'static str {
         LanguageTarget::CSharp => "cs",
         LanguageTarget::Python => "py",
         LanguageTarget::Zig => "zig",
+        LanguageTarget::Sycl => "cpp",
         LanguageTarget::Rust => "rs",
         LanguageTarget::Wit => "wit",
     }

@@ -14,6 +14,7 @@ use fp_core::ast::{AstSerializer, Node};
 use fp_lang::PrettyAstSerializer;
 use fp_csharp::CSharpSerializer;
 use fp_python::PythonSerializer;
+use fp_sycl::SyclSerializer;
 use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
 use fp_wit::WorldMode;
 use fp_wit::{WitOptions, WitSerializer};
@@ -230,6 +231,16 @@ fn syntax_transpile_node(
         }
         crate::languages::backend::LanguageTarget::Zig => {
             let serializer = ZigSerializer;
+            let code = serializer
+                .serialize_node(node)
+                .map_err(|e| CliError::Transpile(e.to_string()))?;
+            Ok(BackendTranspileResult {
+                code,
+                type_defs: None,
+            })
+        }
+        crate::languages::backend::LanguageTarget::Sycl => {
+            let serializer = SyclSerializer;
             let code = serializer
                 .serialize_node(node)
                 .map_err(|e| CliError::Transpile(e.to_string()))?;

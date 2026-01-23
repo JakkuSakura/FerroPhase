@@ -6,10 +6,14 @@ use crate::resolver::project::resolve_graph;
 use crate::utils::find_furthest_manifest;
 use eyre::{Result, WrapErr, bail};
 use glob::glob;
-use std::collections::{BTreeSet, HashMap};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
 use std::time::Instant;
 use tracing::info;
 
@@ -21,6 +25,7 @@ pub struct BuildOptions {
     pub example: Option<String>,
     pub release: bool,
     pub profile: Option<String>,
+    pub jobs: usize,
     pub build_options: Vec<String>,
     pub offline: bool,
     pub cache_dir: Option<PathBuf>,
@@ -42,8 +47,6 @@ pub fn build(options: &BuildOptions) -> Result<()> {
             .map(|ext| matches!(ext, "fp" | "rs"))
             .unwrap_or(false);
     let package = resolve_package(&start_dir, &manifest, options.package.as_deref())?;
-
-    let _fp_requested = single_entry || has_fp_sources(&package.root_path)?;
 
     let build_config = load_manifest_build_config(&root)?;
     validate_feature_list(
@@ -80,8 +83,11 @@ pub fn build(options: &BuildOptions) -> Result<()> {
     };
     let profile = resolve_profile(options.release, options.profile.as_deref());
     info!("build: generating workspace graph");
-    let graph_path = write_workspace_graph(&root, build_options, &graph_options, &profile)?;
+    let (graph, graph_path) =
+        write_workspace_graph(&root, build_options, &graph_options, &profile)?;
     info!("build: graph at {}", graph_path.display());
+
+    let fp_bin = resolve_fp_binary()?;
 
     if single_entry {
         let entry = resolve_entry(&run_path, &package, options.entry.as_deref())?;
@@ -89,83 +95,58 @@ pub fn build(options: &BuildOptions) -> Result<()> {
         let output_dir = build_output_dir(&package, &profile);
         info!("build: compiling single entry {}", entry.display());
         return compile_only(
+            &fp_bin,
             &package,
             &entry,
             &sources,
             &graph_path,
             &output_dir,
             &build_option_args,
-        );
+        )
+        .map(|_| ());
     }
 
-    let packages = if let Some(name) = options.package.as_deref() {
-        vec![
-            manifest
-                .list_packages()?
-                .into_iter()
-                .find(|pkg| pkg.name == name)
-                .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?,
-        ]
+    let workspace_packages = manifest.list_packages()?;
+    let target_packages = if let Some(name) = options.package.as_deref() {
+        vec![workspace_packages
+            .iter()
+            .find(|pkg| pkg.name == name)
+            .cloned()
+            .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?]
     } else {
-        manifest.list_packages()?
+        workspace_packages.clone()
     };
 
-    let package_count = packages.len();
-    info!("build: compiling {} package(s)", package_count);
-    for (idx, pkg) in packages.into_iter().enumerate() {
-        let has_fp = has_fp_sources(&pkg.root_path)?;
-        if !has_fp {
-            info!(
-                "build: [{} / {}] skipping {} (no FP/RS sources)",
-                idx + 1,
-                package_count,
-                pkg.name
-            );
-            continue;
-        }
-        let Some(entry) = resolve_package_entry(&pkg)? else {
-            info!(
-                "build: [{} / {}] skipping {} (no entry)",
-                idx + 1,
-                package_count,
-                pkg.name
-            );
-            continue;
-        };
-        let sources = collect_sources(&pkg, &entry)?;
-        let output_dir = build_output_dir(&pkg, &profile);
-        info!(
-            "build: [{} / {}] compiling {} ({})",
-            idx + 1,
-            package_count,
-            pkg.name,
-            entry.display()
-        );
-        compile_only(
-            &pkg,
-            &entry,
-            &sources,
-            &graph_path,
-            &output_dir,
-            &build_option_args,
-        )?;
-    }
+    build_packages_with_dependencies(
+        &workspace_packages,
+        &target_packages,
+        &graph,
+        &graph_path,
+        &build_option_args,
+        &profile,
+        &fp_bin,
+        options.jobs.max(1),
+    )?;
 
     info!("build: completed in {:.2?}", started_at.elapsed());
     Ok(())
 }
 
 fn compile_only(
+    fp_bin: &Path,
     package: &PackageModel,
     entry: &Path,
     sources: &[PathBuf],
     graph_path: &Path,
     output_dir: &Path,
     build_options: &[String],
-) -> Result<()> {
+) -> Result<BuildOutcome> {
     let started_at = Instant::now();
-    let fp_bin = resolve_fp_binary()?;
     let entry_output = output_path_for_entry(entry, output_dir);
+    let fingerprint = build_fingerprint(fp_bin, entry, sources, build_options, graph_path)?;
+    if let Some(outcome) = check_build_cache(output_dir, entry, &entry_output, &fingerprint)? {
+        return Ok(outcome);
+    }
 
     info!("build: fp binary {}", fp_bin.display());
     info!("build: output dir {}", output_dir.display());
@@ -208,12 +189,13 @@ fn compile_only(
         );
     }
 
+    write_build_cache(output_dir, entry, &fingerprint)?;
     info!(
         "build: compiled {} in {:.2?}",
         entry_output.display(),
         started_at.elapsed()
     );
-    Ok(())
+    Ok(BuildOutcome::Built)
 }
 
 fn resolve_start_dir(path: &Path) -> Result<PathBuf> {
@@ -223,6 +205,100 @@ fn resolve_start_dir(path: &Path) -> Result<PathBuf> {
     } else {
         Ok(path)
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct BuildCache {
+    fingerprint: String,
+    entry: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BuildOutcome {
+    Built,
+    Skipped,
+}
+
+fn build_fingerprint(
+    fp_bin: &Path,
+    entry: &Path,
+    sources: &[PathBuf],
+    build_options: &[String],
+    graph_path: &Path,
+) -> Result<String> {
+    let mut hasher = Sha256::new();
+    hasher.update(fp_bin.display().to_string());
+    if let Ok(meta) = fs::metadata(fp_bin) {
+        hasher.update(meta.len().to_le_bytes());
+        if let Ok(modified) = meta.modified() {
+            if let Ok(duration) = modified.duration_since(std::time::UNIX_EPOCH) {
+                hasher.update(duration.as_secs().to_le_bytes());
+                hasher.update(duration.subsec_nanos().to_le_bytes());
+            }
+        }
+    }
+    hasher.update(entry.display().to_string());
+    for option in build_options {
+        hasher.update(option.as_bytes());
+    }
+    if let Ok(graph_contents) = fs::read(graph_path) {
+        hasher.update(graph_contents);
+    }
+
+    let mut sources_sorted = sources.to_vec();
+    sources_sorted.sort();
+    for source in sources_sorted {
+        hasher.update(source.display().to_string());
+        let contents = fs::read(&source)
+            .with_context(|| format!("Failed to read {}", source.display()))?;
+        hasher.update(contents);
+    }
+
+    let digest = hasher.finalize();
+    Ok(format!("{:x}", digest))
+}
+
+fn build_cache_path(output_dir: &Path) -> PathBuf {
+    output_dir.join(".magnet-build.json")
+}
+
+fn check_build_cache(
+    output_dir: &Path,
+    entry: &Path,
+    entry_output: &Path,
+    fingerprint: &str,
+) -> Result<Option<BuildOutcome>> {
+    let cache_path = build_cache_path(output_dir);
+    if !entry_output.exists() || !cache_path.exists() {
+        return Ok(None);
+    }
+    let payload = fs::read_to_string(&cache_path)
+        .with_context(|| format!("Failed to read {}", cache_path.display()))?;
+    let cache: BuildCache =
+        serde_json::from_str(&payload).context("Failed to parse build cache")?;
+    if cache.fingerprint == fingerprint && cache.entry == entry {
+        info!(
+            "build: skipping {} (cache hit)",
+            entry_output.display()
+        );
+        return Ok(Some(BuildOutcome::Skipped));
+    }
+    Ok(None)
+}
+
+fn write_build_cache(output_dir: &Path, entry: &Path, fingerprint: &str) -> Result<()> {
+    if !output_dir.exists() {
+        fs::create_dir_all(output_dir)
+            .with_context(|| format!("Failed to create {}", output_dir.display()))?;
+    }
+    let cache = BuildCache {
+        fingerprint: fingerprint.to_string(),
+        entry: entry.to_path_buf(),
+    };
+    let payload = serde_json::to_string_pretty(&cache).context("Failed to encode build cache")?;
+    fs::write(build_cache_path(output_dir), payload)
+        .with_context(|| "Failed to write build cache".to_string())?;
+    Ok(())
 }
 
 fn resolve_run_path(options: &BuildOptions) -> Result<PathBuf> {
@@ -241,6 +317,395 @@ fn resolve_run_path(options: &BuildOptions) -> Result<PathBuf> {
     }
 
     Ok(options.path.clone())
+}
+
+struct BuildTask {
+    name: String,
+    package: PackageModel,
+    entry: PathBuf,
+    sources: Vec<PathBuf>,
+    output_dir: PathBuf,
+}
+
+fn build_packages_with_dependencies(
+    workspace_packages: &[PackageModel],
+    target_packages: &[PackageModel],
+    graph: &crate::models::PackageGraph,
+    graph_path: &Path,
+    build_options: &[String],
+    profile: &str,
+    fp_bin: &Path,
+    jobs: usize,
+) -> Result<()> {
+    let mut root_to_package = HashMap::new();
+    for package in workspace_packages {
+        root_to_package.insert(package.root_path.clone(), package.clone());
+    }
+
+    let (workspace_nodes, node_by_root, node_by_name) =
+        workspace_nodes(graph, root_to_package.keys().cloned().collect());
+    let (dependencies, dependents) = workspace_edges(graph, &node_by_root, &node_by_name);
+
+    let target_indices = target_packages
+        .iter()
+        .filter_map(|pkg| node_by_root.get(&pkg.root_path).copied())
+        .collect::<Vec<_>>();
+    let required = required_nodes(&dependencies, &target_indices);
+
+    let mut tasks = Vec::with_capacity(workspace_nodes.len());
+    for (idx, node) in workspace_nodes.iter().enumerate() {
+        if !required.contains(&idx) {
+            tasks.push(None);
+            continue;
+        }
+        let Some(pkg) = root_to_package.get(&node.root) else {
+            tasks.push(None);
+            continue;
+        };
+        let has_fp = has_fp_sources(&pkg.root_path)?;
+        if !has_fp {
+            tasks.push(None);
+            continue;
+        }
+        let Some(entry) = resolve_package_entry(pkg)? else {
+            tasks.push(None);
+            continue;
+        };
+        let sources = collect_sources(pkg, &entry)?;
+        let output_dir = build_output_dir(pkg, profile);
+        tasks.push(Some(BuildTask {
+            name: pkg.name.clone(),
+            package: pkg.clone(),
+            entry,
+            sources,
+            output_dir,
+        }));
+    }
+
+    if jobs <= 1 {
+        build_sequential(
+            &workspace_nodes,
+            &dependencies,
+            &dependents,
+            &tasks,
+            fp_bin,
+            graph_path,
+            build_options,
+            &required,
+        )?;
+        return Ok(());
+    }
+
+    build_parallel(
+        &workspace_nodes,
+        &dependencies,
+        &dependents,
+        tasks,
+        fp_bin,
+        graph_path,
+        build_options,
+        &required,
+        jobs,
+    )
+}
+
+fn workspace_nodes(
+    graph: &crate::models::PackageGraph,
+    workspace_roots: HashSet<PathBuf>,
+) -> (Vec<crate::models::PackageNode>, HashMap<PathBuf, usize>, HashMap<String, usize>) {
+    let mut nodes = Vec::new();
+    let mut by_root = HashMap::new();
+    let mut name_counts: HashMap<String, usize> = HashMap::new();
+    for node in &graph.packages {
+        if workspace_roots.contains(&node.root) {
+            let idx = nodes.len();
+            nodes.push(node.clone());
+            by_root.insert(node.root.clone(), idx);
+            *name_counts.entry(node.name.clone()).or_default() += 1;
+        }
+    }
+    let mut by_name = HashMap::new();
+    for (idx, node) in nodes.iter().enumerate() {
+        if name_counts.get(&node.name).copied().unwrap_or(0) == 1 {
+            by_name.insert(node.name.clone(), idx);
+        }
+    }
+    (nodes, by_root, by_name)
+}
+
+fn workspace_edges(
+    graph: &crate::models::PackageGraph,
+    node_by_root: &HashMap<PathBuf, usize>,
+    node_by_name: &HashMap<String, usize>,
+) -> (Vec<Vec<usize>>, Vec<Vec<usize>>) {
+    let mut dependencies = vec![Vec::new(); node_by_root.len()];
+    let mut dependents = vec![Vec::new(); node_by_root.len()];
+
+    let canonical_root = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    for node in &graph.packages {
+        let Some(&idx) = node_by_root.get(&node.root) else {
+            continue;
+        };
+        let mut deps = Vec::new();
+        for edge in &node.dependencies {
+            let dep_idx = if let Some(path) = edge.path.as_ref() {
+                let resolved = canonical_root(path);
+                node_by_root.get(&resolved).copied()
+            } else if edge.workspace.unwrap_or(false) {
+                let name = edge.package.as_ref().unwrap_or(&edge.name);
+                node_by_name.get(name).copied()
+            } else {
+                None
+            };
+            if let Some(dep_idx) = dep_idx {
+                if dep_idx != idx && !deps.contains(&dep_idx) {
+                    deps.push(dep_idx);
+                }
+            }
+        }
+        dependencies[idx] = deps.clone();
+        for dep in deps {
+            dependents[dep].push(idx);
+        }
+    }
+
+    (dependencies, dependents)
+}
+
+fn required_nodes(deps: &[Vec<usize>], roots: &[usize]) -> HashSet<usize> {
+    let mut visited = HashSet::new();
+    let mut stack = roots.to_vec();
+    while let Some(idx) = stack.pop() {
+        if !visited.insert(idx) {
+            continue;
+        }
+        for dep in &deps[idx] {
+            stack.push(*dep);
+        }
+    }
+    visited
+}
+
+fn build_sequential(
+    nodes: &[crate::models::PackageNode],
+    dependencies: &[Vec<usize>],
+    dependents: &[Vec<usize>],
+    tasks: &[Option<BuildTask>],
+    fp_bin: &Path,
+    graph_path: &Path,
+    build_options: &[String],
+    required: &HashSet<usize>,
+) -> Result<()> {
+    let order = topo_order(dependencies, dependents, required)?;
+    let total = order.len();
+    for (pos, idx) in order.into_iter().enumerate() {
+        if let Some(task) = tasks.get(idx).and_then(|task| task.as_ref()) {
+            info!(
+                "build: [{} / {}] compiling {} ({})",
+                pos + 1,
+                total,
+                task.name,
+                task.entry.display()
+            );
+            compile_only(
+                fp_bin,
+                &task.package,
+                &task.entry,
+                &task.sources,
+                graph_path,
+                &task.output_dir,
+                build_options,
+            )?;
+        } else {
+            info!(
+                "build: [{} / {}] skipping {} (no FP/RS sources)",
+                pos + 1,
+                total,
+                nodes[idx].name
+            );
+        }
+    }
+    Ok(())
+}
+
+fn topo_order(
+    dependencies: &[Vec<usize>],
+    dependents: &[Vec<usize>],
+    required: &HashSet<usize>,
+) -> Result<Vec<usize>> {
+    let mut indegree = vec![0usize; dependencies.len()];
+    for (idx, deps) in dependencies.iter().enumerate() {
+        if !required.contains(&idx) {
+            continue;
+        }
+        indegree[idx] = deps.iter().filter(|dep| required.contains(dep)).count();
+    }
+
+    let mut queue = VecDeque::new();
+    for idx in 0..dependencies.len() {
+        if required.contains(&idx) && indegree[idx] == 0 {
+            queue.push_back(idx);
+        }
+    }
+
+    let mut order = Vec::new();
+    while let Some(idx) = queue.pop_front() {
+        order.push(idx);
+        for dep in &dependents[idx] {
+            if !required.contains(dep) {
+                continue;
+            }
+            indegree[*dep] = indegree[*dep].saturating_sub(1);
+            if indegree[*dep] == 0 {
+                queue.push_back(*dep);
+            }
+        }
+    }
+
+    if order.len() != required.len() {
+        bail!("dependency graph contains a cycle among workspace packages");
+    }
+
+    Ok(order)
+}
+
+fn build_parallel(
+    nodes: &[crate::models::PackageNode],
+    dependencies: &[Vec<usize>],
+    dependents: &[Vec<usize>],
+    tasks: Vec<Option<BuildTask>>,
+    fp_bin: &Path,
+    graph_path: &Path,
+    build_options: &[String],
+    required: &HashSet<usize>,
+    jobs: usize,
+) -> Result<()> {
+    let mut indegree = vec![0usize; dependencies.len()];
+    for (idx, deps) in dependencies.iter().enumerate() {
+        if !required.contains(&idx) {
+            continue;
+        }
+        indegree[idx] = deps.iter().filter(|dep| required.contains(dep)).count();
+    }
+
+    let mut ready = VecDeque::new();
+    for idx in 0..dependencies.len() {
+        if required.contains(&idx) && indegree[idx] == 0 {
+            ready.push_back(idx);
+        }
+    }
+
+    let total = required.len();
+    let state = Arc::new((
+        Mutex::new(BuildScheduler {
+            indegree,
+            ready,
+            done: 0,
+            total,
+            error: None,
+        }),
+        Condvar::new(),
+    ));
+
+    let tasks = Arc::new(tasks);
+    let dependents = Arc::new(dependents.to_vec());
+    let nodes = Arc::new(nodes.to_vec());
+    let fp_bin = fp_bin.to_path_buf();
+    let graph_path = graph_path.to_path_buf();
+    let build_options = build_options.to_vec();
+
+    thread::scope(|scope| {
+        for _ in 0..jobs {
+            let state = Arc::clone(&state);
+            let tasks = Arc::clone(&tasks);
+            let dependents = Arc::clone(&dependents);
+            let nodes = Arc::clone(&nodes);
+            let fp_bin = fp_bin.clone();
+            let graph_path = graph_path.clone();
+            let build_options = build_options.clone();
+            scope.spawn(move || {
+                loop {
+                    let idx = {
+                        let (lock, cvar) = &*state;
+                        let mut scheduler = lock.lock().unwrap();
+                        while scheduler.ready.is_empty() && scheduler.done < scheduler.total {
+                            if scheduler.error.is_some() {
+                                return;
+                            }
+                            scheduler = cvar.wait(scheduler).unwrap();
+                        }
+                        if scheduler.error.is_some() || scheduler.done >= scheduler.total {
+                            return;
+                        }
+                        scheduler.ready.pop_front()
+                    };
+
+                    let Some(idx) = idx else { continue };
+
+                    let result = if let Some(task) = tasks.get(idx).and_then(|task| task.as_ref()) {
+                        info!(
+                            "build: compiling {} ({})",
+                            task.name,
+                            task.entry.display()
+                        );
+                        compile_only(
+                            &fp_bin,
+                            &task.package,
+                            &task.entry,
+                            &task.sources,
+                            &graph_path,
+                            &task.output_dir,
+                            &build_options,
+                        )
+                        .map(|_| ())
+                    } else {
+                        info!(
+                            "build: skipping {} (no FP/RS sources)",
+                            nodes[idx].name
+                        );
+                        Ok(())
+                    };
+
+                    let (lock, cvar) = &*state;
+                    let mut scheduler = lock.lock().unwrap();
+                    if let Err(err) = result {
+                        scheduler.error = Some(err);
+                        cvar.notify_all();
+                        return;
+                    }
+                    scheduler.done += 1;
+                    for dep in &dependents[idx] {
+                        if !required.contains(dep) {
+                            continue;
+                        }
+                        scheduler.indegree[*dep] = scheduler.indegree[*dep].saturating_sub(1);
+                        if scheduler.indegree[*dep] == 0 {
+                            scheduler.ready.push_back(*dep);
+                        }
+                    }
+                    cvar.notify_all();
+                }
+            });
+        }
+    });
+
+    let (lock, _) = &*state;
+    let mut scheduler = lock.lock().unwrap();
+    if let Some(err) = scheduler.error.take() {
+        return Err(err);
+    }
+    if scheduler.done != scheduler.total {
+        bail!("build did not complete for all packages");
+    }
+    Ok(())
+}
+
+struct BuildScheduler {
+    indegree: Vec<usize>,
+    ready: VecDeque<usize>,
+    done: usize,
+    total: usize,
+    error: Option<eyre::Report>,
 }
 
 fn resolve_package(
@@ -557,7 +1022,7 @@ fn write_workspace_graph(
     build_options: std::collections::HashMap<String, String>,
     graph_options: &PackageGraphOptions,
     profile: &str,
-) -> Result<PathBuf> {
+) -> Result<(crate::models::PackageGraph, PathBuf)> {
     let mut graph = resolve_graph(manifest_root, graph_options)?;
     graph.build_options = build_options;
     let output_dir = manifest_root
@@ -576,7 +1041,7 @@ fn write_workspace_graph(
         serde_json::to_string_pretty(&graph).context("Failed to serialize package graph")?;
     fs::write(&graph_path, payload)
         .with_context(|| format!("Failed to write {}", graph_path.display()))?;
-    Ok(graph_path)
+    Ok((graph, graph_path))
 }
 
 fn output_path_for_entry(entry: &Path, output_dir: &Path) -> PathBuf {

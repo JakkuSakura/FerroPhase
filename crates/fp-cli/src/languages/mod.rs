@@ -11,6 +11,7 @@ pub const PYTHON: &str = "python";
 pub const GO: &str = "go";
 pub const RUST: &str = "rust";
 pub const ZIG: &str = "zig";
+pub const SYCL: &str = "sycl";
 pub const CPP: &str = "cpp";
 pub const C: &str = "c";
 pub const JAVA: &str = "java";
@@ -66,6 +67,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: ZIG,
         extensions: &["zig"],
+        transpile_supported: true,
+    },
+    Language {
+        name: SYCL,
+        extensions: &["sycl"],
         transpile_supported: true,
     },
     Language {
@@ -145,6 +151,7 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
                     | (CSHARP, "cs" | "c#")
                     | (PYTHON, "py")
                     | (ZIG, "zig")
+                    | (SYCL, "sycl")
             )
     })
 }

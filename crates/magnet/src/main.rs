@@ -151,6 +151,7 @@ fn main() -> Result<()> {
             release,
             profile,
             build_options,
+            jobs,
             offline,
             cache_dir,
             fetch,
@@ -164,6 +165,7 @@ fn main() -> Result<()> {
                 release,
                 profile,
                 build_options,
+                jobs,
                 offline,
                 cache_dir,
                 fetch,
@@ -446,6 +448,10 @@ enum Commands {
         #[arg(long = "build-option")]
         build_options: Vec<String>,
 
+        /// Number of parallel build jobs
+        #[arg(short = 'j', long, default_value_t = default_jobs())]
+        jobs: usize,
+
         /// Run without network access (use cached crates)
         #[arg(long)]
         offline: bool,
@@ -554,6 +560,12 @@ enum Commands {
 enum RunModeArg {
     Compile,
     Interpret,
+}
+
+fn default_jobs() -> usize {
+    std::thread::available_parallelism()
+        .map(|count| count.get())
+        .unwrap_or(1)
 }
 
 impl From<RunModeArg> for RunMode {

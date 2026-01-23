@@ -20,6 +20,7 @@ fp-llvm = { path = "../fp-llvm" }
 fp-lang = { path = "../fp-lang" }
 fp-wit = { path = "../fp-wit" }
 fp-zig = { path = "../fp-zig" }
+fp-sycl = { path = "../fp-sycl" }
 fp-prql = { path = "../fp-prql" }
 fp-sql = { path = "../fp-sql" }
 fp-jsonschema = { path = "../fp-jsonschema" }

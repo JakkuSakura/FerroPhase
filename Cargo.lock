@@ -1193,6 +1193,7 @@ dependencies = [
  "fp-python",
  "fp-sql",
  "fp-stackvm",
+ "fp-sycl",
  "fp-typescript",
  "fp-typing",
  "fp-wasm",
@@ -1386,6 +1387,13 @@ version = "0.1.0"
 dependencies = [
  "fp-bytecode",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "fp-sycl"
+version = "0.1.0"
+dependencies = [
+ "fp-core",
 ]
 
 [[package]]
