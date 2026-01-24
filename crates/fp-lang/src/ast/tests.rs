@@ -1,7 +1,7 @@
 use super::*;
 use crate::syntax::SyntaxPrinter;
 use fp_core::ast::{
-    AttrMeta, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind,
+    AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use fp_core::ops::BinOpKind;
@@ -366,6 +366,28 @@ fn parse_items_ast_handles_module_item() {
     parser.clear_diagnostics();
     let items = parser.parse_items_ast("mod foo {}").unwrap();
     assert!(matches!(items[0].kind(), ItemKind::Module(_)));
+}
+
+#[test]
+fn parse_items_ast_supports_inner_doc_include_str() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let items = parser
+        .parse_items_ast("mod m { #![doc = include_str!(\"foo\")] }")
+        .unwrap();
+    let ItemKind::Module(module) = items[0].kind() else {
+        panic!("expected module item");
+    };
+    let attr = module
+        .attrs
+        .iter()
+        .find(|attr| matches!(attr.style, AttrStyle::Inner))
+        .expect("expected inner attribute");
+    let AttrMeta::NameValue(meta) = &attr.meta else {
+        panic!("expected name-value attribute");
+    };
+    assert_eq!(meta.name.last().as_str(), "doc");
+    assert!(matches!(meta.value.kind, ExprKind::Macro(_)));
 }
 
 #[test]

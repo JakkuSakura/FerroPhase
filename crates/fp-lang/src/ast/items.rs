@@ -2,12 +2,12 @@ use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant, Expr,
-    ExprKind, ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature, GenericParam,
-    Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst, ItemDefEnum,
-    ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl, ItemImport,
-    ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind, ItemMacro,
-    Locator, MacroInvocation, Module, Path, QuoteFragmentKind, StructuralField, Ty, TypeBounds,
-    TypeEnum, TypeQuote, TypeStruct, Value, Visibility,
+    ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature,
+    GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst,
+    ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl,
+    ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind,
+    ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path, QuoteFragmentKind,
+    StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::ops::UnOpKind;
@@ -160,7 +160,7 @@ fn lower_extern_crate(node: &SyntaxNode) -> Result<ItemImport, LowerItemsError> 
 }
 
 fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
+    let mut attrs = lower_outer_attrs(node);
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name =
         Ident::new(first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("mod name"))?);
@@ -169,6 +169,7 @@ fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
         _ => None,
     });
     let (items, is_external) = if let Some(inner_list) = inner_list {
+        attrs.extend(lower_inner_attrs(inner_list));
         (lower_items_from_cst(inner_list)?, false)
     } else {
         (Vec::new(), true)
@@ -453,14 +454,26 @@ fn lower_outer_attrs(node: &SyntaxNode) -> Vec<Attribute> {
         .iter()
         .filter_map(|child| match child {
             SyntaxElement::Node(attr) if attr.kind == SyntaxKind::AttrOuter => {
-                lower_attr(attr.as_ref())
+                lower_attr(attr.as_ref(), AttrStyle::Outer)
             }
             _ => None,
         })
         .collect()
 }
 
-fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
+fn lower_inner_attrs(node: &SyntaxNode) -> Vec<Attribute> {
+    node.children
+        .iter()
+        .filter_map(|child| match child {
+            SyntaxElement::Node(attr) if attr.kind == SyntaxKind::AttrInner => {
+                lower_attr(attr.as_ref(), AttrStyle::Inner)
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn lower_attr(node: &SyntaxNode, style: AttrStyle) -> Option<Attribute> {
     let mut tokens = Vec::new();
     crate::syntax::collect_tokens(node, &mut tokens);
     let mut inner_tokens = Vec::new();
@@ -478,7 +491,7 @@ fn lower_attr(node: &SyntaxNode) -> Option<Attribute> {
 
     let meta = parse_attr_meta(&inner_tokens)?;
     Some(Attribute {
-        style: AttrStyle::Outer,
+        style,
         meta,
     })
 }
@@ -550,7 +563,11 @@ fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
 }
 
 fn parse_attr_value_expr(tokens: &[String]) -> Option<BExpr> {
-    let value_token = tokens.iter().find(|tok| !tok.is_empty())?;
+    let cleaned: Vec<&str> = tokens.iter().map(|tok| tok.as_str()).filter(|t| !t.is_empty()).collect();
+    if let Some(expr) = parse_include_str_macro_expr(&cleaned) {
+        return Some(expr);
+    }
+    let value_token = cleaned.first()?;
     let decoded = decode_string_literal(value_token)?;
     Some(Box::new(Expr::value(Value::string(decoded))))
 }
@@ -615,6 +632,26 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     let inner = &after_quote[..end_idx];
     let _ = prefix;
     Some(inner.to_string())
+}
+
+fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {
+    if tokens.len() < 4 {
+        return None;
+    }
+    if tokens[0] != "include_str" || tokens[1] != "!" {
+        return None;
+    }
+    if tokens[2] != "(" || tokens[tokens.len() - 1] != ")" {
+        return None;
+    }
+    let inner = &tokens[3..tokens.len() - 1];
+    if inner.is_empty() {
+        return None;
+    }
+    let tokens_text = inner.join(" ");
+    let path = Path::new(vec![Ident::new("include_str".to_string())]);
+    let invocation = MacroInvocation::new(path, MacroDelimiter::Parenthesis, tokens_text);
+    Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(invocation)))))
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {

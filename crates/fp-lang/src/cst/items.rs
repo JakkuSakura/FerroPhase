@@ -101,6 +101,15 @@ pub fn parse_items_tokens_to_cst_with_file(
     let mut input: &[Token] = tokens;
     with_items_file(file, || {
         let mut children: Vec<SyntaxElement> = Vec::new();
+        let inner_attrs = match parse_inner_attrs_cst(&mut input) {
+            Ok(attrs) => attrs,
+            Err(err) => {
+                return Err(ItemParseError::from_err_with_span(err, input, tokens, None));
+            }
+        };
+        for attr in inner_attrs {
+            children.push(SyntaxElement::Node(Box::new(attr)));
+        }
         while !input.is_empty() {
             // Skip stray semicolons.
             if matches_symbol(input.first(), ";") {
@@ -109,6 +118,15 @@ pub fn parse_items_tokens_to_cst_with_file(
             }
 
             let mut item_children = Vec::new();
+            if let Some(attr) = match parse_inner_attr_cst(&mut input) {
+                Ok(attr) => attr,
+                Err(err) => {
+                    return Err(ItemParseError::from_err_with_span(err, input, tokens, None));
+                }
+            } {
+                children.push(SyntaxElement::Node(Box::new(attr)));
+                continue;
+            }
             let attrs = match parse_outer_attrs_cst(&mut input) {
                 Ok(attrs) => attrs,
                 Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
@@ -570,6 +588,10 @@ fn parse_item_cst(
 
 fn parse_items_in_braces_to_item_list(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let mut children = Vec::new();
+    let inner_attrs = parse_inner_attrs_cst(input)?;
+    for attr in inner_attrs {
+        children.push(SyntaxElement::Node(Box::new(attr)));
+    }
     while !matches_symbol(input.first(), "}") {
         if input.is_empty() {
             return Err(ErrMode::Cut(ContextError::new()));
@@ -579,6 +601,10 @@ fn parse_items_in_braces_to_item_list(input: &mut &[Token]) -> ModalResult<Synta
             continue;
         }
         let mut item_children = Vec::new();
+        if let Some(attr) = parse_inner_attr_cst(input)? {
+            children.push(SyntaxElement::Node(Box::new(attr)));
+            continue;
+        }
         let attrs = parse_outer_attrs_cst(input)?;
         for attr in attrs {
             item_children.push(SyntaxElement::Node(Box::new(attr)));
@@ -886,50 +912,69 @@ fn parse_use_tree_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
 
 fn parse_outer_attrs_cst(input: &mut &[Token]) -> ModalResult<Vec<SyntaxNode>> {
     let mut attrs = Vec::new();
-    loop {
-        let mut cursor = *input;
-        if !matches_symbol(cursor.first(), "#") {
-            break;
-        }
-        cursor = &cursor[1..];
-        let is_inner = matches_symbol(cursor.first(), "!");
-        if is_inner {
-            cursor = &cursor[1..];
-        }
-        if !matches_symbol(cursor.first(), "[") {
-            break;
-        }
+    while let Some(attr) = parse_attr_cst(input, false)? {
+        attrs.push(attr);
+    }
+    Ok(attrs)
+}
 
-        // Consume '#', optional '!', '['.
-        let mut children = Vec::new();
+fn parse_inner_attrs_cst(input: &mut &[Token]) -> ModalResult<Vec<SyntaxNode>> {
+    let mut attrs = Vec::new();
+    while let Some(attr) = parse_attr_cst(input, true)? {
+        attrs.push(attr);
+    }
+    Ok(attrs)
+}
+
+fn parse_inner_attr_cst(input: &mut &[Token]) -> ModalResult<Option<SyntaxNode>> {
+    parse_attr_cst(input, true)
+}
+
+fn parse_attr_cst(input: &mut &[Token], is_inner: bool) -> ModalResult<Option<SyntaxNode>> {
+    let mut cursor = *input;
+    if !matches_symbol(cursor.first(), "#") {
+        return Ok(None);
+    }
+    cursor = &cursor[1..];
+    let has_bang = matches_symbol(cursor.first(), "!");
+    if has_bang != is_inner {
+        return Ok(None);
+    }
+    if has_bang {
+        cursor = &cursor[1..];
+    }
+    if !matches_symbol(cursor.first(), "[") {
+        return Ok(None);
+    }
+
+    // Consume '#', optional '!', '['.
+    let mut children = Vec::new();
+    children.push(SyntaxElement::Token(syntax_token_from_token(
+        &advance(input).unwrap(),
+    )));
+    if has_bang {
         children.push(SyntaxElement::Token(syntax_token_from_token(
             &advance(input).unwrap(),
         )));
-        if is_inner {
-            children.push(SyntaxElement::Token(syntax_token_from_token(
-                &advance(input).unwrap(),
-            )));
-        }
-        let open = advance(input).unwrap();
-        children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
-
-        while !matches_symbol(input.first(), "]") {
-            let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
-        }
-        let close = advance(input).unwrap();
-        children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
-
-        attrs.push(node(
-            if is_inner {
-                SyntaxKind::AttrInner
-            } else {
-                SyntaxKind::AttrOuter
-            },
-            children,
-        ));
     }
-    Ok(attrs)
+    let open = advance(input).unwrap();
+    children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
+
+    while !matches_symbol(input.first(), "]") {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+    }
+    let close = advance(input).unwrap();
+    children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+
+    Ok(Some(node(
+        if is_inner {
+            SyntaxKind::AttrInner
+        } else {
+            SyntaxKind::AttrOuter
+        },
+        children,
+    )))
 }
 
 fn parse_visibility_cst(input: &mut &[Token]) -> ModalResult<Option<SyntaxNode>> {
