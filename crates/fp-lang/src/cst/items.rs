@@ -44,12 +44,40 @@ fn cut_message<T>(input: &mut &[Token], message: impl Into<String>) -> ModalResu
 }
 
 impl ItemParseError {
-    fn from_err_with_span(err: ErrMode<ContextError>, input: &[Token]) -> Self {
-        let message = match err {
+    fn from_err_with_span(
+        err: ErrMode<ContextError>,
+        input: &[Token],
+        full_input: &[Token],
+        context: Option<&str>,
+    ) -> Self {
+        let mut message = match err {
             ErrMode::Backtrack(ctx) | ErrMode::Cut(ctx) => ctx.to_string(),
             ErrMode::Incomplete(_) => "incomplete input".to_string(),
         };
-        let span = input.first().map(token_span_to_core);
+        let (token_hint, span) = match input.first() {
+            Some(token) => (
+                format!("next token {:?} '{}'", token.kind, token.lexeme),
+                Some(token_span_to_core(token)),
+            ),
+            None => match full_input.last() {
+                Some(token) => (
+                    format!(
+                        "unexpected end of input after {:?} '{}'",
+                        token.kind, token.lexeme
+                    ),
+                    Some(span_at_eof(token)),
+                ),
+                None => ("unexpected end of input".to_string(), None),
+            },
+        };
+        if message.trim().is_empty() {
+            message = token_hint;
+        } else {
+            message = format!("{message} ({token_hint})");
+        }
+        if let Some(context) = context {
+            message = format!("while parsing {context}: {message}");
+        }
         ItemParseError::Parse { message, span }
     }
 
@@ -83,21 +111,28 @@ pub fn parse_items_tokens_to_cst_with_file(
             let mut item_children = Vec::new();
             let attrs = match parse_outer_attrs_cst(&mut input) {
                 Ok(attrs) => attrs,
-                Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+                Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
             };
             for attr in attrs {
                 item_children.push(SyntaxElement::Node(Box::new(attr)));
             }
             let visibility = match parse_visibility_cst(&mut input) {
                 Ok(vis) => vis,
-                Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+                Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
             };
             if let Some(vis) = visibility {
                 item_children.push(SyntaxElement::Node(Box::new(vis)));
             }
             let item = match parse_item_cst(&mut input, item_children) {
                 Ok(item) => item,
-                Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+                Err(err) => {
+                    return Err(ItemParseError::from_err_with_span(
+                        err,
+                        input,
+                        tokens,
+                        Some("item"),
+                    ))
+                }
             };
             children.push(SyntaxElement::Node(Box::new(item)));
         }
@@ -123,21 +158,21 @@ pub fn parse_item_tokens_prefix_to_cst_with_file(
         let mut item_children: Vec<SyntaxElement> = Vec::new();
         let attrs = match parse_outer_attrs_cst(&mut input) {
             Ok(attrs) => attrs,
-            Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+            Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
         };
         for attr in attrs {
             item_children.push(SyntaxElement::Node(Box::new(attr)));
         }
         let visibility = match parse_visibility_cst(&mut input) {
             Ok(vis) => vis,
-            Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+            Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
         };
         if let Some(vis) = visibility {
             item_children.push(SyntaxElement::Node(Box::new(vis)));
         }
         let item = match parse_item_cst(&mut input, item_children) {
             Ok(item) => item,
-            Err(err) => return Err(ItemParseError::from_err_with_span(err, input)),
+            Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
         };
         Ok((item, tokens.len() - input.len()))
     })
@@ -1155,6 +1190,14 @@ fn token_span_to_core(tok: &Token) -> Span {
     Span::new(
         current_items_file(),
         tok.span.start as u32,
+        tok.span.end as u32,
+    )
+}
+
+fn span_at_eof(tok: &Token) -> Span {
+    Span::new(
+        current_items_file(),
+        tok.span.end as u32,
         tok.span.end as u32,
     )
 }
