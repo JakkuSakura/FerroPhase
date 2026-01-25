@@ -2782,17 +2782,23 @@ impl MirLowering {
                 has_payload = true;
             }
             for (idx, ty) in payload_tys.iter().enumerate() {
-                if let Some(existing) = payload_layout.get_mut(idx) {
+                let slot_ty = if let Some(existing) = payload_layout.get_mut(idx) {
                     if existing != ty {
-                        is_union_enum = true;
                         let opaque_name = format!("{}::payload{}", enum_def.name, idx);
                         *existing = self.opaque_ty(&opaque_name);
+                        is_union_enum = true;
                     }
-                } else if is_union_enum {
-                    let opaque_name = format!("{}::payload{}", enum_def.name, idx);
-                    payload_layout.push(self.opaque_ty(&opaque_name));
+                    None
                 } else {
-                    payload_layout.push(ty.clone());
+                    if is_union_enum {
+                        let opaque_name = format!("{}::payload{}", enum_def.name, idx);
+                        Some(self.opaque_ty(&opaque_name))
+                    } else {
+                        Some(ty.clone())
+                    }
+                };
+                if let Some(slot_ty) = slot_ty {
+                    payload_layout.push(slot_ty);
                 }
             }
             variant_payloads.insert(variant.def_id, payload_tys);
@@ -6026,6 +6032,14 @@ impl<'a> BodyBuilder<'a> {
                 }
             }
         }
+        let payload_struct_def = payload_def.or_else(|| self.struct_def_from_ty(payload_ty));
+        if let (Some(enum_def), Some(payload_struct_def)) = (enum_def, payload_struct_def) {
+            if let Some(info) = self.lowering.enum_variants.values().find(|info| {
+                info.enum_def == enum_def && info.payload_def == Some(payload_struct_def)
+            }) {
+                return Some((info.clone(), layout));
+            }
+        }
         let payload_len = match &payload_ty.kind {
             TyKind::Tuple(fields) => fields.len(),
             _ if MirLowering::is_unit_ty(payload_ty) => 0,
@@ -6047,6 +6061,9 @@ impl<'a> BodyBuilder<'a> {
             });
         let first = len_matches.next().cloned();
         if first.is_some() && len_matches.next().is_some() {
+            if self.lowering.has_unresolved_ty(payload_ty) {
+                return first.map(|info| (info, layout));
+            }
             self.lowering.emit_error(
                 self.span,
                 "ambiguous enum payload coercion: multiple variants share the same payload shape",
@@ -6055,14 +6072,6 @@ impl<'a> BodyBuilder<'a> {
         }
         if let Some(info) = first {
             return Some((info, layout));
-        }
-        let payload_struct_def = payload_def.or_else(|| self.struct_def_from_ty(payload_ty));
-        if let (Some(enum_def), Some(payload_struct_def)) = (enum_def, payload_struct_def) {
-            if let Some(info) = self.lowering.enum_variants.values().find(|info| {
-                info.enum_def == enum_def && info.payload_def == Some(payload_struct_def)
-            }) {
-                return Some((info.clone(), layout));
-            }
         }
         None
     }
