@@ -184,7 +184,10 @@ fn lower_mod(node: &SyntaxNode) -> Result<Module, LowerItemsError> {
 }
 
 fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
-    let attrs = lower_outer_attrs(node);
+    let mut attrs = lower_outer_attrs(node);
+    if is_const_struct(node) {
+        attrs.push(const_struct_attr());
+    }
     let visibility = lower_visibility(first_visibility(node)?)?;
     let name = Ident::new(
         first_ident_token_text(node).ok_or(LowerItemsError::MissingToken("struct name"))?,
@@ -228,6 +231,22 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
             fields,
         },
     })
+}
+
+fn is_const_struct(node: &SyntaxNode) -> bool {
+    let mut tokens = Vec::new();
+    collect_tokens(node, &mut tokens);
+    tokens
+        .iter()
+        .filter(|tok| !tok.is_trivia())
+        .any(|tok| tok.text == "const")
+}
+
+fn const_struct_attr() -> Attribute {
+    Attribute {
+        style: AttrStyle::Outer,
+        meta: AttrMeta::Path(Path::new(vec![Ident::new("const".to_string())])),
+    }
 }
 
 fn lower_enum(node: &SyntaxNode) -> Result<ItemDefEnum, LowerItemsError> {

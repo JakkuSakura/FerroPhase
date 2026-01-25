@@ -444,6 +444,48 @@ fn parse_item_cst(
                 }
                 return Ok(node(SyntaxKind::ItemExpr, children));
             }
+            if matches!(
+                input.get(1),
+                Some(Token {
+                    kind: TokenKind::Keyword(Keyword::Struct),
+                    ..
+                })
+            ) {
+                children.push(SyntaxElement::Token(syntax_token_from_token(
+                    &advance(input).unwrap(),
+                )));
+                advance(input);
+                let name = expect_ident_token(input)?;
+                children.push(SyntaxElement::Token(name));
+                if matches_symbol(input.first(), "<") {
+                    let gen = parse_generic_params_cst(input)?;
+                    children.push(SyntaxElement::Node(Box::new(gen)));
+                }
+                if match_symbol(input, "{") {
+                    while !matches_symbol(input.first(), "}") {
+                        if match_symbol(input, "}") {
+                            break;
+                        }
+                        let field_name = expect_ident_token(input)?;
+                        expect_symbol(input, ":")?;
+                        let ty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
+                        let field = node(
+                            SyntaxKind::StructFieldDecl,
+                            vec![
+                                SyntaxElement::Token(field_name),
+                                SyntaxElement::Node(Box::new(ty)),
+                            ],
+                        );
+                        children.push(SyntaxElement::Node(Box::new(field)));
+                        if match_symbol(input, ",") {
+                            continue;
+                        }
+                        break;
+                    }
+                    expect_symbol(input, "}")?;
+                }
+                return Ok(node(SyntaxKind::ItemStruct, children));
+            }
             // const fn ...
             if matches!(
                 (input.get(1), input.get(2), input.get(3)),

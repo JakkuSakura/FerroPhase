@@ -1987,6 +1987,16 @@ fn should_drop_quote_item(item: &ast::Item) -> bool {
 
 fn should_drop_const_type_item(item: &ast::Item) -> bool {
     match item.kind() {
+        ItemKind::DefStruct(def) => def
+            .value
+            .fields
+            .iter()
+            .any(|field| ty_contains_type_type(&field.value)),
+        ItemKind::DefStructural(def) => def
+            .value
+            .fields
+            .iter()
+            .any(|field| ty_contains_type_type(&field.value)),
         ItemKind::DefFunction(func) => {
             if !func.sig.is_const {
                 return false;
