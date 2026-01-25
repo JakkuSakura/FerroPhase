@@ -427,6 +427,9 @@ impl HirGenerator {
             if should_drop_quote_item(item) {
                 continue;
             }
+            if should_drop_const_type_item(item) {
+                continue;
+            }
             match item.kind() {
                 ItemKind::Module(module) => {
                     self.allocate_def_id_for_item(item);
@@ -667,6 +670,7 @@ impl HirGenerator {
         let mut lowered = file.clone();
         let closure_diagnostics = lower_closures_in_file(&mut lowered)?;
         diagnostic_manager().add_diagnostics(closure_diagnostics);
+        strip_doc_attrs_in_file(&mut lowered);
         self.transform_file_inner(&lowered)
     }
 
@@ -699,6 +703,9 @@ impl HirGenerator {
 
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {
         if should_drop_quote_item(item) {
+            return Ok(());
+        }
+        if should_drop_const_type_item(item) {
             return Ok(());
         }
         match item.kind() {
@@ -765,6 +772,19 @@ impl HirGenerator {
     /// Transform an AST item into a HIR statement
     fn transform_item_to_hir_stmt(&mut self, item: &ast::BItem) -> Result<hir::StmtKind> {
         if should_drop_quote_item(item.as_ref()) {
+            let unit_block = hir::Block {
+                hir_id: self.next_id(),
+                stmts: Vec::new(),
+                expr: None,
+            };
+            let unit_expr = hir::Expr {
+                hir_id: self.next_id(),
+                kind: hir::ExprKind::Block(unit_block),
+                span: self.create_span(1),
+            };
+            return Ok(hir::StmtKind::Expr(unit_expr));
+        }
+        if should_drop_const_type_item(item.as_ref()) {
             let unit_block = hir::Block {
                 hir_id: self.next_id(),
                 stmts: Vec::new(),
@@ -1965,9 +1985,39 @@ fn should_drop_quote_item(item: &ast::Item) -> bool {
     }
 }
 
+fn should_drop_const_type_item(item: &ast::Item) -> bool {
+    match item.kind() {
+        ItemKind::DefFunction(func) => {
+            if !func.sig.is_const {
+                return false;
+            }
+            signature_contains_type_type(&func.sig)
+                || func
+                    .ty_annotation
+                    .as_ref()
+                    .is_some_and(ty_contains_type_type)
+                || func.ty.as_ref().is_some_and(type_function_contains_type_type)
+        }
+        ItemKind::DeclFunction(func) => {
+            func.sig.is_const && signature_contains_type_type(&func.sig)
+        }
+        _ => false,
+    }
+}
+
 fn signature_contains_quote(sig: &ast::FunctionSignature) -> bool {
     sig.params.iter().any(|param| ty_contains_quote(&param.ty))
         || sig.ret_ty.as_ref().is_some_and(ty_contains_quote)
+}
+
+fn signature_contains_type_type(sig: &ast::FunctionSignature) -> bool {
+    sig.params.iter().any(|param| {
+        ty_contains_type_type(&param.ty)
+            || param
+                .ty_annotation
+                .as_ref()
+                .is_some_and(ty_contains_type_type)
+    }) || sig.ret_ty.as_ref().is_some_and(ty_contains_type_type)
 }
 
 fn ty_contains_quote(ty: &ast::Ty) -> bool {
@@ -2010,11 +2060,64 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
     }
 }
 
+fn ty_contains_type_type(ty: &ast::Ty) -> bool {
+    match ty {
+        ast::Ty::Type(_) => true,
+        ast::Ty::Tuple(tuple) => tuple.types.iter().any(ty_contains_type_type),
+        ast::Ty::Array(array) => ty_contains_type_type(&array.elem),
+        ast::Ty::Vec(vec) => ty_contains_type_type(&vec.ty),
+        ast::Ty::Reference(reference) => ty_contains_type_type(&reference.ty),
+        ast::Ty::Slice(slice) => ty_contains_type_type(&slice.elem),
+        ast::Ty::Struct(def) => def.fields.iter().any(|field| ty_contains_type_type(&field.value)),
+        ast::Ty::Structural(def) => def
+            .fields
+            .iter()
+            .any(|field| ty_contains_type_type(&field.value)),
+        ast::Ty::Enum(def) => def
+            .variants
+            .iter()
+            .any(|variant| ty_contains_type_type(&variant.value)),
+        ast::Ty::Function(func) => type_function_contains_type_type(func),
+        ast::Ty::TypeBinaryOp(op) => {
+            ty_contains_type_type(&op.lhs) || ty_contains_type_type(&op.rhs)
+        }
+        ast::Ty::TypeBounds(bounds) => bounds
+            .bounds
+            .iter()
+            .any(|expr| expr_contains_type_type(expr)),
+        ast::Ty::Value(value) => value_contains_type_type(value.value.as_ref()),
+        ast::Ty::Expr(expr) => expr_contains_type_type(expr.as_ref()),
+        ast::Ty::Primitive(_)
+        | ast::Ty::TokenStream(_)
+        | ast::Ty::ImplTraits(_)
+        | ast::Ty::Any(_)
+        | ast::Ty::Unit(_)
+        | ast::Ty::Unknown(_)
+        | ast::Ty::Nothing(_)
+        | ast::Ty::Quote(_)
+        | ast::Ty::AnyBox(_) => false,
+    }
+}
+
+fn type_function_contains_type_type(func: &ast::TypeFunction) -> bool {
+    func.params.iter().any(ty_contains_type_type)
+        || func
+            .ret_ty
+            .as_ref()
+            .is_some_and(|ty| ty_contains_type_type(ty.as_ref()))
+}
+
 fn expr_contains_quote_value(expr: &ast::Expr) -> bool {
     if let ast::ExprKind::Value(value) = expr.kind() {
         return value_contains_quote(value.as_ref());
     }
     false
+}
+
+fn expr_contains_type_type(expr: &ast::Expr) -> bool {
+    expr.ty()
+        .as_ref()
+        .is_some_and(|ty| ty_contains_type_type(ty))
 }
 
 fn value_contains_quote(value: &ast::Value) -> bool {
@@ -2025,6 +2128,28 @@ fn value_contains_quote(value: &ast::Value) -> bool {
                 .values
                 .iter()
                 .all(|value| value_contains_quote(value)),
+        _ => false,
+    }
+}
+
+fn value_contains_type_type(value: &ast::Value) -> bool {
+    match value {
+        ast::Value::Type(ty) => ty_contains_type_type(ty),
+        ast::Value::Expr(expr) => expr_contains_type_type(expr.as_ref()),
+        ast::Value::List(list) => list.values.iter().any(value_contains_type_type),
+        ast::Value::Struct(value) => value
+            .structural
+            .fields
+            .iter()
+            .any(|field| value_contains_type_type(&field.value)),
+        ast::Value::Structural(value) => value
+            .fields
+            .iter()
+            .any(|field| value_contains_type_type(&field.value)),
+        ast::Value::Tuple(value) => value
+            .values
+            .iter()
+            .any(|value| value_contains_type_type(value)),
         _ => false,
     }
 }
@@ -3204,5 +3329,52 @@ fn extract_ident(expr: &ast::Expr) -> Option<&ast::Ident> {
         locator.as_ident()
     } else {
         None
+    }
+}
+
+fn strip_doc_attrs_in_file(file: &mut ast::File) {
+    strip_doc_attrs_in_items(&mut file.items);
+}
+
+fn strip_doc_attrs_in_items(items: &mut [ast::Item]) {
+    for item in items {
+        strip_doc_attrs_in_item(item);
+    }
+}
+
+fn strip_doc_attrs_in_item(item: &mut ast::Item) {
+    if let Some(attrs) = item_attrs_mut(item) {
+        attrs.retain(|attr| !is_doc_attr(attr));
+    }
+
+    match item.kind_mut() {
+        ItemKind::Module(module) => strip_doc_attrs_in_items(&mut module.items),
+        ItemKind::Impl(impl_block) => strip_doc_attrs_in_items(&mut impl_block.items),
+        _ => {}
+    }
+}
+
+fn item_attrs_mut(item: &mut ast::Item) -> Option<&mut Vec<ast::Attribute>> {
+    match item.kind_mut() {
+        ItemKind::Module(module) => Some(&mut module.attrs),
+        ItemKind::DefStruct(def) => Some(&mut def.attrs),
+        ItemKind::DefStructural(def) => Some(&mut def.attrs),
+        ItemKind::DefEnum(def) => Some(&mut def.attrs),
+        ItemKind::DefType(def) => Some(&mut def.attrs),
+        ItemKind::DefConst(def) => Some(&mut def.attrs),
+        ItemKind::DefStatic(def) => Some(&mut def.attrs),
+        ItemKind::DefFunction(def) => Some(&mut def.attrs),
+        ItemKind::DefTrait(def) => Some(&mut def.attrs),
+        ItemKind::Import(import) => Some(&mut import.attrs),
+        ItemKind::Impl(impl_block) => Some(&mut impl_block.attrs),
+        _ => None,
+    }
+}
+
+fn is_doc_attr(attr: &ast::Attribute) -> bool {
+    match &attr.meta {
+        ast::AttrMeta::Path(path) => path.last().as_str() == "doc",
+        ast::AttrMeta::List(list) => list.name.last().as_str() == "doc",
+        ast::AttrMeta::NameValue(nv) => nv.name.last().as_str() == "doc",
     }
 }

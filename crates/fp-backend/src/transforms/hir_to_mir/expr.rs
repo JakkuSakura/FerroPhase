@@ -2758,7 +2758,7 @@ impl MirLowering {
         let mut payload_layout: Vec<Ty> = Vec::new();
         let mut variant_payloads = HashMap::new();
         let mut has_payload = false;
-        let is_union_enum = enum_def.name.starts_with("__union_");
+        let mut is_union_enum = enum_def.name.starts_with("__union_");
 
         for variant in &enum_def.variants {
             let payload_tys = if is_union_enum {
@@ -2782,16 +2782,15 @@ impl MirLowering {
                 has_payload = true;
             }
             for (idx, ty) in payload_tys.iter().enumerate() {
-                if let Some(existing) = payload_layout.get(idx) {
+                if let Some(existing) = payload_layout.get_mut(idx) {
                     if existing != ty {
-                        self.emit_error(
-                            span,
-                            format!(
-                                "enum '{}' has incompatible payload types at index {}",
-                                enum_def.name, idx
-                            ),
-                        );
+                        is_union_enum = true;
+                        let opaque_name = format!("{}::payload{}", enum_def.name, idx);
+                        *existing = self.opaque_ty(&opaque_name);
                     }
+                } else if is_union_enum {
+                    let opaque_name = format!("{}::payload{}", enum_def.name, idx);
+                    payload_layout.push(self.opaque_ty(&opaque_name));
                 } else {
                     payload_layout.push(ty.clone());
                 }
