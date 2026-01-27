@@ -27,6 +27,7 @@ fn emits_and_links_minimal_exec() {
             stack_slots: Vec::new(),
             calling_convention: CallingConvention::C,
             linkage: Linkage::External,
+            is_declaration: false,
         }],
         globals: Vec::new(),
         type_definitions: Vec::new(),

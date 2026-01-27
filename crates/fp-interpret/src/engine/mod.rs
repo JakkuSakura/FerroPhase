@@ -7,17 +7,16 @@ use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
 use fp_core::ast::{Pattern, PatternKind};
 use fp_core::ast::{
-    AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
-    ExprIntrinsicCall,
-    ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange, ExprRangeLimit,
-    ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Item, ItemDefFunction,
-    ItemImport, ItemImportTree, ItemKind, MacroGroup, MacroInvocation, MacroToken,
-    MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet,
-    StructuralField, Ty, TypeAny, TypeTokenStream,
-    TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value,
-    ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
-    ValueTuple,
+    Abi, AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
+    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
+    ExprRangeLimit, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam,
+    FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
+    ItemKind, MacroGroup,
+    MacroInvocation, MacroToken, MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind,
+    QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny, TypeTokenStream, TypeArray,
+    TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
+    TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value, ValueField,
+    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream, ValueTuple,
 };
 use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
@@ -34,11 +33,13 @@ use fp_typing::{AstTypeInferencer, TypeResolutionHook};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
 use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
+use crate::engine::ffi::FfiRuntime;
 mod blocks;
 mod closures;
 mod const_regions;
 mod env;
 mod eval_expr;
+mod ffi;
 mod eval_stmt;
 mod intrinsics;
 mod macro_rules;
@@ -350,6 +351,8 @@ pub struct AstInterpreter<'ctx> {
     stdout: Vec<String>,
     functions: HashMap<String, ItemDefFunction>,
     generic_functions: HashMap<String, GenericTemplate>,
+    extern_functions: HashMap<String, FunctionSignature>,
+    ffi_runtime: Option<FfiRuntime>,
     specialization_cache: HashMap<String, HashMap<String, String>>,
     specialization_counter: HashMap<String, usize>,
     pending_items: Vec<Vec<Item>>,
@@ -407,6 +410,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             stdout: Vec::new(),
             functions: HashMap::new(),
             generic_functions: HashMap::new(),
+            extern_functions: HashMap::new(),
+            ffi_runtime: None,
             specialization_cache: HashMap::new(),
             specialization_counter: HashMap::new(),
             pending_items: Vec::new(),
@@ -1360,6 +1365,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn is_inert_attribute(&self, attr: &Attribute) -> bool {
+        let AttrMeta::Path(path) = &attr.meta else {
+            return false;
+        };
+        path.last().as_str() == "const"
+    }
+
     fn fallback_attr_locator(&self, locator: &Locator) -> Option<Locator> {
         let ident = locator.as_ident()?;
         let name = ident.as_str();
@@ -1384,14 +1396,30 @@ impl<'ctx> AstInterpreter<'ctx> {
             return true;
         }
 
-        if self.apply_proc_macro_attributes(item, attrs) {
+        let mut inert_attrs = Vec::new();
+        let mut active_attrs = Vec::new();
+        for attr in attrs.drain(..) {
+            if self.is_inert_attribute(&attr) {
+                inert_attrs.push(attr);
+            } else {
+                active_attrs.push(attr);
+            }
+        }
+        if active_attrs.is_empty() {
+            attrs.extend(inert_attrs);
+            return false;
+        }
+
+        if self.apply_proc_macro_attributes(item, &mut active_attrs) {
             return true;
         }
 
-        let has_applicable = attrs
+        let has_applicable = active_attrs
             .iter()
             .any(|attr| matches!(attr.meta, AttrMeta::Path(_)));
         if !has_applicable {
+            attrs.extend(active_attrs);
+            attrs.extend(inert_attrs);
             return false;
         }
 
@@ -1407,7 +1435,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         };
         let mut expr = Expr::new(ExprKind::Quote(quote));
 
-        for attr in attrs {
+        for attr in &active_attrs {
             let Some(mut locator) = self.attr_to_locator(attr) else {
                 continue;
             };
@@ -1441,6 +1469,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
 
         if matches!(expr.kind(), ExprKind::Quote(_)) {
+            attrs.extend(active_attrs);
+            attrs.extend(inert_attrs);
             return false;
         }
 
@@ -2192,9 +2222,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ItemKind::DeclConst(_)
             | ItemKind::DeclStatic(_)
-            | ItemKind::DeclFunction(_)
             | ItemKind::DeclType(_)
             | ItemKind::Any(_) => {}
+            ItemKind::DeclFunction(decl) => {
+                self.register_extern_function(decl);
+            }
             ItemKind::Import(import) => {
                 self.handle_import(import);
             }
@@ -2215,6 +2247,63 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Import(import) => Some(&mut import.attrs),
             ItemKind::Impl(impl_block) => Some(&mut impl_block.attrs),
             _ => None,
+        }
+    }
+
+    fn register_extern_function(&mut self, decl: &ItemDeclFunction) {
+        if !matches!(decl.sig.abi, Abi::C) {
+            return;
+        }
+        let base_name = decl.name.as_str().to_string();
+        let qualified = self.qualified_name(decl.name.as_str());
+        self.extern_functions
+            .insert(base_name, decl.sig.clone());
+        self.extern_functions
+            .insert(qualified, decl.sig.clone());
+    }
+
+    fn ensure_ffi_runtime(&mut self) -> Result<&mut FfiRuntime> {
+        if self.ffi_runtime.is_none() {
+            self.ffi_runtime = Some(FfiRuntime::new()?);
+        }
+        Ok(self
+            .ffi_runtime
+            .as_mut()
+            .expect("ffi runtime must be initialized"))
+    }
+
+    fn try_call_extern_function(&mut self, locator: &Locator, args: &[Value]) -> Option<RuntimeFlow> {
+        let mut candidate_names = vec![locator.to_string()];
+        if let Some(ident) = locator.as_ident() {
+            candidate_names.push(ident.as_str().to_string());
+        }
+        for name in candidate_names {
+            if let Some(sig) = self.extern_functions.get(&name).cloned() {
+                return Some(self.call_extern_function_runtime(&name, &sig, args));
+            }
+        }
+        None
+    }
+
+    fn call_extern_function_runtime(
+        &mut self,
+        name: &str,
+        sig: &FunctionSignature,
+        args: &[Value],
+    ) -> RuntimeFlow {
+        let ffi = match self.ensure_ffi_runtime() {
+            Ok(ffi) => ffi,
+            Err(err) => {
+                self.emit_error(err.to_string());
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        };
+        match ffi.call(name, sig, args) {
+            Ok(value) => RuntimeFlow::Value(value),
+            Err(err) => {
+                self.emit_error(err.to_string());
+                RuntimeFlow::Value(Value::undefined())
+            }
         }
     }
 

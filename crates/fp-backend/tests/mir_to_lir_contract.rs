@@ -48,6 +48,8 @@ fn mangles_function_path_into_lir_name() {
             output: return_ty.clone(),
         },
         body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
     };
 
     let program = mir::Program {
@@ -149,6 +151,8 @@ fn lowers_single_case_switchint_as_equality_compare() {
             },
         },
         body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
     };
     let program = mir::Program {
         items: vec![Item {

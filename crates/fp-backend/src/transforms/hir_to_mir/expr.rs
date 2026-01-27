@@ -453,6 +453,8 @@ impl MirLowering {
                 def_id: None,
                 sig: sig.clone(),
                 body_id,
+                abi: mir::ty::Abi::Rust,
+                is_extern: false,
             };
 
             program.items.push(mir::Item {
@@ -503,7 +505,9 @@ impl MirLowering {
             .as_ref()
             .map(|body| body.value.span)
             .unwrap_or(item.span);
-        let mir_body = if self.lossy_mode && self.is_rust_span(span) {
+        let mir_body = if function.body.is_none() {
+            self.stub_body(&sig, span)
+        } else if self.lossy_mode && self.is_rust_span(span) {
             self.emit_warning(span, "lossy mode: stubbing MIR for Rust source");
             self.stub_body(&sig, span)
         } else {
@@ -516,6 +520,8 @@ impl MirLowering {
             def_id: Some(item.def_id),
             sig,
             body_id,
+            abi: self.map_abi(&function.sig.abi),
+            is_extern: function.is_extern,
         };
 
         let mir_item = mir::Item {
@@ -605,6 +611,8 @@ impl MirLowering {
             def_id: None,
             sig: sig.clone(),
             body_id,
+            abi: self.map_abi(&function.sig.abi),
+            is_extern: false,
         };
 
         let mir_item = mir::Item {
@@ -815,6 +823,8 @@ impl MirLowering {
             def_id: None,
             sig: sig.clone(),
             body_id,
+            abi: self.map_abi(&def.function.sig.abi),
+            is_extern: false,
         };
         let mir_item = mir::Item {
             mir_id: self.next_mir_id,
@@ -916,6 +926,8 @@ impl MirLowering {
             def_id: None,
             sig: sig.clone(),
             body_id,
+            abi: self.map_abi(&def.function.sig.abi),
+            is_extern: false,
         };
         let mir_item = mir::Item {
             mir_id: self.next_mir_id,
@@ -970,6 +982,15 @@ impl MirLowering {
                 method_context,
                 substs,
             ),
+        }
+    }
+
+    fn map_abi(&self, abi: &hir::Abi) -> mir::ty::Abi {
+        match abi {
+            hir::Abi::Rust => mir::ty::Abi::Rust,
+            hir::Abi::C { unwind } => mir::ty::Abi::C { unwind: *unwind },
+            hir::Abi::System { unwind } => mir::ty::Abi::System { unwind: *unwind },
+            _ => mir::ty::Abi::Rust,
         }
     }
 
@@ -3304,6 +3325,8 @@ impl MirLowering {
             def_id: None,
             sig: sig.clone(),
             body_id,
+            abi: self.map_abi(&function.sig.abi),
+            is_extern: false,
         };
 
         let mir_item = mir::Item {

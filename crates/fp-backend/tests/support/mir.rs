@@ -46,6 +46,8 @@ pub fn function_item(body_id: BodyId) -> Item {
         def_id: None,
         sig,
         body_id,
+        abi: mir::ty::Abi::Rust,
+        is_extern: false,
     };
 
     Item {

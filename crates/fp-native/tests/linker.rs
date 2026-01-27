@@ -102,6 +102,7 @@ fn minimal_program() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {
@@ -134,6 +135,7 @@ fn program_with_many_call_args() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     let call_id = 1;
@@ -171,6 +173,7 @@ fn program_with_many_call_args() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {
@@ -211,6 +214,7 @@ fn program_with_print() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {
@@ -299,6 +303,7 @@ fn program_with_shifts_and_casts() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {
@@ -356,6 +361,7 @@ fn program_with_switch() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {
@@ -396,6 +402,7 @@ fn program_with_format_intrinsic() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {

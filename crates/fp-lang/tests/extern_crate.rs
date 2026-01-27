@@ -1,4 +1,4 @@
-use fp_core::ast::{Item, ItemImportTree, ItemKind};
+use fp_core::ast::{Abi, Item, ItemImportTree, ItemKind};
 use fp_lang::ast::FerroPhaseParser;
 
 fn parse_single_item(src: &str) -> Item {
@@ -37,5 +37,46 @@ fn parses_extern_crate_alias() {
             other => panic!("expected rename import, got {:?}", other),
         },
         other => panic!("expected import item, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_extern_c_fn_decl() {
+    let item = parse_single_item("extern \"C\" fn strlen(s: string) -> i64;");
+    match item.kind() {
+        ItemKind::DeclFunction(decl) => {
+            assert_eq!(decl.name.as_str(), "strlen");
+            assert_eq!(decl.sig.abi, Abi::C);
+        }
+        other => panic!("expected extern fn decl, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_extern_c_fn_def() {
+    let item = parse_single_item("extern \"C\" fn add(a: i32, b: i32) -> i32 { a + b }");
+    match item.kind() {
+        ItemKind::DefFunction(def) => {
+            assert_eq!(def.name.as_str(), "add");
+            assert_eq!(def.sig.abi, Abi::C);
+        }
+        other => panic!("expected extern fn def, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_extern_c_block() {
+    let parser = FerroPhaseParser::new();
+    let items = parser
+        .parse_items_ast("extern \"C\" { fn puts(s: string); fn puts2(s: string); }")
+        .expect("parse succeeds");
+    assert_eq!(items.len(), 2);
+    for item in items {
+        match item.kind() {
+            ItemKind::DeclFunction(decl) => {
+                assert_eq!(decl.sig.abi, Abi::C);
+            }
+            other => panic!("expected decl function, got {:?}", other),
+        }
     }
 }

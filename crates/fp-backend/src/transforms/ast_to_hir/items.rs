@@ -17,9 +17,10 @@ impl HirGenerator {
                 body.value.span,
             ),
             generics: hir::Generics::default(),
+            abi: hir::Abi::Rust,
         };
 
-        Ok(hir::Function::new(sig, Some(body), false))
+        Ok(hir::Function::new(sig, Some(body), false, false))
     }
 
     pub fn transform_function(
@@ -75,6 +76,7 @@ impl HirGenerator {
                 inputs: params.clone(),
                 output: output.clone(),
                 generics,
+                abi: self.map_abi(&func.sig.abi),
             };
 
             let body_expr = self.transform_expr_to_hir(&func.body)?;
@@ -84,7 +86,47 @@ impl HirGenerator {
                 value: body_expr,
             };
 
-            Ok(hir::Function::new(sig, Some(body), false))
+            Ok(hir::Function::new(sig, Some(body), false, false))
+        })();
+
+        self.pop_value_scope();
+        self.pop_type_scope();
+
+        result
+    }
+
+    pub fn transform_decl_function_sig(
+        &mut self,
+        func: &ast::ItemDeclFunction,
+        self_ty: Option<hir::TypeExpr>,
+    ) -> Result<hir::Function> {
+        self.push_type_scope();
+        self.push_value_scope();
+        let result = (|| {
+            let generics = self.transform_generics(&func.sig.generics_params);
+
+            let mut params = self.transform_params(&func.sig.params)?;
+            if let Some(receiver) = &func.sig.receiver {
+                let receiver_ty = self_ty.clone().unwrap_or_else(|| self.create_unit_type());
+                let self_param = self.make_self_param(receiver, receiver_ty)?;
+                self.register_pattern_bindings(&self_param.pat);
+                params.insert(0, self_param);
+            }
+            let output = if let Some(ret_ty) = &func.sig.ret_ty {
+                self.transform_type_to_hir(ret_ty)?
+            } else {
+                self.create_unit_type()
+            };
+
+            let sig = hir::FunctionSig {
+                name: hir::Symbol::new(self.qualify_name(&func.name.name)),
+                inputs: params,
+                output,
+                generics,
+                abi: self.map_abi(&func.sig.abi),
+            };
+
+            Ok(hir::Function::new(sig, None, func.sig.is_const, true))
         })();
 
         self.pop_value_scope();

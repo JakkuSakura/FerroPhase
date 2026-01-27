@@ -214,22 +214,69 @@ fn parse_item_cst(
         }
         TokenKind::Keyword(Keyword::Extern) => {
             advance(input);
-            expect_keyword(input, Keyword::Crate)?;
-            let crate_name = expect_ident_token(input)?;
-            children.push(SyntaxElement::Token(crate_name.clone()));
-            if match_keyword(input, Keyword::As) {
-                let alias = expect_ident_token(input)?;
-                let rename = node(
-                    SyntaxKind::UseTreeRename,
-                    vec![
-                        SyntaxElement::Token(crate_name),
-                        SyntaxElement::Token(alias),
-                    ],
-                );
-                children.push(SyntaxElement::Node(Box::new(rename)));
+            if match_keyword(input, Keyword::Crate) {
+                let crate_name = expect_ident_token(input)?;
+                children.push(SyntaxElement::Token(crate_name.clone()));
+                if match_keyword(input, Keyword::As) {
+                    let alias = expect_ident_token(input)?;
+                    let rename = node(
+                        SyntaxKind::UseTreeRename,
+                        vec![
+                            SyntaxElement::Token(crate_name),
+                            SyntaxElement::Token(alias),
+                        ],
+                    );
+                    children.push(SyntaxElement::Node(Box::new(rename)));
+                }
+                expect_symbol(input, ";")?;
+                return Ok(node(SyntaxKind::ItemExternCrate, children));
             }
-            expect_symbol(input, ";")?;
-            Ok(node(SyntaxKind::ItemExternCrate, children))
+
+            let abi = expect_string_literal_token(input)?;
+            children.push(SyntaxElement::Token(abi));
+
+            if match_symbol(input, "{") {
+                let mut extern_children = Vec::new();
+                while !matches_symbol(input.first(), "}") {
+                    if input.is_empty() {
+                        return Err(ErrMode::Cut(ContextError::new()));
+                    }
+                    if matches_symbol(input.first(), ";") {
+                        advance(input);
+                        continue;
+                    }
+                    let mut member_children = Vec::new();
+                    let attrs = parse_outer_attrs_cst(input)?;
+                    for attr in attrs {
+                        member_children.push(SyntaxElement::Node(Box::new(attr)));
+                    }
+                    if let Some(vis) = parse_visibility_cst(input)? {
+                        member_children.push(SyntaxElement::Node(Box::new(vis)));
+                    }
+                    expect_keyword(input, Keyword::Fn)?;
+                    let sig = parse_fn_sig_cst(input)?;
+                    member_children.push(SyntaxElement::Node(Box::new(sig)));
+                    expect_symbol(input, ";")?;
+                    extern_children.push(node(SyntaxKind::ItemExternFnDecl, member_children));
+                }
+                expect_symbol(input, "}")?;
+                children.extend(
+                    extern_children
+                        .into_iter()
+                        .map(|child| SyntaxElement::Node(Box::new(child))),
+                );
+                return Ok(node(SyntaxKind::ItemExternBlock, children));
+            }
+
+            expect_keyword(input, Keyword::Fn)?;
+            let sig = parse_fn_sig_cst(input)?;
+            children.push(SyntaxElement::Node(Box::new(sig)));
+            if match_symbol(input, ";") {
+                return Ok(node(SyntaxKind::ItemExternFnDecl, children));
+            }
+            let body = parse_expr_prefix_from_tokens(input)?;
+            children.push(SyntaxElement::Node(Box::new(body)));
+            Ok(node(SyntaxKind::ItemFn, children))
         }
         TokenKind::Keyword(Keyword::Mod) => {
             advance(input);
@@ -1357,6 +1404,14 @@ fn expect_ident_token(input: &mut &[Token]) -> ModalResult<SyntaxToken> {
         TokenKind::Keyword(_) if tok.lexeme == "_" => Ok(syntax_token_from_token(&tok)),
         _ => cut_message(input, "expected identifier"),
     }
+}
+
+fn expect_string_literal_token(input: &mut &[Token]) -> ModalResult<SyntaxToken> {
+    let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    if tok.kind != TokenKind::StringLiteral {
+        return cut_message(input, "expected string literal");
+    }
+    Ok(syntax_token_from_token(&tok))
 }
 
 fn advance(input: &mut &[Token]) -> Option<Token> {

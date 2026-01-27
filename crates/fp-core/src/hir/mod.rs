@@ -7,7 +7,7 @@ pub mod pretty;
 pub mod ty;
 
 pub use ident::Symbol;
-pub use ty::Ty;
+pub use ty::{Abi, Ty};
 
 pub type HirId = u32;
 pub type DefId = u32;
@@ -46,6 +46,7 @@ pub struct Function {
     pub sig: FunctionSig,
     pub body: Option<Body>,
     pub is_const: bool,
+    pub is_extern: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +55,7 @@ pub struct FunctionSig {
     pub inputs: Vec<Param>,
     pub output: TypeExpr,
     pub generics: Generics,
+    pub abi: Abi,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -459,11 +461,12 @@ impl Program {
 }
 
 impl Function {
-    pub fn new(sig: FunctionSig, body: Option<Body>, is_const: bool) -> Self {
+    pub fn new(sig: FunctionSig, body: Option<Body>, is_const: bool, is_extern: bool) -> Self {
         Self {
             sig,
             body,
             is_const,
+            is_extern,
         }
     }
 }

@@ -1,5 +1,6 @@
 pub mod bench;
 pub mod collections;
+pub mod ffi;
 pub mod json;
 pub mod intrinsics;
 pub mod meta;

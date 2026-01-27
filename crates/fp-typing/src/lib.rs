@@ -1387,6 +1387,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ty
                 }
                 ItemKind::DeclFunction(decl) => {
+                    self.validate_extern_c_signature(&decl.sig);
                     let ty = self.ty_from_function_signature(&decl.sig)?;
                     decl.ty_annotation = Some(ty.clone());
                     ty
@@ -1528,6 +1529,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn infer_function(&mut self, func: &mut ItemDefFunction) -> Result<Ty> {
+        self.validate_extern_c_signature(&func.sig);
         let is_lang_item = func.attrs.find_by_name("lang").is_some();
         let impl_ctx = self.impl_stack.last().cloned().flatten();
         let fn_key = impl_ctx
@@ -2327,6 +2329,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     // ensure_function moved to typing::solver
 
     fn ty_from_function_signature(&mut self, sig: &FunctionSignature) -> Result<Ty> {
+        self.validate_extern_c_signature(sig);
         let mut params = Vec::new();
         for param in &sig.params {
             params.push(param.ty.clone());
@@ -2337,6 +2340,74 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             generics_params: sig.generics_params.clone(),
             ret_ty: Some(Box::new(ret_ty)),
         }))
+    }
+
+    fn validate_extern_c_signature(&mut self, sig: &FunctionSignature) {
+        if !matches!(sig.abi, Abi::C) {
+            return;
+        }
+        for param in &sig.params {
+            if self.is_disallowed_c_string_type(&param.ty) {
+                self.emit_error(format!(
+                    "extern \"C\" functions must use &CStr for string parameters: {}",
+                    param.name
+                ));
+            }
+        }
+        if let Some(ret_ty) = &sig.ret_ty {
+            if self.is_disallowed_c_string_type(ret_ty) {
+                self.emit_error(
+                    "extern \"C\" functions must use &CStr for string return types",
+                );
+            }
+        }
+    }
+
+    fn is_disallowed_c_string_type(&self, ty: &Ty) -> bool {
+        if self.is_cstr_reference(ty) {
+            return false;
+        }
+        if self.is_string_like_type(ty) {
+            return true;
+        }
+        if let Ty::Reference(reference) = ty {
+            if self.is_string_like_type(reference.ty.as_ref()) {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn is_cstr_reference(&self, ty: &Ty) -> bool {
+        let Ty::Reference(reference) = ty else {
+            return false;
+        };
+        self.type_name(reference.ty.as_ref()) == Some("CStr")
+    }
+
+    fn is_string_like_type(&self, ty: &Ty) -> bool {
+        match ty {
+            Ty::Primitive(TypePrimitive::String) => true,
+            _ => matches!(
+                self.type_name(ty),
+                Some("str") | Some("String") | Some("string")
+            ),
+        }
+    }
+
+    fn type_name<'a>(&self, ty: &'a Ty) -> Option<&'a str> {
+        match ty {
+            Ty::Struct(struct_ty) => Some(struct_ty.name.as_str()),
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::Locator(locator) => match locator {
+                    Locator::Ident(ident) => Some(ident.as_str()),
+                    Locator::Path(path) => path.segments.last().map(|seg| seg.as_str()),
+                    Locator::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()),
+                },
+                _ => None,
+            },
+            _ => None,
+        }
     }
 
     fn struct_name_from_expr(&self, expr: &Expr) -> Option<String> {

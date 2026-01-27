@@ -35,9 +35,10 @@ pub fn function_item(name: &str, body: Expr) -> Item {
             params: Vec::new(),
             where_clause: None,
         },
+        abi: hir::Abi::Rust,
     };
 
-    let function = Function::new(sig, Some(func_body), false);
+    let function = Function::new(sig, Some(func_body), false, false);
 
     Item {
         hir_id: 0,

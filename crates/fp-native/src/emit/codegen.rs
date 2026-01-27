@@ -16,8 +16,9 @@ pub fn emit_text_from_lir(
 
     let func = lir_program
         .functions
-        .first()
-        .ok_or_else(|| Error::from("no functions in LIR program"))?;
+        .iter()
+        .find(|func| !func.is_declaration)
+        .ok_or_else(|| Error::from("no defined functions in LIR program"))?;
 
     if func.basic_blocks.is_empty() {
         return Err(Error::from(

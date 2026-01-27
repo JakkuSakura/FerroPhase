@@ -378,6 +378,13 @@ impl HirGenerator {
         }
     }
 
+    fn map_abi(&self, abi: &ast::Abi) -> hir::Abi {
+        match abi {
+            ast::Abi::Rust => hir::Abi::Rust,
+            ast::Abi::C => hir::Abi::C { unwind: false },
+        }
+    }
+
     fn item_key(item: &ast::Item) -> usize {
         item as *const _ as usize
     }
@@ -746,7 +753,14 @@ impl HirGenerator {
                 );
                 Ok(())
             }
-            ItemKind::DeclFunction(_) => Ok(()),
+            ItemKind::DeclFunction(decl) => {
+                let hir_item = self.transform_decl_function(item, decl)?;
+                program.def_map.insert(hir_item.def_id, hir_item.clone());
+                self.program_def_map
+                    .insert(hir_item.def_id, hir_item.clone());
+                program.items.push(hir_item);
+                Ok(())
+            }
             ItemKind::Macro(_) => {
                 self.add_warning(
                     Diagnostic::warning(
@@ -1012,6 +1026,11 @@ impl HirGenerator {
                     self.map_visibility(&func_def.visibility),
                 )
             }
+            ItemKind::DeclFunction(func_decl) => {
+                self.register_value_def(&func_decl.name.name, def_id, &ast::Visibility::Public);
+                let function = self.transform_decl_function_sig(func_decl, None)?;
+                (hir::ItemKind::Function(function), hir::Visibility::Public)
+            }
             ItemKind::Impl(impl_block) => {
                 let hir_impl = self.transform_impl(impl_block)?;
                 (hir::ItemKind::Impl(hir_impl), hir::Visibility::Private)
@@ -1095,6 +1114,25 @@ impl HirGenerator {
             def_id,
             visibility,
             kind,
+            span,
+        })
+    }
+
+    fn transform_decl_function(
+        &mut self,
+        item: &ast::Item,
+        decl: &ast::ItemDeclFunction,
+    ) -> Result<hir::Item> {
+        let hir_id = self.next_id();
+        let def_id = self.def_id_for_item(item);
+        let span = self.create_span(1);
+        self.register_value_def(&decl.name.name, def_id, &ast::Visibility::Public);
+        let function = self.transform_decl_function_sig(decl, None)?;
+        Ok(hir::Item {
+            hir_id,
+            def_id,
+            visibility: hir::Visibility::Public,
+            kind: hir::ItemKind::Function(function),
             span,
         })
     }

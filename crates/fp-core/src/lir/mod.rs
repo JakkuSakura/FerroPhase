@@ -77,6 +77,7 @@ pub struct LirFunction {
     pub stack_slots: Vec<StackSlot>,
     pub calling_convention: CallingConvention,
     pub linkage: Linkage,
+    pub is_declaration: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -446,6 +447,7 @@ impl LirFunction {
             stack_slots: Vec::new(),
             calling_convention,
             linkage,
+            is_declaration: false,
         }
     }
 

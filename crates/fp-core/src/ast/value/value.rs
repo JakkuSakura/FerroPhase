@@ -839,6 +839,19 @@ impl GenericParam {
     }
 }
 
+common_enum! {
+    pub enum Abi {
+        Rust,
+        C,
+    }
+}
+
+impl Default for Abi {
+    fn default() -> Self {
+        Abi::Rust
+    }
+}
+
 common_struct! {
     pub struct FunctionSignature {
         pub name: Option<Ident>,
@@ -847,6 +860,8 @@ common_struct! {
         pub generics_params: Vec<GenericParam>,
         #[serde(default)]
         pub is_const: bool,
+        #[serde(default)]
+        pub abi: Abi,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub quote_kind: Option<QuoteFragmentKind>,
         pub ret_ty: Option<Ty>,
@@ -860,6 +875,7 @@ impl FunctionSignature {
             params: vec![],
             generics_params: vec![],
             is_const: false,
+            abi: Abi::Rust,
             quote_kind: None,
             ret_ty: None,
         }

@@ -34,6 +34,8 @@ pub struct LirGenerator {
     struct_layouts: HashMap<String, Vec<Option<lir::LirType>>>,
     function_symbol_map: HashMap<String, String>,
     function_signatures: HashMap<String, lir::LirFunctionSignature>,
+    function_call_conventions: HashMap<String, lir::CallingConvention>,
+    function_declarations: HashMap<String, bool>,
     runtime_symbol_map: fn(&str) -> Option<lir::RuntimeSymbol>,
 }
 
@@ -91,6 +93,8 @@ impl LirGenerator {
             struct_layouts: HashMap::new(),
             function_symbol_map: HashMap::new(),
             function_signatures: HashMap::new(),
+            function_call_conventions: HashMap::new(),
+            function_declarations: HashMap::new(),
             runtime_symbol_map,
         }
     }
@@ -136,7 +140,19 @@ impl LirGenerator {
                     return_type: self.lir_type_from_ty(&func.sig.output),
                     is_variadic: false,
                 };
-                self.function_signatures.entry(name).or_insert(signature);
+                self.function_signatures
+                    .entry(name.clone())
+                    .or_insert(signature);
+                let cc = self.calling_convention_for_abi(&func.abi);
+                self.function_call_conventions
+                    .entry(func.name.as_str().to_string())
+                    .or_insert(cc.clone());
+                self.function_call_conventions
+                    .entry(name.clone())
+                    .or_insert(cc);
+                self.function_declarations
+                    .entry(name)
+                    .or_insert(func.is_extern);
             }
         }
     }
@@ -168,15 +184,30 @@ impl LirGenerator {
         self.function_signatures
             .insert(function_name.clone(), signature.clone());
 
+        let calling_convention = self.calling_convention_for_abi(&mir_func.abi);
+        let linkage = if mir_func.is_extern {
+            lir::Linkage::External
+        } else if matches!(mir_func.abi, mir::ty::Abi::C { .. } | mir::ty::Abi::System { .. }) {
+            lir::Linkage::External
+        } else {
+            lir::Linkage::Internal
+        };
+        let is_declaration = mir_func.is_extern;
+
         let mut lir_func = lir::LirFunction {
             name: lir::Name::new(function_name),
             signature,
             basic_blocks: Vec::new(),
             locals: Vec::new(),
             stack_slots: Vec::new(),
-            calling_convention: lir::CallingConvention::C,
-            linkage: lir::Linkage::Internal,
+            calling_convention,
+            linkage,
+            is_declaration,
         };
+
+        if lir_func.is_declaration {
+            return Ok(lir_func);
+        }
 
         // Transform MIR body if present
         if let Some(mir_body) = bodies.get(&mir_func.body_id) {
@@ -295,6 +326,15 @@ impl LirGenerator {
             prefixed
         } else {
             result
+        }
+    }
+
+    fn calling_convention_for_abi(&self, abi: &mir::ty::Abi) -> lir::CallingConvention {
+        match abi {
+            mir::ty::Abi::Rust => lir::CallingConvention::C,
+            mir::ty::Abi::C { .. } => lir::CallingConvention::C,
+            mir::ty::Abi::System { .. } => lir::CallingConvention::C,
+            _ => lir::CallingConvention::C,
         }
     }
 
@@ -4144,6 +4184,11 @@ impl LirGenerator {
             .as_ref()
             .and_then(|name| self.function_signatures.get(name))
             .map(|sig| sig.return_type.clone());
+        let calling_convention = callee_name
+            .as_ref()
+            .and_then(|name| self.function_call_conventions.get(name))
+            .cloned()
+            .unwrap_or(lir::CallingConvention::C);
 
         let mut lowered_args = Vec::with_capacity(args.len());
         for (idx, arg) in args.iter().enumerate() {
@@ -4173,7 +4218,7 @@ impl LirGenerator {
                 args: lowered_args,
                 normal_dest: *dest_bb,
                 unwind_dest: unwind_bb,
-                calling_convention: lir::CallingConvention::C,
+                calling_convention,
             });
         }
 
@@ -4182,7 +4227,7 @@ impl LirGenerator {
             kind: lir::LirInstructionKind::Call {
                 function: function_value,
                 args: lowered_args,
-                calling_convention: lir::CallingConvention::C,
+                calling_convention,
                 tail_call: false,
             },
             type_hint: result_type

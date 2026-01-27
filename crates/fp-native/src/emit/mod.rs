@@ -233,6 +233,7 @@ fn default_lir_program() -> LirProgram {
         stack_slots: Vec::new(),
         calling_convention: CallingConvention::C,
         linkage: Linkage::External,
+        is_declaration: false,
     };
 
     LirProgram {

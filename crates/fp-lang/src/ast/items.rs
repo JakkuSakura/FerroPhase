@@ -1,8 +1,8 @@
 use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
-    AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant, Expr,
-    ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature,
+    Abi, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant,
+    Expr, ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature,
     GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst,
     ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl,
     ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind,
@@ -18,12 +18,17 @@ pub enum LowerItemsError {
     UnexpectedNode(SyntaxKind),
     #[error("missing required token: {0}")]
     MissingToken(&'static str),
+    #[error("unsupported extern ABI: {0}")]
+    UnsupportedAbi(String),
 }
 
 pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
     if node.kind != SyntaxKind::ItemList {
         // Be forgiving: some callers may pass a single item node directly.
         if node.kind.category() == CstCategory::Item {
+            if node.kind == SyntaxKind::ItemExternBlock {
+                return lower_extern_block(node);
+            }
             return Ok(vec![lower_item_from_cst(node)?]);
         }
         return Err(LowerItemsError::UnexpectedNode(node.kind));
@@ -35,6 +40,10 @@ pub fn lower_items_from_cst(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsEr
             continue;
         };
         if n.kind.category() != CstCategory::Item {
+            continue;
+        }
+        if n.kind == SyntaxKind::ItemExternBlock {
+            out.extend(lower_extern_block(n.as_ref())?);
             continue;
         }
         out.push(lower_item_from_cst(n.as_ref())?);
@@ -55,6 +64,9 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
         SyntaxKind::ItemConst => Ok(Item::from(ItemKind::DefConst(lower_const(node)?))),
         SyntaxKind::ItemStatic => Ok(Item::from(ItemKind::DefStatic(lower_static(node)?))),
         SyntaxKind::ItemFn => Ok(Item::from(ItemKind::DefFunction(lower_fn(node)?))),
+        SyntaxKind::ItemExternFnDecl => Ok(Item::from(ItemKind::DeclFunction(
+            lower_extern_fn_decl(node, None)?,
+        ))),
         SyntaxKind::ItemMacro => Ok(Item::from(ItemKind::Macro(lower_item_macro(node)?))),
         SyntaxKind::ItemExpr => {
             let expr_node = first_child_by_category(node, CstCategory::Expr)
@@ -68,6 +80,75 @@ pub(crate) fn lower_item_from_cst(node: &SyntaxNode) -> Result<Item, LowerItemsE
 
     item = item.with_span(node.span);
     Ok(item)
+}
+
+fn lower_extern_block(node: &SyntaxNode) -> Result<Vec<Item>, LowerItemsError> {
+    let abi = lower_extern_abi(node)?;
+    let mut items = Vec::new();
+    for child in &node.children {
+        let SyntaxElement::Node(n) = child else {
+            continue;
+        };
+        if n.kind != SyntaxKind::ItemExternFnDecl {
+            continue;
+        }
+        let decl = lower_extern_fn_decl(n.as_ref(), Some(abi.clone()))?;
+        items.push(Item::from(ItemKind::DeclFunction(decl)));
+    }
+    Ok(items)
+}
+
+fn lower_extern_fn_decl(
+    node: &SyntaxNode,
+    inherited_abi: Option<Abi>,
+) -> Result<ItemDeclFunction, LowerItemsError> {
+    let sig_node = node
+        .children
+        .iter()
+        .find_map(|c| match c {
+            SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
+            _ => None,
+        })
+        .ok_or(LowerItemsError::MissingToken("fn sig"))?;
+    let mut sig = lower_fn_sig(sig_node)?;
+    sig.abi = lower_extern_abi(node)?;
+    sig.abi = inherited_abi.unwrap_or(lower_extern_abi(node)?);
+    let name = sig
+        .name
+        .clone()
+        .ok_or(LowerItemsError::MissingToken("fn name"))?;
+    Ok(ItemDeclFunction {
+        ty_annotation: None,
+        name,
+        sig,
+    })
+}
+
+fn lower_extern_abi(node: &SyntaxNode) -> Result<Abi, LowerItemsError> {
+    let abi_text = node.children.iter().find_map(|child| match child {
+        SyntaxElement::Token(tok)
+            if tok.text.starts_with('"') || tok.text.starts_with("r#") =>
+        {
+            Some(tok.text.clone())
+        }
+        _ => None,
+    });
+    let Some(raw) = abi_text else {
+        return Ok(Abi::Rust);
+    };
+    let cleaned = if let (Some(start), Some(end)) = (raw.find('"'), raw.rfind('"')) {
+        if start < end {
+            raw[start + 1..end].to_string()
+        } else {
+            raw.clone()
+        }
+    } else {
+        raw.clone()
+    };
+    match cleaned.as_str() {
+        "C" | "c" => Ok(Abi::C),
+        other => Err(LowerItemsError::UnsupportedAbi(other.to_string())),
+    }
 }
 
 fn lower_visibility(node: Option<&SyntaxNode>) -> Result<Visibility, LowerItemsError> {
@@ -962,6 +1043,7 @@ fn lower_fn_sig(node: &SyntaxNode) -> Result<FunctionSignature, LowerItemsError>
         params,
         generics_params,
         is_const: false,
+        abi: Abi::Rust,
         quote_kind: None,
         ret_ty,
     })

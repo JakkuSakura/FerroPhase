@@ -1550,6 +1550,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
 
+                if let Some(flow) = self.try_call_extern_function(&locator, &args) {
+                    return flow;
+                }
+
                 if let Some(value) = self.lookup_callable_value(&locator) {
                     match value {
                         Value::Function(function) => {

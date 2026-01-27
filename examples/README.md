@@ -61,5 +61,6 @@ fp run examples/01_const_eval_basics.fp
 | Example                | Focus                       | Demonstrates                                                  |
 |------------------------|-----------------------------|---------------------------------------------------------------|
 | `19_wit_interface.wit` | WebAssembly Interface Types | Defining interfaces & records consumable via the WIT frontend |
+| `34_ffi_basics.fp`     | FFI basics                  | `extern "C"` declarations and libc calls                      |
 
 See `docs/ConstEval.md` for background on the showcased features.

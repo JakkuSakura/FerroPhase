@@ -68,9 +68,10 @@ fn lowers_constant_return_function_into_mir_assign_and_return() {
         inputs: Vec::new(),
         output: primitive_type(TypePrimitive::Int(TypeInt::I32)),
         generics: Generics::default(),
+        abi: hir::Abi::Rust,
     };
 
-    let function = Function::new(sig, Some(body), false);
+    let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 3,
         def_id: 10,
@@ -162,9 +163,10 @@ fn lowers_identity_function_with_parameter() {
         inputs: vec![param],
         output: param_ty.clone(),
         generics: Generics::default(),
+        abi: hir::Abi::Rust,
     };
 
-    let function = Function::new(sig, Some(body), false);
+    let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 9,
         def_id: 11,
@@ -331,9 +333,10 @@ fn lowers_index_expression_into_place_projection() {
         inputs: vec![values_param, idx_param],
         output: primitive_type(TypePrimitive::Int(TypeInt::I64)),
         generics: Generics::default(),
+        abi: hir::Abi::Rust,
     };
 
-    let function = Function::new(sig, Some(body), false);
+    let function = Function::new(sig, Some(body), false, false);
     let item = Item {
         hir_id: 30,
         def_id: 40,

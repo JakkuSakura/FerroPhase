@@ -38,6 +38,8 @@ pub struct Function {
     pub def_id: Option<ty::DefId>,
     pub sig: FunctionSig,
     pub body_id: BodyId,
+    pub abi: ty::Abi,
+    pub is_extern: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

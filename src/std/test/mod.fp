@@ -4,7 +4,7 @@ struct TestCase {
 }
 
 const mut REGISTRY: Vec<TestCase> = Vec::new();
-
+// TODO: use quote<fn> instead
 const fn test(item: quote<item>) -> quote<item> {
     let name = item.name;
     REGISTRY.push(TestCase { name, run: item.value });

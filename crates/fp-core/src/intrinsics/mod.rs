@@ -6,7 +6,7 @@
 //! language before we introduce backend-specific resolvers.
 
 use crate::ast::{
-    Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprStruct, ExprStructural, File,
+    Abi, Expr, ExprIntrinsicCall, ExprIntrinsicContainer, ExprStruct, ExprStructural, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclFunction, ItemKind, Ty, TySlot,
     TypeFunction,
 };
@@ -142,6 +142,7 @@ fn build_function_decl_item(
         params,
         generics_params: Vec::new(),
         is_const: false,
+        abi: Abi::Rust,
         quote_kind: None,
         ret_ty: Some(ret_ty),
     };

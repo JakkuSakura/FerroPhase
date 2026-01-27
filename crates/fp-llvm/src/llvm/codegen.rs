@@ -260,6 +260,9 @@ impl<'a> LirCodegen<'a> {
     }
 
     fn generate_function(&mut self, lir_func: lir::LirFunction) -> Result<()> {
+        if lir_func.is_declaration {
+            return Ok(());
+        }
         let llvm_name = self.llvm_symbol_for(&lir_func.name);
         let mut signature = lir_func.signature.clone();
         let is_main = llvm_name == "main";

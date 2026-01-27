@@ -30,5 +30,6 @@ pub fn return_function(name: &str) -> LirFunction {
         stack_slots: Vec::new(),
         calling_convention: lir::CallingConvention::C,
         linkage: lir::Linkage::External,
+        is_declaration: false,
     }
 }

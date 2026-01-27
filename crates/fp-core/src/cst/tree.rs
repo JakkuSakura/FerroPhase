@@ -25,6 +25,8 @@ pub enum CstKind {
     ItemMod,
     ItemUse,
     ItemExternCrate,
+    ItemExternBlock,
+    ItemExternFnDecl,
     ItemConst,
     ItemStatic,
     ItemTypeAlias,
@@ -146,6 +148,8 @@ impl CstKind {
             | CstKind::ItemMod
             | CstKind::ItemUse
             | CstKind::ItemExternCrate
+            | CstKind::ItemExternBlock
+            | CstKind::ItemExternFnDecl
             | CstKind::ItemConst
             | CstKind::ItemStatic
             | CstKind::ItemTypeAlias

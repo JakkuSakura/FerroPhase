@@ -1125,7 +1125,14 @@ fn render_function_signature(sig: &ast::FunctionSignature) -> String {
         .map(|ty| format!(" -> {}", render_ty_brief(ty)))
         .unwrap_or_default();
     let const_prefix = if sig.is_const { "const " } else { "" };
-    format!("{}fn{} {}({}){}", const_prefix, generics, name, params, ret)
+    let abi_prefix = match sig.abi {
+        ast::Abi::Rust => "",
+        ast::Abi::C => "extern \"C\" ",
+    };
+    format!(
+        "{}{}fn{} {}({}){}",
+        const_prefix, abi_prefix, generics, name, params, ret
+    )
 }
 
 fn render_function_param(param: &ast::FunctionParam) -> String {

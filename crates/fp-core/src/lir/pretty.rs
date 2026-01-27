@@ -90,17 +90,24 @@ fn write_function(
         .map(|(idx, ty)| format!("arg{}: {}", idx, format_type(ty)))
         .collect::<Vec<_>>()
         .join(", ");
-    let header = format!(
-        "fn {}({}) -> {} [cc: {}, linkage: {}] {{",
+    let mut header = format!(
+        "fn {}({}) -> {} [cc: {}, linkage: {}",
         func.name,
         params,
         format_type(&func.signature.return_type),
         format_calling_convention(&func.calling_convention),
         format_linkage(&func.linkage)
     );
+    if func.is_declaration {
+        header.push_str(", decl");
+    }
+    header.push_str("] {");
 
     ctx.writeln(f, header)?;
     ctx.with_indent(|ctx| {
+        if func.is_declaration {
+            return Ok(());
+        }
         if !func.locals.is_empty() {
             ctx.writeln(f, "locals:")?;
             ctx.with_indent(|ctx| {

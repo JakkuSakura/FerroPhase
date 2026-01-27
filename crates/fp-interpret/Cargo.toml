@@ -15,6 +15,8 @@ eyre = "0.6"
 syn = { version = "2", features = ["full"] }
 num-traits = "0.2"
 proc-macro2 = "1"
+libffi = "5.1.0"
+libloading = "0.8"
 
 [dev-dependencies]
 pretty_assertions = "1"

@@ -110,9 +110,14 @@ impl CraneliftBackend {
             }
             let sig =
                 signature_from_lir(&func.signature, self.pointer_type, func.calling_convention.clone());
+            let linkage = if func.is_declaration {
+                Linkage::Import
+            } else {
+                map_linkage(func.linkage.clone())
+            };
             let func_id = self
                 .module
-                .declare_function(&name, map_linkage(func.linkage.clone()), &sig)
+                .declare_function(&name, linkage, &sig)
                 .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
             self.func_ids.insert(name, func_id);
         }
@@ -167,6 +172,9 @@ impl CraneliftBackend {
 
     fn define_functions(&mut self, program: &LirProgram) -> Result<()> {
         for func in &program.functions {
+            if func.is_declaration {
+                continue;
+            }
             let func_id = *self
                 .func_ids
                 .get(&func.name.to_string())
