@@ -116,6 +116,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ));
             return Value::undefined();
         }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Const,
+            CallFrameKind::Function(function.name.as_str().to_string()),
+            function.body.as_ref().span,
+        );
         self.push_scope();
         for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
             if let Some(scope) = self.type_env.last_mut() {
@@ -157,6 +162,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ));
             return Value::undefined();
         }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Const,
+            CallFrameKind::ValueFunction,
+            function.body.as_ref().span,
+        );
         self.push_scope();
         for (param, value) in function.sig.params.iter().zip(args.into_iter()) {
             if let Some(scope) = self.type_env.last_mut() {
@@ -203,6 +213,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ));
             return RuntimeFlow::Value(Value::undefined());
         }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Runtime,
+            CallFrameKind::Function(function.name.as_str().to_string()),
+            function.body.as_ref().span,
+        );
 
         self.function_depth += 1;
         self.push_scope();
@@ -249,6 +264,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ));
             return RuntimeFlow::Value(Value::undefined());
         }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Runtime,
+            CallFrameKind::Method(function.name.as_str().to_string()),
+            function.body.as_ref().span,
+        );
 
         let receiver_kind = function
             .sig
@@ -332,6 +352,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ));
             return RuntimeFlow::Value(Value::undefined());
         }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Runtime,
+            CallFrameKind::ValueFunction,
+            function.body.as_ref().span,
+        );
 
         self.function_depth += 1;
         self.push_scope();
@@ -376,6 +401,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             ));
             return RuntimeFlow::Value(Value::undefined());
         }
+        let _call_guard = self.push_call_frame(
+            EvalMode::Runtime,
+            CallFrameKind::ConstClosure,
+            closure.body.span,
+        );
 
         let saved_values = std::mem::replace(&mut self.value_env, closure.captured_values.clone());
         let saved_types = std::mem::replace(&mut self.type_env, closure.captured_types.clone());

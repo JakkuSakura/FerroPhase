@@ -148,6 +148,14 @@ pub struct InterpreterOutcome {
     pub closure_types: HashMap<String, Ty>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InterpreterStackSnapshot {
+    pub call_frames: usize,
+    pub expr_frames: usize,
+    pub const_values: usize,
+    pub runtime_values: usize,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 struct ConstClosure {
     params: Vec<Pattern>,
@@ -283,6 +291,71 @@ enum RuntimeFlow {
     Panic(Value),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EvalMode {
+    Const,
+    Runtime,
+}
+
+type ExprDiscriminant = std::mem::Discriminant<ExprKind>;
+
+#[derive(Debug, Clone, Copy)]
+struct ExprFrame {
+    mode: EvalMode,
+    span: Option<Span>,
+    kind: ExprDiscriminant,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CallFrameKind {
+    Function(String),
+    Method(String),
+    ValueFunction,
+    Closure,
+    ConstClosure,
+}
+
+#[derive(Debug, Clone)]
+struct CallFrame {
+    mode: EvalMode,
+    kind: CallFrameKind,
+    span: Option<Span>,
+    module_depth: usize,
+    value_env_depth: usize,
+    type_env_depth: usize,
+    impl_depth: usize,
+    loop_depth: usize,
+    function_depth: usize,
+}
+
+struct ExprFrameGuard<'ctx> {
+    interpreter: *mut AstInterpreter<'ctx>,
+}
+
+impl<'ctx> Drop for ExprFrameGuard<'ctx> {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(interpreter) = self.interpreter.as_mut() {
+                interpreter.expr_stack.pop();
+            }
+        }
+    }
+}
+
+struct CallFrameGuard<'ctx> {
+    interpreter: *mut AstInterpreter<'ctx>,
+}
+
+impl<'ctx> Drop for CallFrameGuard<'ctx> {
+    fn drop(&mut self) {
+        unsafe {
+            if let Some(interpreter) = self.interpreter.as_mut() {
+                interpreter.call_stack.pop();
+            }
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ReceiverBinding {
     value: Value,
@@ -381,6 +454,10 @@ pub struct AstInterpreter<'ctx> {
     lazy_evaluated: HashSet<String>,
     item_scopes: Vec<*mut Vec<Item>>,
     root_items: Option<*mut Vec<Item>>,
+    call_stack: Vec<CallFrame>,
+    expr_stack: Vec<ExprFrame>,
+    const_value_stack: Vec<Value>,
+    runtime_value_stack: Vec<Value>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -440,6 +517,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             lazy_evaluated: HashSet::new(),
             item_scopes: Vec::new(),
             root_items: None,
+            call_stack: Vec::new(),
+            expr_stack: Vec::new(),
+            const_value_stack: Vec::new(),
+            runtime_value_stack: Vec::new(),
         }
     }
 
@@ -559,6 +640,64 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub fn has_errors(&self) -> bool {
         self.has_errors
+    }
+
+    pub fn stack_snapshot(&self) -> InterpreterStackSnapshot {
+        InterpreterStackSnapshot {
+            call_frames: self.call_stack.len(),
+            expr_frames: self.expr_stack.len(),
+            const_values: self.const_value_stack.len(),
+            runtime_values: self.runtime_value_stack.len(),
+        }
+    }
+
+    fn push_expr_frame(&mut self, mode: EvalMode, expr: &Expr) -> ExprFrameGuard<'ctx> {
+        let frame = ExprFrame {
+            mode,
+            span: expr.span,
+            kind: std::mem::discriminant(expr.kind()),
+        };
+        self.expr_stack.push(frame);
+        ExprFrameGuard {
+            interpreter: self as *mut _,
+        }
+    }
+
+    fn push_call_frame(
+        &mut self,
+        mode: EvalMode,
+        kind: CallFrameKind,
+        span: Option<Span>,
+    ) -> CallFrameGuard<'ctx> {
+        let frame = CallFrame {
+            mode,
+            kind,
+            span,
+            module_depth: self.module_stack.len(),
+            value_env_depth: self.value_env.len(),
+            type_env_depth: self.type_env.len(),
+            impl_depth: self.impl_stack.len(),
+            loop_depth: self.loop_depth,
+            function_depth: self.function_depth,
+        };
+        self.call_stack.push(frame);
+        CallFrameGuard {
+            interpreter: self as *mut _,
+        }
+    }
+
+    fn record_const_value(&mut self, base_len: usize, value: Value) -> Value {
+        self.const_value_stack.truncate(base_len);
+        self.const_value_stack.push(value.clone());
+        value
+    }
+
+    fn record_runtime_value(&mut self, base_len: usize, flow: RuntimeFlow) -> RuntimeFlow {
+        self.runtime_value_stack.truncate(base_len);
+        if let RuntimeFlow::Value(value) = &flow {
+            self.runtime_value_stack.push(value.clone());
+        }
+        flow
     }
 
     fn mark_mutated(&mut self) {

@@ -4,6 +4,19 @@ use fp_core::ast::Locator;
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
     pub(super) fn eval_expr_runtime(&mut self, expr: &mut Expr) -> RuntimeFlow {
+        let is_root = self.expr_stack.is_empty();
+        let _expr_guard = self.push_expr_frame(EvalMode::Runtime, expr);
+        let base_len = if is_root {
+            self.runtime_value_stack.clear();
+            0
+        } else {
+            self.runtime_value_stack.len()
+        };
+        let flow = self.eval_expr_runtime_inner(expr);
+        self.record_runtime_value(base_len, flow)
+    }
+
+    fn eval_expr_runtime_inner(&mut self, expr: &mut Expr) -> RuntimeFlow {
         self.ensure_expr_typed(expr);
         let expr_ty_snapshot = expr.ty().cloned();
         match expr.kind_mut() {
@@ -500,6 +513,19 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_expr(&mut self, expr: &mut Expr) -> Value {
+        let is_root = self.expr_stack.is_empty();
+        let _expr_guard = self.push_expr_frame(EvalMode::Const, expr);
+        let base_len = if is_root {
+            self.const_value_stack.clear();
+            0
+        } else {
+            self.const_value_stack.len()
+        };
+        let value = self.eval_expr_inner(expr);
+        self.record_const_value(base_len, value)
+    }
+
+    fn eval_expr_inner(&mut self, expr: &mut Expr) -> Value {
         let _guard = self.push_span(expr.span);
         self.ensure_expr_typed(expr);
         let expr_ty_snapshot = expr.ty().cloned();
