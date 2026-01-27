@@ -18,6 +18,14 @@ fn typing_error(msg: impl Into<String>) -> Error {
 
 pub(crate) type TypeVarId = usize;
 
+fn attrs_has_name(attrs: &[Attribute], name: &str) -> bool {
+    attrs.iter().any(|attr| match &attr.meta {
+        AttrMeta::Path(path) => path.last().as_str() == name,
+        AttrMeta::NameValue(nv) => nv.name.last().as_str() == name,
+        AttrMeta::List(list) => list.name.last().as_str() == name,
+    })
+}
+
 fn detect_lossy_mode() -> bool {
     config::lossy_mode()
 }
@@ -118,6 +126,7 @@ pub struct AstTypeInferencer<'ctx> {
     module_defs: HashSet<Vec<String>>,
     module_aliases: Vec<HashMap<String, Vec<String>>>,
     symbol_aliases: Vec<HashMap<String, String>>,
+    unimplemented_symbols: HashSet<String>,
     current_level: usize,
     diagnostics: Vec<TypingDiagnostic>,
     has_errors: bool,
@@ -196,6 +205,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             hashmap_args: HashMap::new(),
             current_span: None,
             resolution_hook: None,
+            unimplemented_symbols: HashSet::new(),
         }
     }
 
@@ -591,8 +601,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn record_function_signature(&mut self, name: &Ident, sig: &FunctionSignature) {
-        let mut candidates = vec![name.as_str().to_string()];
-        if !self.module_path.is_empty() {
+        let mut candidates = Vec::new();
+        if self.module_path.is_empty() {
+            candidates.push(name.as_str().to_string());
+        } else {
             let mut qualified = self.module_path.clone();
             qualified.push(name.as_str().to_string());
             candidates.push(qualified.join("::"));
@@ -602,6 +614,84 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 .entry(candidate)
                 .or_insert_with(|| sig.clone());
         }
+    }
+
+    fn record_unimplemented_symbol(&mut self, name: &Ident, attrs: &[Attribute]) {
+        if !attrs_has_name(attrs, "unimplemented") {
+            return;
+        }
+        let mut candidates = Vec::new();
+        if self.module_path.is_empty() {
+            candidates.push(name.as_str().to_string());
+        } else {
+            let mut qualified = self.module_path.clone();
+            qualified.push(name.as_str().to_string());
+            candidates.push(qualified.join("::"));
+        }
+        for candidate in candidates {
+            self.unimplemented_symbols.insert(candidate);
+        }
+    }
+
+    fn is_unimplemented_name(&self, name: &str) -> bool {
+        self.unimplemented_symbols.contains(name)
+    }
+
+    fn check_unimplemented_locator(&mut self, locator: &Locator) -> bool {
+        let mut candidates = Vec::new();
+        if let Some(qualified) = self.resolve_alias_locator(locator) {
+            candidates.push(qualified);
+        }
+        candidates.push(locator.to_string());
+        if let Some(ident) = locator.as_ident() {
+            candidates.push(ident.as_str().to_string());
+            if !self.module_path.is_empty() {
+                let mut qualified = self.module_path.clone();
+                qualified.push(ident.as_str().to_string());
+                candidates.push(qualified.join("::"));
+            }
+        }
+        match locator {
+            Locator::Path(path) => {
+                if let Some(last) = path.segments.last() {
+                    candidates.push(last.as_str().to_string());
+                    if !self.module_path.is_empty() {
+                        let mut qualified = self.module_path.clone();
+                        qualified.push(last.as_str().to_string());
+                        candidates.push(qualified.join("::"));
+                    }
+                }
+                if path.segments.len() >= 2 {
+                    let type_name = path.segments[path.segments.len() - 2].as_str();
+                    candidates.push(type_name.to_string());
+                    if !self.module_path.is_empty() {
+                        let mut qualified = self.module_path.clone();
+                        qualified.push(type_name.to_string());
+                        candidates.push(qualified.join("::"));
+                    }
+                }
+            }
+            Locator::ParameterPath(path) => {
+                if let Some(last) = path.segments.last() {
+                    candidates.push(last.ident.as_str().to_string());
+                    if !self.module_path.is_empty() {
+                        let mut qualified = self.module_path.clone();
+                        qualified.push(last.ident.as_str().to_string());
+                        candidates.push(qualified.join("::"));
+                    }
+                }
+            }
+            Locator::Ident(_) => {}
+        }
+
+        if let Some(name) = candidates
+            .into_iter()
+            .find(|candidate| self.is_unimplemented_name(candidate))
+        {
+            self.emit_error(format!("use of unimplemented item: {}", name));
+            return true;
+        }
+        false
     }
 
     fn lookup_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {
@@ -738,6 +828,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.predeclare_macro_item(mac);
             }
             ItemKind::DefStruct(def) => {
+                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.struct_defs
                     .insert(def.name.as_str().to_string(), def.value.clone());
                 let var = self.symbol_var(&def.name);
@@ -747,6 +838,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ItemKind::DefStructural(def) => {
+                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 let struct_ty = TypeStruct {
                     name: def.name.clone(),
                     generics_params: Vec::new(),
@@ -757,11 +849,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.register_symbol(&def.name);
             }
             ItemKind::DefType(def) => {
+                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 // Type aliases / type-level expressions introduce a named type.
                 // The concrete shape (e.g. structural fields) is resolved during `infer_item`.
                 self.register_symbol(&def.name);
             }
             ItemKind::DefEnum(def) => {
+                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 let enum_name = def.name.as_str().to_string();
                 self.enum_defs.insert(enum_name.clone(), def.value.clone());
                 self.register_symbol(&def.name);
@@ -808,6 +902,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ItemKind::DefFunction(def) => {
+                self.record_unimplemented_symbol(&def.name, &def.attrs);
                 self.record_function_signature(&def.name, &def.sig);
                 let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
                     let key = format!("{}::{}", ctx.struct_name, def.name.as_str());
@@ -2033,6 +2128,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lookup_locator(&mut self, locator: &Locator) -> Result<TypeVarId> {
+        if self.check_unimplemented_locator(locator) {
+            return Ok(self.error_type_var());
+        }
         let key = self
             .resolve_alias_locator(locator)
             .unwrap_or_else(|| locator.to_string());

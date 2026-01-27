@@ -883,6 +883,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
                 if let ExprKind::Locator(loc) = expr.kind() {
+                    if self.check_unimplemented_locator(loc) {
+                        return Ok(self.error_type_var());
+                    }
                     if let Some((key_var, value_var)) = self.hashmap_args_from_locator(loc)? {
                         let map_var = self.fresh_type_var();
                         let map_ty = self.make_hashmap_struct();

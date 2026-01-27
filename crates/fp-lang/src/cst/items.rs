@@ -253,6 +253,19 @@ fn parse_item_cst(
                     if let Some(vis) = parse_visibility_cst(input)? {
                         member_children.push(SyntaxElement::Node(Box::new(vis)));
                     }
+                    if matches!(
+                        input.first(),
+                        Some(Token {
+                            kind: TokenKind::Keyword(Keyword::Async),
+                            ..
+                        })
+                    ) {
+                        let async_token =
+                            advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                        member_children.push(SyntaxElement::Token(syntax_token_from_token(
+                            &async_token,
+                        )));
+                    }
                     expect_keyword(input, Keyword::Fn)?;
                     let sig = parse_fn_sig_cst(input)?;
                     member_children.push(SyntaxElement::Node(Box::new(sig)));
@@ -616,6 +629,17 @@ fn parse_item_cst(
             expect_symbol(input, ";")?;
             Ok(node(SyntaxKind::ItemStatic, children))
         }
+        TokenKind::Keyword(Keyword::Async) => {
+            let async_token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            children.push(SyntaxElement::Token(syntax_token_from_token(&async_token)));
+            expect_keyword(input, Keyword::Fn)?;
+            let sig = parse_fn_sig_cst(input)?;
+            children.push(SyntaxElement::Node(Box::new(sig)));
+            consume_where_clause(input);
+            let body = parse_expr_prefix_from_tokens(input)?;
+            children.push(SyntaxElement::Node(Box::new(body)));
+            Ok(node(SyntaxKind::ItemFn, children))
+        }
         TokenKind::Keyword(Keyword::Fn) => {
             advance(input);
             let sig = parse_fn_sig_cst(input)?;
@@ -829,6 +853,28 @@ fn parse_trait_member_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         return Err(ErrMode::Cut(ContextError::new()));
     };
     match head.kind {
+        TokenKind::Keyword(Keyword::Async) => {
+            let async_token = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+            let sig = {
+                expect_keyword(input, Keyword::Fn)?;
+                parse_fn_sig_cst(input)?
+            };
+            let mut children = vec![
+                SyntaxElement::Token(syntax_token_from_token(&async_token)),
+                SyntaxElement::Token(token_text("fn")),
+                SyntaxElement::Node(Box::new(sig)),
+            ];
+            if match_symbol(input, ";") {
+                return Ok(node(SyntaxKind::TraitMember, children));
+            }
+            // Default method body.
+            if matches_symbol(input.first(), "{") {
+                let body = parse_expr_prefix_from_tokens(input)?;
+                children.push(SyntaxElement::Node(Box::new(body)));
+                return Ok(node(SyntaxKind::TraitMember, children));
+            }
+            Err(ErrMode::Cut(ContextError::new()))
+        }
         TokenKind::Keyword(Keyword::Fn) => {
             advance(input);
             let sig = parse_fn_sig_cst(input)?;

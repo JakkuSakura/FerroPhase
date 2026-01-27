@@ -2718,6 +2718,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.error_type_var());
             }
         };
+        if self.check_unimplemented_locator(&Locator::Ident(Ident::new(struct_name.clone()))) {
+            return Ok(self.error_type_var());
+        }
         if let Some(def) = self.struct_defs.get(&struct_name).cloned() {
             let var = self.fresh_type_var();
             self.bind(var, TypeTerm::Struct(def.clone()));

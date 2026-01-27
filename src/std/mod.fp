@@ -4,6 +4,7 @@ pub mod ffi;
 pub mod json;
 pub mod intrinsics;
 pub mod meta;
+pub mod net;
 pub mod proc_macro;
 pub mod test;
 pub mod time;

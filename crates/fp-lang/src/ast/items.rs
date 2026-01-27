@@ -2,12 +2,13 @@ use crate::ast::expr::{lower_expr_from_cst, lower_type_from_cst};
 use crate::syntax::{collect_tokens, SyntaxElement, SyntaxKind, SyntaxNode};
 use fp_core::ast::{
     Abi, AttrMeta, AttrMetaList, AttrMetaNameValue, AttrStyle, Attribute, BExpr, EnumTypeVariant,
-    Expr, ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver, FunctionSignature,
-    GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType, ItemDefConst,
-    ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait, ItemDefType, ItemImpl,
-    ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename, ItemImportTree, ItemKind,
-    ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path, QuoteFragmentKind,
-    StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value, Visibility,
+    Expr, ExprAsync, ExprKind, ExprMacro, ExprUnOp, FunctionParam, FunctionParamReceiver,
+    FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
+    ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
+    ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
+    ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
+    QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
+    Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::ops::UnOpKind;
@@ -520,7 +521,20 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         crate::ast::expr::LowerError::UnexpectedNode(kind) => LowerItemsError::UnexpectedNode(kind),
         _ => LowerItemsError::UnexpectedNode(node.kind),
     })?;
-    let body = body;
+    let is_async = node.children.iter().any(|c| {
+        matches!(
+            c,
+            SyntaxElement::Token(t) if !t.is_trivia() && t.text == "async"
+        )
+    });
+    let body = if is_async {
+        Expr::new(ExprKind::Async(ExprAsync {
+            span: body.span(),
+            expr: Box::new(body),
+        }))
+    } else {
+        body
+    };
     if let Some(kind) = quote_kind {
         sig.is_const = true;
         sig.quote_kind = Some(kind);
@@ -795,6 +809,44 @@ fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
 fn lower_trait_member(node: &SyntaxNode) -> Result<Item, LowerItemsError> {
     let head = first_token_text(node).ok_or(LowerItemsError::MissingToken("trait member"))?;
     match head.as_str() {
+        "async" => {
+            let sig_node = node
+                .children
+                .iter()
+                .find_map(|c| match c {
+                    SyntaxElement::Node(n) if n.kind == SyntaxKind::FnSig => Some(n.as_ref()),
+                    _ => None,
+                })
+                .ok_or(LowerItemsError::MissingToken("fn sig"))?;
+            let sig = lower_fn_sig(sig_node)?;
+            let name = sig
+                .name
+                .clone()
+                .ok_or(LowerItemsError::MissingToken("fn name"))?;
+
+            if let Some(body_node) = first_child_by_category(node, CstCategory::Expr) {
+                let body = lower_expr_from_cst(body_node)
+                    .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
+                let body = Expr::new(ExprKind::Async(ExprAsync {
+                    span: body.span(),
+                    expr: Box::new(body),
+                }));
+                return Ok(Item::from(ItemKind::DefFunction(ItemDefFunction {
+                    ty_annotation: None,
+                    attrs: Vec::new(),
+                    name: name.clone(),
+                    ty: None,
+                    sig,
+                    body: Box::new(body),
+                    visibility: Visibility::Inherited,
+                })));
+            }
+            Ok(Item::from(ItemKind::DeclFunction(ItemDeclFunction {
+                ty_annotation: None,
+                name,
+                sig,
+            })))
+        }
         "fn" => {
             let sig_node = node
                 .children
