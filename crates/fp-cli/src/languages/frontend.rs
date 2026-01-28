@@ -1,5 +1,6 @@
 pub use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 pub use fp_flatbuffers::FlatbuffersFrontend;
+pub use fp_hcl::HclFrontend;
 pub use fp_json::JsonFrontend;
 pub use fp_jsonschema::JsonSchemaFrontend;
 pub use fp_lang::FerroFrontend;

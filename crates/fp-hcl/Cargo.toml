@@ -1,0 +1,8 @@
+[package]
+name = "fp-hcl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+hcl = { package = "hcl-rs", version = "0.19.4" }

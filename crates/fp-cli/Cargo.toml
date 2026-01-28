@@ -27,6 +27,7 @@ fp-jsonschema = { path = "../fp-jsonschema" }
 fp-json = { path = "../fp-json" }
 fp-flatbuffers = { path = "../fp-flatbuffers" }
 fp-toml = { path = "../fp-toml" }
+fp-hcl = { path = "../fp-hcl" }
 fp-pipeline = { path = "../fp-pipeline" }
 fp-bytecode = { path = "../fp-bytecode" }
 fp-stackvm = { path = "../fp-stackvm" }

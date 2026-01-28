@@ -25,6 +25,7 @@ pub const JSONSCHEMA: &str = fp_jsonschema::JSON_SCHEMA;
 pub const JSON: &str = fp_json::JSON;
 pub const FLATBUFFERS: &str = fp_flatbuffers::FLATBUFFERS;
 pub const TOML: &str = fp_toml::TOML;
+pub const HCL: &str = fp_hcl::HCL;
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +140,11 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: TOML,
         extensions: &["toml"],
+        transpile_supported: false,
+    },
+    Language {
+        name: HCL,
+        extensions: &["hcl"],
         transpile_supported: false,
     },
 ];
