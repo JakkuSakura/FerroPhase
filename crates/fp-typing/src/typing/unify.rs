@@ -412,9 +412,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             (TypeTerm::Unit, TypeTerm::Unit)
-            | (TypeTerm::Nothing, TypeTerm::Nothing)
             | (TypeTerm::Any, TypeTerm::Any)
             | (TypeTerm::Unknown, TypeTerm::Unknown) => Ok(()),
+            (TypeTerm::Nothing, _) | (_, TypeTerm::Nothing) => Ok(()),
             (TypeTerm::Struct(sa), TypeTerm::Struct(sb)) => {
                 if sa == sb {
                     Ok(())

@@ -30,6 +30,13 @@ fn detect_lossy_mode() -> bool {
     config::lossy_mode()
 }
 
+fn default_extern_prelude() -> HashSet<String> {
+    ["std", "core", "alloc"]
+        .into_iter()
+        .map(|name| name.to_string())
+        .collect()
+}
+
 pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
 }
@@ -124,6 +131,8 @@ pub struct AstTypeInferencer<'ctx> {
     impl_stack: Vec<Option<ImplContext>>,
     module_path: Vec<String>,
     module_defs: HashSet<Vec<String>>,
+    root_modules: HashSet<String>,
+    extern_prelude: HashSet<String>,
     module_aliases: Vec<HashMap<String, Vec<String>>>,
     symbol_aliases: Vec<HashMap<String, String>>,
     unimplemented_symbols: HashSet<String>,
@@ -194,6 +203,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             impl_stack: Vec::new(),
             module_path: Vec::new(),
             module_defs: HashSet::new(),
+            root_modules: HashSet::new(),
+            extern_prelude: default_extern_prelude(),
             module_aliases: vec![HashMap::new()],
             symbol_aliases: vec![HashMap::new()],
             current_level: 0,
@@ -212,6 +223,26 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     pub fn with_context(mut self, ctx: &'ctx SharedScopedContext) -> Self {
         self.ctx = Some(ctx);
         self
+    }
+
+    pub fn with_extern_prelude<I, S>(mut self, names: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.set_extern_prelude(names);
+        self
+    }
+
+    pub fn set_extern_prelude<I, S>(&mut self, names: I)
+    where
+        I: IntoIterator<Item = S>,
+        S: Into<String>,
+    {
+        self.extern_prelude.clear();
+        for name in names {
+            self.extern_prelude.insert(name.into());
+        }
     }
 
     pub fn set_resolution_hook(&mut self, hook: Box<dyn TypeResolutionHook + 'ctx>) {
@@ -637,92 +668,109 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.unimplemented_symbols.contains(name)
     }
 
-    fn check_unimplemented_locator(&mut self, locator: &Locator) -> bool {
-        let mut candidates = Vec::new();
-        if let Some(qualified) = self.resolve_alias_locator(locator) {
-            candidates.push(qualified);
+    fn resolution_segments(&self, locator: &Locator) -> Vec<String> {
+        match locator {
+            Locator::Ident(ident) => vec![ident.as_str().to_string()],
+            Locator::Path(path) => path
+                .segments
+                .iter()
+                .map(|seg| seg.as_str().to_string())
+                .collect(),
+            Locator::ParameterPath(path) => path
+                .segments
+                .iter()
+                .map(|seg| seg.ident.as_str().to_string())
+                .collect(),
         }
-        candidates.push(locator.to_string());
+    }
+
+    fn resolve_path_segments(&self, segments: &[String]) -> Option<Vec<String>> {
+        let first = segments.first()?.as_str();
+        match first {
+            "__root__" => Some(segments.iter().skip(1).cloned().collect()),
+            "crate" => Some(segments.iter().skip(1).cloned().collect()),
+            "self" => {
+                let mut qualified = self.module_path.clone();
+                qualified.extend(segments.iter().skip(1).cloned());
+                Some(qualified)
+            }
+            "super" => {
+                if self.module_path.is_empty() {
+                    return None;
+                }
+                let mut qualified = self.parent_module_path();
+                qualified.extend(segments.iter().skip(1).cloned());
+                Some(qualified)
+            }
+            _ => {
+                if !self.module_path.is_empty() {
+                    let mut local = self.module_path.clone();
+                    local.push(first.to_string());
+                    if self.module_defs.contains(&local) {
+                        let mut qualified = self.module_path.clone();
+                        qualified.extend(segments.iter().cloned());
+                        return Some(qualified);
+                    }
+                }
+                if self.root_modules.contains(first) || self.extern_prelude.contains(first) {
+                    Some(segments.to_vec())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    fn resolve_locator_key(&self, locator: &Locator) -> Option<String> {
+        if let Some(qualified) = self.resolve_alias_locator(locator) {
+            return Some(qualified);
+        }
+        let segments = self.resolution_segments(locator);
+        if segments.len() == 1 {
+            return Some(segments[0].clone());
+        }
+        let qualified = self.resolve_path_segments(&segments)?;
+        if qualified.is_empty() {
+            return None;
+        }
+        Some(qualified.join("::"))
+    }
+
+    fn check_unimplemented_locator(&mut self, locator: &Locator) -> bool {
         if let Some(ident) = locator.as_ident() {
-            candidates.push(ident.as_str().to_string());
             if !self.module_path.is_empty() {
                 let mut qualified = self.module_path.clone();
                 qualified.push(ident.as_str().to_string());
-                candidates.push(qualified.join("::"));
+                let candidate = qualified.join("::");
+                if self.is_unimplemented_name(&candidate) {
+                    self.emit_error(format!("use of unimplemented item: {}", candidate));
+                    return true;
+                }
             }
         }
-        match locator {
-            Locator::Path(path) => {
-                if let Some(last) = path.segments.last() {
-                    candidates.push(last.as_str().to_string());
-                    if !self.module_path.is_empty() {
-                        let mut qualified = self.module_path.clone();
-                        qualified.push(last.as_str().to_string());
-                        candidates.push(qualified.join("::"));
-                    }
-                }
-                if path.segments.len() >= 2 {
-                    let type_name = path.segments[path.segments.len() - 2].as_str();
-                    candidates.push(type_name.to_string());
-                    if !self.module_path.is_empty() {
-                        let mut qualified = self.module_path.clone();
-                        qualified.push(type_name.to_string());
-                        candidates.push(qualified.join("::"));
-                    }
-                }
-            }
-            Locator::ParameterPath(path) => {
-                if let Some(last) = path.segments.last() {
-                    candidates.push(last.ident.as_str().to_string());
-                    if !self.module_path.is_empty() {
-                        let mut qualified = self.module_path.clone();
-                        qualified.push(last.ident.as_str().to_string());
-                        candidates.push(qualified.join("::"));
-                    }
-                }
-            }
-            Locator::Ident(_) => {}
-        }
-
-        if let Some(name) = candidates
-            .into_iter()
-            .find(|candidate| self.is_unimplemented_name(candidate))
-        {
-            self.emit_error(format!("use of unimplemented item: {}", name));
+        let Some(candidate) = self.resolve_locator_key(locator) else {
+            return false;
+        };
+        if self.is_unimplemented_name(&candidate) {
+            self.emit_error(format!("use of unimplemented item: {}", candidate));
             return true;
         }
         false
     }
 
     fn lookup_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {
-        let mut candidates = Vec::new();
-        if let Some(qualified) = self.resolve_alias_locator(locator) {
-            candidates.push(qualified);
-        }
-        candidates.push(locator.to_string());
         if let Some(ident) = locator.as_ident() {
-            candidates.push(ident.as_str().to_string());
-        }
-        if let Locator::Path(path) = locator {
-            if path.segments.len() >= 2 {
-                let type_name = path.segments[path.segments.len() - 2].as_str();
-                let func_name = path.segments[path.segments.len() - 1].as_str();
-                candidates.push(format!("{}::{}", type_name, func_name));
+            if !self.module_path.is_empty() {
+                let mut qualified = self.module_path.clone();
+                qualified.push(ident.as_str().to_string());
+                let candidate = qualified.join("::");
+                if let Some(sig) = self.function_signatures.get(&candidate) {
+                    return Some(sig.clone());
+                }
             }
         }
-        if let Locator::ParameterPath(path) = locator {
-            if path.segments.len() >= 2 {
-                let type_name = path.segments[path.segments.len() - 2].ident.as_str();
-                let func_name = path.segments[path.segments.len() - 1].ident.as_str();
-                candidates.push(format!("{}::{}", type_name, func_name));
-            }
-        }
-        for candidate in candidates {
-            if let Some(sig) = self.function_signatures.get(&candidate) {
-                return Some(sig.clone());
-            }
-        }
-        None
+        let candidate = self.resolve_locator_key(locator)?;
+        self.function_signatures.get(&candidate).cloned()
     }
 
     fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
@@ -2029,6 +2077,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let mut path = self.module_path.clone();
         path.push(name.to_string());
         self.module_defs.insert(path);
+        if self.module_path.is_empty() {
+            self.root_modules.insert(name.to_string());
+        }
     }
 
     fn parent_module_path(&self) -> Vec<String> {
@@ -2131,9 +2182,27 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if self.check_unimplemented_locator(locator) {
             return Ok(self.error_type_var());
         }
-        let key = self
-            .resolve_alias_locator(locator)
-            .unwrap_or_else(|| locator.to_string());
+        if let Some(ident) = locator.as_ident() {
+            let name = ident.as_str();
+            if let Some(var) = self.lookup_env_var(name) {
+                return Ok(var);
+            }
+            if !self.module_path.is_empty() {
+                let mut qualified = self.module_path.clone();
+                qualified.push(name.to_string());
+                let qualified = qualified.join("::");
+                if let Some(var) = self.lookup_env_var(&qualified) {
+                    return Ok(var);
+                }
+            }
+        }
+        let key = match self.resolve_locator_key(locator) {
+            Some(key) => key,
+            None => {
+                self.emit_error(format!("unresolved symbol: {}", locator));
+                return Ok(self.error_type_var());
+            }
+        };
         if let Some(ident) = locator.as_ident() {
             let name = ident.as_str();
             if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
@@ -2155,42 +2224,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(var) = self.lookup_env_var(&key) {
             return Ok(var);
         }
-        if let Some(ident) = locator.as_ident() {
-            if let Some(qualified) = self.lookup_symbol_alias(ident.as_str()) {
-                if let Some(var) = self.lookup_env_var(&qualified) {
-                    return Ok(var);
-                }
-            }
-            if let Some(var) = self.lookup_env_var(ident.as_str()) {
-                return Ok(var);
-            }
-        }
         if let Locator::Path(path) = locator {
-            if let Some(first) = path.segments.first() {
-                if let Some(module_path) = self.lookup_module_alias(first.as_str()) {
-                    let mut qualified = module_path;
-                    qualified.extend(
-                        path.segments
-                            .iter()
-                            .skip(1)
-                            .map(|seg| seg.as_str().to_string()),
-                    );
-                    let qualified = qualified.join("::");
-                    if let Some(var) = self.lookup_env_var(&qualified) {
-                        return Ok(var);
-                    }
-                }
-                if let Some(var) = self.lookup_env_var(first.as_str()) {
-                    return Ok(var);
-                }
-            }
-            if let Some(last) = path.segments.last() {
-                if let Some(var) = self.lookup_env_var(last.as_str()) {
-                    return Ok(var);
-                }
-            }
-
-            // Enum unit variants as values: `Enum::Variant`.
             if path.segments.len() >= 2 {
                 if let (Some(enum_segment), Some(variant_segment)) = (
                     path.segments.get(path.segments.len() - 2),
@@ -2231,6 +2265,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         );
                         return Some(qualified.join("::"));
                     }
+                    if let Some(symbol_path) = self.lookup_symbol_alias(first.as_str()) {
+                        let mut qualified = symbol_path
+                            .split("::")
+                            .map(|seg| seg.to_string())
+                            .collect::<Vec<_>>();
+                        qualified.extend(
+                            path.segments
+                                .iter()
+                                .skip(1)
+                                .map(|seg| seg.as_str().to_string()),
+                        );
+                        return Some(qualified.join("::"));
+                    }
                 }
                 None
             }
@@ -2238,6 +2285,19 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if let Some(first) = path.segments.first() {
                     if let Some(module_path) = self.lookup_module_alias(first.ident.as_str()) {
                         let mut qualified = module_path;
+                        qualified.extend(
+                            path.segments
+                            .iter()
+                            .skip(1)
+                            .map(|seg| seg.ident.as_str().to_string()),
+                        );
+                        return Some(qualified.join("::"));
+                    }
+                    if let Some(symbol_path) = self.lookup_symbol_alias(first.ident.as_str()) {
+                        let mut qualified = symbol_path
+                            .split("::")
+                            .map(|seg| seg.to_string())
+                            .collect::<Vec<_>>();
                         qualified.extend(
                             path.segments
                                 .iter()
@@ -2624,7 +2684,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 }
 
-pub fn annotate(node: &mut Node) -> Result<TypingOutcome> {
-    let mut inferencer = AstTypeInferencer::new();
+pub fn annotate_with_prelude<I, S>(node: &mut Node, extern_prelude: I) -> Result<TypingOutcome>
+where
+    I: IntoIterator<Item = S>,
+    S: Into<String>,
+{
+    let mut inferencer = AstTypeInferencer::new().with_extern_prelude(extern_prelude);
     inferencer.infer(node)
+}
+
+pub fn annotate(node: &mut Node) -> Result<TypingOutcome> {
+    annotate_with_prelude(node, default_extern_prelude())
 }
