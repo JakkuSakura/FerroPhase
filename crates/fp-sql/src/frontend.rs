@@ -5,7 +5,7 @@ use fp_core::ast::{AstSerializer, Node};
 use fp_core::diagnostics::{Diagnostic, DiagnosticManager};
 use fp_core::error::Result as CoreResult;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::query::{QueryDocument, QuerySerializer};
+use fp_core::query::{QueryDocument, QueryKind, QuerySerializer};
 
 use crate::SqlDialect;
 
@@ -56,13 +56,29 @@ impl LanguageFrontend for SqlFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let diagnostics = Arc::new(DiagnosticManager::new());
-        let document = self.build_document(source, path);
+        let mut document = self.build_document(source, path);
 
         if document.is_empty() {
             diagnostics.add_diagnostic(
                 Diagnostic::warning("SQL input is empty".to_string())
                     .with_source_context("sql frontend"),
             );
+        }
+
+        if let QueryKind::Sql(sql) = &mut document.kind {
+            if let Some(raw) = &sql.raw {
+                match crate::sql_ast::parse_sql_ast(raw, sql.dialect.clone()) {
+                    Ok(ast) => {
+                        sql.ast = ast;
+                    }
+                    Err(err) => {
+                        diagnostics.add_diagnostic(
+                            Diagnostic::error(format!("failed to parse SQL AST: {err}"))
+                                .with_source_context("sql frontend"),
+                        );
+                    }
+                }
+            }
         }
 
         let serializer: Arc<dyn AstSerializer> = Arc::new(QuerySerializer::new());

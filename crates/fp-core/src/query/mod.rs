@@ -7,6 +7,7 @@
 //! the original source text.
 
 use crate::ast::AstSerializer;
+use crate::sql_ast;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
 use std::fmt::{self, Display, Formatter};
@@ -176,6 +177,8 @@ common_struct! {
         pub dialect: SqlDialect,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         pub statements: Vec<QueryStatement>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub ast: Vec<sql_ast::Statement>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         pub raw: Option<String>,
     }
@@ -186,6 +189,7 @@ impl SqlQuery {
         Self {
             dialect,
             statements,
+            ast: Vec::new(),
             raw: None,
         }
     }
@@ -198,8 +202,14 @@ impl SqlQuery {
         Self {
             dialect,
             statements,
+            ast: Vec::new(),
             raw: Some(source),
         }
+    }
+
+    pub fn with_ast(mut self, ast: Vec<sql_ast::Statement>) -> Self {
+        self.ast = ast;
+        self
     }
 }
 
