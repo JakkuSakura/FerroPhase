@@ -1,0 +1,185 @@
+use fp_core::{Error, Result};
+use fp_core::ast::Expr;
+use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
+use fp_core::span::FileId;
+use std::path::{Path, PathBuf};
+
+const FERRO_CONTEXT: &str = "ferrophase.parser";
+
+fn resolve_file_id(file: FileId, source: &str, source_path: Option<&Path>) -> FileId {
+    if file != 0 {
+        return file;
+    }
+    let path = source_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("<expr>"));
+    fp_core::source_map::source_map().register_or_update(path, source)
+}
+
+/// Parser for the FerroPhase language.
+pub struct FerroPhaseParser {
+    diagnostics: std::sync::Arc<DiagnosticManager>,
+}
+
+impl Default for FerroPhaseParser {
+    fn default() -> Self {
+        Self {
+            diagnostics: std::sync::Arc::new(DiagnosticManager::new()),
+        }
+    }
+}
+
+impl FerroPhaseParser {
+    /// Create a new parser instance.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Access the diagnostics collected by the parser.
+    pub fn diagnostics(&self) -> std::sync::Arc<DiagnosticManager> {
+        self.diagnostics.clone()
+    }
+
+    /// Clear any previously collected diagnostics.
+    pub fn clear_diagnostics(&self) {
+        self.diagnostics.clear();
+    }
+
+    fn record_diagnostic(&self, level: DiagnosticLevel, message: impl Into<String>) {
+        let message = message.into();
+        let diagnostic = match level {
+            DiagnosticLevel::Error => Diagnostic::error(message),
+            DiagnosticLevel::Warning => Diagnostic::warning(message),
+            DiagnosticLevel::Info => Diagnostic::info(message),
+        }
+        .with_source_context(FERRO_CONTEXT.to_string());
+
+        self.diagnostics.add_diagnostic(diagnostic);
+    }
+
+    fn record_error(&self, message: impl Into<String>) {
+        self.record_diagnostic(DiagnosticLevel::Error, message);
+    }
+
+    fn record_error_with_span(&self, message: impl Into<String>, span: fp_core::span::Span) {
+        let message = message.into();
+        let diagnostic = Diagnostic::error(message)
+            .with_span(span)
+            .with_source_context(FERRO_CONTEXT.to_string());
+        self.diagnostics.add_diagnostic(diagnostic);
+    }
+
+    /// Parse a FerroPhase expression directly into an fp-core AST expression.
+    pub fn parse_expr_ast(&self, source: &str) -> Result<Expr> {
+        self.parse_expr_ast_with_file(source, 0)
+    }
+
+    pub fn parse_expr_ast_with_file(&self, source: &str, file: FileId) -> Result<Expr> {
+        let file = resolve_file_id(file, source, None);
+        let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex expression: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex expression: {err}"));
+            }
+            Error::from(format!("{}", err))
+        })?;
+        let (cst, idx) =
+            crate::cst::parse_expr_lexemes_prefix_to_cst(&lexemes, file).map_err(|err| {
+                if let Some(span) = err.span {
+                    self.record_error_with_span(
+                        format!("failed to parse expression CST: {err}"),
+                        span,
+                    );
+                } else {
+                    self.record_error(format!("failed to parse expression CST: {err}"));
+                }
+                Error::from(format!("{}", err))
+            })?;
+        if lexemes[idx..].iter().any(|lexeme| !lexeme.is_trivia()) {
+            self.record_error("trailing tokens after expression");
+            return Err(Error::from("trailing tokens after expression"));
+        }
+        crate::ast::lower_expr_from_cst(&cst).map_err(|err| {
+            self.record_error(format!("failed to lower expression CST: {err}"));
+            Error::from(format!("{}", err))
+        })
+    }
+
+    /// Parse an expression into CST.
+    pub fn parse_expr_cst(&self, source: &str) -> Result<crate::syntax::SyntaxNode> {
+        self.parse_expr_cst_with_file(source, 0)
+    }
+
+    pub fn parse_expr_cst_with_file(
+        &self,
+        source: &str,
+        file: FileId,
+    ) -> Result<crate::syntax::SyntaxNode> {
+        let file = resolve_file_id(file, source, None);
+        let lexemes = crate::lexer::tokenizer::lex_lexemes(source).map_err(|err| {
+            self.record_error(format!("failed to lex expression: {err}"));
+            Error::from(format!("{}", err))
+        })?;
+        crate::cst::parse_expr_lexemes_to_cst(&lexemes, file).map_err(|err| {
+            if let Some(span) = err.span {
+                self.record_error_with_span(format!("failed to parse expression CST: {err}"), span);
+            } else {
+                self.record_error(format!("failed to parse expression CST: {err}"));
+            }
+            Error::from(format!("{}", err))
+        })
+    }
+
+    /// Parse a sequence of items into fp-core AST items.
+    pub fn parse_items_ast(&self, source: &str) -> Result<Vec<fp_core::ast::Item>> {
+        self.parse_items_ast_with_file(source, 0, None)
+    }
+
+    pub fn parse_items_ast_with_file(
+        &self,
+        source: &str,
+        file: FileId,
+        source_path: Option<&Path>,
+    ) -> Result<Vec<fp_core::ast::Item>> {
+        let file = resolve_file_id(file, source, source_path);
+        let tokens = crate::lexer::tokenizer::lex(source).map_err(|err| {
+            if let Some(span) = err.span() {
+                let span = fp_core::span::Span::new(file, span.start as u32, span.end as u32);
+                self.record_error_with_span(format!("failed to lex items: {err}"), span);
+            } else {
+                self.record_error(format!("failed to lex items: {err}"));
+            }
+            Error::from(format!("{}", err))
+        })?;
+        let tokens = crate::tokens::rewrite::lower_tokens(tokens).map_err(|err| {
+            self.record_error(format!("failed to lower tokens: {err}"));
+            Error::from(format!("{}", err))
+        })?;
+        let cst = crate::cst::items::parse_items_tokens_to_cst_with_file(&tokens, file).map_err(
+            |err| {
+                if let Some(span) = err.span() {
+                    self.record_error_with_span(format!("failed to parse items CST: {err}"), span);
+                } else {
+                    self.record_error(format!("failed to parse items CST: {err}"));
+                }
+                Error::from(format!("{}", err))
+            },
+        )?;
+        crate::ast::lower_items_from_cst(&cst).map_err(|err| {
+            self.record_error(format!("failed to lower items CST: {err}"));
+            Error::from(format!("{}", err))
+        })
+    }
+}
+
+pub(crate) mod expr;
+pub(crate) mod items;
+pub(crate) mod macros;
+
+pub(crate) use expr::lower_expr_from_cst;
+pub(crate) use items::lower_items_from_cst;
+
+#[cfg(test)]
+mod tests;

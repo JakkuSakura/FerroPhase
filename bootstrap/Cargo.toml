@@ -1,0 +1,20 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/fp-core",
+    "crates/fp-lang",
+    "crates/fp-typing",
+    "crates/fp-interpret",
+    "crates/fp-pipeline",
+    "crates/fp-backend",
+    "crates/fp-native",
+    "crates/fp-bytecode",
+    "crates/fp-json",
+    "crates/fp-toml",
+    "crates/magnet",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.0.0"
+publish = false

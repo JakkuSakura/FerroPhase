@@ -1,0 +1,11 @@
+[package]
+name = "fp-interpret"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+fp-pipeline = { path = "../fp-pipeline" }
+fp-typing = { path = "../fp-typing" }
+fp-native = { path = "../fp-native" }

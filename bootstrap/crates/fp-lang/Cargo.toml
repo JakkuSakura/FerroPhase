@@ -1,0 +1,9 @@
+[package]
+name = "fp-lang"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+fp-backend = { path = "../fp-backend" }

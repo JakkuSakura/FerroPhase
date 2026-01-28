@@ -1,0 +1,215 @@
+use super::*;
+
+impl HirGenerator {
+    pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
+        let mut hir_args = Vec::new();
+        for arg in args {
+            let ty = self.transform_type_to_hir(arg)?;
+            hir_args.push(hir::GenericArg::Type(Box::new(ty)));
+        }
+
+        Ok(hir::GenericArgs { args: hir_args })
+    }
+
+    pub(super) fn locator_to_hir_path_with_scope(
+        &mut self,
+        locator: &Locator,
+        scope: PathResolutionScope,
+    ) -> Result<hir::Path> {
+        // Build segments from the locator
+        let segments = match locator {
+            Locator::Ident(ident) => vec![self.make_path_segment(&ident.name, None)],
+            Locator::Path(path) => path
+                .segments
+                .iter()
+                .map(|seg| self.make_path_segment(&seg.name, None))
+                .collect(),
+            Locator::ParameterPath(param_path) => {
+                let mut segs = Vec::new();
+                for seg in &param_path.segments {
+                    let args = if seg.args.is_empty() {
+                        None
+                    } else {
+                        Some(self.convert_generic_args(&seg.args)?)
+                    };
+                    segs.push(self.make_path_segment(&seg.ident.name, args));
+                }
+                segs
+            }
+        };
+
+        let mut resolved = None;
+
+        if let Some(first) = segments.first() {
+            let first_name = first.name.as_str();
+            if matches!(first_name, "super" | "self" | "crate") {
+                let mut canonical = match first_name {
+                    "crate" => Vec::new(),
+                    "self" => self.module_path.clone(),
+                    "super" => self.module_path.clone(),
+                    _ => Vec::new(),
+                };
+
+                let mut idx = 0usize;
+                if first_name == "super" {
+                    while idx < segments.len() && segments[idx].name.as_str() == "super" {
+                        canonical.pop();
+                        idx += 1;
+                    }
+                } else {
+                    idx = 1;
+                }
+
+                canonical.extend(
+                    segments
+                        .iter()
+                        .skip(idx)
+                        .map(|seg| seg.name.as_str().to_string()),
+                );
+                resolved = self.lookup_global_res(&canonical, scope);
+            }
+        }
+
+        if resolved.is_none() {
+            if let Some(first) = segments.first() {
+                let alias = match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(&first.name),
+                    PathResolutionScope::Type => self.resolve_type_symbol(&first.name),
+                };
+                if let Some(hir::Res::Module(module_path)) = alias {
+                    let mut canonical = module_path;
+                    canonical.extend(
+                        segments
+                            .iter()
+                            .skip(1)
+                            .map(|seg| seg.name.as_str().to_string()),
+                    );
+                    resolved = self.lookup_global_res(&canonical, scope);
+                    if resolved.is_none() && segments.len() == 1 {
+                        resolved = Some(hir::Res::Module(canonical));
+                    }
+                }
+            }
+        }
+
+        if resolved.is_none() {
+            if segments.len() == 1 {
+                resolved = segments.last().and_then(|segment| match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+                    PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                });
+            }
+        }
+
+        // Fallback to global symbol tables based on canonicalized segments
+        if resolved.is_none() {
+            let canonical = self.canonicalize_segments(&segments);
+            resolved = self.lookup_global_res(&canonical, scope);
+        }
+
+        Ok(hir::Path {
+            segments,
+            res: resolved,
+        })
+    }
+
+    pub(super) fn ast_expr_to_hir_path(
+        &mut self,
+        expr: &ast::Expr,
+        scope: PathResolutionScope,
+    ) -> Result<hir::Path> {
+        match expr.kind() {
+            ast::ExprKind::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
+            ast::ExprKind::Select(select) => {
+                let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
+                let seg = self.make_path_segment(&select.field.name, None);
+                base.segments.push(seg);
+                Ok(base)
+            }
+            ast::ExprKind::Invoke(invoke) => {
+                let mut base = match &invoke.target {
+                    ast::ExprInvokeTarget::Function(locator) => {
+                        self.locator_to_hir_path_with_scope(locator, scope)?
+                    }
+                    ast::ExprInvokeTarget::Expr(expr) => {
+                        self.ast_expr_to_hir_path(expr.as_ref(), scope)?
+                    }
+                    ast::ExprInvokeTarget::Method(select) => {
+                        let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
+                        let seg = self.make_path_segment(&select.field.name, None);
+                        base.segments.push(seg);
+                        base
+                    }
+                    other => {
+                        self.add_error(
+                            Diagnostic::error(format!(
+                                "expected path-like expression for type path, found {:?}",
+                                other
+                            ))
+                            .with_source_context(DIAGNOSTIC_CONTEXT)
+                            .with_span(expr.span()),
+                        );
+                        hir::Path {
+                            segments: vec![self.make_path_segment("__fp_error", None)],
+                            res: None,
+                        }
+                    }
+                };
+
+                if !invoke.args.is_empty() {
+                    let args: Vec<ast::Ty> = invoke
+                        .args
+                        .iter()
+                        .map(|arg| match arg.kind() {
+                            ast::ExprKind::Value(value) => match value.as_ref() {
+                                ast::Value::Type(ty) => ty.clone(),
+                                _ => ast::Ty::expr(arg.clone()),
+                            },
+                            _ => ast::Ty::expr(arg.clone()),
+                        })
+                        .collect();
+                    let hir_args = self.convert_generic_args(&args)?;
+                    if let Some(last) = base.segments.last_mut() {
+                        if last.args.is_none() {
+                            last.args = Some(hir_args);
+                        }
+                    }
+                }
+
+                Ok(base)
+            }
+            other => {
+                self.add_error(
+                    Diagnostic::error(format!(
+                        "expected path-like expression for type path, found {:?}",
+                        other
+                    ))
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(expr.span()),
+                );
+                Ok(hir::Path {
+                    segments: vec![self.make_path_segment("__fp_error", None)],
+                    res: None,
+                })
+            }
+        }
+    }
+
+    pub(super) fn canonicalize_segments(&self, segments: &[hir::PathSegment]) -> Vec<String> {
+        segments
+            .iter()
+            .map(|s| s.name.as_str().to_string())
+            .collect()
+    }
+
+    pub(super) fn make_path_segment(
+        &self,
+        name: &str,
+        args: Option<hir::GenericArgs>,
+    ) -> hir::PathSegment {
+        hir::PathSegment {
+            name: hir::Symbol::new(name),
+            args,
+        }
+    }
+}
