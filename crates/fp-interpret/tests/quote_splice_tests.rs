@@ -5,7 +5,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
 use fp_core::Result;
 use fp_core::span::Span;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
 
 fn i32_ty() -> Ty {
     Ty::Primitive(TypePrimitive::Int(TypeInt::I32))
@@ -50,6 +50,8 @@ fn quote_fn_structural_pattern_binds_name() -> Result<()> {
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
         macro_parser: None,
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -91,6 +93,8 @@ fn quote_items_plural_pattern_binds_list() -> Result<()> {
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
         macro_parser: None,
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
 
@@ -155,6 +159,8 @@ fn splice_stmt_expands_inside_const_block() -> Result<()> {
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
         macro_parser: None,
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -388,6 +394,8 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
         macro_parser: None,
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -450,6 +458,8 @@ fn splice_executes_expr_outside_const_block() -> Result<()> {
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
         macro_parser: None,
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);
@@ -528,6 +538,8 @@ fn splice_allows_items_inside_function_bodies() -> Result<()> {
         diagnostic_context: "ast-interpreter",
         module_resolution: None,
         macro_parser: None,
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     interpreter.interpret(&mut ast);

@@ -112,7 +112,6 @@ fn lower_extern_fn_decl(
         })
         .ok_or(LowerItemsError::MissingToken("fn sig"))?;
     let mut sig = lower_fn_sig(sig_node)?;
-    sig.abi = lower_extern_abi(node)?;
     sig.abi = inherited_abi.unwrap_or(lower_extern_abi(node)?);
     let name = sig
         .name
@@ -476,6 +475,7 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
     {
         sig.is_const = true;
     }
+    sig.abi = lower_extern_abi(node)?;
 
     let quote_kind = node
         .children

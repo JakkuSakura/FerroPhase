@@ -3,24 +3,80 @@ use fp_core::ast::ExprKwArg;
 use fp_core::span::Span;
 use proc_macro2::TokenStream as ProcMacroTokenStream;
 use std::str::FromStr;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 impl<'ctx> AstInterpreter<'ctx> {
+    fn interpolate_literal_template(
+        &mut self,
+        literal: &str,
+        named: &HashMap<String, Value>,
+    ) -> std::result::Result<String, String> {
+        if !literal.contains('{') {
+            return Ok(literal.to_string());
+        }
+        let mut out = String::new();
+        let mut chars = literal.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch != '{' {
+                out.push(ch);
+                continue;
+            }
+            let mut ident = String::new();
+            let mut closed = false;
+            while let Some(next) = chars.peek().copied() {
+                if next == '}' {
+                    chars.next();
+                    closed = true;
+                    break;
+                }
+                if ident.is_empty() {
+                    if next.is_ascii_alphabetic() || next == '_' {
+                        ident.push(next);
+                        chars.next();
+                        continue;
+                    }
+                    break;
+                }
+                if next.is_ascii_alphanumeric() || next == '_' {
+                    ident.push(next);
+                    chars.next();
+                    continue;
+                }
+                break;
+            }
+            if ident.is_empty() || !closed {
+                out.push('{');
+                out.push_str(&ident);
+                if closed {
+                    out.push('}');
+                }
+                continue;
+            }
+            if let Some(value) = named
+                .get(&ident)
+                .cloned()
+                .or_else(|| self.lookup_value(&ident))
+            {
+                let rendered = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+                out.push_str(&rendered);
+            } else {
+                out.push('{');
+                out.push_str(&ident);
+                out.push('}');
+            }
+        }
+        Ok(out)
+    }
     // Runtime intrinsic evaluation that propagates control-flow.
     pub(super) fn eval_intrinsic_runtime(&mut self, call: &mut ExprIntrinsicCall) -> RuntimeFlow {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 match self.render_intrinsic_call_runtime(call) {
-                    Ok(mut output) => {
+                    Ok(output) => {
                         if call.kind == IntrinsicCallKind::Print {
-                            if let Some(last) = self.stdout.last_mut() {
-                                last.push_str(&output);
-                            } else {
-                                self.stdout.push(output);
-                            }
+                            self.emit_stdout_fragment(output);
                         } else {
-                            output.push('\n');
-                            self.stdout.push(output);
+                            self.emit_stdout_line(output);
                         }
                     }
                     Err(err) => self.emit_error(err),
@@ -39,7 +95,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             IntrinsicCallKind::Panic => {
                 let message = self.intrinsic_panic_message(call);
-                self.stdout.push(format!("panic: {}", message));
+                self.emit_stdout_line(format!("panic: {}", message));
                 RuntimeFlow::Panic(Value::string(message))
             }
             IntrinsicCallKind::CatchUnwind => {
@@ -81,6 +137,150 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
+            IntrinsicCallKind::Sleep => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("time::sleep intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 1 {
+                    self.emit_error("time::sleep intrinsic expects one argument");
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                let flow = self.eval_expr_runtime(&mut call.args[0]);
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                let seconds = match value {
+                    Value::Decimal(decimal) => decimal.value,
+                    Value::Int(int) => int.value as f64,
+                    other => {
+                        self.emit_error(format!(
+                            "time::sleep expects a numeric duration, got {other}"
+                        ));
+                        return RuntimeFlow::Value(Value::unit());
+                    }
+                };
+                if !seconds.is_finite() || seconds < 0.0 {
+                    self.emit_error("time::sleep expects a non-negative, finite duration");
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                self.mark_task_sleep(Duration::from_secs_f64(seconds));
+                RuntimeFlow::Value(Value::unit())
+            }
+            IntrinsicCallKind::Spawn => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("task::spawn intrinsic does not accept named arguments");
+                }
+                if call.args.len() != 1 {
+                    self.emit_error("task::spawn intrinsic expects one argument");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let flow = self.eval_expr_runtime(&mut call.args[0]);
+                let value = match flow {
+                    RuntimeFlow::Value(value) => value,
+                    other => return other,
+                };
+                if let Some(future) = self.extract_runtime_future(&value) {
+                    let handle = self.spawn_runtime_future(future);
+                    return RuntimeFlow::Value(Value::any(handle));
+                }
+                self.emit_error("task::spawn expects a Future value");
+                RuntimeFlow::Value(Value::undefined())
+            }
+            IntrinsicCallKind::Join => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("task::join intrinsic does not accept named arguments");
+                }
+                if call.args.is_empty() {
+                    self.emit_error("task::join intrinsic expects at least one argument");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let mut handles = Vec::with_capacity(call.args.len());
+                for arg in call.args.iter_mut() {
+                    let flow = self.eval_expr_runtime(arg);
+                    let value = match flow {
+                        RuntimeFlow::Value(value) => value,
+                        other => return other,
+                    };
+                    if let Some(handle) = self.extract_task_handle(&value) {
+                        handles.push(handle.id);
+                        continue;
+                    }
+                    if let Some(future) = self.extract_runtime_future(&value) {
+                        let handle = self.spawn_runtime_future(future);
+                        handles.push(handle.id);
+                        continue;
+                    }
+                    self.emit_error("task::join expects Task or Future arguments");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+
+                loop {
+                    let mut all_ready = true;
+                    let mut values = Vec::with_capacity(handles.len());
+                    for id in &handles {
+                        match self.task_result(*id) {
+                            Some(RuntimeFlow::Value(value)) => values.push(value),
+                            Some(RuntimeFlow::Panic(value)) => return RuntimeFlow::Panic(value),
+                            _ => {
+                                all_ready = false;
+                                break;
+                            }
+                        }
+                    }
+                    if all_ready {
+                        if values.len() == 1 {
+                            return RuntimeFlow::Value(values.remove(0));
+                        }
+                        return RuntimeFlow::Value(Value::Tuple(ValueTuple::new(values)));
+                    }
+                    if !self.tick_scheduler() {
+                        self.emit_error("no runnable tasks available during join");
+                        return RuntimeFlow::Value(Value::undefined());
+                    }
+                }
+            }
+            IntrinsicCallKind::Select => {
+                if !call.kwargs.is_empty() {
+                    self.emit_error("task::select intrinsic does not accept named arguments");
+                }
+                if call.args.len() < 2 {
+                    self.emit_error("task::select intrinsic expects at least two arguments");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                let mut handles = Vec::with_capacity(call.args.len());
+                for arg in call.args.iter_mut() {
+                    let flow = self.eval_expr_runtime(arg);
+                    let value = match flow {
+                        RuntimeFlow::Value(value) => value,
+                        other => return other,
+                    };
+                    if let Some(handle) = self.extract_task_handle(&value) {
+                        handles.push(handle.id);
+                        continue;
+                    }
+                    if let Some(future) = self.extract_runtime_future(&value) {
+                        let handle = self.spawn_runtime_future(future);
+                        handles.push(handle.id);
+                        continue;
+                    }
+                    self.emit_error("task::select expects Task or Future arguments");
+                    return RuntimeFlow::Value(Value::undefined());
+                }
+                match self.run_scheduler_until_any(&handles) {
+                    Some((idx, RuntimeFlow::Value(value))) => {
+                        RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                            Value::int(idx as i64),
+                            value,
+                        ])))
+                    }
+                    Some((_idx, flow)) => flow,
+                    None => {
+                        self.emit_error("no runnable tasks available during select");
+                        RuntimeFlow::Value(Value::undefined())
+                    }
+                }
+            }
             _ => RuntimeFlow::Value(self.eval_intrinsic(call)),
         }
     }
@@ -114,16 +314,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         match call.kind {
             IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
                 match self.render_intrinsic_call(call) {
-                    Ok(mut output) => {
+                    Ok(output) => {
                         if call.kind == IntrinsicCallKind::Print {
-                            if let Some(last) = self.stdout.last_mut() {
-                                last.push_str(&output);
-                            } else {
-                                self.stdout.push(output);
-                            }
+                            self.emit_stdout_fragment(output);
                         } else {
-                            output.push('\n');
-                            self.stdout.push(output);
+                            self.emit_stdout_line(output);
                         }
                     }
                     Err(err) => self.emit_error(err),
@@ -530,8 +725,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         &mut self,
         call: &mut ExprIntrinsicCall,
     ) -> std::result::Result<String, String> {
-        if let Some((template, args, kwargs)) = split_format_call(call) {
-            return self.render_format_template(template, args, kwargs);
+        match split_format_call(call) {
+            Ok(Some((template, args, kwargs))) => {
+                return self.render_format_template(template, args, kwargs);
+            }
+            Ok(None) => {}
+            Err(err) => return Err(err),
         }
 
         let mut rendered = Vec::with_capacity(call.args.len() + call.kwargs.len());
@@ -552,8 +751,12 @@ impl<'ctx> AstInterpreter<'ctx> {
         &mut self,
         call: &mut ExprIntrinsicCall,
     ) -> std::result::Result<String, String> {
-        if let Some((template, args, kwargs)) = split_format_call(call) {
-            return self.render_format_template_runtime(template, args, kwargs);
+        match split_format_call(call) {
+            Ok(Some((template, args, kwargs))) => {
+                return self.render_format_template_runtime(template, args, kwargs);
+            }
+            Ok(None) => {}
+            Err(err) => return Err(err),
         }
 
         let mut rendered = Vec::with_capacity(call.args.len() + call.kwargs.len());
@@ -605,16 +808,21 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for part in &template.parts {
             match part {
-                FormatTemplatePart::Literal(literal) => output.push_str(literal),
+                FormatTemplatePart::Literal(literal) => {
+                    let rendered = self.interpolate_literal_template(literal, &named)?;
+                    output.push_str(&rendered);
+                }
                 FormatTemplatePart::Placeholder(placeholder) => {
                     let value = match &placeholder.arg_ref {
                         FormatArgRef::Implicit => {
                             let index = implicit_index;
                             implicit_index += 1;
-                            positional.get(index)
+                            positional.get(index).cloned()
                         }
-                        FormatArgRef::Positional(index) => positional.get(*index),
-                        FormatArgRef::Named(name) => named.get(name),
+                        FormatArgRef::Positional(index) => positional.get(*index).cloned(),
+                        FormatArgRef::Named(name) => {
+                            named.get(name).cloned().or_else(|| self.lookup_value(name))
+                        }
                     }
                     .ok_or_else(|| match &placeholder.arg_ref {
                         FormatArgRef::Implicit => format!(
@@ -631,7 +839,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     })?;
 
                     let formatted = format_value_with_spec(
-                        value,
+                        &value,
                         placeholder
                             .format_spec
                             .as_ref()
@@ -672,20 +880,25 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         for part in &template.parts {
             match part {
-                FormatTemplatePart::Literal(literal) => output.push_str(literal),
+                FormatTemplatePart::Literal(literal) => {
+                    let rendered = self.interpolate_literal_template(literal, &named)?;
+                    output.push_str(&rendered);
+                }
                 FormatTemplatePart::Placeholder(placeholder) => {
                     let value = match &placeholder.arg_ref {
                         FormatArgRef::Implicit => {
                             let index = implicit_index;
                             implicit_index += 1;
-                            positional.get(index)
+                            positional.get(index).cloned()
                         }
-                        FormatArgRef::Positional(index) => positional.get(*index),
-                        FormatArgRef::Named(name) => named.get(name),
+                        FormatArgRef::Positional(index) => positional.get(*index).cloned(),
+                        FormatArgRef::Named(name) => {
+                            named.get(name).cloned().or_else(|| self.lookup_value(name))
+                        }
                     };
                     if let Some(value) = value {
                         let rendered = format_value_with_spec(
-                            value,
+                            &value,
                             placeholder
                                 .format_spec
                                 .as_ref()
@@ -756,10 +969,46 @@ fn token_stream_to_string(tokens: &[MacroTokenTree]) -> String {
 
 fn split_format_call(
     call: &mut ExprIntrinsicCall,
-) -> Option<(&mut ExprStringTemplate, &mut [Expr], &mut [ExprKwArg])> {
-    let (first, rest) = call.args.split_first_mut()?;
-    match first.kind_mut() {
-        ExprKind::FormatString(template) => Some((template, rest, call.kwargs.as_mut_slice())),
+) -> std::result::Result<Option<(&mut ExprStringTemplate, &mut [Expr], &mut [ExprKwArg])>, String>
+{
+    let (first, rest) = match call.args.split_first_mut() {
+        Some(parts) => parts,
+        None => return Ok(None),
+    };
+
+    if matches!(first.kind(), ExprKind::FormatString(_)) {
+        if let ExprKind::FormatString(template) = first.kind_mut() {
+            return Ok(Some((template, rest, call.kwargs.as_mut_slice())));
+        }
+        return Err("format template is missing".to_string());
+    }
+
+    let template_text = match first.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(string) => Some(string.value.clone()),
+            _ => None,
+        },
         _ => None,
+    };
+
+    if !matches!(
+        call.kind,
+        IntrinsicCallKind::Format | IntrinsicCallKind::Print | IntrinsicCallKind::Println
+    ) {
+        return Ok(None);
+    }
+
+    let Some(template_text) = template_text else {
+        return Ok(None);
+    };
+
+    let parts = fp_core::ast::parse_format_template(&template_text)
+        .map_err(|err| format!("invalid format template: {err}"))?;
+    first.kind = ExprKind::FormatString(ExprStringTemplate { parts });
+
+    if let ExprKind::FormatString(template) = first.kind_mut() {
+        Ok(Some((template, rest, call.kwargs.as_mut_slice())))
+    } else {
+        Err("failed to build format template".to_string())
     }
 }

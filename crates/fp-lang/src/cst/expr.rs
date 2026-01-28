@@ -498,20 +498,8 @@ impl Parser {
         self.bump_token_into(&mut children); // `let`
         self.bump_trivia_into(&mut children);
 
-        // Optional `mut`
-        if self.peek_non_trivia_normalized() == Some("mut") {
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
-        }
-
-        // ident or `_`
-        match self.peek_non_trivia_token_kind() {
-            Some(TokenKind::Ident) => self.bump_token_into(&mut children),
-            Some(TokenKind::Keyword(_)) if self.peek_non_trivia_raw() == Some("_") => {
-                self.bump_token_into(&mut children)
-            }
-            _ => return Err(self.error("expected identifier after let")),
-        }
+        let pat = self.parse_pattern()?;
+        children.push(SyntaxElement::Node(Box::new(pat)));
         self.bump_trivia_into(&mut children);
 
         // Optional type annotation `: <type>`.

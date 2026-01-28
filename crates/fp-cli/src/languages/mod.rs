@@ -22,7 +22,9 @@ pub const WIT: &str = "wit";
 pub const SQL: &str = fp_sql::SQL;
 pub const PRQL: &str = fp_prql::PRQL;
 pub const JSONSCHEMA: &str = fp_jsonschema::JSON_SCHEMA;
+pub const JSON: &str = fp_json::JSON;
 pub const FLATBUFFERS: &str = fp_flatbuffers::FLATBUFFERS;
+pub const TOML: &str = fp_toml::TOML;
 
 /// Language information structure
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -125,8 +127,18 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
         transpile_supported: false,
     },
     Language {
+        name: JSON,
+        extensions: &["json"],
+        transpile_supported: false,
+    },
+    Language {
         name: FLATBUFFERS,
         extensions: &["fbs"],
+        transpile_supported: false,
+    },
+    Language {
+        name: TOML,
+        extensions: &["toml"],
         transpile_supported: false,
     },
 ];

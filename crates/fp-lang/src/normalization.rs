@@ -189,6 +189,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
 
 fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
     match name {
+        "join" => Some(IntrinsicCallKind::Join),
         "sizeof" => Some(IntrinsicCallKind::SizeOf),
         "reflect_fields" => Some(IntrinsicCallKind::ReflectFields),
         "hasmethod" => Some(IntrinsicCallKind::HasMethod),

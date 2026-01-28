@@ -6,7 +6,7 @@ use fp_core::ast::{
 use fp_core::span::Span;
 use fp_core::context::SharedScopedContext;
 use fp_core::error::Result;
-use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
 
 struct TokenStreamParser;
 
@@ -135,6 +135,8 @@ fn expands_function_like_proc_macro() -> Result<()> {
         diagnostic_context: "proc-macro-test",
         module_resolution: None,
         macro_parser: Some(std::sync::Arc::new(TokenStreamParser)),
+        intrinsic_normalizer: None,
+        stdout_mode: StdoutMode::Capture,
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     let mut node = fp_core::ast::Node::file(file);

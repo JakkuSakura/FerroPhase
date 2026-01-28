@@ -16,6 +16,7 @@ fn interpret_and_run(source: &str) -> Result<Value> {
     let options = InterpreterOptions {
         mode: InterpreterMode::RunTime,
         macro_parser: result.macro_parser,
+        intrinsic_normalizer: result.intrinsic_normalizer,
         ..InterpreterOptions::default()
     };
 

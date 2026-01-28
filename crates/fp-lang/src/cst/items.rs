@@ -1186,14 +1186,17 @@ fn parse_visibility_cst(input: &mut &[Token]) -> ModalResult<Option<SyntaxNode>>
 }
 
 fn parse_let_stmt_as_block(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
-    expect_keyword(input, Keyword::Let)?;
     let mut let_children = Vec::new();
-    let_children.push(SyntaxElement::Token(token_text("let")));
-    if match_keyword(input, Keyword::Mut) {
-        let_children.push(SyntaxElement::Token(token_text("mut")));
+    let let_tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    match let_tok.kind {
+        TokenKind::Keyword(Keyword::Let) => {
+            let_children.push(SyntaxElement::Token(syntax_token_from_token(&let_tok)));
+        }
+        _ => return cut_message(input, "expected keyword Let"),
     }
-    let name_tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-    let_children.push(SyntaxElement::Token(syntax_token_from_token(&name_tok)));
+
+    let pattern = parse_pattern_from_tokens(input)?;
+    let_children.push(SyntaxElement::Node(Box::new(pattern)));
 
     if match_symbol(input, ":") {
         let ty = parse_type_prefix_from_tokens(input, &["="])?;
@@ -1209,6 +1212,70 @@ fn parse_let_stmt_as_block(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
         SyntaxKind::ExprBlock,
         vec![SyntaxElement::Node(Box::new(let_node))],
     ))
+}
+
+fn parse_pattern_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
+    let mut children = Vec::new();
+    if matches!(
+        input.first(),
+        Some(Token {
+            kind: TokenKind::Keyword(Keyword::Mut),
+            ..
+        })
+    ) {
+        let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+    }
+
+    if matches_symbol(input.first(), "(") {
+        let open = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        if open.kind != TokenKind::Symbol || open.lexeme != "(" {
+            return cut_message(input, "expected '(' in tuple pattern");
+        }
+        children.push(SyntaxElement::Token(syntax_token_from_token(&open)));
+
+        while !matches_symbol(input.first(), ")") {
+            let pat = parse_pattern_from_tokens(input)?;
+            children.push(SyntaxElement::Node(Box::new(pat)));
+
+            if matches_symbol(input.first(), ",") {
+                let comma = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                if comma.kind != TokenKind::Symbol || comma.lexeme != "," {
+                    return cut_message(input, "expected ',' in tuple pattern");
+                }
+                children.push(SyntaxElement::Token(syntax_token_from_token(&comma)));
+                if matches_symbol(input.first(), ")") {
+                    break;
+                }
+                continue;
+            }
+            break;
+        }
+
+        let close = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+        if close.kind != TokenKind::Symbol || close.lexeme != ")" {
+            return cut_message(input, "expected ')' to close tuple pattern");
+        }
+        children.push(SyntaxElement::Token(syntax_token_from_token(&close)));
+        return Ok(node(SyntaxKind::PatternTuple, children));
+    }
+
+    let tok = advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+    match tok.kind {
+        TokenKind::Ident if tok.lexeme == "_" => {
+            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+            Ok(node(SyntaxKind::PatternWildcard, children))
+        }
+        TokenKind::Ident => {
+            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+            Ok(node(SyntaxKind::PatternIdent, children))
+        }
+        TokenKind::Keyword(_) if tok.lexeme == "_" => {
+            children.push(SyntaxElement::Token(syntax_token_from_token(&tok)));
+            Ok(node(SyntaxKind::PatternWildcard, children))
+        }
+        _ => cut_message(input, "expected pattern"),
+    }
 }
 
 fn consume_where_clause(input: &mut &[Token]) {

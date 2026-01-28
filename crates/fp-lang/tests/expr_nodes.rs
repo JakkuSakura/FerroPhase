@@ -86,6 +86,25 @@ fn parses_block_expression() {
 }
 
 #[test]
+fn parses_tuple_destructuring_let() {
+    let fe = FerroFrontend::new();
+    let res = fe.parse("{ let (a, b) = (1, 2); a }", None).expect("parse");
+    let e = unwrap_expr(&res.ast);
+    let block = match e.kind() {
+        ExprKind::Block(block) => block,
+        other => panic!("expected ExprKind::Block, found {:?}", other),
+    };
+    let first = block
+        .stmts
+        .first()
+        .expect("expected at least one statement");
+    let BlockStmt::Let(stmt) = first else {
+        panic!("expected let statement, found {:?}", first);
+    };
+    assert!(matches!(stmt.pat.kind(), PatternKind::Tuple(_)));
+}
+
+#[test]
 fn parses_async_block_expression() {
     let fe = FerroFrontend::new();
     let res = fe.parse("async { 1 }", None).expect("parse");

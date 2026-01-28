@@ -1299,27 +1299,16 @@ fn lower_block_from_cst(node: &SyntaxNode) -> Result<ExprBlock, LowerError> {
 }
 
 fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
-    let mut saw_mut = false;
-    let mut name: Option<String> = None;
+    let mut pattern: Option<Pattern> = None;
     let mut ty: Option<Ty> = None;
     let mut init_expr: Option<Expr> = None;
 
     for child in &node.children {
         match child {
-            crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut" => {
-                saw_mut = true;
-            }
-            crate::syntax::SyntaxElement::Token(t)
-                if !t.is_trivia()
-                    && name.is_none()
-                    && t.text != "let"
-                    && t.text != "mut"
-                    && t.text
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphabetic() || c == '_') =>
-            {
-                name = Some(t.text.clone());
+            crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Pattern => {
+                if pattern.is_none() {
+                    pattern = Some(lower_pattern_from_cst(n)?);
+                }
             }
             crate::syntax::SyntaxElement::Node(n) if n.kind.category() == CstCategory::Type => {
                 ty = Some(lower_type_from_cst(n)?);
@@ -1352,28 +1341,14 @@ fn lower_let_stmt(node: &SyntaxNode) -> Result<BlockStmt, LowerError> {
         }
     }
 
-    let Some(name) = name else {
+    let Some(pat) = pattern else {
         return Err(LowerError::UnexpectedNode(SyntaxKind::BlockStmtLet));
-    };
-    let pat = if name == "_" {
-        Pattern::new(PatternKind::Wildcard(PatternWildcard {}))
-    } else {
-        let ident = Ident::new(name);
-        let mut pat = Pattern::new(PatternKind::Ident(PatternIdent::new(ident)));
-        if saw_mut {
-            pat.make_mut();
-        }
-        pat
     };
 
     let stmt = match (ty, init_expr) {
         (Some(ty), Some(init)) => {
-            if let PatternKind::Ident(_) = pat.kind() {
-                let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
-                StmtLet::new(typed_pat, Some(init), None)
-            } else {
-                StmtLet::new(pat, Some(init), None)
-            }
+            let typed_pat = Pattern::from(PatternKind::Type(PatternType::new(pat, ty)));
+            StmtLet::new(typed_pat, Some(init), None)
         }
         (Some(_ty), None) => StmtLet::new(pat, None, None),
         (None, init) => StmtLet::new(pat, init, None),

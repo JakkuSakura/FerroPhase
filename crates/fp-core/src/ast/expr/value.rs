@@ -851,6 +851,46 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
                 invoke.kwargs.clone(),
             ))
         }
+        IntrinsicCallKind::Sleep => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                invoke.kwargs.clone(),
+            ))
+        }
+        IntrinsicCallKind::Spawn => {
+            if invoke.args.len() != 1 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                vec![invoke.args[0].clone()],
+                invoke.kwargs.clone(),
+            ))
+        }
+        IntrinsicCallKind::Join => {
+            if invoke.args.is_empty() {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                invoke.args.clone(),
+                invoke.kwargs.clone(),
+            ))
+        }
+        IntrinsicCallKind::Select => {
+            if invoke.args.len() < 2 {
+                return None;
+            }
+            Some(ExprIntrinsicCall::new(
+                kind,
+                invoke.args.clone(),
+                invoke.kwargs.clone(),
+            ))
+        }
         IntrinsicCallKind::CreateStruct => {
             if invoke.args.len() != 1 {
                 return None;
@@ -942,6 +982,10 @@ fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
                     Some(IntrinsicCallKind::Len)
                 }
                 ["std", "time", "now"] => Some(IntrinsicCallKind::TimeNow),
+                ["std", "time", "sleep"] => Some(IntrinsicCallKind::Sleep),
+                ["std", "task", "spawn"] => Some(IntrinsicCallKind::Spawn),
+                ["std", "task", "join"] => Some(IntrinsicCallKind::Join),
+                ["std", "task", "select"] => Some(IntrinsicCallKind::Select),
                 ["proc_macro", "token_stream_from_str"]
                 | ["std", "proc_macro", "token_stream_from_str"]
                 | ["proc_macro", "TokenStream", "from_str"]
@@ -1037,7 +1081,7 @@ fn build_string_template_from_args(
     }
 }
 
-fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>, String> {
+pub fn parse_format_template(template: &str) -> Result<Vec<FormatTemplatePart>, String> {
     let mut parts = Vec::new();
     let mut current_literal = String::new();
     let mut chars = template.chars().peekable();

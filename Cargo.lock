@@ -1184,6 +1184,7 @@ dependencies = [
  "fp-csharp",
  "fp-flatbuffers",
  "fp-interpret",
+ "fp-json",
  "fp-jsonschema",
  "fp-lang",
  "fp-llvm",
@@ -1194,6 +1195,7 @@ dependencies = [
  "fp-sql",
  "fp-stackvm",
  "fp-sycl",
+ "fp-toml",
  "fp-typescript",
  "fp-typing",
  "fp-wasm",
@@ -1302,6 +1304,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "fp-json"
+version = "0.0.0"
+dependencies = [
+ "fp-core",
+ "serde_json",
+]
+
+[[package]]
 name = "fp-jsonschema"
 version = "0.1.0"
 dependencies = [
@@ -1396,6 +1406,14 @@ name = "fp-sycl"
 version = "0.1.0"
 dependencies = [
  "fp-core",
+]
+
+[[package]]
+name = "fp-toml"
+version = "0.0.0"
+dependencies = [
+ "fp-core",
+ "toml 0.9.11+spec-1.1.0",
 ]
 
 [[package]]

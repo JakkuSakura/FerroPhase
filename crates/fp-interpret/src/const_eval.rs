@@ -8,10 +8,11 @@ use fp_core::ast::{
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result as CoreResult;
+use fp_core::intrinsics::IntrinsicNormalizer;
 use fp_core::lang::{collect_lang_items, register_threadlocal_lang_items};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
-use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
+use crate::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
 
 pub const STAGE_CONST_EVAL: &str = "const-eval";
 
@@ -65,6 +66,7 @@ impl ConstEvaluationOrchestrator {
         ast: &mut Node,
         ctx: &SharedScopedContext,
         macro_parser: Option<Arc<dyn MacroExpansionParser>>,
+        intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     ) -> CoreResult<ConstEvalOutcome> {
         register_threadlocal_serializer(self.serializer.clone());
         let options = InterpreterOptions {
@@ -74,6 +76,8 @@ impl ConstEvaluationOrchestrator {
             diagnostic_context: STAGE_CONST_EVAL,
             module_resolution: None,
             macro_parser,
+            intrinsic_normalizer,
+            stdout_mode: StdoutMode::Capture,
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);
@@ -103,6 +107,7 @@ pub struct ConstEvalContext {
     pub options: ConstEvalOptions,
     pub serializer: Option<Arc<dyn AstSerializer>>,
     pub macro_parser: Option<Arc<dyn MacroExpansionParser>>,
+    pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     pub std_modules: Vec<Node>,
 }
 
@@ -153,7 +158,12 @@ impl PipelineStage for ConstEvalStage {
         }
         let lang_items = collect_lang_items(&ast);
         register_threadlocal_lang_items(lang_items);
-        fp_core::intrinsics::normalize_intrinsics(&mut ast).map_err(|err| {
+        let normalization = if let Some(normalizer) = context.intrinsic_normalizer.as_ref() {
+            fp_core::intrinsics::normalize_intrinsics_with(&mut ast, normalizer.as_ref())
+        } else {
+            fp_core::intrinsics::normalize_intrinsics(&mut ast)
+        };
+        normalization.map_err(|err| {
             diagnostics.push(
                 Diagnostic::error(format!("Intrinsic normalization failed: {}", err))
                     .with_source_context(STAGE_CONST_EVAL),
@@ -165,7 +175,12 @@ impl PipelineStage for ConstEvalStage {
         orchestrator.set_debug_assertions(!context.options.release);
         orchestrator.set_execute_main(context.options.execute_main);
 
-        let outcome = match orchestrator.evaluate(&mut ast, &shared_context, context.macro_parser) {
+        let outcome = match orchestrator.evaluate(
+            &mut ast,
+            &shared_context,
+            context.macro_parser,
+            context.intrinsic_normalizer.clone(),
+        ) {
             Ok(outcome) => outcome,
             Err(err) => {
                 diagnostics.push(

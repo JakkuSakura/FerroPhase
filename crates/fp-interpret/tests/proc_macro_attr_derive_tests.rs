@@ -15,6 +15,7 @@ fn interpret_source(source: &str) -> Result<Node> {
     let options = InterpreterOptions {
         mode: InterpreterMode::CompileTime,
         macro_parser: result.macro_parser,
+        intrinsic_normalizer: result.intrinsic_normalizer,
         ..InterpreterOptions::default()
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);

@@ -44,6 +44,7 @@ fp run examples/01_const_eval_basics.fp
 | `20_quote_splice.fp`             | Quote/splice            | Typed quote tokens, const block splicing |
 | `21_build_blocks.fp`             | Build blocks            | Item generation with `item` and `[item]` |
 | `23_runtime_collections.fp`      | Runtime collections     | List/map indexing and linear search      |
+| `35_async_await.fp`              | Async/await basics      | `async fn`, sequential `await` usage     |
 
 ### Type System
 
@@ -62,5 +63,6 @@ fp run examples/01_const_eval_basics.fp
 |------------------------|-----------------------------|---------------------------------------------------------------|
 | `19_wit_interface.wit` | WebAssembly Interface Types | Defining interfaces & records consumable via the WIT frontend |
 | `34_ffi_basics.fp`     | FFI basics                  | `extern "C"` declarations and libc calls                      |
+| `35_glibc_http_server.fp` | glibc TCP server         | Raw socket accept/read/write with a minimal HTTP response     |
 
 See `docs/ConstEval.md` for background on the showcased features.

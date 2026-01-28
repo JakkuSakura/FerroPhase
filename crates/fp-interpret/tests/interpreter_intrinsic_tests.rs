@@ -1,10 +1,12 @@
 use fp_core::ast::{
-    Expr, ExprIntrinsicCall, ExprKind, ExprStringTemplate, FormatArgRef, FormatPlaceholder,
-    FormatTemplatePart, Ty, TypeInt, TypePrimitive, Value,
+    BlockStmt, BlockStmtExpr, Expr, ExprAsync, ExprBlock, ExprIntrinsicCall, ExprKind,
+    ExprStringTemplate, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Ty, TypeInt,
+    TypePrimitive, Value,
 };
 use fp_core::context::SharedScopedContext;
 use fp_core::intrinsics::IntrinsicCallKind;
-use fp_interpret::engine::{AstInterpreter, InterpreterOptions};
+use fp_core::span::Span;
+use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions};
 
 fn intrinsic_args_expr(kind: IntrinsicCallKind, values: Vec<Value>) -> Expr {
     let args = values.into_iter().map(Expr::value).collect();
@@ -21,6 +23,40 @@ fn intrinsic_format_expr(
     call_args.push(Expr::new(ExprKind::FormatString(template)));
     call_args.extend(args);
     let call = ExprIntrinsicCall::new(kind, call_args, Vec::new());
+    Expr::new(ExprKind::IntrinsicCall(call))
+}
+
+fn async_value_expr(value: Value) -> Expr {
+    Expr::new(ExprKind::Async(ExprAsync {
+        span: Span::null(),
+        expr: Box::new(Expr::value(value)),
+    }))
+}
+
+fn async_sleep_value_expr(seconds: f64, value: Value) -> Expr {
+    let sleep_call = ExprIntrinsicCall::new(
+        IntrinsicCallKind::Sleep,
+        vec![Expr::value(Value::decimal(seconds))],
+        Vec::new(),
+    );
+    let mut block = ExprBlock::new();
+    block.push_stmt(BlockStmt::Expr(
+        BlockStmtExpr::new(Expr::new(ExprKind::IntrinsicCall(sleep_call))).with_semicolon(true),
+    ));
+    block.push_expr(Expr::value(value));
+    Expr::new(ExprKind::Async(ExprAsync {
+        span: Span::null(),
+        expr: Box::new(Expr::new(ExprKind::Block(block))),
+    }))
+}
+
+fn spawn_expr(expr: Expr) -> Expr {
+    let call = ExprIntrinsicCall::new(IntrinsicCallKind::Spawn, vec![expr], Vec::new());
+    Expr::new(ExprKind::IntrinsicCall(call))
+}
+
+fn join_expr(expr: Expr) -> Expr {
+    let call = ExprIntrinsicCall::new(IntrinsicCallKind::Join, vec![expr], Vec::new());
     Expr::new(ExprKind::IntrinsicCall(call))
 }
 
@@ -77,6 +113,104 @@ fn println_renders_format_template_placeholders() {
     );
     interpreter.evaluate_expression(&mut expr);
 
+    let outcome = interpreter.take_outcome();
+    assert_eq!(outcome.stdout, vec!["total=42\n".to_owned()]);
+    assert!(!outcome.has_errors);
+}
+
+#[test]
+fn format_uses_string_literal_template() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());
+
+    let call = ExprIntrinsicCall::new(
+        IntrinsicCallKind::Format,
+        vec![
+            Expr::value(Value::string("total={}".to_owned())),
+            Expr::value(Value::int(42)),
+        ],
+        Vec::new(),
+    );
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert_eq!(value, Value::string("total=42".to_owned()));
+
+    let outcome = interpreter.take_outcome();
+    assert!(!outcome.has_errors);
+}
+
+#[test]
+fn format_uses_string_literal_template_in_runtime_mode() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let call = ExprIntrinsicCall::new(
+        IntrinsicCallKind::Format,
+        vec![
+            Expr::value(Value::string("total={}".to_owned())),
+            Expr::value(Value::int(42)),
+        ],
+        Vec::new(),
+    );
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert_eq!(value, Value::string("total=42".to_owned()));
+
+    let outcome = interpreter.take_outcome();
+    assert!(!outcome.has_errors);
+}
+
+#[test]
+fn println_uses_string_literal_template() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());
+
+    let call = ExprIntrinsicCall::new(
+        IntrinsicCallKind::Println,
+        vec![
+            Expr::value(Value::string("total={}".to_owned())),
+            Expr::value(Value::int(42)),
+        ],
+        Vec::new(),
+    );
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    interpreter.evaluate_expression(&mut expr);
+    let outcome = interpreter.take_outcome();
+    assert_eq!(outcome.stdout, vec!["total=42\n".to_owned()]);
+    assert!(!outcome.has_errors);
+}
+
+#[test]
+fn println_uses_string_literal_template_in_runtime_mode() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let call = ExprIntrinsicCall::new(
+        IntrinsicCallKind::Println,
+        vec![
+            Expr::value(Value::string("total={}".to_owned())),
+            Expr::value(Value::int(42)),
+        ],
+        Vec::new(),
+    );
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    interpreter.evaluate_expression(&mut expr);
     let outcome = interpreter.take_outcome();
     assert_eq!(outcome.stdout, vec!["total=42\n".to_owned()]);
     assert!(!outcome.has_errors);
@@ -140,5 +274,75 @@ fn type_of_returns_typed_expression_type() {
             ));
         }
         other => panic!("expected type value, got {:?}", other),
+    }
+}
+
+#[test]
+fn spawn_join_returns_async_value() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let async_expr = async_value_expr(Value::int(7));
+    let mut expr = join_expr(spawn_expr(async_expr));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    assert_eq!(value, Value::int(7));
+}
+
+#[test]
+fn select_prefers_ready_task_over_sleeping_one() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let slow = spawn_expr(async_sleep_value_expr(0.02, Value::int(1)));
+    let fast = spawn_expr(async_value_expr(Value::int(2)));
+    let call = ExprIntrinsicCall::new(IntrinsicCallKind::Select, vec![slow, fast], Vec::new());
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    match value {
+        Value::Tuple(tuple) => {
+            assert_eq!(tuple.values.len(), 2);
+            assert_eq!(tuple.values[0], Value::int(1));
+            assert_eq!(tuple.values[1], Value::int(2));
+        }
+        other => panic!("expected select tuple, got {other:?}"),
+    }
+}
+
+#[test]
+fn join_multiple_futures_returns_tuple() {
+    let ctx = SharedScopedContext::new();
+    let mut interpreter = AstInterpreter::new(
+        &ctx,
+        InterpreterOptions {
+            mode: InterpreterMode::RunTime,
+            ..InterpreterOptions::default()
+        },
+    );
+
+    let left = async_value_expr(Value::int(1));
+    let right = async_value_expr(Value::int(2));
+    let call = ExprIntrinsicCall::new(IntrinsicCallKind::Join, vec![left, right], Vec::new());
+    let mut expr = Expr::new(ExprKind::IntrinsicCall(call));
+
+    let value = interpreter.evaluate_expression(&mut expr);
+    match value {
+        Value::Tuple(tuple) => {
+            assert_eq!(tuple.values, vec![Value::int(1), Value::int(2)]);
+        }
+        other => panic!("expected join tuple, got {other:?}"),
     }
 }

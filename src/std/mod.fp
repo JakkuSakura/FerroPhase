@@ -1,10 +1,12 @@
 pub mod bench;
 pub mod collections;
 pub mod ffi;
+pub mod future;
 pub mod json;
 pub mod intrinsics;
 pub mod meta;
 pub mod net;
 pub mod proc_macro;
+pub mod task;
 pub mod test;
 pub mod time;

@@ -52,6 +52,7 @@ impl Pipeline {
             },
             serializer: self.serializer.clone(),
             macro_parser: self.macro_parser.clone(),
+            intrinsic_normalizer: self.intrinsic_normalizer.clone(),
             std_modules,
         };
         let mut diagnostics = PipelineDiagnostics::default();

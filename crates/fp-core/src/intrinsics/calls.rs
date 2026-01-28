@@ -21,6 +21,14 @@ pub enum IntrinsicCallKind {
     CatchUnwind,
     /// Get the current time as seconds since the Unix epoch.
     TimeNow,
+    /// Sleep for the given number of seconds.
+    Sleep,
+    /// Spawn a future onto the runtime.
+    Spawn,
+    /// Join a spawned task and return its result.
+    Join,
+    /// Select the first completed task.
+    Select,
 
     // Metaprogramming intrinsics
     /// `sizeof!` - get size of a type in bytes

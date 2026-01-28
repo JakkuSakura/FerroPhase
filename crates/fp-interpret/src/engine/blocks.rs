@@ -276,7 +276,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                     .and_then(|tokens| parser.parse_expr(&tokens));
                 self.macro_depth = self.macro_depth.saturating_sub(1);
                 match expanded {
-                    Ok(new_expr) => {
+                    Ok(mut new_expr) => {
+                        if let Err(err) = self.normalize_macro_expansion_expr(&mut new_expr) {
+                            self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                            return;
+                        }
                         *expr = new_expr;
                         self.mark_mutated();
                         self.evaluate_function_body(expr);

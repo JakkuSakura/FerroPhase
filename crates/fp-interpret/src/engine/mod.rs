@@ -1,6 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use std::io::Write;
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
@@ -11,7 +13,7 @@ use fp_core::ast::{
     ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
     ExprRangeLimit, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam,
     FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
-    ItemKind, MacroGroup,
+    ItemKind, MacroDelimiter, MacroGroup,
     MacroInvocation, MacroToken, MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind,
     QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny, TypeTokenStream, TypeArray,
     TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
@@ -22,7 +24,7 @@ use fp_core::ast::{Ident, Locator};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
-use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer};
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
@@ -92,6 +94,13 @@ struct ProcMacroDefinition {
     function: ItemDefFunction,
 }
 
+#[derive(Debug, Clone)]
+struct SelectMacroArm {
+    name: String,
+    future: Vec<MacroTokenTree>,
+    body: Vec<MacroTokenTree>,
+}
+
 struct InterpreterTypeHook<'ctx> {
     interpreter: *mut AstInterpreter<'ctx>,
 }
@@ -116,6 +125,8 @@ pub struct InterpreterOptions {
     // Optional module resolution context for handling `use`/imports during evaluation.
     pub module_resolution: Option<ModuleResolutionContext>,
     pub macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
+    pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
+    pub stdout_mode: StdoutMode,
 }
 
 impl Default for InterpreterOptions {
@@ -127,8 +138,16 @@ impl Default for InterpreterOptions {
             diagnostic_context: DEFAULT_DIAGNOSTIC_CONTEXT,
             module_resolution: None,
             macro_parser: None,
+            intrinsic_normalizer: None,
+            stdout_mode: StdoutMode::Capture,
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum StdoutMode {
+    Capture,
+    Inherit,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +165,18 @@ pub struct InterpreterOutcome {
     pub has_errors: bool,
     pub mutations_applied: bool,
     pub closure_types: HashMap<String, Ty>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EvalStepOutcome {
+    Yielded,
+    Complete(Value),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeStepOutcome {
+    Yielded,
+    Complete(RuntimeFlow),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -241,7 +272,7 @@ impl PartialEq for StoredValue {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 struct ImplContext {
     self_ty: Option<String>,
     trait_ty: Option<String>,
@@ -282,8 +313,8 @@ enum StructLiteralType {
     Structural(TypeStructural),
 }
 
-#[derive(Debug, Clone)]
-enum RuntimeFlow {
+#[derive(Debug, Clone, PartialEq)]
+pub enum RuntimeFlow {
     Value(Value),
     Break(Option<Value>),
     Continue,
@@ -356,6 +387,136 @@ impl<'ctx> Drop for CallFrameGuard<'ctx> {
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeFuture {
+    expr: Box<Expr>,
+    value_env: Vec<HashMap<String, StoredValue>>,
+    type_env: Vec<HashMap<String, Ty>>,
+    module_stack: Vec<String>,
+    impl_stack: Vec<ImplContext>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TaskHandle {
+    id: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskStatus {
+    Pending,
+    Ready,
+    Panicked,
+}
+
+#[derive(Debug, Clone)]
+struct TaskState {
+    id: u64,
+    expr: Box<Expr>,
+    value_env: Vec<HashMap<String, StoredValue>>,
+    type_env: Vec<HashMap<String, Ty>>,
+    module_stack: Vec<String>,
+    impl_stack: Vec<ImplContext>,
+    runtime_tasks: Vec<RuntimeTask>,
+    runtime_value_stack: Vec<RuntimeFlow>,
+    block_stack: Vec<BlockFrame>,
+    expr_stack: Vec<ExprFrame>,
+    call_stack: Vec<CallFrame>,
+    loop_depth: usize,
+    function_depth: usize,
+    in_const_region: usize,
+    status: TaskStatus,
+    result: Option<Value>,
+    panic: Option<Value>,
+    sleep_until: Option<Instant>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ActiveEval {
+    Const,
+    Runtime,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CollectKind {
+    Tuple,
+    Array,
+}
+
+#[derive(Debug, Clone)]
+enum ConstTask {
+    Eval(*mut Expr),
+    PushValue(Value),
+    ApplyBinOp(BinOpKind),
+    ApplyUnOp(UnOpKind),
+    ApplyIf {
+        then_expr: *mut Expr,
+        else_expr: Option<*mut Expr>,
+    },
+    ApplyCollect {
+        len: usize,
+        kind: CollectKind,
+    },
+    ApplyCast {
+        ty: Ty,
+    },
+    ApplyRange {
+        inclusive: bool,
+    },
+    ApplySelect {
+        field: String,
+    },
+    ApplyIndex {
+        has_start: bool,
+        has_end: bool,
+        inclusive: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+enum RuntimeTask {
+    Eval(*mut Expr),
+    PushValue(Value),
+    ApplyBinOp(BinOpKind),
+    ApplyUnOp(UnOpKind),
+    ApplyIf {
+        then_expr: *mut Expr,
+        else_expr: Option<*mut Expr>,
+    },
+    EvalBlock {
+        block: *mut ExprBlock,
+        idx: usize,
+    },
+    ApplyBlockValue {
+        has_value: bool,
+    },
+    ApplyLet {
+        pat: Pattern,
+    },
+    ApplyCollect {
+        len: usize,
+        kind: CollectKind,
+    },
+    ApplyCast {
+        ty: Ty,
+    },
+    ApplyRange {
+        inclusive: bool,
+    },
+    ApplySelect {
+        field: String,
+    },
+    ApplyIndex {
+        has_start: bool,
+        has_end: bool,
+        inclusive: bool,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct BlockFrame {
+    last_value: Value,
+}
+
 #[derive(Debug, Clone)]
 struct ReceiverBinding {
     value: Value,
@@ -412,6 +573,8 @@ pub struct AstInterpreter<'ctx> {
     diagnostic_context: &'static str,
     module_resolution: Option<ModuleResolutionContext>,
     macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
+    intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
+    stdout_mode: StdoutMode,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -457,7 +620,19 @@ pub struct AstInterpreter<'ctx> {
     call_stack: Vec<CallFrame>,
     expr_stack: Vec<ExprFrame>,
     const_value_stack: Vec<Value>,
-    runtime_value_stack: Vec<Value>,
+    runtime_value_stack: Vec<RuntimeFlow>,
+    const_tasks: Vec<ConstTask>,
+    runtime_tasks: Vec<RuntimeTask>,
+    block_stack: Vec<BlockFrame>,
+    stack_eval_active: bool,
+    active_eval: Option<ActiveEval>,
+    eval_scope_pushed: bool,
+    task_counter: u64,
+    tasks: HashMap<u64, TaskState>,
+    ready_tasks: VecDeque<u64>,
+    current_task: Option<u64>,
+    task_should_yield: bool,
+    current_task_sleep_until: Option<Instant>,
 }
 
 impl<'ctx> AstInterpreter<'ctx> {
@@ -476,6 +651,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             diagnostic_context: options.diagnostic_context,
             module_resolution: options.module_resolution.clone(),
             macro_parser: options.macro_parser.clone(),
+            intrinsic_normalizer: options.intrinsic_normalizer.clone(),
+            stdout_mode: options.stdout_mode,
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -521,6 +698,18 @@ impl<'ctx> AstInterpreter<'ctx> {
             expr_stack: Vec::new(),
             const_value_stack: Vec::new(),
             runtime_value_stack: Vec::new(),
+            const_tasks: Vec::new(),
+            runtime_tasks: Vec::new(),
+            block_stack: Vec::new(),
+            stack_eval_active: false,
+            active_eval: None,
+            eval_scope_pushed: false,
+            task_counter: 0,
+            tasks: HashMap::new(),
+            ready_tasks: VecDeque::new(),
+            current_task: None,
+            task_should_yield: false,
+            current_task_sleep_until: None,
         }
     }
 
@@ -622,7 +811,15 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             InterpreterMode::RunTime => {
                 let flow = self.call_function_runtime(function, Vec::new());
-                Some(self.finish_runtime_flow(flow))
+                let value = self.finish_runtime_flow(flow);
+                let should_await = self.extract_task_handle(&value).is_some()
+                    || self.extract_runtime_future(&value).is_some();
+                if should_await {
+                    let awaited = self.await_runtime_value(value);
+                    Some(self.finish_runtime_flow(awaited))
+                } else {
+                    Some(value)
+                }
             }
         }
     }
@@ -642,12 +839,415 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.has_errors
     }
 
+    pub fn begin_const_eval(&mut self, expr: &mut Expr) -> std::result::Result<(), String> {
+        match self.active_eval {
+            Some(ActiveEval::Const) => {
+                return Err("const evaluation is already active".to_string());
+            }
+            Some(ActiveEval::Runtime) => {
+                return Err("runtime evaluation is active; stop it before const eval".to_string());
+            }
+            None => {}
+        }
+        self.stack_eval_active = true;
+        self.active_eval = Some(ActiveEval::Const);
+        self.eval_scope_pushed = true;
+        self.push_scope();
+        self.const_tasks.clear();
+        self.const_value_stack.clear();
+        self.const_tasks.push(ConstTask::Eval(expr as *mut Expr));
+        Ok(())
+    }
+
+    pub fn begin_runtime_eval(&mut self, expr: &mut Expr) -> std::result::Result<(), String> {
+        match self.active_eval {
+            Some(ActiveEval::Const) => {
+                return Err("const evaluation is active; stop it before runtime eval".to_string());
+            }
+            Some(ActiveEval::Runtime) => {
+                return Err("runtime evaluation is already active".to_string());
+            }
+            None => {}
+        }
+        self.stack_eval_active = true;
+        self.active_eval = Some(ActiveEval::Runtime);
+        self.eval_scope_pushed = true;
+        self.push_scope();
+        self.runtime_tasks.clear();
+        self.runtime_value_stack.clear();
+        self.block_stack.clear();
+        self.runtime_tasks.push(RuntimeTask::Eval(expr as *mut Expr));
+        Ok(())
+    }
+
+    pub fn step_const_eval(&mut self, max_steps: usize) -> std::result::Result<EvalStepOutcome, String> {
+        match self.active_eval {
+            Some(ActiveEval::Const) => {}
+            Some(ActiveEval::Runtime) => {
+                return Err("runtime evaluation is active; cannot step const eval".to_string());
+            }
+            None => return Err("const evaluation not started".to_string()),
+        }
+        let outcome = self.run_const_tasks_limit(max_steps);
+        match outcome {
+            EvalStepOutcome::Yielded => Ok(EvalStepOutcome::Yielded),
+            EvalStepOutcome::Complete(value) => {
+                self.finish_active_eval();
+                Ok(EvalStepOutcome::Complete(value))
+            }
+        }
+    }
+
+    pub fn step_runtime_eval(
+        &mut self,
+        max_steps: usize,
+    ) -> std::result::Result<RuntimeStepOutcome, String> {
+        match self.active_eval {
+            Some(ActiveEval::Runtime) => {}
+            Some(ActiveEval::Const) => {
+                return Err("const evaluation is active; cannot step runtime eval".to_string());
+            }
+            None => return Err("runtime evaluation not started".to_string()),
+        }
+        let outcome = self.run_runtime_tasks_limit(max_steps);
+        match outcome {
+            RuntimeStepOutcome::Yielded => Ok(RuntimeStepOutcome::Yielded),
+            RuntimeStepOutcome::Complete(flow) => {
+                self.finish_active_eval();
+                Ok(RuntimeStepOutcome::Complete(flow))
+            }
+        }
+    }
+
+    pub fn stop_eval(&mut self) {
+        self.finish_active_eval();
+    }
+
+    fn finish_active_eval(&mut self) {
+        self.active_eval = None;
+        self.stack_eval_active = false;
+        self.const_tasks.clear();
+        self.runtime_tasks.clear();
+        self.block_stack.clear();
+        if self.eval_scope_pushed {
+            self.pop_scope();
+            self.eval_scope_pushed = false;
+        }
+    }
+
     pub fn stack_snapshot(&self) -> InterpreterStackSnapshot {
         InterpreterStackSnapshot {
             call_frames: self.call_stack.len(),
             expr_frames: self.expr_stack.len(),
             const_values: self.const_value_stack.len(),
             runtime_values: self.runtime_value_stack.len(),
+        }
+    }
+
+    fn capture_runtime_future(&self, expr: &Expr) -> RuntimeFuture {
+        RuntimeFuture {
+            expr: Box::new(expr.clone()),
+            value_env: self.value_env.clone(),
+            type_env: self.type_env.clone(),
+            module_stack: self.module_stack.clone(),
+            impl_stack: self.impl_stack.clone(),
+        }
+    }
+
+    fn spawn_runtime_future(&mut self, future: RuntimeFuture) -> TaskHandle {
+        let id = self.task_counter;
+        self.task_counter += 1;
+        let state = TaskState {
+            id,
+            expr: future.expr,
+            value_env: future.value_env,
+            type_env: future.type_env,
+            module_stack: future.module_stack,
+            impl_stack: future.impl_stack,
+            runtime_tasks: Vec::new(),
+            runtime_value_stack: Vec::new(),
+            block_stack: Vec::new(),
+            expr_stack: Vec::new(),
+            call_stack: Vec::new(),
+            loop_depth: 0,
+            function_depth: 0,
+            in_const_region: 0,
+            status: TaskStatus::Pending,
+            result: None,
+            panic: None,
+            sleep_until: None,
+        };
+        self.tasks.insert(id, state);
+        self.ready_tasks.push_back(id);
+        TaskHandle { id }
+    }
+
+    fn task_result(&self, id: u64) -> Option<RuntimeFlow> {
+        let task = self.tasks.get(&id)?;
+        match task.status {
+            TaskStatus::Ready => task.result.clone().map(RuntimeFlow::Value),
+            TaskStatus::Panicked => task.panic.clone().map(RuntimeFlow::Panic),
+            TaskStatus::Pending => None,
+        }
+    }
+
+    fn run_scheduler_until_task(&mut self, id: u64) -> RuntimeFlow {
+        loop {
+            if let Some(result) = self.task_result(id) {
+                return result;
+            }
+            if !self.tick_scheduler() {
+                if let Some(task) = self.tasks.get(&id) {
+                    if task.status == TaskStatus::Pending && task.sleep_until.is_none() {
+                        self.ready_tasks.push_back(id);
+                        continue;
+                    }
+                }
+                self.emit_error("no runnable tasks available during join");
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        }
+    }
+
+    fn run_scheduler_until_any(&mut self, ids: &[u64]) -> Option<(usize, RuntimeFlow)> {
+        loop {
+            for (idx, id) in ids.iter().enumerate() {
+                if let Some(result) = self.task_result(*id) {
+                    return Some((idx, result));
+                }
+            }
+            if !self.tick_scheduler() {
+                return None;
+            }
+        }
+    }
+
+    fn tick_scheduler(&mut self) -> bool {
+        self.wake_sleeping_tasks();
+        let Some(task_id) = self.ready_tasks.pop_front() else {
+            return self.sleep_until_next_task();
+        };
+        if let Some(result) = self.run_task_steps(task_id, 128) {
+            if let Some(task) = self.tasks.get_mut(&task_id) {
+                match result {
+                    RuntimeFlow::Value(value) => {
+                        task.status = TaskStatus::Ready;
+                        task.result = Some(value);
+                    }
+                    RuntimeFlow::Panic(value) => {
+                        task.status = TaskStatus::Panicked;
+                        task.panic = Some(value);
+                    }
+                    _ => {
+                        task.status = TaskStatus::Ready;
+                        task.result = Some(Value::undefined());
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    fn sleep_until_next_task(&mut self) -> bool {
+        let mut next = None;
+        for task in self.tasks.values() {
+            if let Some(deadline) = task.sleep_until {
+                next = match next {
+                    Some(current) if current <= deadline => Some(current),
+                    _ => Some(deadline),
+                };
+            }
+        }
+        let Some(deadline) = next else {
+            return false;
+        };
+        let now = Instant::now();
+        if deadline > now {
+            std::thread::sleep(deadline - now);
+        }
+        self.wake_sleeping_tasks();
+        true
+    }
+
+    fn wake_sleeping_tasks(&mut self) {
+        let now = Instant::now();
+        let ready: Vec<u64> = self
+            .tasks
+            .iter()
+            .filter_map(|(id, task)| {
+                if task.status != TaskStatus::Pending {
+                    return None;
+                }
+                match task.sleep_until {
+                    Some(deadline) if deadline <= now => Some(*id),
+                    _ => None,
+                }
+            })
+            .collect();
+        for id in ready {
+            if let Some(task) = self.tasks.get_mut(&id) {
+                task.sleep_until = None;
+            }
+            self.ready_tasks.push_back(id);
+        }
+    }
+
+    fn run_task_steps(&mut self, id: u64, steps: usize) -> Option<RuntimeFlow> {
+        let Some(mut task) = self.tasks.remove(&id) else {
+            return Some(RuntimeFlow::Value(Value::undefined()));
+        };
+
+        let saved_value_env = std::mem::replace(&mut self.value_env, task.value_env.clone());
+        let saved_type_env = std::mem::replace(&mut self.type_env, task.type_env.clone());
+        let saved_module_stack = std::mem::replace(&mut self.module_stack, task.module_stack.clone());
+        let saved_impl_stack = std::mem::replace(&mut self.impl_stack, task.impl_stack.clone());
+        let saved_runtime_tasks = std::mem::replace(&mut self.runtime_tasks, task.runtime_tasks.clone());
+        let saved_runtime_stack =
+            std::mem::replace(&mut self.runtime_value_stack, task.runtime_value_stack.clone());
+        let saved_block_stack = std::mem::replace(&mut self.block_stack, task.block_stack.clone());
+        let saved_expr_stack = std::mem::replace(&mut self.expr_stack, task.expr_stack.clone());
+        let saved_call_stack = std::mem::replace(&mut self.call_stack, task.call_stack.clone());
+        let saved_loop_depth = self.loop_depth;
+        let saved_function_depth = self.function_depth;
+        let saved_in_const = self.in_const_region;
+        let saved_current_task = self.current_task;
+        let saved_task_should_yield = self.task_should_yield;
+        let saved_task_sleep_until = self.current_task_sleep_until;
+        let saved_stack_eval_active = self.stack_eval_active;
+
+        self.loop_depth = task.loop_depth;
+        self.function_depth = task.function_depth;
+        self.in_const_region = task.in_const_region;
+        self.current_task = Some(id);
+        self.task_should_yield = false;
+        self.current_task_sleep_until = None;
+        self.stack_eval_active = true;
+
+        if self.runtime_tasks.is_empty() {
+            self.runtime_tasks.push(RuntimeTask::Eval(task.expr.as_mut() as *mut Expr));
+        }
+
+        let outcome = self.run_runtime_tasks_limit(steps);
+
+        task.value_env = std::mem::replace(&mut self.value_env, saved_value_env);
+        task.type_env = std::mem::replace(&mut self.type_env, saved_type_env);
+        task.module_stack = std::mem::replace(&mut self.module_stack, saved_module_stack);
+        task.impl_stack = std::mem::replace(&mut self.impl_stack, saved_impl_stack);
+        task.runtime_tasks = std::mem::replace(&mut self.runtime_tasks, saved_runtime_tasks);
+        task.runtime_value_stack = std::mem::replace(&mut self.runtime_value_stack, saved_runtime_stack);
+        task.block_stack = std::mem::replace(&mut self.block_stack, saved_block_stack);
+        task.expr_stack = std::mem::replace(&mut self.expr_stack, saved_expr_stack);
+        task.call_stack = std::mem::replace(&mut self.call_stack, saved_call_stack);
+        task.loop_depth = self.loop_depth;
+        task.function_depth = self.function_depth;
+        task.in_const_region = self.in_const_region;
+
+        self.loop_depth = saved_loop_depth;
+        self.function_depth = saved_function_depth;
+        self.in_const_region = saved_in_const;
+        let task_yielded = self.task_should_yield;
+        if let Some(deadline) = self.current_task_sleep_until {
+            task.sleep_until = Some(deadline);
+        }
+        self.current_task = saved_current_task;
+        self.task_should_yield = saved_task_should_yield;
+        self.current_task_sleep_until = saved_task_sleep_until;
+        self.stack_eval_active = saved_stack_eval_active;
+
+        self.tasks.insert(id, task);
+
+        if task_yielded {
+            return None;
+        }
+
+        match outcome {
+            RuntimeStepOutcome::Complete(flow) => Some(flow),
+            RuntimeStepOutcome::Yielded => {
+                if let Some(task) = self.tasks.get(&id) {
+                    if task.sleep_until.is_none() {
+                        self.ready_tasks.push_back(id);
+                    }
+                }
+                None
+            }
+        }
+    }
+
+    fn mark_task_sleep(&mut self, duration: Duration) {
+        let Some(task_id) = self.current_task else {
+            std::thread::sleep(duration);
+            return;
+        };
+        if let Some(task) = self.tasks.get_mut(&task_id) {
+            task.sleep_until = Some(Instant::now() + duration);
+        } else {
+            self.current_task_sleep_until = Some(Instant::now() + duration);
+        }
+        self.task_should_yield = true;
+    }
+
+    fn unwind_block_scopes(&mut self) {
+        while !self.block_stack.is_empty() {
+            self.block_stack.pop();
+            self.pop_scope();
+        }
+    }
+
+    fn await_runtime_value(&mut self, value: Value) -> RuntimeFlow {
+        if let Some(handle) = self.extract_task_handle(&value) {
+            return self.run_scheduler_until_task(handle.id);
+        }
+        if let Some(future) = self.extract_runtime_future(&value) {
+            let handle = self.spawn_runtime_future(future);
+            return self.run_scheduler_until_task(handle.id);
+        }
+        self.emit_error("await expects a Future or Task value");
+        RuntimeFlow::Value(Value::undefined())
+    }
+
+    fn extract_runtime_future(&mut self, value: &Value) -> Option<RuntimeFuture> {
+        match value {
+            Value::Any(any) => any.downcast_ref::<RuntimeFuture>().cloned(),
+            Value::Struct(value_struct) => {
+                self.extract_runtime_future_from_struct(&value_struct.structural)
+            }
+            Value::Structural(structural) => self.extract_runtime_future_from_struct(structural),
+            _ => None,
+        }
+    }
+
+    fn extract_task_handle(&mut self, value: &Value) -> Option<TaskHandle> {
+        match value {
+            Value::Any(any) => any.downcast_ref::<TaskHandle>().copied(),
+            Value::Struct(value_struct) => {
+                self.extract_task_handle_from_struct(&value_struct.structural)
+            }
+            Value::Structural(structural) => self.extract_task_handle_from_struct(structural),
+            _ => None,
+        }
+    }
+
+    fn extract_runtime_future_from_struct(
+        &self,
+        structural: &ValueStructural,
+    ) -> Option<RuntimeFuture> {
+        let handle = Ident::new("handle");
+        let future = Ident::new("future");
+        let field = structural
+            .get_field(&handle)
+            .or_else(|| structural.get_field(&future))?;
+        match &field.value {
+            Value::Any(any) => any.downcast_ref::<RuntimeFuture>().cloned(),
+            _ => None,
+        }
+    }
+
+    fn extract_task_handle_from_struct(&self, structural: &ValueStructural) -> Option<TaskHandle> {
+        let handle = Ident::new("handle");
+        let field = structural.get_field(&handle)?;
+        match &field.value {
+            Value::Any(any) => any.downcast_ref::<TaskHandle>().copied(),
+            _ => None,
         }
     }
 
@@ -694,14 +1294,54 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn record_runtime_value(&mut self, base_len: usize, flow: RuntimeFlow) -> RuntimeFlow {
         self.runtime_value_stack.truncate(base_len);
-        if let RuntimeFlow::Value(value) = &flow {
-            self.runtime_value_stack.push(value.clone());
-        }
+        self.runtime_value_stack.push(flow.clone());
         flow
     }
 
     fn mark_mutated(&mut self) {
         self.mutations_applied = true;
+    }
+
+    fn emit_stdout_fragment(&mut self, text: String) {
+        match self.stdout_mode {
+            StdoutMode::Capture => {
+                if let Some(last) = self.stdout.last_mut() {
+                    last.push_str(&text);
+                } else {
+                    self.stdout.push(text);
+                }
+            }
+            StdoutMode::Inherit => {
+                print!("{}", text);
+                let _ = std::io::stdout().flush();
+            }
+        }
+    }
+
+    fn emit_stdout_line(&mut self, mut text: String) {
+        match self.stdout_mode {
+            StdoutMode::Capture => {
+                text.push('\n');
+                self.stdout.push(text);
+            }
+            StdoutMode::Inherit => {
+                println!("{}", text);
+                let _ = std::io::stdout().flush();
+            }
+        }
+    }
+
+    fn normalize_macro_expansion_expr(&mut self, expr: &mut Expr) -> Result<()> {
+        let Some(normalizer) = self.intrinsic_normalizer.as_ref() else {
+            return Ok(());
+        };
+        let mut node = Node::expr(expr.clone());
+        fp_core::intrinsics::normalize_intrinsics_with(&mut node, normalizer.as_ref())?;
+        let Node { kind, .. } = node;
+        if let NodeKind::Expr(new_expr) = kind {
+            *expr = new_expr;
+        }
+        Ok(())
     }
 
     fn in_std_module(&self) -> bool {
@@ -1445,6 +2085,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             .last()
             .map(|seg| seg.as_str())
             .unwrap_or("");
+        if let Some(expansion) = self.try_expand_select_macro(invocation, name)? {
+            return Ok(expansion);
+        }
         let expansion = if let Some(def) = self.lookup_macro_rules(name) {
             expand_macro(def, invocation)?
         } else if let Some(def) = self.lookup_proc_macro(name, ProcMacroKind::FunctionLike) {
@@ -1480,6 +2123,167 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn try_expand_select_macro(
+        &self,
+        invocation: &MacroInvocation,
+        name: &str,
+    ) -> Result<Option<Vec<MacroTokenTree>>> {
+        if name != "select" || invocation.delimiter != MacroDelimiter::Brace {
+            return Ok(None);
+        }
+        let arms = match self.parse_select_macro_arms(&invocation.token_trees) {
+            Ok(arms) if !arms.is_empty() => arms,
+            Ok(_) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+        Ok(Some(self.build_select_macro_expansion(&arms)))
+    }
+
+    fn parse_select_macro_arms(&self, tokens: &[MacroTokenTree]) -> Result<Vec<SelectMacroArm>> {
+        let mut idx = 0usize;
+        let mut arms = Vec::new();
+        while idx < tokens.len() {
+            if self.is_token(tokens, idx, ",") {
+                idx += 1;
+                continue;
+            }
+            let Some(name) = self.read_ident(tokens, idx) else {
+                return Err(fp_core::error::Error::from(
+                    "select! expects `name = future => expr` arms",
+                ));
+            };
+            idx += 1;
+            if !self.is_token(tokens, idx, "=") {
+                return Err(fp_core::error::Error::from(
+                    "select! expects `=` after binding name",
+                ));
+            }
+            idx += 1;
+            let future_start = idx;
+            while idx < tokens.len() && !self.is_token(tokens, idx, "=>") {
+                idx += 1;
+            }
+            if idx == future_start || idx >= tokens.len() {
+                return Err(fp_core::error::Error::from(
+                    "select! expects `=>` after future expression",
+                ));
+            }
+            let future = tokens[future_start..idx].to_vec();
+            idx += 1;
+            let body_start = idx;
+            while idx < tokens.len() && !self.is_token(tokens, idx, ",") {
+                idx += 1;
+            }
+            if idx == body_start {
+                return Err(fp_core::error::Error::from(
+                    "select! expects an expression after `=>`",
+                ));
+            }
+            let body = tokens[body_start..idx].to_vec();
+            arms.push(SelectMacroArm { name, future, body });
+            if idx < tokens.len() && self.is_token(tokens, idx, ",") {
+                idx += 1;
+            }
+        }
+        Ok(arms)
+    }
+
+    fn build_select_macro_expansion(&self, arms: &[SelectMacroArm]) -> Vec<MacroTokenTree> {
+        let mut block_tokens = Vec::new();
+        block_tokens.push(self.token("let"));
+        block_tokens.push(self.token("__select_result"));
+        block_tokens.push(self.token("="));
+        block_tokens.extend(self.select_call_tokens(arms));
+        block_tokens.push(self.token(";"));
+        block_tokens.push(self.token("match"));
+        block_tokens.push(self.token("__select_result"));
+        block_tokens.push(self.match_group_tokens(arms));
+        vec![self.group(MacroDelimiter::Brace, block_tokens)]
+    }
+
+    fn select_call_tokens(&self, arms: &[SelectMacroArm]) -> Vec<MacroTokenTree> {
+        let mut tokens = Vec::new();
+        tokens.push(self.token("std"));
+        tokens.push(self.token("::"));
+        tokens.push(self.token("task"));
+        tokens.push(self.token("::"));
+        tokens.push(self.token("select"));
+        let mut args = Vec::new();
+        for (idx, arm) in arms.iter().enumerate() {
+            args.extend(arm.future.clone());
+            if idx + 1 < arms.len() {
+                args.push(self.token(","));
+            }
+        }
+        tokens.push(self.group(MacroDelimiter::Parenthesis, args));
+        tokens
+    }
+
+    fn match_group_tokens(&self, arms: &[SelectMacroArm]) -> MacroTokenTree {
+        let mut tokens = Vec::new();
+        for (idx, arm) in arms.iter().enumerate() {
+            let mut pattern_tokens = Vec::new();
+            pattern_tokens.push(self.token(idx.to_string().as_str()));
+            pattern_tokens.push(self.token(","));
+            pattern_tokens.push(self.token("__select_value"));
+            let pattern = self.group(MacroDelimiter::Parenthesis, pattern_tokens);
+
+            let mut body_tokens = Vec::new();
+            body_tokens.push(self.token("let"));
+            body_tokens.push(self.token(arm.name.as_str()));
+            body_tokens.push(self.token("="));
+            body_tokens.push(self.token("__select_value"));
+            body_tokens.push(self.token(";"));
+            body_tokens.extend(arm.body.clone());
+            let body_group = self.group(MacroDelimiter::Brace, body_tokens);
+
+            tokens.push(pattern);
+            tokens.push(self.token("=>"));
+            tokens.push(body_group);
+            if idx + 1 < arms.len() {
+                tokens.push(self.token(","));
+            }
+        }
+        self.group(MacroDelimiter::Brace, tokens)
+    }
+
+    fn token(&self, text: &str) -> MacroTokenTree {
+        MacroTokenTree::Token(MacroToken {
+            text: text.to_string(),
+            span: Span::null(),
+        })
+    }
+
+    fn group(&self, delimiter: MacroDelimiter, tokens: Vec<MacroTokenTree>) -> MacroTokenTree {
+        MacroTokenTree::Group(MacroGroup {
+            delimiter,
+            tokens,
+            span: Span::null(),
+        })
+    }
+
+    fn is_token(&self, tokens: &[MacroTokenTree], idx: usize, text: &str) -> bool {
+        matches!(
+            tokens.get(idx),
+            Some(MacroTokenTree::Token(tok)) if tok.text == text
+        )
+    }
+
+    fn read_ident(&self, tokens: &[MacroTokenTree], idx: usize) -> Option<String> {
+        match tokens.get(idx) {
+            Some(MacroTokenTree::Token(tok)) if Self::token_is_ident(&tok.text) => {
+                Some(tok.text.clone())
+            }
+            _ => None,
+        }
+    }
+
+    fn token_is_ident(text: &str) -> bool {
+        text.chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic() || c == '_')
+    }
+
     pub fn evaluate_expression(&mut self, expr: &mut Expr) -> Value {
         self.push_scope();
         let value = self.eval_expr_with_mode(expr);
@@ -1508,7 +2312,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let AttrMeta::Path(path) = &attr.meta else {
             return false;
         };
-        path.last().as_str() == "const"
+        matches!(path.last().as_str(), "const" | "unimplemented")
     }
 
     fn fallback_attr_locator(&self, locator: &Locator) -> Option<Locator> {

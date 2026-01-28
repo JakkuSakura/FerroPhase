@@ -1,8 +1,9 @@
 use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::languages::frontend::{
-    FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, JsonSchemaFrontend,
-    LanguageFrontend, PrqlFrontend, SqlFrontend, TypeScriptFrontend, WitFrontend,
+    FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, JsonFrontend,
+    JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, SqlFrontend, TomlFrontend,
+    TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
@@ -126,8 +127,12 @@ impl Pipeline {
         register(prql_frontend);
         let jsonschema_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonSchemaFrontend::new());
         register(jsonschema_frontend);
+        let json_frontend: Arc<dyn LanguageFrontend> = Arc::new(JsonFrontend::new());
+        register(json_frontend);
         let flatbuffers_frontend: Arc<dyn LanguageFrontend> = Arc::new(FlatbuffersFrontend::new());
         register(flatbuffers_frontend);
+        let toml_frontend: Arc<dyn LanguageFrontend> = Arc::new(TomlFrontend::new());
+        register(toml_frontend);
         Self {
             frontends,
             default_runtime: "literal".to_string(),
@@ -943,6 +948,11 @@ impl Pipeline {
     ) -> Result<(Value, InterpreterOutcome), CliError> {
         let mut working_ast = ast.clone();
         let ctx = SharedScopedContext::new();
+        let stdout_mode = if options.target == BackendKind::Interpret {
+            fp_interpret::engine::StdoutMode::Inherit
+        } else {
+            fp_interpret::engine::StdoutMode::Capture
+        };
         let interpreter_opts = InterpreterOptions {
             mode,
             debug_assertions: !options.release,
@@ -950,6 +960,8 @@ impl Pipeline {
             diagnostic_context: STAGE_AST_INTERPRET,
             module_resolution: None,
             macro_parser: self.macro_parser.clone(),
+            intrinsic_normalizer: self.intrinsic_normalizer.clone(),
+            stdout_mode,
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
         interpreter.enable_incremental_typing(&working_ast);

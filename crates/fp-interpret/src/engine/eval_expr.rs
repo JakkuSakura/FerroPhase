@@ -4,16 +4,567 @@ use fp_core::ast::Locator;
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
     pub(super) fn eval_expr_runtime(&mut self, expr: &mut Expr) -> RuntimeFlow {
-        let is_root = self.expr_stack.is_empty();
-        let _expr_guard = self.push_expr_frame(EvalMode::Runtime, expr);
-        let base_len = if is_root {
-            self.runtime_value_stack.clear();
-            0
-        } else {
-            self.runtime_value_stack.len()
+        if self.stack_eval_active {
+            let flow = self.eval_expr_runtime_inner(expr);
+            return flow;
+        }
+        if let Err(err) = self.begin_runtime_eval(expr) {
+            self.emit_error(err);
+            return RuntimeFlow::Value(Value::undefined());
+        }
+        let flow = match self.run_runtime_tasks_limit(usize::MAX) {
+            RuntimeStepOutcome::Yielded => RuntimeFlow::Value(Value::undefined()),
+            RuntimeStepOutcome::Complete(flow) => flow,
         };
-        let flow = self.eval_expr_runtime_inner(expr);
-        self.record_runtime_value(base_len, flow)
+        self.finish_active_eval();
+        flow
+    }
+
+    pub(super) fn run_runtime_tasks_limit(&mut self, max_steps: usize) -> RuntimeStepOutcome {
+        let mut steps = 0usize;
+        while steps < max_steps {
+            let Some(task) = self.runtime_tasks.pop() else {
+                break;
+            };
+            steps += 1;
+            match task {
+                RuntimeTask::Eval(expr_ptr) => {
+                    let expr = unsafe { &mut *expr_ptr };
+                    let _expr_guard = self.push_expr_frame(EvalMode::Runtime, expr);
+                    match expr.kind_mut() {
+                        ExprKind::Value(value) => {
+                            let value = match value.as_ref() {
+                                Value::Expr(inner) => {
+                                    let mut cloned = inner.as_ref().clone();
+                                    match self.eval_expr_runtime_inner(&mut cloned) {
+                                        RuntimeFlow::Value(value) => value,
+                                        other => {
+                                            return RuntimeStepOutcome::Complete(other);
+                                        }
+                                    }
+                                }
+                                other => other.clone(),
+                            };
+                            self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                        }
+                        ExprKind::Locator(_locator) => {
+                            let flow = match self.eval_expr_runtime_inner(expr) {
+                                RuntimeFlow::Value(value) => RuntimeFlow::Value(value),
+                                other => other,
+                            };
+                            self.runtime_value_stack.push(flow);
+                        }
+                        ExprKind::BinOp(binop) => {
+                            self.runtime_tasks
+                                .push(RuntimeTask::ApplyBinOp(binop.kind));
+                            self.runtime_tasks.push(RuntimeTask::Eval(
+                                binop.rhs.as_mut() as *mut Expr,
+                            ));
+                            self.runtime_tasks.push(RuntimeTask::Eval(
+                                binop.lhs.as_mut() as *mut Expr,
+                            ));
+                        }
+                        ExprKind::UnOp(unop) => {
+                            self.runtime_tasks
+                                .push(RuntimeTask::ApplyUnOp(unop.op.clone()));
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(unop.val.as_mut() as *mut Expr));
+                        }
+                        ExprKind::If(if_expr) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplyIf {
+                                then_expr: if_expr.then.as_mut() as *mut Expr,
+                                else_expr: if_expr
+                                    .elze
+                                    .as_mut()
+                                    .map(|expr| expr.as_mut() as *mut Expr),
+                            });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(if_expr.cond.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Tuple(tuple) => {
+                            let len = tuple.values.len();
+                            self.runtime_tasks.push(RuntimeTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Tuple,
+                            });
+                            for expr in tuple.values.iter_mut().rev() {
+                                self.runtime_tasks.push(RuntimeTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Array(array) => {
+                            let len = array.values.len();
+                            self.runtime_tasks.push(RuntimeTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Array,
+                            });
+                            for expr in array.values.iter_mut().rev() {
+                                self.runtime_tasks.push(RuntimeTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Range(range) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplyRange {
+                                inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                            });
+                            if let Some(expr) = range.end.as_mut() {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::PushValue(Value::int(0)));
+                            }
+                            if let Some(expr) = range.start.as_mut() {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.runtime_tasks
+                                    .push(RuntimeTask::PushValue(Value::int(0)));
+                            }
+                        }
+                        ExprKind::Select(select) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplySelect {
+                                field: select.field.name.clone(),
+                            });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(select.obj.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Index(index_expr) => {
+                            if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                                let has_start = range.start.is_some();
+                                let has_end = range.end.is_some();
+                                self.runtime_tasks.push(RuntimeTask::ApplyIndex {
+                                    has_start,
+                                    has_end,
+                                    inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                                });
+                                if let Some(expr) = range.end.as_mut() {
+                                    self.runtime_tasks
+                                        .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                if let Some(expr) = range.start.as_mut() {
+                                    self.runtime_tasks
+                                        .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                self.runtime_tasks.push(RuntimeTask::Eval(
+                                    index_expr.obj.as_mut() as *mut Expr,
+                                ));
+                            } else {
+                                self.runtime_tasks.push(RuntimeTask::ApplyIndex {
+                                    has_start: true,
+                                    has_end: true,
+                                    inclusive: false,
+                                });
+                                self.runtime_tasks.push(RuntimeTask::Eval(
+                                    index_expr.index.as_mut() as *mut Expr,
+                                ));
+                                self.runtime_tasks.push(RuntimeTask::Eval(
+                                    index_expr.obj.as_mut() as *mut Expr,
+                                ));
+                            }
+                        }
+                        ExprKind::Paren(paren) => {
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(paren.expr.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Cast(cast) => {
+                            let ty = cast.ty.clone();
+                            self.runtime_tasks.push(RuntimeTask::ApplyCast { ty });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(cast.expr.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Block(block) => {
+                            self.push_scope();
+                            self.block_stack.push(BlockFrame {
+                                last_value: Value::unit(),
+                            });
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block as *mut ExprBlock,
+                                idx: 0,
+                            });
+                        }
+                        _ => {
+                            let flow = self.eval_expr_runtime_inner(expr);
+                            self.runtime_value_stack.push(flow);
+                        }
+                    }
+                }
+                RuntimeTask::PushValue(value) => {
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyBinOp(op) => {
+                    let rhs = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(rhs_value) = rhs else {
+                        return RuntimeStepOutcome::Complete(rhs);
+                    };
+                    let lhs = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(lhs_value) = lhs else {
+                        return RuntimeStepOutcome::Complete(lhs);
+                    };
+                    let value =
+                        self.handle_result(self.evaluate_binop(op, lhs_value, rhs_value));
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyUnOp(op) => {
+                    let value_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = value_flow else {
+                        return RuntimeStepOutcome::Complete(value_flow);
+                    };
+                    let value = self.handle_result(self.evaluate_unary(op, value));
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyIf {
+                    then_expr,
+                    else_expr,
+                } => {
+                    let cond_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(cond) = cond_flow else {
+                        return RuntimeStepOutcome::Complete(cond_flow);
+                    };
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                self.runtime_tasks.push(RuntimeTask::Eval(then_expr));
+                            } else if let Some(elze) = else_expr {
+                                self.runtime_tasks.push(RuntimeTask::Eval(elze));
+                            } else {
+                                self.runtime_value_stack
+                                    .push(RuntimeFlow::Value(Value::unit()));
+                            }
+                        }
+                        _ => {
+                            self.emit_error("expected boolean condition in runtime expression");
+                            self.runtime_value_stack
+                                .push(RuntimeFlow::Value(Value::undefined()));
+                        }
+                    }
+                }
+                RuntimeTask::ApplyCollect { len, kind } => {
+                    let mut values = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        let flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(value) = flow else {
+                            return RuntimeStepOutcome::Complete(flow);
+                        };
+                        values.push(value);
+                    }
+                    values.reverse();
+                    let value = match kind {
+                        CollectKind::Tuple => Value::Tuple(ValueTuple::new(values)),
+                        CollectKind::Array => Value::List(ValueList::new(values)),
+                    };
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyCast { ty } => {
+                    let flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = flow else {
+                        return RuntimeStepOutcome::Complete(flow);
+                    };
+                    let result = self.cast_value_to_type(value, &ty);
+                    self.runtime_value_stack
+                        .push(RuntimeFlow::Value(result));
+                }
+                RuntimeTask::EvalBlock { block, idx } => {
+                    let block = unsafe { &mut *block };
+                    let block_ptr = block as *mut ExprBlock;
+                    if idx >= block.stmts.len() {
+                        let frame = self
+                            .block_stack
+                            .pop()
+                            .unwrap_or(BlockFrame { last_value: Value::unit() });
+                        self.pop_scope();
+                        self.runtime_value_stack
+                            .push(RuntimeFlow::Value(frame.last_value));
+                        continue;
+                    }
+                    let stmt = &mut block.stmts[idx];
+                    match stmt {
+                        BlockStmt::Expr(expr_stmt) => {
+                            if self.in_const_region() {
+                                if let ExprKind::Splice(splice) = expr_stmt.expr.kind_mut() {
+                                    if !self.pending_stmt_splices.is_empty() {
+                                        let Some(fragments) =
+                                            self.resolve_splice_fragments(splice.token.as_mut())
+                                        else {
+                                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                                block: block_ptr,
+                                                idx: idx + 1,
+                                            });
+                                            continue;
+                                        };
+                                        if fragments
+                                            .iter()
+                                            .any(|fragment| matches!(fragment, QuotedFragment::Type(_)))
+                                        {
+                                            self.emit_error(
+                                                "splice<type> is not valid in statement position",
+                                            );
+                                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                                block: block_ptr,
+                                                idx: idx + 1,
+                                            });
+                                            continue;
+                                        }
+                                        let mut to_append = Vec::new();
+                                        for fragment in fragments {
+                                            match fragment {
+                                                QuotedFragment::Stmts(stmts) => {
+                                                    to_append.extend(stmts);
+                                                }
+                                                QuotedFragment::Expr(e) => {
+                                                    let mut es = expr_stmt.clone();
+                                                    es.expr = e.into();
+                                                    es.semicolon = Some(true);
+                                                    to_append.push(BlockStmt::Expr(es));
+                                                }
+                                                QuotedFragment::Items(items) => {
+                                                    for item in items {
+                                                        to_append.push(BlockStmt::Item(Box::new(item)));
+                                                    }
+                                                }
+                                                QuotedFragment::Type(_) => {}
+                                            }
+                                        }
+                                        if !to_append.is_empty() {
+                                            if let Some(pending) = self.pending_stmt_splices.last_mut()
+                                            {
+                                                pending.extend(to_append);
+                                            }
+                                            self.mark_mutated();
+                                        }
+                                        self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                            block: block_ptr,
+                                            idx: idx + 1,
+                                        });
+                                        continue;
+                                    }
+                                }
+                            }
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                            self.runtime_tasks.push(RuntimeTask::ApplyBlockValue {
+                                has_value: expr_stmt.has_value(),
+                            });
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(expr_stmt.expr.as_mut() as *mut Expr));
+                        }
+                        BlockStmt::Let(stmt_let) => {
+                            if let Some(init) = stmt_let.init.as_mut() {
+                                self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                    block: block_ptr,
+                                    idx: idx + 1,
+                                });
+                                self.runtime_tasks.push(RuntimeTask::ApplyLet {
+                                    pat: stmt_let.pat.clone(),
+                                });
+                                self.runtime_tasks.push(RuntimeTask::Eval(init as *mut Expr));
+                            } else {
+                                self.emit_error(
+                                    "let bindings without initializer are not supported in runtime",
+                                );
+                                self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                    block: block_ptr,
+                                    idx: idx + 1,
+                                });
+                            }
+                        }
+                        BlockStmt::Item(item) => {
+                            self.evaluate_item(item.as_mut());
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                        }
+                        BlockStmt::Noop | BlockStmt::Any(_) => {
+                            self.runtime_tasks.push(RuntimeTask::EvalBlock {
+                                block: block_ptr,
+                                idx: idx + 1,
+                            });
+                        }
+                    }
+                }
+                RuntimeTask::ApplyBlockValue { has_value } => {
+                    let flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = flow else {
+                        self.unwind_block_scopes();
+                        return RuntimeStepOutcome::Complete(flow);
+                    };
+                    if has_value {
+                        if let Some(frame) = self.block_stack.last_mut() {
+                            frame.last_value = value;
+                        }
+                    }
+                }
+                RuntimeTask::ApplyLet { pat } => {
+                    let flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(value) = flow else {
+                        self.unwind_block_scopes();
+                        return RuntimeStepOutcome::Complete(flow);
+                    };
+                    self.bind_pattern(&pat, value);
+                }
+                RuntimeTask::ApplyRange { inclusive } => {
+                    let end_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(end) = end_flow else {
+                        return RuntimeStepOutcome::Complete(end_flow);
+                    };
+                    let start_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(start) = start_flow else {
+                        return RuntimeStepOutcome::Complete(start_flow);
+                    };
+                    let start = match self.numeric_to_i64(&start, "range start") {
+                        Some(value) => value,
+                        None => {
+                            self.runtime_value_stack
+                                .push(RuntimeFlow::Value(Value::undefined()));
+                            continue;
+                        }
+                    };
+                    let end = match self.numeric_to_i64(&end, "range end") {
+                        Some(value) => value,
+                        None => {
+                            self.runtime_value_stack
+                                .push(RuntimeFlow::Value(Value::undefined()));
+                            continue;
+                        }
+                    };
+                    let mut values = Vec::new();
+                    let mut current = start;
+                    while if inclusive {
+                        current <= end
+                    } else {
+                        current < end
+                    } {
+                        values.push(Value::int(current));
+                        current += 1;
+                    }
+                    self.runtime_value_stack
+                        .push(RuntimeFlow::Value(Value::List(ValueList::new(values))));
+                }
+                RuntimeTask::ApplySelect { field } => {
+                    let target_flow = match self.runtime_value_stack.pop() {
+                        Some(flow) => flow,
+                        None => RuntimeFlow::Value(Value::undefined()),
+                    };
+                    let RuntimeFlow::Value(target) = target_flow else {
+                        return RuntimeStepOutcome::Complete(target_flow);
+                    };
+                    let value = self.evaluate_select(target, &field);
+                    self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                }
+                RuntimeTask::ApplyIndex {
+                    has_start,
+                    has_end,
+                    inclusive,
+                } => {
+                    if has_start && has_end {
+                        let index_flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(index_value) = index_flow else {
+                            return RuntimeStepOutcome::Complete(index_flow);
+                        };
+                        let target_flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(target) = target_flow else {
+                            return RuntimeStepOutcome::Complete(target_flow);
+                        };
+                        let value = self.evaluate_index(target, index_value);
+                        self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                    } else {
+                        let end = if has_end {
+                            let end_flow = match self.runtime_value_stack.pop() {
+                                Some(flow) => flow,
+                                None => RuntimeFlow::Value(Value::undefined()),
+                            };
+                            let RuntimeFlow::Value(end) = end_flow else {
+                                return RuntimeStepOutcome::Complete(end_flow);
+                            };
+                            match self.numeric_to_non_negative_usize(&end, "range end") {
+                                Some(value) => Some(value),
+                                None => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let start = if has_start {
+                            let start_flow = match self.runtime_value_stack.pop() {
+                                Some(flow) => flow,
+                                None => RuntimeFlow::Value(Value::undefined()),
+                            };
+                            let RuntimeFlow::Value(start) = start_flow else {
+                                return RuntimeStepOutcome::Complete(start_flow);
+                            };
+                            match self.numeric_to_non_negative_usize(&start, "range start") {
+                                Some(value) => Some(value),
+                                None => None,
+                            }
+                        } else {
+                            None
+                        };
+                        let target_flow = match self.runtime_value_stack.pop() {
+                            Some(flow) => flow,
+                            None => RuntimeFlow::Value(Value::undefined()),
+                        };
+                        let RuntimeFlow::Value(target) = target_flow else {
+                            return RuntimeStepOutcome::Complete(target_flow);
+                        };
+                        let value = self.evaluate_range_index_slices(
+                            target,
+                            start,
+                            end,
+                            inclusive,
+                        );
+                        self.runtime_value_stack.push(RuntimeFlow::Value(value));
+                    }
+                }
+            }
+            if self.task_should_yield {
+                return RuntimeStepOutcome::Yielded;
+            }
+        }
+
+        if !self.runtime_tasks.is_empty() {
+            return RuntimeStepOutcome::Yielded;
+        }
+
+        match self.runtime_value_stack.pop() {
+            Some(flow) => RuntimeStepOutcome::Complete(flow),
+            None => RuntimeStepOutcome::Complete(RuntimeFlow::Value(Value::undefined())),
+        }
     }
 
     fn eval_expr_runtime_inner(&mut self, expr: &mut Expr) -> RuntimeFlow {
@@ -465,6 +1016,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut inner = closured.expr.as_ref().clone();
                 self.eval_expr_runtime(&mut inner)
             }
+            ExprKind::Async(async_expr) => {
+                let future = self.capture_runtime_future(async_expr.expr.as_ref());
+                RuntimeFlow::Value(Value::Any(AnyBox::new(future)))
+            }
+            ExprKind::Await(await_expr) => {
+                let flow = self.eval_expr_runtime(await_expr.base.as_mut());
+                let value = self.finish_runtime_flow(flow);
+                self.await_runtime_value(value)
+            }
             ExprKind::Cast(cast) => {
                 let target_ty = cast.ty.clone();
                 let value = match self.eval_value_runtime(cast.expr.as_mut()) {
@@ -485,7 +1045,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Ok(output) =
                     self.render_format_template_runtime(template, &mut args, &mut kwargs)
                 {
-                    self.stdout.push(output);
+                    if !output.is_empty() {
+                        self.emit_stdout_fragment(output);
+                    }
                 }
                 RuntimeFlow::Value(Value::unit())
             }
@@ -513,16 +1075,297 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn eval_expr(&mut self, expr: &mut Expr) -> Value {
-        let is_root = self.expr_stack.is_empty();
-        let _expr_guard = self.push_expr_frame(EvalMode::Const, expr);
-        let base_len = if is_root {
-            self.const_value_stack.clear();
-            0
-        } else {
-            self.const_value_stack.len()
+        if self.stack_eval_active {
+            return self.eval_expr_inner(expr);
+        }
+        if let Err(err) = self.begin_const_eval(expr) {
+            self.emit_error(err);
+            return Value::undefined();
+        }
+        let value = match self.run_const_tasks_limit(usize::MAX) {
+            EvalStepOutcome::Yielded => Value::undefined(),
+            EvalStepOutcome::Complete(value) => value,
         };
-        let value = self.eval_expr_inner(expr);
-        self.record_const_value(base_len, value)
+        self.finish_active_eval();
+        value
+    }
+
+    pub(super) fn run_const_tasks_limit(&mut self, max_steps: usize) -> EvalStepOutcome {
+        let mut steps = 0usize;
+        while steps < max_steps {
+            let Some(task) = self.const_tasks.pop() else {
+                break;
+            };
+            steps += 1;
+            match task {
+                ConstTask::Eval(expr_ptr) => {
+                    let expr = unsafe { &mut *expr_ptr };
+                    let _expr_guard = self.push_expr_frame(EvalMode::Const, expr);
+                    match expr.kind_mut() {
+                        ExprKind::Value(value) => {
+                            let value = match value.as_ref() {
+                                Value::Expr(inner) => {
+                                    let mut cloned = inner.as_ref().clone();
+                                    self.eval_expr_inner(&mut cloned)
+                                }
+                                other => other.clone(),
+                            };
+                            self.const_value_stack.push(value);
+                        }
+                        ExprKind::Locator(_) => {
+                            let value = self.eval_expr_inner(expr);
+                            self.const_value_stack.push(value);
+                        }
+                        ExprKind::BinOp(binop) => {
+                            self.const_tasks
+                                .push(ConstTask::ApplyBinOp(binop.kind));
+                            self.const_tasks
+                                .push(ConstTask::Eval(binop.rhs.as_mut() as *mut Expr));
+                            self.const_tasks
+                                .push(ConstTask::Eval(binop.lhs.as_mut() as *mut Expr));
+                        }
+                        ExprKind::UnOp(unop) => {
+                            self.const_tasks
+                                .push(ConstTask::ApplyUnOp(unop.op.clone()));
+                            self.const_tasks
+                                .push(ConstTask::Eval(unop.val.as_mut() as *mut Expr));
+                        }
+                        ExprKind::If(if_expr) => {
+                            self.const_tasks.push(ConstTask::ApplyIf {
+                                then_expr: if_expr.then.as_mut() as *mut Expr,
+                                else_expr: if_expr
+                                    .elze
+                                    .as_mut()
+                                    .map(|expr| expr.as_mut() as *mut Expr),
+                            });
+                            self.const_tasks
+                                .push(ConstTask::Eval(if_expr.cond.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Tuple(tuple) => {
+                            let len = tuple.values.len();
+                            self.const_tasks.push(ConstTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Tuple,
+                            });
+                            for expr in tuple.values.iter_mut().rev() {
+                                self.const_tasks.push(ConstTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Array(array) => {
+                            let len = array.values.len();
+                            self.const_tasks.push(ConstTask::ApplyCollect {
+                                len,
+                                kind: CollectKind::Array,
+                            });
+                            for expr in array.values.iter_mut().rev() {
+                                self.const_tasks.push(ConstTask::Eval(expr as *mut Expr));
+                            }
+                        }
+                        ExprKind::Range(range) => {
+                            self.const_tasks.push(ConstTask::ApplyRange {
+                                inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                            });
+                            if let Some(expr) = range.end.as_mut() {
+                                self.const_tasks
+                                    .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.const_tasks
+                                    .push(ConstTask::PushValue(Value::int(0)));
+                            }
+                            if let Some(expr) = range.start.as_mut() {
+                                self.const_tasks
+                                    .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                            } else {
+                                self.const_tasks
+                                    .push(ConstTask::PushValue(Value::int(0)));
+                            }
+                        }
+                        ExprKind::Select(select) => {
+                            self.const_tasks.push(ConstTask::ApplySelect {
+                                field: select.field.name.clone(),
+                            });
+                            self.const_tasks
+                                .push(ConstTask::Eval(select.obj.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Index(index_expr) => {
+                            if let ExprKind::Range(range) = index_expr.index.kind_mut() {
+                                let has_start = range.start.is_some();
+                                let has_end = range.end.is_some();
+                                self.const_tasks.push(ConstTask::ApplyIndex {
+                                    has_start,
+                                    has_end,
+                                    inclusive: matches!(range.limit, ExprRangeLimit::Inclusive),
+                                });
+                                if let Some(expr) = range.end.as_mut() {
+                                    self.const_tasks
+                                        .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                if let Some(expr) = range.start.as_mut() {
+                                    self.const_tasks
+                                        .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
+                                }
+                                self.const_tasks
+                                    .push(ConstTask::Eval(index_expr.obj.as_mut() as *mut Expr));
+                            } else {
+                                self.const_tasks.push(ConstTask::ApplyIndex {
+                                    has_start: true,
+                                    has_end: true,
+                                    inclusive: false,
+                                });
+                                self.const_tasks
+                                    .push(ConstTask::Eval(index_expr.index.as_mut() as *mut Expr));
+                                self.const_tasks
+                                    .push(ConstTask::Eval(index_expr.obj.as_mut() as *mut Expr));
+                            }
+                        }
+                        ExprKind::Paren(paren) => {
+                            self.const_tasks
+                                .push(ConstTask::Eval(paren.expr.as_mut() as *mut Expr));
+                        }
+                        ExprKind::Cast(cast) => {
+                            let ty = cast.ty.clone();
+                            self.const_tasks.push(ConstTask::ApplyCast { ty });
+                            self.const_tasks
+                                .push(ConstTask::Eval(cast.expr.as_mut() as *mut Expr));
+                        }
+                        _ => {
+                            let value = self.eval_expr_inner(expr);
+                            self.const_value_stack.push(value);
+                        }
+                    }
+                }
+                ConstTask::PushValue(value) => {
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyBinOp(op) => {
+                    let rhs = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let lhs = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let value = self.handle_result(self.evaluate_binop(op, lhs, rhs));
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyUnOp(op) => {
+                    let value = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let value = self.handle_result(self.evaluate_unary(op, value));
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyIf {
+                    then_expr,
+                    else_expr,
+                } => {
+                    let cond = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    match cond {
+                        Value::Bool(b) => {
+                            if b.value {
+                                self.const_tasks.push(ConstTask::Eval(then_expr));
+                            } else if let Some(elze) = else_expr {
+                                self.const_tasks.push(ConstTask::Eval(elze));
+                            } else {
+                                self.const_value_stack.push(Value::unit());
+                            }
+                        }
+                        _ => {
+                            self.emit_error("expected boolean condition in const expression");
+                            self.const_value_stack.push(Value::undefined());
+                        }
+                    }
+                }
+                ConstTask::ApplyCollect { len, kind } => {
+                    let mut values = Vec::with_capacity(len);
+                    for _ in 0..len {
+                        values.push(self.const_value_stack.pop().unwrap_or_else(Value::undefined));
+                    }
+                    values.reverse();
+                    let value = match kind {
+                        CollectKind::Tuple => Value::Tuple(ValueTuple::new(values)),
+                        CollectKind::Array => Value::List(ValueList::new(values)),
+                    };
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyCast { ty } => {
+                    let value = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let result = self.cast_value_to_type(value, &ty);
+                    self.const_value_stack.push(result);
+                }
+                ConstTask::ApplyRange { inclusive } => {
+                    let end = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let start = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let start = match self.numeric_to_i64(&start, "range start") {
+                        Some(value) => value,
+                        None => {
+                            self.const_value_stack.push(Value::undefined());
+                            continue;
+                        }
+                    };
+                    let end = match self.numeric_to_i64(&end, "range end") {
+                        Some(value) => value,
+                        None => {
+                            self.const_value_stack.push(Value::undefined());
+                            continue;
+                        }
+                    };
+                    let mut values = Vec::new();
+                    let mut current = start;
+                    while if inclusive {
+                        current <= end
+                    } else {
+                        current < end
+                    } {
+                        values.push(Value::int(current));
+                        current += 1;
+                    }
+                    self.const_value_stack.push(Value::List(ValueList::new(values)));
+                }
+                ConstTask::ApplySelect { field } => {
+                    let target = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let value = self.evaluate_select(target, &field);
+                    self.const_value_stack.push(value);
+                }
+                ConstTask::ApplyIndex {
+                    has_start,
+                    has_end,
+                    inclusive,
+                } => {
+                    if has_start && has_end {
+                        let index_value =
+                            self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                        let target = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                        let value = self.evaluate_index(target, index_value);
+                        self.const_value_stack.push(value);
+                    } else {
+                        let end = if has_end {
+                            let end = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                            self.numeric_to_non_negative_usize(&end, "range end")
+                        } else {
+                            None
+                        };
+                        let start = if has_start {
+                            let start =
+                                self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                            self.numeric_to_non_negative_usize(&start, "range start")
+                        } else {
+                            None
+                        };
+                        let target = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                        let value = self.evaluate_range_index_slices(
+                            target,
+                            start,
+                            end,
+                            inclusive,
+                        );
+                        self.const_value_stack.push(value);
+                    }
+                }
+            }
+        }
+
+        if !self.const_tasks.is_empty() {
+            return EvalStepOutcome::Yielded;
+        }
+
+        match self.const_value_stack.pop() {
+            Some(value) => EvalStepOutcome::Complete(value),
+            None => EvalStepOutcome::Complete(Value::undefined()),
+        }
     }
 
     fn eval_expr_inner(&mut self, expr: &mut Expr) -> Value {
@@ -938,6 +1781,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.macro_depth = self.macro_depth.saturating_sub(1);
                 match expanded {
                     Ok(mut new_expr) => {
+                        if let Err(err) = self.normalize_macro_expansion_expr(&mut new_expr) {
+                            self.emit_error_at(macro_expr.invocation.span, err.to_string());
+                            return Value::undefined();
+                        }
                         if let Some(ty) = expr_ty_snapshot.clone() {
                             new_expr.ty = Some(ty);
                         }
@@ -1485,7 +2332,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         match format_runtime_string(&format_str.value, &evaluated[1..]) {
                             Ok(output) => {
                                 if !output.is_empty() {
-                                    self.stdout.push(output);
+                                    self.emit_stdout_fragment(output);
                                 }
                             }
                             Err(err) => self.emit_error(err.to_string()),
