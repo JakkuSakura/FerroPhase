@@ -1379,6 +1379,7 @@ dependencies = [
 name = "fp-sql"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "fp-core",
  "sqlparser",
 ]
