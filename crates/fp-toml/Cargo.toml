@@ -1,0 +1,9 @@
+[package]
+name = "fp-toml"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+toml = "0.9.8"
