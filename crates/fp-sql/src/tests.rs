@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::frontend::LanguageFrontend;
 use fp_core::diagnostics::DiagnosticLevel;
 
 #[test]
