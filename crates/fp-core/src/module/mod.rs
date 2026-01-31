@@ -76,3 +76,4 @@ pub struct ModuleDescriptor {
 
 pub mod resolver;
 pub mod resolvers;
+pub mod path;

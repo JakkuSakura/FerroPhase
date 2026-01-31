@@ -3,10 +3,14 @@
 //!
 //! Linux-only (glibc) and intended for `fp interpret`.
 
+struct InAddr {
+    s_addr: u32,
+}
+
 struct SockAddrIn {
     sin_family: u16,
     sin_port: u16,
-    sin_addr: u32,
+    sin_addr: InAddr,
     sin_zero: [u8; 8],
 }
 
@@ -38,7 +42,7 @@ fn make_addr(port: u16) -> SockAddrIn {
     SockAddrIn {
         sin_family: AF_INET as u16,
         sin_port: htons(port),
-        sin_addr: INADDR_ANY,
+        sin_addr: InAddr { s_addr: INADDR_ANY },
         sin_zero: [0; 8],
     }
 }

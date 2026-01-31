@@ -28,6 +28,15 @@ impl HirGenerator {
         func: &ast::ItemDefFunction,
         self_ty: Option<hir::TypeExpr>,
     ) -> Result<hir::Function> {
+        self.transform_function_with_body(func, self_ty, true)
+    }
+
+    pub(super) fn transform_function_with_body(
+        &mut self,
+        func: &ast::ItemDefFunction,
+        self_ty: Option<hir::TypeExpr>,
+        lower_body: bool,
+    ) -> Result<hir::Function> {
         self.push_type_scope();
         self.push_value_scope();
         let result = (|| {
@@ -79,14 +88,18 @@ impl HirGenerator {
                 abi: self.map_abi(&func.sig.abi),
             };
 
-            let body_expr = self.transform_expr_to_hir(&func.body)?;
-            let body = hir::Body {
-                hir_id: self.next_id(),
-                params,
-                value: body_expr,
-            };
+            if lower_body {
+                let body_expr = self.transform_expr_to_hir(&func.body)?;
+                let body = hir::Body {
+                    hir_id: self.next_id(),
+                    params,
+                    value: body_expr,
+                };
 
-            Ok(hir::Function::new(sig, Some(body), false, false))
+                Ok(hir::Function::new(sig, Some(body), false, false))
+            } else {
+                Ok(hir::Function::new(sig, None, false, false))
+            }
         })();
 
         self.pop_value_scope();
@@ -216,6 +229,16 @@ impl HirGenerator {
         })
     }
 
+    fn is_unimplemented_type_expr(&self, ty: &hir::TypeExpr) -> bool {
+        let hir::TypeExprKind::Path(path) = &ty.kind else {
+            return false;
+        };
+        let Some(hir::Res::Def(def_id)) = path.res else {
+            return false;
+        };
+        self.unimplemented_type_def_ids.contains(&def_id)
+    }
+
     pub(super) fn transform_impl(&mut self, impl_block: &ast::ItemImpl) -> Result<hir::Impl> {
         self.push_type_scope();
         self.current_type_scope()
@@ -237,6 +260,9 @@ impl HirGenerator {
             } else {
                 None
             };
+            let stub_methods = self.is_std_module()
+                || attrs_has_name(&impl_block.attrs, "unimplemented")
+                || self.is_unimplemented_type_expr(&self_ty);
 
             let mut items = Vec::new();
             let mut method_names = HashSet::new();
@@ -246,7 +272,11 @@ impl HirGenerator {
                 }
                 match item.kind() {
                     ast::ItemKind::DefFunction(func) => {
-                        let method = self.transform_function(func, Some(self_ty.clone()))?;
+                        let method = self.transform_function_with_body(
+                            func,
+                            Some(self_ty.clone()),
+                            !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
+                        )?;
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
                             hir_id: self.next_id(),
@@ -293,7 +323,11 @@ impl HirGenerator {
                     if method_names.contains(&func.name.name) {
                         continue;
                     }
-                        let method = self.transform_function(func, Some(self_ty.clone()))?;
+                        let method = self.transform_function_with_body(
+                            func,
+                            Some(self_ty.clone()),
+                            !stub_methods && !attrs_has_name(&func.attrs, "unimplemented"),
+                        )?;
                         method_names.insert(method.sig.name.as_str().to_string());
                         items.push(hir::ImplItem {
                             hir_id: self.next_id(),

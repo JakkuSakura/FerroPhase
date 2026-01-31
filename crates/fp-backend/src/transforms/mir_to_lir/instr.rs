@@ -1412,12 +1412,24 @@ impl LirGenerator {
                 result_value =
                     Some(self.build_slice_value(array_ptr, len, &entry_lir_ty, &mut instructions));
             }
-            mir::Rvalue::ContainerLen { kind, .. } => {
-                let len = self.container_len(kind);
-                result_value = Some(lir::LirValue::Constant(lir::LirConstant::UInt(
-                    len,
-                    lir::LirType::I64,
-                )));
+            mir::Rvalue::ContainerLen { kind, container } => {
+                if let mir::ContainerKind::List { len: 0, .. } = kind {
+                    let slice_value = self.transform_operand(container)?;
+                    instructions.extend(self.take_queued_instructions());
+                    let len_value = self.extract_slice_field(
+                        slice_value,
+                        1,
+                        lir::LirType::I64,
+                        &mut instructions,
+                    );
+                    result_value = Some(len_value);
+                } else {
+                    let len = self.container_len(kind);
+                    result_value = Some(lir::LirValue::Constant(lir::LirConstant::UInt(
+                        len,
+                        lir::LirType::I64,
+                    )));
+                }
             }
             mir::Rvalue::ContainerGet {
                 kind,

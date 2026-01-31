@@ -1,4 +1,4 @@
-pub const struct TypeBuilder {
+pub struct TypeBuilder {
     ty: type,
 }
 

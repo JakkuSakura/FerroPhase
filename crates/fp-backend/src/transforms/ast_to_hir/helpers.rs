@@ -1,4 +1,5 @@
 use super::*;
+use fp_core::module::path::{parse_segments, resolve_item_path};
 
 impl HirGenerator {
     pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
@@ -40,33 +41,111 @@ impl HirGenerator {
 
         let mut resolved = None;
 
-        if let Some(first) = segments.first() {
-            let first_name = first.name.as_str();
-            if matches!(first_name, "super" | "self" | "crate") {
-                let mut canonical = match first_name {
-                    "crate" => Vec::new(),
-                    "self" => self.module_path.clone(),
-                    "super" => self.module_path.clone(),
-                    _ => Vec::new(),
-                };
+        if segments.len() == 1 {
+            resolved = segments.last().and_then(|segment| match scope {
+                PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+                PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+            });
+        }
 
-                let mut idx = 0usize;
-                if first_name == "super" {
-                    while idx < segments.len() && segments[idx].name.as_str() == "super" {
-                        canonical.pop();
-                        idx += 1;
+        if segments.len() > 1 {
+            if let Some(first) = segments.first() {
+                if let Some(hir::Res::Module(module_path)) =
+                    self.resolve_value_symbol(first.name.as_str())
+                {
+                    let mut canonical = module_path;
+                    canonical.extend(
+                        segments
+                            .iter()
+                            .skip(1)
+                            .map(|seg| seg.name.as_str().to_string()),
+                    );
+                    let mut canonical_segments = Vec::with_capacity(canonical.len());
+                    let offset = canonical.len().saturating_sub(segments.len());
+                    for (idx, seg) in canonical.iter().enumerate() {
+                        let args = if idx >= offset {
+                            segments[idx - offset].args.clone()
+                        } else {
+                            None
+                        };
+                        canonical_segments.push(self.make_path_segment(seg, args));
                     }
-                } else {
-                    idx = 1;
+                    let mut canonical_res = self.lookup_global_res(&canonical, scope);
+                    if canonical_res.is_none() && self.module_defs.contains(&canonical) {
+                        canonical_res = Some(hir::Res::Module(canonical.clone()));
+                    }
+                    return Ok(hir::Path {
+                        segments: canonical_segments,
+                        res: canonical_res.or(resolved),
+                    });
                 }
+            }
+        }
 
-                canonical.extend(
-                    segments
-                        .iter()
-                        .skip(idx)
-                        .map(|seg| seg.name.as_str().to_string()),
-                );
-                resolved = self.lookup_global_res(&canonical, scope);
+        if !matches!(resolved, Some(hir::Res::Local(_))) {
+            let mut root_modules = HashSet::new();
+            for path in &self.module_defs {
+                if let Some(first) = path.first() {
+                    root_modules.insert(first.clone());
+                }
+            }
+            for key in self.global_type_defs.keys().chain(self.global_value_defs.keys()) {
+                if let Some((head, _)) = key.split_once("::") {
+                    root_modules.insert(head.to_string());
+                }
+            }
+            let extern_prelude = HashSet::new();
+            let segment_names = self.canonicalize_segments(&segments);
+            if let Ok(parsed) = parse_segments(&segment_names) {
+                let item_exists = |candidate: &[String]| {
+                    let key = candidate.join("::");
+                    match scope {
+                        PathResolutionScope::Value => {
+                            if self.global_value_defs.contains_key(&key) {
+                                return true;
+                            }
+                            if candidate.len() > 1 {
+                                let parent = candidate[..candidate.len() - 1].join("::");
+                                if self.global_type_defs.contains_key(&parent) {
+                                    return true;
+                                }
+                            }
+                        }
+                        PathResolutionScope::Type => {
+                            if self.global_type_defs.contains_key(&key) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                };
+                if let Some(canonical) = resolve_item_path(
+                    &parsed,
+                    &self.module_path,
+                    &root_modules,
+                    &extern_prelude,
+                    &self.module_defs,
+                    item_exists,
+                ) {
+                    let mut canonical_segments = Vec::with_capacity(canonical.len());
+                    let offset = canonical.len().saturating_sub(segments.len());
+                    for (idx, seg) in canonical.iter().enumerate() {
+                        let args = if idx >= offset {
+                            segments[idx - offset].args.clone()
+                        } else {
+                            None
+                        };
+                        canonical_segments.push(self.make_path_segment(seg, args));
+                    }
+                    let mut canonical_res = self.lookup_global_res(&canonical, scope);
+                    if canonical_res.is_none() && self.module_defs.contains(&canonical) {
+                        canonical_res = Some(hir::Res::Module(canonical.clone()));
+                    }
+                    return Ok(hir::Path {
+                        segments: canonical_segments,
+                        res: canonical_res.or(resolved),
+                    });
+                }
             }
         }
 
@@ -92,16 +171,6 @@ impl HirGenerator {
             }
         }
 
-        if resolved.is_none() {
-            if segments.len() == 1 {
-                resolved = segments.last().and_then(|segment| match scope {
-                    PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
-                    PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
-                });
-            }
-        }
-
-        // Fallback to global symbol tables based on canonicalized segments
         if resolved.is_none() {
             let canonical = self.canonicalize_segments(&segments);
             resolved = self.lookup_global_res(&canonical, scope);

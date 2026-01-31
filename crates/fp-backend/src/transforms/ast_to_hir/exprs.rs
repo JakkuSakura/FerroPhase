@@ -170,7 +170,7 @@ impl HirGenerator {
             }
             ExprKind::Try(expr_try) => {
                 let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
-                self.add_error(
+                self.add_error_or_warning(
                     Diagnostic::error("`?` operator lowering not implemented".to_string())
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(expr_span),
@@ -183,7 +183,7 @@ impl HirGenerator {
             }
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
-                self.add_error(
+                self.add_error_or_warning(
                     Diagnostic::error("`await` lowering not implemented".to_string())
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(expr_span),
@@ -196,7 +196,7 @@ impl HirGenerator {
             }
             ExprKind::Async(async_expr) => {
                 let inner_expr = self.transform_expr_to_hir(async_expr.expr.as_ref())?;
-                self.add_error(
+                self.add_error_or_warning(
                     Diagnostic::error("`async` lowering not implemented".to_string())
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(expr_span),
@@ -296,7 +296,7 @@ impl HirGenerator {
             }
             ExprKind::Continue(_) => hir::ExprKind::Continue,
             ExprKind::ConstBlock(_const_block) => {
-                self.add_error(
+                self.add_error_or_warning(
                     Diagnostic::error(
                         "const block must be evaluated before AST→HIR lowering".to_string(),
                     )
@@ -1910,7 +1910,7 @@ impl HirGenerator {
         for arg in args {
             values.push(self.transform_expr_to_hir(arg)?);
         }
-        let Some(param_names) = callee
+        let Some((param_names, is_variadic)) = callee
             .and_then(|expr| match &expr.kind {
                 hir::ExprKind::Path(path) => path.res.as_ref(),
                 _ => None,
@@ -1919,7 +1919,7 @@ impl HirGenerator {
                 hir::Res::Def(def_id) => Some(*def_id),
                 _ => None,
             })
-            .and_then(|def_id| self.program_def_params(def_id))
+            .and_then(|def_id| self.program_def_param_info(def_id))
         else {
             return Ok(values
                 .into_iter()
@@ -1932,11 +1932,24 @@ impl HirGenerator {
         };
 
         if values.len() != param_names.len() {
+            if is_variadic {
+                let required = param_names.len().saturating_sub(1);
+                if values.len() >= required {
+                    return Ok(values
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, value)| hir::CallArg {
+                            name: hir::Symbol::new(format!("arg{}", index)),
+                            value,
+                        })
+                        .collect());
+                }
+            }
             let span = args
                 .first()
                 .map(|arg| arg.span())
                 .unwrap_or_else(Span::null);
-            self.add_error(
+            self.add_error_or_warning(
                 Diagnostic::error(
                     "call arguments do not match function parameter count".to_string(),
                 )
@@ -1997,6 +2010,34 @@ impl HirGenerator {
                     })
                     .collect(),
             ),
+            _ => None,
+        }
+    }
+
+    pub(super) fn program_def_param_info(
+        &self,
+        def_id: hir::DefId,
+    ) -> Option<(Vec<hir::Symbol>, bool)> {
+        let Some(item) = self.program_def_map.get(&def_id) else {
+            return None;
+        };
+        match &item.kind {
+            hir::ItemKind::Function(function) => {
+                let mut names = Vec::with_capacity(function.sig.inputs.len());
+                for param in &function.sig.inputs {
+                    match &param.pat.kind {
+                        hir::PatKind::Binding { name, .. } => names.push(name.clone()),
+                        _ => return None,
+                    }
+                }
+                let is_variadic = function
+                    .sig
+                    .inputs
+                    .last()
+                    .map(|param| matches!(param.ty.kind, hir::TypeExprKind::Infer))
+                    .unwrap_or(false);
+                Some((names, is_variadic))
+            }
             _ => None,
         }
     }

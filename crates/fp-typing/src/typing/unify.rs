@@ -822,8 +822,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Custom(ty.clone()));
             }
             Ty::Struct(struct_ty) => {
-                self.struct_defs
-                    .insert(struct_ty.name.as_str().to_string(), struct_ty.clone());
+                self.insert_struct_def(&struct_ty.name, struct_ty.clone());
                 self.bind(var, TypeTerm::Struct(struct_ty.clone()));
             }
             Ty::Structural(structural) => self.bind(var, TypeTerm::Structural(structural.clone())),
@@ -888,8 +887,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let Some((key_var, value_var)) = self.hashmap_args_from_locator(loc)? {
                         let map_var = self.fresh_type_var();
-                        let map_ty = self.make_hashmap_struct();
-                        self.bind(map_var, TypeTerm::Struct(map_ty));
+                        if let Some(key) = self.resolve_locator_key(loc) {
+                            if let Some(struct_ty) = self.struct_defs.get(&key) {
+                                self.bind(map_var, TypeTerm::Struct(struct_ty.clone()));
+                            } else {
+                                let map_ty = self.make_hashmap_struct();
+                                self.bind(map_var, TypeTerm::Struct(map_ty));
+                            }
+                        } else {
+                            let map_ty = self.make_hashmap_struct();
+                            self.bind(map_var, TypeTerm::Struct(map_ty));
+                        }
                         self.record_hashmap_args(map_var, key_var, value_var);
                         return Ok(map_var);
                     }
@@ -915,12 +923,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .unwrap_or_default(),
                         other => other.to_string(),
                     };
+                    let resolved = self.resolve_locator_key(loc);
                     if is_token_stream_name(&name) {
                         self.bind(var, TypeTerm::Custom(Ty::TokenStream(TypeTokenStream)));
-                        return Ok(var);
-                    }
-                    if name == "HashMap" {
-                        self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);
                     }
                     if name == "Self" {
@@ -951,6 +956,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                     if let Some(prim) = primitive_from_name(&name) {
                         self.bind(var, TypeTerm::Primitive(prim));
+                        return Ok(var);
+                    }
+                    if let Some(key) = resolved.clone() {
+                        if let Some(struct_ty) = self.struct_defs.get(&key) {
+                            self.bind(var, TypeTerm::Struct(struct_ty.clone()));
+                            return Ok(var);
+                        }
+                        if let Some(enum_ty) = self.enum_defs.get(&key) {
+                            self.bind(var, TypeTerm::Enum(enum_ty.clone()));
+                            return Ok(var);
+                        }
+                    }
+                    if name == "HashMap" {
+                        self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);
                     }
                     if let Some(struct_ty) = self.struct_defs.get(&name) {

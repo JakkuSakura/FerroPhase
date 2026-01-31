@@ -22,7 +22,7 @@ use fp_core::mir::ty::{
 use fp_core::mir::{self, Symbol};
 use fp_core::ops::format_value_with_spec;
 use fp_core::span::Span;
-use std::collections::{hash_map::DefaultHasher, HashMap, HashSet};
+use std::collections::{hash_map::DefaultHasher, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
 const DIAGNOSTIC_CONTEXT: &str = "hir→mir";
@@ -317,7 +317,18 @@ impl MirLowering {
             .unwrap_or(0)
             .saturating_add(1);
 
-        for item in &program.items {
+        let reachable = self.collect_reachable_def_ids(program);
+        let items: Vec<&hir::Item> = if reachable.is_empty() {
+            program.items.iter().collect()
+        } else {
+            program
+                .items
+                .iter()
+                .filter(|item| reachable.contains(&item.def_id))
+                .collect()
+        };
+
+        for item in &items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
                     self.register_struct(item.def_id, def, item.span);
@@ -329,7 +340,7 @@ impl MirLowering {
             }
         }
 
-        for item in &program.items {
+        for item in &items {
             if let hir::ItemKind::Const(const_item) = &item.kind {
                 if self.lossy_mode && self.is_rust_span(const_item.body.value.span) {
                     self.emit_warning(
@@ -342,7 +353,7 @@ impl MirLowering {
             }
         }
 
-        for item in &program.items {
+        for item in &items {
             match &item.kind {
                 hir::ItemKind::Struct(def) => {
                     self.register_struct(item.def_id, def, item.span);
@@ -387,6 +398,384 @@ impl MirLowering {
         self.append_runtime_stubs(&mut mir_program);
 
         Ok(mir_program)
+    }
+
+    fn collect_reachable_def_ids(&self, program: &hir::Program) -> HashSet<hir::DefId> {
+        let (full_map, tail_map) = Self::build_item_name_maps(program);
+        let mut roots = VecDeque::new();
+        for item in &program.items {
+            if let hir::ItemKind::Function(func) = &item.kind {
+                let name = func.sig.name.as_str();
+                if name == "main" || name.ends_with("::main") {
+                    roots.push_back(item.def_id);
+                }
+            }
+        }
+
+        let mut reachable = HashSet::new();
+        let mut work = roots;
+        while let Some(def_id) = work.pop_front() {
+            if !reachable.insert(def_id) {
+                continue;
+            }
+            let Some(item) = program.def_map.get(&def_id) else {
+                continue;
+            };
+            Self::collect_def_ids_from_item(item, &full_map, &tail_map, &mut work);
+        }
+
+        reachable
+    }
+
+    fn build_item_name_maps(
+        program: &hir::Program,
+    ) -> (HashMap<String, hir::DefId>, HashMap<String, hir::DefId>) {
+        let mut full = HashMap::new();
+        let mut tails: HashMap<String, Option<hir::DefId>> = HashMap::new();
+
+        for item in &program.items {
+            let name = match &item.kind {
+                hir::ItemKind::Function(func) => func.sig.name.as_str().to_string(),
+                hir::ItemKind::Struct(strukt) => strukt.name.as_str().to_string(),
+                hir::ItemKind::Enum(enm) => enm.name.as_str().to_string(),
+                hir::ItemKind::Const(konst) => konst.name.as_str().to_string(),
+                _ => continue,
+            };
+            full.insert(name.clone(), item.def_id);
+            let tail = name.split("::").last().unwrap_or(name.as_str()).to_string();
+            tails
+                .entry(tail)
+                .and_modify(|entry| *entry = None)
+                .or_insert(Some(item.def_id));
+        }
+
+        let mut tail_map = HashMap::new();
+        for (name, def_id) in tails {
+            if let Some(def_id) = def_id {
+                tail_map.insert(name, def_id);
+            }
+        }
+
+        (full, tail_map)
+    }
+
+    fn collect_def_ids_from_item(
+        item: &hir::Item,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+        work: &mut VecDeque<hir::DefId>,
+    ) {
+        match &item.kind {
+            hir::ItemKind::Function(func) => {
+                for param in &func.sig.inputs {
+                    Self::collect_def_ids_from_type(&param.ty, full_map, tail_map, work);
+                }
+                Self::collect_def_ids_from_type(&func.sig.output, full_map, tail_map, work);
+                if let Some(body) = &func.body {
+                    Self::collect_def_ids_from_expr(&body.value, full_map, tail_map, work);
+                }
+            }
+            hir::ItemKind::Const(konst) => {
+                Self::collect_def_ids_from_type(&konst.ty, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(&konst.body.value, full_map, tail_map, work);
+            }
+            hir::ItemKind::Struct(strukt) => {
+                for field in &strukt.fields {
+                    Self::collect_def_ids_from_type(&field.ty, full_map, tail_map, work);
+                }
+            }
+            hir::ItemKind::Enum(enm) => {
+                for variant in &enm.variants {
+                    if let Some(payload) = &variant.payload {
+                        Self::collect_def_ids_from_type(payload, full_map, tail_map, work);
+                    }
+                }
+            }
+            hir::ItemKind::Impl(impl_block) => {
+                Self::collect_def_ids_from_type(&impl_block.self_ty, full_map, tail_map, work);
+                if let Some(trait_ty) = &impl_block.trait_ty {
+                    Self::collect_def_ids_from_type(trait_ty, full_map, tail_map, work);
+                }
+                for item in &impl_block.items {
+                    match &item.kind {
+                        hir::ImplItemKind::Method(func) => {
+                            for param in &func.sig.inputs {
+                                Self::collect_def_ids_from_type(
+                                    &param.ty,
+                                    full_map,
+                                    tail_map,
+                                    work,
+                                );
+                            }
+                            Self::collect_def_ids_from_type(
+                                &func.sig.output,
+                                full_map,
+                                tail_map,
+                                work,
+                            );
+                            if let Some(body) = &func.body {
+                                Self::collect_def_ids_from_expr(
+                                    &body.value,
+                                    full_map,
+                                    tail_map,
+                                    work,
+                                );
+                            }
+                        }
+                        hir::ImplItemKind::AssocConst(konst) => {
+                            Self::collect_def_ids_from_type(
+                                &konst.ty,
+                                full_map,
+                                tail_map,
+                                work,
+                            );
+                            Self::collect_def_ids_from_expr(
+                                &konst.body.value,
+                                full_map,
+                                tail_map,
+                                work,
+                            );
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn resolve_def_id_from_path(
+        path: &hir::Path,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+    ) -> Option<hir::DefId> {
+        if let Some(hir::Res::Def(def_id)) = &path.res {
+            return Some(*def_id);
+        }
+        let full = path
+            .segments
+            .iter()
+            .map(|seg| seg.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        if let Some(def_id) = full_map.get(&full) {
+            return Some(*def_id);
+        }
+        let tail = path.segments.last()?.name.as_str();
+        tail_map.get(tail).copied()
+    }
+
+    fn collect_def_ids_from_type(
+        ty: &hir::TypeExpr,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+        work: &mut VecDeque<hir::DefId>,
+    ) {
+        match &ty.kind {
+            hir::TypeExprKind::Path(path) => {
+                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
+                    work.push_back(def_id);
+                }
+            }
+            hir::TypeExprKind::Structural(structural) => {
+                for field in &structural.fields {
+                    Self::collect_def_ids_from_type(&field.ty, full_map, tail_map, work);
+                }
+            }
+            hir::TypeExprKind::TypeBinaryOp(op) => {
+                Self::collect_def_ids_from_type(&op.lhs, full_map, tail_map, work);
+                Self::collect_def_ids_from_type(&op.rhs, full_map, tail_map, work);
+            }
+            hir::TypeExprKind::Tuple(items) => {
+                for item in items {
+                    Self::collect_def_ids_from_type(item, full_map, tail_map, work);
+                }
+            }
+            hir::TypeExprKind::Array(elem, len) => {
+                Self::collect_def_ids_from_type(elem, full_map, tail_map, work);
+                if let Some(len) = len {
+                    Self::collect_def_ids_from_expr(len, full_map, tail_map, work);
+                }
+            }
+            hir::TypeExprKind::Slice(elem)
+            | hir::TypeExprKind::Ptr(elem)
+            | hir::TypeExprKind::Ref(elem) => {
+                Self::collect_def_ids_from_type(elem, full_map, tail_map, work);
+            }
+            hir::TypeExprKind::FnPtr(fn_ptr) => {
+                for input in &fn_ptr.inputs {
+                    Self::collect_def_ids_from_type(input, full_map, tail_map, work);
+                }
+                Self::collect_def_ids_from_type(&fn_ptr.output, full_map, tail_map, work);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_def_ids_from_expr(
+        expr: &hir::Expr,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+        work: &mut VecDeque<hir::DefId>,
+    ) {
+        match &expr.kind {
+            hir::ExprKind::Path(path) => {
+                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
+                    work.push_back(def_id);
+                }
+            }
+            hir::ExprKind::Binary(_, lhs, rhs)
+            | hir::ExprKind::Assign(lhs, rhs) => {
+                Self::collect_def_ids_from_expr(lhs, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(rhs, full_map, tail_map, work);
+            }
+            hir::ExprKind::Unary(_, value)
+            | hir::ExprKind::FieldAccess(value, _)
+            | hir::ExprKind::Cast(value, _)
+            | hir::ExprKind::Return(Some(value))
+            | hir::ExprKind::Break(Some(value)) => {
+                Self::collect_def_ids_from_expr(value, full_map, tail_map, work);
+            }
+            hir::ExprKind::Call(callee, args) => {
+                Self::collect_def_ids_from_expr(callee, full_map, tail_map, work);
+                for arg in args {
+                    Self::collect_def_ids_from_expr(&arg.value, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::MethodCall(receiver, _, args) => {
+                Self::collect_def_ids_from_expr(receiver, full_map, tail_map, work);
+                for arg in args {
+                    Self::collect_def_ids_from_expr(&arg.value, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::Index(base, index) => {
+                Self::collect_def_ids_from_expr(base, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(index, full_map, tail_map, work);
+            }
+            hir::ExprKind::Struct(path, fields) => {
+                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
+                    work.push_back(def_id);
+                }
+                for field in fields {
+                    Self::collect_def_ids_from_expr(&field.expr, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
+                Self::collect_def_ids_from_expr(cond, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(then_expr, full_map, tail_map, work);
+                if let Some(else_expr) = else_expr {
+                    Self::collect_def_ids_from_expr(else_expr, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::Match(scrutinee, arms) => {
+                Self::collect_def_ids_from_expr(scrutinee, full_map, tail_map, work);
+                for arm in arms {
+                    Self::collect_def_ids_from_pat(&arm.pat, full_map, tail_map, work);
+                    if let Some(guard) = &arm.guard {
+                        Self::collect_def_ids_from_expr(guard, full_map, tail_map, work);
+                    }
+                    Self::collect_def_ids_from_expr(&arm.body, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::Block(block) => {
+                for stmt in &block.stmts {
+                    Self::collect_def_ids_from_stmt(stmt, full_map, tail_map, work);
+                }
+                if let Some(expr) = &block.expr {
+                    Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::IntrinsicCall(call) => {
+                for arg in &call.callargs {
+                    Self::collect_def_ids_from_expr(&arg.value, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::Let(pat, ty, init) => {
+                Self::collect_def_ids_from_pat(pat, full_map, tail_map, work);
+                Self::collect_def_ids_from_type(ty, full_map, tail_map, work);
+                if let Some(init) = init {
+                    Self::collect_def_ids_from_expr(init, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::Loop(block) | hir::ExprKind::While(_, block) => {
+                for stmt in &block.stmts {
+                    Self::collect_def_ids_from_stmt(stmt, full_map, tail_map, work);
+                }
+                if let Some(expr) = &block.expr {
+                    Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::Array(elements) => {
+                for elem in elements {
+                    Self::collect_def_ids_from_expr(elem, full_map, tail_map, work);
+                }
+            }
+            hir::ExprKind::ArrayRepeat { elem, len } => {
+                Self::collect_def_ids_from_expr(elem, full_map, tail_map, work);
+                Self::collect_def_ids_from_expr(len, full_map, tail_map, work);
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_def_ids_from_stmt(
+        stmt: &hir::Stmt,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+        work: &mut VecDeque<hir::DefId>,
+    ) {
+        match &stmt.kind {
+            hir::StmtKind::Expr(expr) | hir::StmtKind::Semi(expr) => {
+                Self::collect_def_ids_from_expr(expr, full_map, tail_map, work);
+            }
+            hir::StmtKind::Local(local) => {
+                if let Some(ty) = &local.ty {
+                    Self::collect_def_ids_from_type(ty, full_map, tail_map, work);
+                }
+                if let Some(init) = &local.init {
+                    Self::collect_def_ids_from_expr(init, full_map, tail_map, work);
+                }
+            }
+            hir::StmtKind::Item(item) => {
+                Self::collect_def_ids_from_item(item, full_map, tail_map, work);
+            }
+        }
+    }
+
+    fn collect_def_ids_from_pat(
+        pat: &hir::Pat,
+        full_map: &HashMap<String, hir::DefId>,
+        tail_map: &HashMap<String, hir::DefId>,
+        work: &mut VecDeque<hir::DefId>,
+    ) {
+        match &pat.kind {
+            hir::PatKind::Struct(path, fields, _) => {
+                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
+                    work.push_back(def_id);
+                }
+                for field in fields {
+                    Self::collect_def_ids_from_pat(&field.pat, full_map, tail_map, work);
+                }
+            }
+            hir::PatKind::TupleStruct(path, parts) => {
+                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
+                    work.push_back(def_id);
+                }
+                for part in parts {
+                    Self::collect_def_ids_from_pat(part, full_map, tail_map, work);
+                }
+            }
+            hir::PatKind::Tuple(parts) => {
+                for part in parts {
+                    Self::collect_def_ids_from_pat(part, full_map, tail_map, work);
+                }
+            }
+            hir::PatKind::Variant(path) => {
+                if let Some(def_id) = Self::resolve_def_id_from_path(path, full_map, tail_map) {
+                    work.push_back(def_id);
+                }
+            }
+            _ => {}
+        }
     }
 
     fn append_runtime_stubs(&mut self, program: &mut mir::Program) {
@@ -3576,17 +3965,15 @@ impl MirLowering {
                 Some(mir::ConstValue::Array(lowered))
             }
             hir::ExprKind::Struct(path, fields) => {
-                let hir::Res::Def(def_id) = path.res.as_ref()? else {
-                    return None;
-                };
-                let struct_def = self.struct_defs.get(def_id)?.clone();
+                let def_id = self.resolve_path_def_id(path)?;
+                let struct_def = self.struct_defs.get(&def_id)?.clone();
                 let args = path
                     .segments
                     .last()
                     .and_then(|segment| segment.args.as_ref())
                     .map(|args| self.lower_generic_args(Some(args), expr.span))
                     .unwrap_or_default();
-                let layout = self.struct_layout_for_instance(*def_id, &args, expr.span)?;
+                let layout = self.struct_layout_for_instance(def_id, &args, expr.span)?;
                 let mut field_map: HashMap<String, &hir::Expr> = HashMap::new();
                 for field in fields {
                     field_map.insert(field.name.as_str().to_string(), &field.expr);
@@ -4682,11 +5069,11 @@ impl<'a> BodyBuilder<'a> {
 
         self.current_block = cond_block;
         let bool_ty = Ty { kind: TyKind::Bool };
-        let cond_operand = self.lower_operand(cond, Some(&bool_ty))?;
+        let cond_operand = self.lower_condition_operand(cond)?;
         let switch = mir::Terminator {
             source_info: cond.span,
             kind: mir::TerminatorKind::SwitchInt {
-                discr: cond_operand.operand,
+                discr: cond_operand,
                 switch_ty: bool_ty.clone(),
                 targets: mir::SwitchTargets {
                     values: vec![1],
@@ -4936,12 +5323,12 @@ impl<'a> BodyBuilder<'a> {
             self.bind_match_pattern(&arm.pat, &scrutinee_place, &scrutinee_info.ty, span);
 
             if let Some(guard) = &arm.guard {
-                let guard_operand = self.lower_operand(guard, Some(&Ty { kind: TyKind::Bool }))?;
+                let guard_operand = self.lower_condition_operand(guard)?;
                 let guard_block = self.new_block();
                 let guard_switch = mir::Terminator {
                     source_info: guard.span,
                     kind: mir::TerminatorKind::SwitchInt {
-                        discr: guard_operand.operand,
+                        discr: guard_operand,
                         switch_ty: Ty { kind: TyKind::Bool },
                         targets: mir::SwitchTargets {
                             values: vec![1],
@@ -5833,6 +6220,9 @@ impl<'a> BodyBuilder<'a> {
                 };
                 self.lower_loop_expr(expr.span, block, Some(destination), true)?;
             }
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
+                self.lower_if_statement(expr.span, cond, then_expr, else_expr)?;
+            }
             hir::ExprKind::While(cond, block) => {
                 self.lower_while_expr(expr.span, cond, block, None)?;
             }
@@ -5850,6 +6240,85 @@ impl<'a> BodyBuilder<'a> {
                 let _ = self.lower_operand(expr, None)?;
             }
         }
+        Ok(())
+    }
+
+    fn lower_expr_as_statement(&mut self, expr: &hir::Expr) -> Result<()> {
+        match &expr.kind {
+            hir::ExprKind::Block(block) => self.lower_block(block),
+            hir::ExprKind::If(cond, then_expr, else_expr) => {
+                self.lower_if_statement(expr.span, cond, then_expr, else_expr)
+            }
+            _ => self.lower_expr_statement(expr),
+        }
+    }
+
+    fn lower_if_statement(
+        &mut self,
+        span: Span,
+        cond: &hir::Expr,
+        then_expr: &hir::Expr,
+        else_expr: &Option<Box<hir::Expr>>,
+    ) -> Result<()> {
+        let bool_ty = Ty { kind: TyKind::Bool };
+        let cond_operand = self.lower_condition_operand(cond)?;
+
+        let then_block = self.new_block();
+        let else_block = self.new_block();
+        let continue_block = self.new_block();
+
+        let switch = mir::Terminator {
+            source_info: cond.span,
+            kind: mir::TerminatorKind::SwitchInt {
+                discr: cond_operand,
+                switch_ty: bool_ty,
+                targets: mir::SwitchTargets {
+                    values: vec![1],
+                    targets: vec![then_block],
+                    otherwise: else_block,
+                },
+            },
+        };
+        self.set_current_terminator(switch);
+
+        self.current_block = then_block;
+        self.lower_expr_as_statement(then_expr)?;
+        if self.blocks[self.current_block as usize]
+            .terminator
+            .is_none()
+        {
+            self.set_current_terminator(mir::Terminator {
+                source_info: then_expr.span,
+                kind: mir::TerminatorKind::Goto {
+                    target: continue_block,
+                },
+            });
+        }
+
+        self.current_block = else_block;
+        if let Some(else_expr) = else_expr {
+            self.lower_expr_as_statement(else_expr)?;
+            if self.blocks[self.current_block as usize]
+                .terminator
+                .is_none()
+            {
+                self.set_current_terminator(mir::Terminator {
+                    source_info: else_expr.span,
+                    kind: mir::TerminatorKind::Goto {
+                        target: continue_block,
+                    },
+                });
+            }
+        } else {
+            self.set_current_terminator(mir::Terminator {
+                source_info: span,
+                kind: mir::TerminatorKind::Goto {
+                    target: continue_block,
+                },
+            });
+        }
+
+        self.current_block = continue_block;
         Ok(())
     }
 
@@ -6242,10 +6711,7 @@ impl<'a> BodyBuilder<'a> {
             .find_map(|segment| segment.args.as_ref())
             .map(|args| self.lowering.lower_generic_args(Some(args), span))
             .unwrap_or_default();
-        let def_id = match &resolved_path.res {
-            Some(hir::Res::Def(def_id)) => Some(*def_id),
-            _ => None,
-        };
+        let def_id = self.lowering.resolve_path_def_id(&resolved_path);
 
         if let (Some(expected_ty), Some(variant)) = (
             annotated_ty,
@@ -8853,6 +9319,14 @@ impl<'a> BodyBuilder<'a> {
         )
     }
 
+    fn lower_condition_operand(&mut self, expr: &hir::Expr) -> Result<mir::Operand> {
+        let bool_ty = Ty { kind: TyKind::Bool };
+        let local_id = self.allocate_temp(bool_ty, expr.span);
+        let place = mir::Place::from_local(local_id);
+        self.lower_expr_into_place(expr, place.clone(), &Ty { kind: TyKind::Bool })?;
+        Ok(mir::Operand::copy(place))
+    }
+
     fn fallback_operand_for_reference(&self, reference_ty: &Ty, span: Span) -> OperandInfo {
         match &reference_ty.kind {
             TyKind::Uint(kind) => OperandInfo::constant(
@@ -10745,7 +11219,7 @@ impl<'a> BodyBuilder<'a> {
             }
             hir::ExprKind::If(cond, then_expr, else_expr) => {
                 let bool_ty = Ty { kind: TyKind::Bool };
-                let cond_operand = self.lower_operand(cond, Some(&bool_ty))?;
+                let cond_operand = self.lower_condition_operand(cond)?;
 
                 let then_block = self.new_block();
                 let else_block = self.new_block();
@@ -10754,7 +11228,7 @@ impl<'a> BodyBuilder<'a> {
                 let switch = mir::Terminator {
                     source_info: cond.span,
                     kind: mir::TerminatorKind::SwitchInt {
-                        discr: cond_operand.operand,
+                        discr: cond_operand,
                         switch_ty: bool_ty,
                         targets: mir::SwitchTargets {
                             values: vec![1],
@@ -11595,6 +12069,45 @@ impl<'a> BodyBuilder<'a> {
                             };
                             self.push_statement(statement);
                             return Ok(());
+                        }
+                        if let Some(local) = self.locals.get(local_id as usize) {
+                            if self.is_list_container(&local.ty) {
+                                let elem_ty = self
+                                    .expect_array_element_ty(&local.ty)
+                                    .unwrap_or_else(|| self.lowering.error_ty());
+                                let len = self
+                                    .container_locals
+                                    .get(&local_id)
+                                    .and_then(|kind| match kind {
+                                        mir::ContainerKind::List { len, .. } => Some(*len),
+                                        _ => None,
+                                    })
+                                    .unwrap_or(0);
+                                let kind = mir::ContainerKind::List {
+                                    elem_ty: elem_ty.clone(),
+                                    len,
+                                };
+                                let len_ty = Ty {
+                                    kind: TyKind::Uint(UintTy::Usize),
+                                };
+                                if (place.local as usize) < self.locals.len() {
+                                    self.locals[place.local as usize].ty = len_ty.clone();
+                                }
+                                let statement = mir::Statement {
+                                    source_info: expr.span,
+                                    kind: mir::StatementKind::Assign(
+                                        place,
+                                        mir::Rvalue::ContainerLen {
+                                            kind,
+                                            container: mir::Operand::copy(
+                                                mir::Place::from_local(local_id),
+                                            ),
+                                        },
+                                    ),
+                                };
+                                self.push_statement(statement);
+                                return Ok(());
+                            }
                         }
                         let array_len = self.locals.get(local_id as usize).and_then(|local| {
                             if let TyKind::Array(_, len) = &local.ty.kind {

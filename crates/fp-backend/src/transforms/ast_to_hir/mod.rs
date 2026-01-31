@@ -44,6 +44,7 @@ pub struct HirGenerator {
     synthetic_items: Vec<hir::Item>,
     module_defs: HashSet<Vec<String>>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
+    unimplemented_type_def_ids: HashSet<hir::DefId>,
 }
 
 enum MaterializedTypeAlias {
@@ -112,6 +113,19 @@ impl HirGenerator {
 
     fn add_warning(&mut self, diag: Diagnostic) {
         diagnostic_manager().add_diagnostic(diag);
+    }
+
+    fn add_error_or_warning(&mut self, mut diag: Diagnostic) {
+        if self.is_std_module() {
+            diag.level = fp_core::diagnostics::DiagnosticLevel::Warning;
+            self.add_warning(diag);
+        } else {
+            self.add_error(diag);
+        }
+    }
+
+    fn is_std_module(&self) -> bool {
+        matches!(self.module_path.first(), Some(name) if name == "std")
     }
 
     fn normalize_span(&self, span: Span) -> Span {
@@ -277,6 +291,7 @@ impl HirGenerator {
             synthetic_items: Vec::new(),
             module_defs: HashSet::new(),
             program_def_map: HashMap::new(),
+            unimplemented_type_def_ids: HashSet::new(),
         }
     }
 
@@ -298,6 +313,7 @@ impl HirGenerator {
         self.enum_variant_def_ids.clear();
         self.struct_field_defs.clear();
         self.module_defs.clear();
+        self.unimplemented_type_def_ids.clear();
     }
 
     fn current_type_scope(&mut self) -> &mut HashMap<String, hir::Res> {
@@ -452,6 +468,9 @@ impl HirGenerator {
                 ItemKind::DefStruct(def_struct) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_struct.name.name, def_id, &def_struct.visibility);
+                    if attrs_has_name(&def_struct.attrs, "unimplemented") {
+                        self.unimplemented_type_def_ids.insert(def_id);
+                    }
                     self.struct_field_defs
                         .insert(def_id, def_struct.value.fields.clone());
                 }
@@ -462,12 +481,18 @@ impl HirGenerator {
                         def_id,
                         &def_structural.visibility,
                     );
+                    if attrs_has_name(&def_structural.attrs, "unimplemented") {
+                        self.unimplemented_type_def_ids.insert(def_id);
+                    }
                     self.struct_field_defs
                         .insert(def_id, def_structural.value.fields.clone());
                 }
                 ItemKind::DefEnum(def_enum) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_enum.name.name, def_id, &def_enum.visibility);
+                    if attrs_has_name(&def_enum.attrs, "unimplemented") {
+                        self.unimplemented_type_def_ids.insert(def_id);
+                    }
 
                     for variant in &def_enum.value.variants {
                         let variant_def_id = self.next_def_id();
@@ -496,6 +521,9 @@ impl HirGenerator {
                 ItemKind::DefTrait(def_trait) => {
                     let def_id = self.allocate_def_id_for_item(item);
                     self.register_type_def(&def_trait.name.name, def_id, &def_trait.visibility);
+                    if attrs_has_name(&def_trait.attrs, "unimplemented") {
+                        self.unimplemented_type_def_ids.insert(def_id);
+                    }
                     self.trait_defs
                         .insert(def_trait.name.name.clone(), def_trait.clone());
                 }
@@ -504,6 +532,9 @@ impl HirGenerator {
                     if let Some(materialized) = self.materialized_type_alias(def_type) {
                         let def_id = self.allocate_def_id_for_item(item);
                         self.register_type_def(&def_type.name.name, def_id, &def_type.visibility);
+                        if attrs_has_name(&def_type.attrs, "unimplemented") {
+                            self.unimplemented_type_def_ids.insert(def_id);
+                        }
                         match materialized {
                             MaterializedTypeAlias::Struct(struct_ty) => {
                                 self.struct_field_defs
@@ -1020,7 +1051,9 @@ impl HirGenerator {
             }
             ItemKind::DefFunction(func_def) => {
                 self.register_value_def(&func_def.name.name, def_id, &func_def.visibility);
-                let function = self.transform_function(func_def, None)?;
+                let lower_body =
+                    !self.is_std_module() && !attrs_has_name(&func_def.attrs, "unimplemented");
+                let function = self.transform_function_with_body(func_def, None, lower_body)?;
                 (
                     hir::ItemKind::Function(function),
                     self.map_visibility(&func_def.visibility),
@@ -3416,6 +3449,18 @@ fn item_attrs_mut(item: &mut ast::Item) -> Option<&mut Vec<ast::Attribute>> {
         ItemKind::Import(import) => Some(&mut import.attrs),
         ItemKind::Impl(impl_block) => Some(&mut impl_block.attrs),
         _ => None,
+    }
+}
+
+fn attrs_has_name(attrs: &[ast::Attribute], name: &str) -> bool {
+    attrs.iter().any(|attr| attr_has_name(attr, name))
+}
+
+fn attr_has_name(attr: &ast::Attribute, name: &str) -> bool {
+    match &attr.meta {
+        ast::AttrMeta::Path(path) => path.last().as_str() == name,
+        ast::AttrMeta::List(list) => list.name.last().as_str() == name,
+        ast::AttrMeta::NameValue(nv) => nv.name.last().as_str() == name,
     }
 }
 
