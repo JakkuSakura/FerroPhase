@@ -1264,6 +1264,25 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         if let ExprInvokeTarget::Function(locator) = &invoke.target {
+            if let Some(sig) = self.lookup_extern_function_signature(locator) {
+                if invoke.args.len() != sig.params.len() {
+                    self.emit_error("extern \"C\" call arity mismatch");
+                    return Ok(self.error_type_var());
+                }
+                for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
+                    let arg_var = self.infer_expr(arg_expr)?;
+                    let param_var = self.type_from_ast_ty(&param.ty)?;
+                    self.unify(arg_var, param_var)?;
+                }
+                let ret_var = if let Some(ret_ty) = &sig.ret_ty {
+                    self.type_from_ast_ty(ret_ty)?
+                } else {
+                    let unit = self.fresh_type_var();
+                    self.bind(unit, TypeTerm::Unit);
+                    unit
+                };
+                return Ok(ret_var);
+            }
             if let Some(sig) = self.lookup_function_signature(locator) {
                 if sig.abi == Abi::C && sig.generics_params.is_empty() && sig.receiver.is_none() {
                     if invoke.args.len() != sig.params.len() {

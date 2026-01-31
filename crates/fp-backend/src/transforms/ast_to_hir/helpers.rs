@@ -119,6 +119,10 @@ impl HirGenerator {
                     }
                     false
                 };
+                let scope_contains = |name: &str| match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
+                    PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
+                };
                 if let Some(canonical) = resolve_item_path(
                     &parsed,
                     &self.module_path,
@@ -126,6 +130,7 @@ impl HirGenerator {
                     &extern_prelude,
                     &self.module_defs,
                     item_exists,
+                    scope_contains,
                 ) {
                     let mut canonical_segments = Vec::with_capacity(canonical.len());
                     let offset = canonical.len().saturating_sub(segments.len());

@@ -968,6 +968,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             return Ok(var);
                         }
                     }
+                    if let Some((_, struct_ty)) = self.lookup_struct_def_by_name(&name) {
+                        self.bind(var, TypeTerm::Struct(struct_ty));
+                        return Ok(var);
+                    }
+                    if let Some((_, enum_ty)) = self.lookup_enum_def_by_name(&name) {
+                        self.bind(var, TypeTerm::Enum(enum_ty));
+                        return Ok(var);
+                    }
                     if name == "HashMap" {
                         self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);

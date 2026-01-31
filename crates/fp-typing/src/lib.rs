@@ -127,11 +127,13 @@ pub struct AstTypeInferencer<'ctx> {
     struct_methods: HashMap<String, HashMap<String, MethodRecord>>,
     trait_method_sigs: HashMap<String, HashMap<String, FunctionSignature>>,
     function_signatures: HashMap<String, FunctionSignature>,
+    extern_function_signatures: HashMap<String, FunctionSignature>,
     impl_traits: HashMap<String, HashSet<String>>,
     generic_trait_bounds: HashMap<TypeVarId, Vec<String>>,
     impl_stack: Vec<Option<ImplContext>>,
     module_path: Vec<String>,
     module_defs: HashSet<Vec<String>>,
+    module_scope_depths: Vec<usize>,
     root_modules: HashSet<String>,
     extern_prelude: HashSet<String>,
     module_aliases: Vec<HashMap<String, Vec<String>>>,
@@ -200,11 +202,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             struct_methods: HashMap::new(),
             trait_method_sigs: HashMap::new(),
             function_signatures: HashMap::new(),
+            extern_function_signatures: HashMap::new(),
             impl_traits: HashMap::new(),
             generic_trait_bounds: HashMap::new(),
             impl_stack: Vec::new(),
             module_path: Vec::new(),
             module_defs: HashSet::new(),
+            module_scope_depths: vec![0],
             root_modules: HashSet::new(),
             extern_prelude: default_extern_prelude(),
             module_aliases: vec![HashMap::new()],
@@ -751,8 +755,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
         for candidate in candidates {
             self.function_signatures
-                .entry(candidate)
-                .or_insert_with(|| sig.clone());
+                .insert(candidate, sig.clone());
+        }
+    }
+
+    fn record_extern_function_signature(&mut self, name: &Ident, sig: &FunctionSignature) {
+        let mut candidates = Vec::new();
+        if self.module_path.is_empty() {
+            candidates.push(name.as_str().to_string());
+        } else {
+            let mut qualified = self.module_path.clone();
+            qualified.push(name.as_str().to_string());
+            candidates.push(qualified.join("::"));
+        }
+        for candidate in candidates {
+            self.extern_function_signatures
+                .insert(candidate, sig.clone());
         }
     }
 
@@ -797,10 +815,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.env.iter().rev().any(|scope| scope.contains_key(key))
     }
 
+    fn scope_contains_non_module(&self, name: &str) -> bool {
+        let module_depth = *self.module_scope_depths.last().unwrap_or(&0);
+        self.env
+            .iter()
+            .enumerate()
+            .rev()
+            .any(|(idx, scope)| idx > module_depth && scope.contains_key(name))
+    }
+
     fn item_exists_key(&self, key: &str) -> bool {
         self.struct_defs.contains_key(key)
             || self.enum_defs.contains_key(key)
             || self.function_signatures.contains_key(key)
+            || self.extern_function_signatures.contains_key(key)
             || self.unimplemented_symbols.contains(key)
             || self.env_contains(key)
     }
@@ -819,16 +847,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return None;
         }
         if segments.len() == 1 {
-            let name = segments[0].clone();
-            if !self.module_path.is_empty() {
-                let mut qualified = self.module_path.clone();
-                qualified.push(name.clone());
-                let qualified_key = segments_to_key(&qualified);
-                if self.item_exists_key(&qualified_key) {
-                    return Some(qualified_key);
-                }
-            }
-            return Some(name);
+            let parsed = parse_segments(&segments).ok()?;
+            let qualified = resolve_item_path(
+                &parsed,
+                &self.module_path,
+                &self.root_modules,
+                &self.extern_prelude,
+                &self.module_defs,
+                |candidate| self.item_exists_segments(candidate),
+                |name| self.scope_contains_non_module(name),
+            )?;
+            return Some(segments_to_key(&qualified));
         }
         let parsed = parse_segments(&segments).ok()?;
         let qualified = resolve_item_path(
@@ -838,6 +867,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             &self.extern_prelude,
             &self.module_defs,
             |candidate| self.item_exists_segments(candidate),
+            |name| self.scope_contains_non_module(name),
         )?;
         Some(segments_to_key(&qualified))
     }
@@ -847,16 +877,17 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return None;
         }
         if segments.len() == 1 {
-            let name = segments[0].clone();
-            if !self.module_path.is_empty() {
-                let mut qualified = self.module_path.clone();
-                qualified.push(name.clone());
-                let qualified_key = segments_to_key(&qualified);
-                if self.item_exists_key(&qualified_key) {
-                    return Some(qualified_key);
-                }
-            }
-            return Some(name);
+            let parsed = parse_segments(segments).ok()?;
+            let qualified = resolve_item_path(
+                &parsed,
+                &self.module_path,
+                &self.root_modules,
+                &self.extern_prelude,
+                &self.module_defs,
+                |candidate| self.item_exists_segments(candidate),
+                |name| self.scope_contains_non_module(name),
+            )?;
+            return Some(segments_to_key(&qualified));
         }
         let parsed = parse_segments(segments).ok()?;
         let qualified = resolve_item_path(
@@ -866,6 +897,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             &self.extern_prelude,
             &self.module_defs,
             |candidate| self.item_exists_segments(candidate),
+            |name| self.scope_contains_non_module(name),
         )?;
         Some(segments_to_key(&qualified))
     }
@@ -893,39 +925,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     fn lookup_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {
-        if let Some(ident) = locator.as_ident() {
-            if let Some(sig) = self.function_signatures.get(ident.as_str()) {
-                return Some(sig.clone());
-            }
-        }
-        if let Some(ident) = locator.as_ident() {
-            if !self.module_path.is_empty() {
-                let mut qualified = self.module_path.clone();
-                qualified.push(ident.as_str().to_string());
-                let candidate = qualified.join("::");
-                if let Some(sig) = self.function_signatures.get(&candidate) {
-                    return Some(sig.clone());
-                }
-            }
-        }
         let candidate = self.resolve_locator_key(locator)?;
-        if let Some(sig) = self.function_signatures.get(&candidate) {
+        if let Some(sig) = self.extern_function_signatures.get(&candidate) {
             return Some(sig.clone());
         }
-        if let Some(ident) = locator.as_ident() {
-            let suffix = format!("::{}", ident.as_str());
-            let mut match_sig = None;
-            for (key, sig) in &self.function_signatures {
-                if key == ident.as_str() || key.ends_with(&suffix) {
-                    if match_sig.is_some() {
-                        return None;
-                    }
-                    match_sig = Some(sig.clone());
-                }
-            }
-            return match_sig;
-        }
-        None
+        self.function_signatures.get(&candidate).cloned()
+    }
+
+    fn lookup_extern_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {
+        let candidate = self.resolve_locator_key(locator)?;
+        self.extern_function_signatures.get(&candidate).cloned()
     }
 
     fn resolve_impl_context(&mut self, self_ty: &Expr) -> Option<ImplContext> {
@@ -1185,7 +1194,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
             ItemKind::DefFunction(def) => {
                 self.record_unimplemented_symbol(&def.name, &def.attrs);
-                self.record_function_signature(&def.name, &def.sig);
+                let in_impl = self.impl_stack.last().is_some();
+                if !in_impl {
+                    self.record_function_signature(&def.name, &def.sig);
+                }
                 let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
                     let key = format!("{}::{}", ctx.struct_name, def.name.as_str());
                     if let Some(var) = self.lookup_env_var(&key) {
@@ -1195,7 +1207,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.insert_env(key, EnvEntry::Mono(var));
                         var
                     }
+                } else if in_impl {
+                    self.fresh_type_var()
                 } else {
+                    if !in_impl {
+                        self.register_symbol(&def.name);
+                    }
                     self.symbol_var(&def.name)
                 };
                 if def.sig.generics_params.is_empty() {
@@ -1261,9 +1278,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
             ItemKind::DeclFunction(decl) => {
-                self.record_function_signature(&decl.name, &decl.sig);
-                self.register_symbol(&decl.name);
-                let fn_var = self.symbol_var(&decl.name);
+                let in_impl = self.impl_stack.last().is_some();
+                if !in_impl {
+                    self.record_function_signature(&decl.name, &decl.sig);
+                    if decl.sig.abi == Abi::C {
+                        self.record_extern_function_signature(&decl.name, &decl.sig);
+                    }
+                    self.register_symbol(&decl.name);
+                }
+                let fn_var = if let Some(ctx) = self.impl_stack.last().cloned().flatten() {
+                    let key = format!("{}::{}", ctx.struct_name, decl.name.as_str());
+                    if let Some(var) = self.lookup_env_var(&key) {
+                        var
+                    } else {
+                        let var = self.fresh_type_var();
+                        self.insert_env(key, EnvEntry::Mono(var));
+                        var
+                    }
+                } else if in_impl {
+                    self.fresh_type_var()
+                } else {
+                    self.symbol_var(&decl.name)
+                };
                 if decl.sig.generics_params.is_empty() && decl.sig.receiver.is_none() {
                     self.prebind_decl_function_signature(decl, fn_var);
                 }
@@ -1272,10 +1308,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.record_module_def(module.name.as_str());
                 self.push_module_path(module.name.as_str());
                 self.enter_scope();
+                self.module_scope_depths
+                    .push(self.env.len().saturating_sub(1));
                 for child in &module.items {
                     self.predeclare_item(child);
                 }
                 self.exit_scope();
+                self.module_scope_depths.pop();
                 self.pop_module_path();
                 self.register_qualified_items(&module.items, module.name.as_str());
             }
@@ -1838,6 +1877,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ItemKind::Module(module) => {
                     self.push_module_path(module.name.as_str());
                     self.enter_scope();
+                    self.module_scope_depths
+                        .push(self.env.len().saturating_sub(1));
                     for child in &module.items {
                         self.predeclare_item(child);
                     }
@@ -1845,6 +1886,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.infer_item(child)?;
                     }
                     self.exit_scope();
+                    self.module_scope_depths.pop();
                     self.pop_module_path();
                     Ty::Unit(TypeUnit)
                 }
@@ -2703,7 +2745,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let key = name.as_str().to_string();
         let var = self.fresh_type_var();
         if let Some(scope) = self.env.last_mut() {
-            scope.insert(key, EnvEntry::Mono(var));
+            scope.entry(key).or_insert(EnvEntry::Mono(var));
         }
     }
 
