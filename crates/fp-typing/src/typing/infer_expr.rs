@@ -3,6 +3,7 @@ use crate::{AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId}
 use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::module::path::QualifiedPath;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -1871,7 +1872,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn make_hashmap_struct(&self) -> TypeStruct {
-        if let Some(existing) = self.struct_defs.get("HashMap") {
+        let key = QualifiedPath::new(vec!["HashMap".to_string()]);
+        if let Some(existing) = self.struct_defs.get(&key) {
             return existing.clone();
         }
         TypeStruct {
@@ -2182,7 +2184,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             PatternKind::Struct(struct_pat) => {
                 let struct_name = self
                     .qualified_name(struct_pat.name.as_str())
-                    .unwrap_or_else(|| struct_pat.name.as_str().to_string());
+                    .unwrap_or_else(|| {
+                        QualifiedPath::new(vec![struct_pat.name.as_str().to_string()])
+                    });
                 let struct_var = self.fresh_type_var();
                 if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
                     self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
@@ -2215,7 +2219,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         bindings,
                     }
                 } else {
-                    self.emit_error(format!("unknown struct {} in pattern", struct_name));
+                    self.emit_error(format!(
+                        "unknown struct {} in pattern",
+                        struct_name.to_key()
+                    ));
                     PatternInfo::new(self.error_type_var())
                 }
             }
@@ -2365,9 +2372,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         let resolved = self.resolve_locator_key(locator);
                         let struct_name = resolved.or_else(|| match locator {
                             Locator::Path(path) if path.segments.len() == 1 => {
-                                Some(path.segments[0].as_str().to_string())
+                                Some(QualifiedPath::new(vec![
+                                    path.segments[0].as_str().to_string(),
+                                ]))
                             }
-                            Locator::Ident(ident) => Some(ident.as_str().to_string()),
+                            Locator::Ident(ident) => {
+                                Some(QualifiedPath::new(vec![ident.as_str().to_string()]))
+                            }
                             _ => None,
                         });
                         if let Some(struct_name) = struct_name {
@@ -2439,9 +2450,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn lookup_struct_method(&mut self, obj_var: TypeVarId, field: &Ident) -> Result<TypeVarId> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty.clone());
-        let struct_name = match resolved_ty {
-            Ty::Struct(struct_ty) => struct_ty.name.as_str().to_string(),
-            Ty::Enum(enum_ty) => enum_ty.name.as_str().to_string(),
+        let struct_path = match resolved_ty {
+            Ty::Struct(struct_ty) => {
+                QualifiedPath::new(vec![struct_ty.name.as_str().to_string()])
+            }
+            Ty::Enum(enum_ty) => {
+                QualifiedPath::new(vec![enum_ty.name.as_str().to_string()])
+            }
             other => {
                 if let Some(var) = self.lookup_trait_method_for_receiver(obj_var, field)? {
                     return Ok(var);
@@ -2463,34 +2478,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.error_type_var());
             }
         };
-        let short_name = struct_name.rsplit("::").next().unwrap_or(&struct_name);
-        let mut struct_key = struct_name.clone();
-        let mut record = self
-            .struct_methods
-            .get(&struct_key)
-            .and_then(|methods| methods.get(field.as_str()))
-            .cloned();
-        if record.is_none() && short_name != struct_name {
-            if let Some(found) = self
-                .struct_methods
-                .keys()
-                .find(|key| key.rsplit("::").next() == Some(short_name))
-                .cloned()
-            {
-                struct_key = found;
-                record = self
-                    .struct_methods
-                    .get(&struct_key)
-                    .and_then(|methods| methods.get(field.as_str()))
-                    .cloned();
-            } else {
-                record = self
-                    .struct_methods
-                    .get(short_name)
-                    .and_then(|methods| methods.get(field.as_str()))
-                    .cloned();
-                if record.is_some() {
-                    struct_key = short_name.to_string();
+        let candidates = self.struct_name_variants_for_path(&struct_path, true);
+        let mut struct_key = None;
+        let mut record = None;
+        for candidate in &candidates {
+            if let Some(methods) = self.struct_methods.get(candidate) {
+                if let Some(found) = methods.get(field.as_str()) {
+                    struct_key = Some(candidate.clone());
+                    record = Some(found.clone());
+                    break;
                 }
             }
         }
@@ -2508,13 +2504,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
 
-        let qualified = format!("{}::{}", struct_key, field.as_str());
-        if let Some(var) = self.lookup_env_var(&qualified) {
-            return Ok(var);
+        if let Some(struct_key) = struct_key.as_ref() {
+            let qualified = struct_key.with_segment(field.as_str().to_string());
+            if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
+                return Ok(var);
+            }
         }
-        if short_name != struct_key {
-            let fallback = format!("{}::{}", short_name, field.as_str());
-            if let Some(var) = self.lookup_env_var(&fallback) {
+        for candidate in candidates {
+            let qualified = candidate.with_segment(field.as_str().to_string());
+            if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                 return Ok(var);
             }
         }
@@ -2523,7 +2521,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
         self.emit_error(format!(
             "unknown method {} on struct {}",
-            field, struct_name
+            field,
+            struct_path.to_key()
         ));
         Ok(self.error_type_var())
     }
@@ -2804,29 +2803,28 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if self.check_unimplemented_locator(locator) {
                 return Ok(self.error_type_var());
             }
-        } else if self.check_unimplemented_locator(&Locator::Ident(Ident::new(struct_name.clone())))
-        {
-            return Ok(self.error_type_var());
+        } else if let Some(tail) = struct_name.tail() {
+            if self.check_unimplemented_locator(&Locator::Ident(Ident::new(tail.to_string()))) {
+                return Ok(self.error_type_var());
+            }
         }
         let mut candidates = Vec::new();
         if let Some(resolved) = resolved_name {
             candidates.push(resolved);
         }
-        if !candidates.contains(&struct_name) {
-            candidates.push(struct_name.clone());
-        }
-        if !struct_name.contains("::") {
-            if let Some(qualified) = self.qualified_name(&struct_name) {
-                if !candidates.contains(&qualified) {
-                    candidates.push(qualified);
-                }
+        for candidate in self.struct_name_variants_for_path(
+            &struct_name,
+            struct_name.segments.len() == 1,
+        ) {
+            if !candidates.contains(&candidate) {
+                candidates.push(candidate);
             }
         }
         if let Some(def) = candidates
             .iter()
             .find_map(|name| self.struct_defs.get(name).cloned())
             .or_else(|| {
-                self.lookup_struct_def_by_name(&struct_name)
+                self.lookup_struct_def_by_name(&struct_name.to_key())
                     .map(|(_, def)| def)
             })
         {
@@ -2879,10 +2877,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                     self.type_from_ast_ty(&def_field.value)?;
                                                 self.unify(value_var, expected)?;
                                             } else {
-                                                self.emit_error(format!(
-                                                    "unknown field {} on enum variant {}::{}",
-                                                    field.name, enum_key, variant_name
-                                                ));
+                                        self.emit_error(format!(
+                                            "unknown field {} on enum variant {}::{}",
+                                            field.name,
+                                            enum_key.to_key(),
+                                            variant_name
+                                        ));
                                                 return Ok(self.error_type_var());
                                             }
                                         }
@@ -2897,7 +2897,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
             }
 
-            self.emit_error(format!("unknown struct literal target: {}", struct_name));
+            self.emit_error(format!(
+                "unknown struct literal target: {}",
+                struct_name.to_key()
+            ));
             Ok(self.error_type_var())
         }
     }
@@ -2933,10 +2936,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             None => return Ok(None),
         };
 
-        let variant = enum_ty
-            .variants
-            .iter()
-            .find(|variant| variant.name.as_str() == struct_name.as_str());
+        let variant = enum_ty.variants.iter().find(|variant| {
+            struct_name.tail() == Some(variant.name.as_str())
+        });
         let Some(variant) = variant else {
             return Ok(None);
         };
@@ -2952,7 +2954,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .or_else(|| {
                         locator
                             .as_ident()
-                            .and_then(|ident| self.struct_defs.get(ident.as_str()).cloned())
+                            .and_then(|ident| {
+                                self.struct_defs
+                                    .get(&QualifiedPath::new(vec![ident.as_str().to_string()]))
+                                    .cloned()
+                            })
                     })
                     .map(|struct_ty| struct_ty.fields),
                 _ => None,

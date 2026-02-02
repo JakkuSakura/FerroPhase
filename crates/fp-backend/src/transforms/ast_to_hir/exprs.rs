@@ -2052,13 +2052,13 @@ impl HirGenerator {
 
     pub(super) fn lookup_global_res(
         &self,
-        segments: &[String],
+        path: &fp_core::module::path::QualifiedPath,
         scope: PathResolutionScope,
     ) -> Option<hir::Res> {
-        if segments.is_empty() {
+        if path.segments.is_empty() {
             return None;
         }
-        let key = segments.join("::");
+        let key = path.to_key();
         match scope {
             PathResolutionScope::Value => self.lookup_symbol(&key, &self.global_value_defs),
             PathResolutionScope::Type => self.lookup_symbol(&key, &self.global_type_defs),
