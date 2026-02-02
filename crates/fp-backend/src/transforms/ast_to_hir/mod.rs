@@ -30,7 +30,7 @@ pub struct HirGenerator {
     current_position: u32,
     type_scopes: Vec<HashMap<String, hir::Res>>,
     value_scopes: Vec<HashMap<String, hir::Res>>,
-    module_path: Vec<String>,
+    module_path: fp_core::module::path::QualifiedPath,
     module_visibility: Vec<bool>,
     global_value_defs: HashMap<String, SymbolEntry>,
     global_type_defs: HashMap<String, SymbolEntry>,
@@ -42,7 +42,7 @@ pub struct HirGenerator {
     structural_value_defs: HashMap<String, StructuralValueDef>,
     const_list_length_scopes: Vec<HashMap<String, usize>>,
     synthetic_items: Vec<hir::Item>,
-    module_defs: HashSet<Vec<String>>,
+    module_defs: HashSet<fp_core::module::path::QualifiedPath>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
 }
@@ -125,7 +125,7 @@ impl HirGenerator {
     }
 
     fn is_std_module(&self) -> bool {
-        matches!(self.module_path.first(), Some(name) if name == "std")
+        matches!(self.module_path.head(), Some(name) if name == "std")
     }
 
     fn normalize_span(&self, span: Span) -> Span {
@@ -194,10 +194,10 @@ impl HirGenerator {
                     prefix.clear();
                 }
                 ast::ItemImportTree::SelfMod => {
-                    prefix = self.module_path.clone();
+                    prefix = self.module_path.segments.clone();
                 }
                 ast::ItemImportTree::SuperMod => {
-                    prefix = self.module_path.clone();
+                    prefix = self.module_path.segments.clone();
                     prefix.pop();
                 }
                 ast::ItemImportTree::Ident(ident) => {
@@ -245,12 +245,13 @@ impl HirGenerator {
         if alias.is_empty() {
             return;
         }
-        if self.module_defs.contains(&binding.target) {
+        let target_path = fp_core::module::path::QualifiedPath::new(binding.target.clone());
+        if self.module_defs.contains(&target_path) {
             self.current_value_scope()
                 .insert(alias.clone(), hir::Res::Module(binding.target.clone()));
             return;
         }
-        let key = binding.target.join("::");
+        let key = target_path.to_key();
         if let Some(res) = self.lookup_symbol(&key, &self.global_value_defs) {
             self.current_value_scope()
                 .insert(alias.clone(), res.clone());
@@ -277,7 +278,7 @@ impl HirGenerator {
             current_position: 0,
             type_scopes: vec![HashMap::new()],
             value_scopes: vec![HashMap::new()],
-            module_path: Vec::new(),
+            module_path: fp_core::module::path::QualifiedPath::new(Vec::new()),
             module_visibility: vec![true],
             global_value_defs: HashMap::new(),
             global_type_defs: HashMap::new(),
@@ -304,7 +305,7 @@ impl HirGenerator {
         self.type_scopes.push(HashMap::new());
         self.value_scopes.clear();
         self.value_scopes.push(HashMap::new());
-        self.module_path.clear();
+        self.module_path = fp_core::module::path::QualifiedPath::new(Vec::new());
         self.module_visibility.clear();
         self.module_visibility.push(true);
         self.global_value_defs.clear();
@@ -346,8 +347,7 @@ impl HirGenerator {
     }
 
     fn record_module_def(&mut self, name: &str) {
-        let mut path = self.module_path.clone();
-        path.push(name.to_string());
+        let path = self.module_path.with_segment(name.to_string());
         self.module_defs.insert(path);
     }
 
@@ -376,7 +376,7 @@ impl HirGenerator {
         if self.should_export(visibility) {
             SymbolExport::Public
         } else {
-            SymbolExport::Scoped(self.module_path.clone())
+            SymbolExport::Scoped(self.module_path.segments.clone())
         }
     }
 
@@ -430,7 +430,7 @@ impl HirGenerator {
         self.type_scopes.push(HashMap::new());
         self.value_scopes.clear();
         self.value_scopes.push(HashMap::new());
-        self.module_path.clear();
+        self.module_path = fp_core::module::path::QualifiedPath::new(Vec::new());
         self.module_visibility.clear();
         self.module_visibility.push(true);
         self.next_hir_id = 0;
@@ -502,9 +502,16 @@ impl HirGenerator {
                             &def_enum.visibility,
                         );
 
-                        let qualified_variant =
-                            format!("{}::{}", def_enum.name.name, variant.name.name);
-                        let fully_qualified = self.qualify_name(&qualified_variant);
+                        let variant_path = fp_core::module::path::QualifiedPath::new(vec![
+                            def_enum.name.name.clone(),
+                            variant.name.name.clone(),
+                        ]);
+                        let qualified_variant = variant_path.to_key();
+                        let fully_qualified = if self.module_path.is_empty() {
+                            qualified_variant.clone()
+                        } else {
+                            self.module_path.join(&variant_path.segments).to_key()
+                        };
                         self.record_value_symbol(
                             &qualified_variant,
                             hir::Res::Def(variant_def_id),
@@ -553,9 +560,17 @@ impl HirGenerator {
                                         &def_type.visibility,
                                     );
 
-                                    let qualified_variant =
-                                        format!("{}::{}", def_type.name.name, variant.name.name);
-                                    let fully_qualified = self.qualify_name(&qualified_variant);
+                                    let variant_path =
+                                        fp_core::module::path::QualifiedPath::new(vec![
+                                            def_type.name.name.clone(),
+                                            variant.name.name.clone(),
+                                        ]);
+                                    let qualified_variant = variant_path.to_key();
+                                    let fully_qualified = if self.module_path.is_empty() {
+                                        qualified_variant.clone()
+                                    } else {
+                                        self.module_path.join(&variant_path.segments).to_key()
+                                    };
                                     self.record_value_symbol(
                                         &qualified_variant,
                                         hir::Res::Def(variant_def_id),
@@ -610,16 +625,15 @@ impl HirGenerator {
         if self.module_path.is_empty() {
             name.to_string()
         } else {
-            let mut qualified = self.module_path.join("::");
-            qualified.push_str("::");
-            qualified.push_str(name);
-            qualified
+            self.module_path
+                .with_segment(name.to_string())
+                .to_key()
         }
     }
 
     fn lookup_symbol(&self, key: &str, map: &HashMap<String, SymbolEntry>) -> Option<hir::Res> {
         map.get(key).and_then(|entry| {
-            if entry.export.can_access(&self.module_path) {
+            if entry.export.can_access(&self.module_path.segments) {
                 Some(entry.res.clone())
             } else {
                 None
@@ -984,9 +998,16 @@ impl HirGenerator {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let qualified_variant =
-                            format!("{}::{}", enum_def.name.name, variant.name.name);
-                        let fully_qualified = self.qualify_name(&qualified_variant);
+                        let variant_path = fp_core::module::path::QualifiedPath::new(vec![
+                            enum_def.name.name.clone(),
+                            variant.name.name.clone(),
+                        ]);
+                        let qualified_variant = variant_path.to_key();
+                        let fully_qualified = if self.module_path.is_empty() {
+                            qualified_variant.clone()
+                        } else {
+                            self.module_path.join(&variant_path.segments).to_key()
+                        };
 
                         let variant_def_id = if let Some(def_id) =
                             self.enum_variant_def_ids.get(&fully_qualified).copied()
@@ -1875,7 +1896,7 @@ impl HirGenerator {
         let qualified = if segments.len() == 1 {
             self.qualify_name(&segments[0])
         } else {
-            segments.join("::")
+            fp_core::module::path::QualifiedPath::new(segments.to_vec()).to_key()
         };
         self.type_aliases
             .get(&qualified)
@@ -1969,9 +1990,16 @@ impl HirGenerator {
                     .variants
                     .iter()
                     .map(|variant| {
-                        let qualified_variant =
-                            format!("{}::{}", def_type.name.name, variant.name.name);
-                        let fully_qualified = self.qualify_name(&qualified_variant);
+                        let variant_path = fp_core::module::path::QualifiedPath::new(vec![
+                            def_type.name.name.clone(),
+                            variant.name.name.clone(),
+                        ]);
+                        let qualified_variant = variant_path.to_key();
+                        let fully_qualified = if self.module_path.is_empty() {
+                            qualified_variant.clone()
+                        } else {
+                            self.module_path.join(&variant_path.segments).to_key()
+                        };
 
                         let variant_def_id = if let Some(def_id) =
                             self.enum_variant_def_ids.get(&fully_qualified).copied()

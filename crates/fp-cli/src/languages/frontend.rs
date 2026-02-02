@@ -5,6 +5,7 @@ pub use fp_json::JsonFrontend;
 pub use fp_jsonschema::JsonSchemaFrontend;
 pub use fp_lang::FerroFrontend;
 pub use fp_prql::PrqlFrontend;
+pub use fp_python::PythonFrontend;
 pub use fp_sql::SqlFrontend;
 pub use fp_toml::TomlFrontend;
 pub use fp_typescript::TypeScriptFrontend;

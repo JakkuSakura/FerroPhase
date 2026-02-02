@@ -6,6 +6,69 @@ pub struct ParsedPath {
     pub segments: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct QualifiedPath {
+    pub segments: Vec<String>,
+}
+
+impl QualifiedPath {
+    pub fn new(segments: Vec<String>) -> Self {
+        Self { segments }
+    }
+
+    pub fn from_slice(segments: &[String]) -> Self {
+        Self {
+            segments: segments.to_vec(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.segments.is_empty()
+    }
+
+    pub fn head(&self) -> Option<&str> {
+        self.segments.first().map(|seg| seg.as_str())
+    }
+
+    pub fn tail(&self) -> Option<&str> {
+        self.segments.last().map(|seg| seg.as_str())
+    }
+
+    pub fn push(&mut self, segment: String) {
+        self.segments.push(segment);
+    }
+
+    pub fn pop(&mut self) -> Option<String> {
+        self.segments.pop()
+    }
+
+    pub fn with_segment(&self, segment: String) -> Self {
+        let mut segments = self.segments.clone();
+        segments.push(segment);
+        Self { segments }
+    }
+
+    pub fn join(&self, extra: &[String]) -> Self {
+        let mut segments = self.segments.clone();
+        segments.extend(extra.iter().cloned());
+        Self { segments }
+    }
+
+    pub fn parent_n(&self, depth: usize) -> Option<Self> {
+        if depth > self.segments.len() {
+            return None;
+        }
+        let keep = self.segments.len().saturating_sub(depth);
+        Some(Self {
+            segments: self.segments[..keep].to_vec(),
+        })
+    }
+
+    pub fn to_key(&self) -> String {
+        segments_to_key(&self.segments)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PathPrefix {
     Root,
@@ -19,40 +82,6 @@ pub enum PathPrefix {
 pub enum PathError {
     EmptyPath,
     InvalidPath(String),
-}
-
-pub fn parse_segments(segments: &[String]) -> Result<ParsedPath, PathError> {
-    if segments.is_empty() {
-        return Err(PathError::EmptyPath);
-    }
-
-    let mut idx = 0;
-    let first = segments[0].as_str();
-    let mut prefix = PathPrefix::Plain;
-
-    if first == "__root__" {
-        prefix = PathPrefix::Root;
-        idx = 1;
-    } else if first == "crate" {
-        prefix = PathPrefix::Crate;
-        idx = 1;
-    } else if first == "self" {
-        prefix = PathPrefix::SelfMod;
-        idx = 1;
-    } else if first == "super" {
-        let mut depth = 0;
-        while idx < segments.len() && segments[idx] == "super" {
-            depth += 1;
-            idx += 1;
-        }
-        prefix = PathPrefix::Super(depth);
-    }
-
-    let rest = segments[idx..].to_vec();
-    Ok(ParsedPath {
-        prefix,
-        segments: rest,
-    })
 }
 
 pub fn parse_path(spec: &str) -> Result<ParsedPath, PathError> {
@@ -106,43 +135,35 @@ pub fn parse_path(spec: &str) -> Result<ParsedPath, PathError> {
 
 pub fn resolve_path(
     parsed: &ParsedPath,
-    module_path: &[String],
+    module_path: &QualifiedPath,
     root_modules: &HashSet<String>,
     extern_prelude: &HashSet<String>,
-    module_defs: &HashSet<Vec<String>>,
-) -> Option<Vec<String>> {
+    module_defs: &HashSet<QualifiedPath>,
+) -> Option<QualifiedPath> {
     if parsed.segments.is_empty() {
         return None;
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some(parsed.segments.clone()),
+        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(parsed.segments.clone())),
         PathPrefix::SelfMod => {
-            let mut full = module_path.to_vec();
-            full.extend(parsed.segments.iter().cloned());
-            Some(full)
+            Some(module_path.join(&parsed.segments))
         }
         PathPrefix::Super(depth) => {
-            if depth > module_path.len() {
-                return None;
-            }
-            let mut full = module_path[..module_path.len() - depth].to_vec();
-            full.extend(parsed.segments.iter().cloned());
-            Some(full)
+            module_path
+                .parent_n(depth)
+                .map(|parent| parent.join(&parsed.segments))
         }
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
             if !module_path.is_empty() {
-                let mut local = module_path.to_vec();
-                local.push(first.clone());
+                let local = module_path.with_segment(first.clone());
                 if module_defs.contains(&local) {
-                    let mut full = module_path.to_vec();
-                    full.extend(parsed.segments.iter().cloned());
-                    return Some(full);
+                    return Some(module_path.join(&parsed.segments));
                 }
             }
             if root_modules.contains(first) || extern_prelude.contains(first) {
-                return Some(parsed.segments.clone());
+                return Some(QualifiedPath::new(parsed.segments.clone()));
             }
             None
         }
@@ -151,73 +172,71 @@ pub fn resolve_path(
 
 pub fn resolve_item_path<F>(
     parsed: &ParsedPath,
-    module_path: &[String],
+    module_path: &QualifiedPath,
     root_modules: &HashSet<String>,
     extern_prelude: &HashSet<String>,
-    module_defs: &HashSet<Vec<String>>,
+    module_defs: &HashSet<QualifiedPath>,
     item_exists: F,
     scope_contains: impl Fn(&str) -> bool,
-) -> Option<Vec<String>>
+) -> Option<QualifiedPath>
 where
-    F: Fn(&[String]) -> bool,
+    F: Fn(&QualifiedPath) -> bool,
 {
     if parsed.segments.is_empty() {
         return None;
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some(parsed.segments.clone()),
+        PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(parsed.segments.clone())),
         PathPrefix::SelfMod => {
-            let mut full = module_path.to_vec();
-            full.extend(parsed.segments.iter().cloned());
-            Some(full)
+            Some(module_path.join(&parsed.segments))
         }
         PathPrefix::Super(depth) => {
-            if depth > module_path.len() {
-                return None;
-            }
-            let mut full = module_path[..module_path.len() - depth].to_vec();
-            full.extend(parsed.segments.iter().cloned());
-            Some(full)
+            module_path
+                .parent_n(depth)
+                .map(|parent| parent.join(&parsed.segments))
         }
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
             if parsed.segments.len() == 1 {
                 if scope_contains(first) {
-                    return Some(vec![first.clone()]);
+                    return Some(QualifiedPath::new(vec![first.clone()]));
                 }
                 if !module_path.is_empty() {
-                    let mut local = module_path.to_vec();
-                    local.push(first.clone());
+                    let local = module_path.with_segment(first.clone());
                     if item_exists(&local) || module_defs.contains(&local) {
                         return Some(local);
                     }
-                } else if item_exists(&parsed.segments) {
-                    return Some(parsed.segments.clone());
+                } else {
+                    let local = QualifiedPath::new(parsed.segments.clone());
+                    if item_exists(&local) {
+                        return Some(local);
+                    }
                 }
                 if root_modules.contains(first) || extern_prelude.contains(first) {
-                    return Some(parsed.segments.clone());
+                    return Some(QualifiedPath::new(parsed.segments.clone()));
                 }
                 return None;
             }
 
             if !module_path.is_empty() {
-                let mut local = module_path.to_vec();
-                local.extend(parsed.segments.iter().cloned());
+                let local = module_path.join(&parsed.segments);
                 if item_exists(&local) {
                     return Some(local);
                 }
-                let mut module_candidate = module_path.to_vec();
-                module_candidate.push(first.clone());
+                let module_candidate = module_path.with_segment(first.clone());
                 if module_defs.contains(&module_candidate) {
                     return Some(local);
                 }
-            } else if item_exists(&parsed.segments) {
-                return Some(parsed.segments.clone());
+            } else {
+                let local = QualifiedPath::new(parsed.segments.clone());
+                if item_exists(&local) {
+                    return Some(local);
+                }
             }
 
             if root_modules.contains(first) || extern_prelude.contains(first) {
-                return Some(parsed.segments.clone());
+                return Some(QualifiedPath::new(parsed.segments.clone()));
             }
             None
         }
@@ -233,31 +252,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_segments_prefixes() {
-        let parsed = parse_segments(&["self".into(), "foo".into()]).unwrap();
-        assert_eq!(parsed.prefix, PathPrefix::SelfMod);
-        assert_eq!(parsed.segments, vec!["foo".to_string()]);
-
-        let parsed = parse_segments(&["super".into(), "super".into(), "bar".into()]).unwrap();
-        assert_eq!(parsed.prefix, PathPrefix::Super(2));
-        assert_eq!(parsed.segments, vec!["bar".to_string()]);
-
-        let parsed = parse_segments(&["__root__".into(), "std".into()]).unwrap();
-        assert_eq!(parsed.prefix, PathPrefix::Root);
-        assert_eq!(parsed.segments, vec!["std".to_string()]);
-    }
-
-    #[test]
     fn resolve_plain_prefers_local_module() {
         let parsed = ParsedPath {
             prefix: PathPrefix::Plain,
             segments: vec!["meta".to_string(), "TypeBuilder".to_string()],
         };
         let mut module_defs = HashSet::new();
-        module_defs.insert(vec!["std".to_string(), "meta".to_string()]);
+        module_defs.insert(QualifiedPath::new(vec![
+            "std".to_string(),
+            "meta".to_string(),
+        ]));
         let resolved = resolve_path(
             &parsed,
-            &vec!["std".to_string()],
+            &QualifiedPath::new(vec!["std".to_string()]),
             &HashSet::new(),
             &HashSet::new(),
             &module_defs,
@@ -265,7 +272,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             resolved,
-            vec!["std".to_string(), "meta".to_string(), "TypeBuilder".to_string()]
+            QualifiedPath::new(vec![
+                "std".to_string(),
+                "meta".to_string(),
+                "TypeBuilder".to_string()
+            ])
         );
     }
 
@@ -275,19 +286,19 @@ mod tests {
             prefix: PathPrefix::Plain,
             segments: vec!["TypeBuilder".to_string()],
         };
-        let module_path = vec!["std".to_string(), "meta".to_string()];
-        let expected = vec![
+        let module_path = QualifiedPath::new(vec!["std".to_string(), "meta".to_string()]);
+        let expected = QualifiedPath::new(vec![
             "std".to_string(),
             "meta".to_string(),
             "TypeBuilder".to_string(),
-        ];
+        ]);
         let resolved = resolve_item_path(
             &parsed,
             &module_path,
             &HashSet::new(),
             &HashSet::new(),
             &HashSet::new(),
-            |segments| segments == expected.as_slice(),
+            |segments| segments == &expected,
             |_| false,
         )
         .unwrap();
@@ -300,7 +311,7 @@ mod tests {
             prefix: PathPrefix::Plain,
             segments: vec!["TypeBuilder".to_string()],
         };
-        let module_path = vec!["std".to_string(), "meta".to_string()];
+        let module_path = QualifiedPath::new(vec!["std".to_string(), "meta".to_string()]);
         let resolved = resolve_item_path(
             &parsed,
             &module_path,
@@ -311,7 +322,7 @@ mod tests {
             |name| name == "TypeBuilder",
         )
         .unwrap();
-        assert_eq!(resolved, vec!["TypeBuilder".to_string()]);
+        assert_eq!(resolved, QualifiedPath::new(vec!["TypeBuilder".to_string()]));
     }
 
     #[test]
@@ -321,10 +332,13 @@ mod tests {
             segments: vec!["net".to_string(), "tcp".to_string()],
         };
         let mut module_defs = HashSet::new();
-        module_defs.insert(vec!["std".to_string(), "net".to_string()]);
+        module_defs.insert(QualifiedPath::new(vec![
+            "std".to_string(),
+            "net".to_string(),
+        ]));
         let resolved = resolve_item_path(
             &parsed,
-            &vec!["std".to_string()],
+            &QualifiedPath::new(vec!["std".to_string()]),
             &HashSet::new(),
             &["net".to_string()].into_iter().collect(),
             &module_defs,
@@ -334,7 +348,11 @@ mod tests {
         .unwrap();
         assert_eq!(
             resolved,
-            vec!["std".to_string(), "net".to_string(), "tcp".to_string()]
+            QualifiedPath::new(vec![
+                "std".to_string(),
+                "net".to_string(),
+                "tcp".to_string()
+            ])
         );
     }
 }

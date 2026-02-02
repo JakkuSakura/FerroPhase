@@ -2,6 +2,7 @@ use crate::typing::scheme::{SchemeType, TypeScheme};
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
+use fp_core::module::path::QualifiedPath;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypeVar {
@@ -980,11 +981,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);
                     }
-                    if let Some(struct_ty) = self.struct_defs.get(&name) {
+                    let key = QualifiedPath::new(vec![name.clone()]);
+                    if let Some(struct_ty) = self.struct_defs.get(&key) {
                         self.bind(var, TypeTerm::Struct(struct_ty.clone()));
                         return Ok(var);
                     }
-                    if let Some(enum_ty) = self.enum_defs.get(&name) {
+                    if let Some(enum_ty) = self.enum_defs.get(&key) {
                         self.bind(var, TypeTerm::Enum(enum_ty.clone()));
                         return Ok(var);
                     }
