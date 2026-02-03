@@ -6,6 +6,7 @@ pub use fp_jsonschema::JsonSchemaFrontend;
 pub use fp_lang::FerroFrontend;
 pub use fp_prql::PrqlFrontend;
 pub use fp_python::PythonFrontend;
+pub use fp_golang::GoFrontend;
 pub use fp_sql::SqlFrontend;
 pub use fp_toml::TomlFrontend;
 pub use fp_typescript::TypeScriptFrontend;
@@ -19,6 +20,7 @@ pub enum LanguageSource {
     TypeScript,
     JavaScript,
     Rust,
+    Go,
     Zig,
     Wit,
 }
@@ -32,6 +34,7 @@ pub fn detect_language_source_by_path(path: &Path) -> Option<LanguageSource> {
         "js" | "jsx" | "mjs" => Some(LanguageSource::JavaScript),
         // Other supported frontends
         "rs" => Some(LanguageSource::Rust),
+        "go" => Some(LanguageSource::Go),
         "zig" => Some(LanguageSource::Zig),
         "wit" => Some(LanguageSource::Wit),
         _ => None,
