@@ -16,6 +16,7 @@ fp-typing = { path = "../fp-typing" }
 fp-typescript = { path = "../fp-typescript" }
 fp-csharp = { path = "../fp-csharp" }
 fp-python = { path = "../fp-python" }
+fp-golang = { path = "../fp-golang" }
 fp-llvm = { path = "../fp-llvm" }
 fp-lang = { path = "../fp-lang" }
 fp-wit = { path = "../fp-wit" }

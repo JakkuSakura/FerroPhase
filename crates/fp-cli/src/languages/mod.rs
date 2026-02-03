@@ -168,6 +168,7 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
                     | (JAVASCRIPT, "js")
                     | (CSHARP, "cs" | "c#")
                     | (PYTHON, "py")
+                    | (GO, "golang")
                     | (ZIG, "zig")
                     | (SYCL, "sycl")
             )

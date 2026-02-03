@@ -2,8 +2,8 @@ use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::languages::frontend::{
     FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, HclFrontend,
-    JsonFrontend, JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, PythonFrontend, SqlFrontend,
-    TomlFrontend, TypeScriptFrontend, WitFrontend,
+    JsonFrontend, JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, PythonFrontend, GoFrontend,
+    SqlFrontend, TomlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
@@ -137,6 +137,8 @@ impl Pipeline {
         register(hcl_frontend);
         let python_frontend: Arc<dyn LanguageFrontend> = Arc::new(PythonFrontend::new());
         register(python_frontend);
+        let go_frontend: Arc<dyn LanguageFrontend> = Arc::new(GoFrontend::new());
+        register(go_frontend);
         Self {
             frontends,
             default_runtime: "literal".to_string(),

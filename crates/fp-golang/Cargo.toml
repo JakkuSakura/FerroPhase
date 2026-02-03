@@ -1,0 +1,14 @@
+[package]
+name = "fp-golang"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+fp-core = { path = "../fp-core" }
+eyre = "0.6"
+tree-sitter = "0.24"
+tree-sitter-go = "0.23"
+tracing = "0.1"
+
+[dev-dependencies]
+pretty_assertions = "1.4"
