@@ -1,13 +1,16 @@
 use super::*;
 use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::module::path::PathPrefix;
 
 struct EnumerateLoopSpec {
+    base_prefix: PathPrefix,
     base_segments: Vec<ast::Ident>,
     index_ident: ast::Ident,
     value_ident: ast::Ident,
 }
 
 struct IterLoopSpec {
+    base_prefix: PathPrefix,
     base_segments: Vec<ast::Ident>,
     value_ident: ast::Ident,
 }
@@ -40,7 +43,7 @@ impl HirGenerator {
 
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => self.transform_value_to_hir(value)?,
-            ExprKind::Locator(locator) => hir::ExprKind::Path(
+            ExprKind::Name(locator) => hir::ExprKind::Path(
                 self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?,
             ),
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
@@ -315,7 +318,16 @@ impl HirGenerator {
             }
             ExprKind::IntrinsicCall(call) => self.transform_intrinsic_call_to_hir(call)?,
             ExprKind::Reference(reference) => {
-                return self.transform_expr_to_hir(reference.referee.as_ref());
+                let inner = self.transform_expr_to_hir(reference.referee.as_ref())?;
+                let mutable = match reference.mutable {
+                    Some(true) => hir::ty::Mutability::Mut,
+                    _ => hir::ty::Mutability::Not,
+                };
+                hir::ExprKind::Reference(hir::ExprReference {
+                    hir_id: self.next_id(),
+                    mutable,
+                    expr: Box::new(inner),
+                })
             }
             ExprKind::Dereference(deref) => {
                 let inner = self.transform_expr_to_hir(deref.referee.as_ref())?;
@@ -487,7 +499,7 @@ impl HirGenerator {
                     );
                     ast::Ident::new("__fp_error".to_string())
                 });
-                let locator = Locator::Ident(name);
+                let locator = Name::Ident(name);
                 let path =
                     self.locator_to_hir_path_with_scope(&locator, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
@@ -1142,26 +1154,27 @@ impl HirGenerator {
         if !invoke.args.is_empty() {
             return Ok(None);
         }
-        let segments = match &invoke.target {
+        let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(locator) => match locator {
-                ast::Locator::Path(path) => path.segments.clone(),
-                ast::Locator::Ident(ident) => vec![ident.clone()],
-                ast::Locator::ParameterPath(path) => {
-                    path.segments.iter().map(|seg| seg.ident.clone()).collect()
-                }
+                ast::Name::Path(path) => (path.segments.clone(), path.prefix),
+                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
+                ast::Name::ParameterPath(path) => (
+                    path.segments.iter().map(|seg| seg.ident.clone()).collect(),
+                    path.prefix,
+                ),
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
                     return Ok(None);
                 };
                 base.push(select.field.clone());
-                base
+                (base, PathPrefix::Plain)
             }
             ast::ExprInvokeTarget::Expr(expr) => {
                 let Some(segments) = self.path_segments_from_expr(expr) else {
                     return Ok(None);
                 };
-                segments
+                (segments, PathPrefix::Plain)
             }
             _ => return Ok(None),
         };
@@ -1236,6 +1249,7 @@ impl HirGenerator {
         };
 
         Ok(Some(EnumerateLoopSpec {
+            base_prefix,
             base_segments,
             index_ident,
             value_ident,
@@ -1249,26 +1263,27 @@ impl HirGenerator {
         if !invoke.args.is_empty() {
             return Ok(None);
         }
-        let segments = match &invoke.target {
+        let (segments, base_prefix) = match &invoke.target {
             ast::ExprInvokeTarget::Function(locator) => match locator {
-                ast::Locator::Path(path) => path.segments.clone(),
-                ast::Locator::Ident(ident) => vec![ident.clone()],
-                ast::Locator::ParameterPath(path) => {
-                    path.segments.iter().map(|seg| seg.ident.clone()).collect()
-                }
+                ast::Name::Path(path) => (path.segments.clone(), path.prefix),
+                ast::Name::Ident(ident) => (vec![ident.clone()], PathPrefix::Plain),
+                ast::Name::ParameterPath(path) => (
+                    path.segments.iter().map(|seg| seg.ident.clone()).collect(),
+                    path.prefix,
+                ),
             },
             ast::ExprInvokeTarget::Method(select) => {
                 let Some(mut base) = self.path_segments_from_expr(&select.obj) else {
                     return Ok(None);
                 };
                 base.push(select.field.clone());
-                base
+                (base, PathPrefix::Plain)
             }
             ast::ExprInvokeTarget::Expr(expr) => {
                 let Some(segments) = self.path_segments_from_expr(expr) else {
                     return Ok(None);
                 };
-                segments
+                (segments, PathPrefix::Plain)
             }
             _ => return Ok(None),
         };
@@ -1305,6 +1320,7 @@ impl HirGenerator {
         };
 
         Ok(Some(IterLoopSpec {
+            base_prefix,
             base_segments,
             value_ident,
         }))
@@ -1319,8 +1335,8 @@ impl HirGenerator {
 
         let mut stmts = Vec::new();
 
-        let base_path = ast::Path::new(spec.base_segments.clone());
-        let base_locator = ast::Locator::path(base_path);
+        let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
+        let base_locator = ast::Name::path(base_path);
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
@@ -1515,8 +1531,8 @@ impl HirGenerator {
 
         let mut stmts = Vec::new();
 
-        let base_path = ast::Path::new(spec.base_segments.clone());
-        let base_locator = ast::Locator::path(base_path);
+        let base_path = ast::Path::new(spec.base_prefix, spec.base_segments.clone());
+        let base_locator = ast::Name::path(base_path);
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
@@ -1685,10 +1701,10 @@ impl HirGenerator {
 
     fn path_segments_from_expr(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
         match expr.kind() {
-            ast::ExprKind::Locator(locator) => match locator {
-                ast::Locator::Path(path) => Some(path.segments.clone()),
-                ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
-                ast::Locator::ParameterPath(path) => {
+            ast::ExprKind::Name(locator) => match locator {
+                ast::Name::Path(path) => Some(path.segments.clone()),
+                ast::Name::Ident(ident) => Some(vec![ident.clone()]),
+                ast::Name::ParameterPath(path) => {
                     Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                 }
             },
@@ -1700,9 +1716,9 @@ impl HirGenerator {
                 }
                 match &invoke.target {
                     ast::ExprInvokeTarget::Function(locator) => match locator {
-                        ast::Locator::Path(path) => Some(path.segments.clone()),
-                        ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
-                        ast::Locator::ParameterPath(path) => {
+                        ast::Name::Path(path) => Some(path.segments.clone()),
+                        ast::Name::Ident(ident) => Some(vec![ident.clone()]),
+                        ast::Name::ParameterPath(path) => {
                             Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                         }
                     },
@@ -2124,7 +2140,7 @@ impl HirGenerator {
                 }
             }
             ast::Ty::Expr(expr) => {
-                if let ast::ExprKind::Locator(locator) = expr.kind() {
+                if let ast::ExprKind::Name(locator) = expr.kind() {
                     let path = locator.to_path();
                     let segments = path
                         .segments

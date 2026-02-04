@@ -350,7 +350,7 @@ impl SharedScopedContext {
     pub fn try_get_value_from_expr(&self, expr: &Expr) -> Option<Value> {
         // info!("try_get_value_from_expr {}", expr);
         let ret = match expr.kind() {
-            ExprKind::Locator(ident) => self.get_value(ident.to_path()),
+            ExprKind::Name(ident) => self.get_value(ident.to_path()),
             ExprKind::Value(value) => Some(value.get()),
             _ => None,
         };
@@ -367,7 +367,7 @@ impl SharedScopedContext {
         let expr = self.get_expr(&key)?;
         debug!("get_value_recursive {} => {:?}", key, expr);
         match expr.kind() {
-            ExprKind::Locator(ident) => self.get_value_recursive(ident.to_path()),
+            ExprKind::Name(ident) => self.get_value_recursive(ident.to_path()),
             _ => Some(Value::expr(expr.clone())),
         }
     }

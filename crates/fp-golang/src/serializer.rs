@@ -368,8 +368,8 @@ impl GoEmitter {
     fn render_invoke(&mut self, invoke: &ExprInvoke) -> Result<Option<String>> {
         let target = match &invoke.target {
             ExprInvokeTarget::Function(locator) => match locator {
-                fp_core::ast::Locator::Ident(ident) => ident.name.clone(),
-                fp_core::ast::Locator::Path(path) => path.join("."),
+                fp_core::ast::Name::Ident(ident) => ident.name.clone(),
+                fp_core::ast::Name::Path(path) => path.join("."),
                 _ => return Ok(None),
             },
             _ => return Ok(None),

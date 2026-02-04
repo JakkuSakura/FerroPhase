@@ -1,7 +1,7 @@
 use std::ffi::{c_void, CString};
 
 use fp_core::ast::{
-    Abi, DecimalType, ExprKind, FunctionSignature, Locator, Ty, TypeInt, TypePrimitive,
+    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive,
     TypeReference, Value, ValueChar, ValuePointer,
 };
 use fp_core::error::{Error, Result};
@@ -186,8 +186,8 @@ fn ffi_value_for_arg(ty: &Ty, value: &Value, cstrings: &mut Vec<CString>) -> Res
 fn resolve_ffi_ty(ty: &Ty) -> Option<Ty> {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Locator(locator) => match locator {
-                Locator::Ident(ident) => match ident.as_str() {
+            ExprKind::Name(locator) => match locator {
+                Name::Ident(ident) => match ident.as_str() {
                     "i64" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
                     "u64" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::U64))),
                     "i32" => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I32))),
@@ -215,9 +215,9 @@ fn resolve_ffi_ty(ty: &Ty) -> Option<Ty> {
 fn resolves_to_string(ty: &Ty) -> bool {
     match ty {
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Locator(locator) => match locator {
-                Locator::Path(path) => path.segments.last().map(|seg| seg.as_str()) == Some("str"),
-                Locator::Ident(ident) => ident.as_str() == "str",
+            ExprKind::Name(locator) => match locator {
+                Name::Path(path) => path.segments.last().map(|seg| seg.as_str()) == Some("str"),
+                Name::Ident(ident) => ident.as_str() == "str",
                 _ => false,
             },
             _ => false,
@@ -231,8 +231,8 @@ fn is_cstr_reference(ty: &Ty) -> bool {
     match ty {
         Ty::Reference(TypeReference { ty, .. }) => match ty.as_ref() {
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => match locator {
-                    Locator::Path(path) => path
+                ExprKind::Name(locator) => match locator {
+                    Name::Path(path) => path
                         .segments
                         .iter()
                         .map(|seg| seg.as_str())

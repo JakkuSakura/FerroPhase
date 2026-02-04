@@ -1,6 +1,6 @@
 use crate::ast::{
     BExpr, Expr, ExprArray, ExprArrayRepeat, ExprBlock, ExprConstBlock, ExprInvoke,
-    ExprInvokeTarget, ExprKind, ExprTuple, Ident, Locator, Path,
+    ExprInvokeTarget, ExprKind, ExprTuple, Ident, Name, Path,
 };
 use crate::common_struct;
 use crate::span::Span;
@@ -209,7 +209,7 @@ fn hash_map_from_call(iterable: Expr) -> Expr {
 }
 
 fn make_function_call(path: &[&str], args: Vec<Expr>) -> Expr {
-    let locator = Locator::path(Path::new(
+    let locator = Name::path(Path::new(
         path.iter().map(|segment| Ident::new(*segment)).collect(),
     ));
     ExprKind::Invoke(ExprInvoke {
@@ -221,11 +221,11 @@ fn make_function_call(path: &[&str], args: Vec<Expr>) -> Expr {
     .into()
 }
 
-fn locator_segments(locator: &Locator) -> Vec<&str> {
+fn locator_segments(locator: &Name) -> Vec<&str> {
     match locator {
-        Locator::Ident(ident) => vec![ident.as_str()],
-        Locator::Path(path) => path.segments.iter().map(|seg| seg.as_str()).collect(),
-        Locator::ParameterPath(path) => {
+        Name::Ident(ident) => vec![ident.as_str()],
+        Name::Path(path) => path.segments.iter().map(|seg| seg.as_str()).collect(),
+        Name::ParameterPath(path) => {
             path.segments.iter().map(|seg| seg.ident.as_str()).collect()
         }
     }
@@ -246,8 +246,8 @@ fn ends_with<'a>(segments: &[&'a str], suffix: &[&'a str]) -> bool {
 mod tests {
     use super::*;
 
-    fn ident_path<'a>(segs: impl IntoIterator<Item = &'a str>) -> Locator {
-        Locator::path(Path::new(segs.into_iter().map(Ident::new).collect()))
+    fn ident_path<'a>(segs: impl IntoIterator<Item = &'a str>) -> Name {
+        Name::path(Path::new(segs.into_iter().map(Ident::new).collect()))
     }
 
     #[test]

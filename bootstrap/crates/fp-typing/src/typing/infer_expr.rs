@@ -347,7 +347,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.infer_value(value.as_ref())?
                     }
                 }
-                ExprKind::Locator(locator) => {
+                ExprKind::Name(locator) => {
                     let var = self.lookup_locator(locator)?;
                     if let Some(ty) = existing_ty.as_ref() {
                         let annot = self.type_from_ast_ty(ty)?;
@@ -1828,7 +1828,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn locator_matches_suffix(locator: &Locator, suffix: &[&str]) -> bool {
+    fn locator_matches_suffix(locator: &Name, suffix: &[&str]) -> bool {
         let segments = Self::locator_segments(locator);
         if segments.len() < suffix.len() {
             return false;
@@ -1840,15 +1840,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .all(|(segment, expected)| segment == expected)
     }
 
-    fn locator_segments(locator: &Locator) -> Vec<String> {
+    fn locator_segments(locator: &Name) -> Vec<String> {
         match locator {
-            Locator::Ident(ident) => vec![ident.as_str().to_string()],
-            Locator::Path(path) => path
+            Name::Ident(ident) => vec![ident.as_str().to_string()],
+            Name::Path(path) => path
                 .segments
                 .iter()
                 .map(|s| s.as_str().to_string())
                 .collect(),
-            Locator::ParameterPath(path) => path
+            Name::ParameterPath(path) => path
                 .segments
                 .iter()
                 .map(|seg| seg.ident.as_str().to_string())
@@ -2179,7 +2179,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                 // Try to resolve as an enum variant: `Enum::Variant(...)`.
                 let locator = &tuple_struct.name;
-                if let Locator::Path(path) = locator {
+                if let Name::Path(path) = locator {
                     if path.segments.len() >= 2 {
                         let enum_name = path.segments[path.segments.len() - 2].as_str().to_string();
                         let variant_name = path.segments[path.segments.len() - 1].as_str();
@@ -2218,8 +2218,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             PatternKind::Variant(variant) => {
                 // Enum variant patterns (unit and struct-like) and literal patterns.
                 match variant.name.kind() {
-                    ExprKind::Locator(locator) => {
-                        if let Locator::Path(path) = locator {
+                    ExprKind::Name(locator) => {
+                        if let Name::Path(path) = locator {
                             if path.segments.len() >= 2 {
                                 let enum_name =
                                     path.segments[path.segments.len() - 2].as_str().to_string();
@@ -2289,10 +2289,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         // single-segment path and structural payload. Bind fields against
                         // known struct definitions so identifiers enter the environment.
                         let struct_name = match locator {
-                            Locator::Path(path) if path.segments.len() == 1 => {
+                            Name::Path(path) if path.segments.len() == 1 => {
                                 Some(path.segments[0].as_str().to_string())
                             }
-                            Locator::Ident(ident) => Some(ident.as_str().to_string()),
+                            Name::Ident(ident) => Some(ident.as_str().to_string()),
                             _ => None,
                         };
                         if let Some(struct_name) = struct_name {
@@ -2718,7 +2718,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.error_type_var());
             }
         };
-        if self.check_unimplemented_locator(&Locator::Ident(Ident::new(struct_name.clone()))) {
+        if self.check_unimplemented_locator(&Name::Ident(Ident::new(struct_name.clone()))) {
             return Ok(self.error_type_var());
         }
         if let Some(def) = self.struct_defs.get(&struct_name).cloned() {
@@ -2742,7 +2742,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ok(var)
         } else {
             // Enum struct variants: `Enum::Variant { ... }`.
-            if let ExprKind::Locator(Locator::Path(path)) = struct_expr.name.kind() {
+            if let ExprKind::Name(Name::Path(path)) = struct_expr.name.kind() {
                 if path.segments.len() >= 2 {
                     let enum_name = path.segments[path.segments.len() - 2].as_str().to_string();
                     let variant_name = path.segments[path.segments.len() - 1].as_str();
@@ -2828,7 +2828,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Structural(structural) => Some(structural.fields.clone()),
             Ty::Struct(struct_ty) => Some(struct_ty.fields.clone()),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => locator
+                ExprKind::Name(locator) => locator
                     .as_ident()
                     .and_then(|ident| self.struct_defs.get(ident.as_str()).cloned())
                     .map(|struct_ty| struct_ty.fields),

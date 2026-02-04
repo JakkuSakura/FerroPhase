@@ -2,6 +2,7 @@ use crate::typing::unify::TypeTerm;
 use crate::{typing_error, AstTypeInferencer, LoopContext, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::Result;
+use fp_core::module::path::PathPrefix;
 
 impl<'ctx> AstTypeInferencer<'ctx> {
     pub(crate) fn is_stmt_or_item_quote(&self, ty: &Ty) -> bool {
@@ -229,12 +230,16 @@ fn qualify_enum_variant_pattern(pat: &mut Pattern, enum_ty: &TypeEnum) {
     let PatternKind::Variant(variant) = pat.kind_mut() else {
         return;
     };
-    let ExprKind::Locator(locator) = variant.name.kind() else {
+    let ExprKind::Name(locator) = variant.name.kind() else {
         return;
     };
     let variant_name = match locator {
-        Locator::Ident(ident) => ident.clone(),
-        Locator::Path(path) if path.segments.len() == 1 => path.segments[0].clone(),
+        Name::Ident(ident) => ident.clone(),
+        Name::Path(path)
+            if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+        {
+            path.segments[0].clone()
+        }
         _ => return,
     };
     if !enum_ty
@@ -246,6 +251,6 @@ fn qualify_enum_variant_pattern(pat: &mut Pattern, enum_ty: &TypeEnum) {
     }
 
     let enum_ident = enum_ty.name.clone();
-    let path = Path::new(vec![enum_ident, variant_name]);
+    let path = Path::plain(vec![enum_ident, variant_name]);
     variant.name = Expr::path(path);
 }

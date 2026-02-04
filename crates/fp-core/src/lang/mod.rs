@@ -2,7 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 use crate::ast::{
-    AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Locator, Node, Path, Value,
+    AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Name, Node, Path, Value,
 };
 use crate::intrinsics::IntrinsicCallKind;
 
@@ -63,11 +63,11 @@ pub fn collect_lang_items(node: &Node) -> LangItemRegistry {
     registry
 }
 
-pub fn lookup_lang_item_intrinsic(locator: &Locator) -> Option<IntrinsicCallKind> {
+pub fn lookup_lang_item_intrinsic(locator: &Name) -> Option<IntrinsicCallKind> {
     let registry = try_get_threadlocal_lang_items()?;
     let locator_segments: Vec<&str> = match locator {
-        Locator::Ident(ident) => vec![ident.name.as_str()],
-        Locator::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
+        Name::Ident(ident) => vec![ident.name.as_str()],
+        Name::Path(path) => path.segments.iter().map(|seg| seg.name.as_str()).collect(),
         _ => return None,
     };
 
@@ -107,7 +107,7 @@ fn collect_lang_items_from_items(
                 if let Some(lang_name) = extract_lang_attribute(&function.attrs) {
                     let mut segments = module_path.clone();
                     segments.push(function.name.clone());
-                    registry.insert(lang_name, Path::new(segments));
+                    registry.insert(lang_name, Path::plain(segments));
                 }
             }
             _ => {}

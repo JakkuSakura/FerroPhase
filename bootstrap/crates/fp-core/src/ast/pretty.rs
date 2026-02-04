@@ -20,7 +20,7 @@ impl PrettyPrintable for ast::Expr {
 
         match &self.kind {
             ast::ExprKind::Id(id) => ctx.writeln(f, format!("id({}){}", id, suffix)),
-            ast::ExprKind::Locator(locator) => {
+            ast::ExprKind::Name(locator) => {
                 ctx.writeln(f, format!("locator {}{}", locator, suffix))
             }
             ast::ExprKind::Value(value) => ctx.writeln(
@@ -1228,7 +1228,7 @@ fn summarize_value(value: &ast::Value) -> String {
 fn render_expr_inline(expr: &ast::Expr) -> String {
     match &expr.kind {
         ast::ExprKind::Id(id) => format!("id({})", id),
-        ast::ExprKind::Locator(locator) => locator.to_string(),
+        ast::ExprKind::Name(locator) => locator.to_string(),
         ast::ExprKind::Value(value) => summarize_value(value.as_ref()),
         ast::ExprKind::BinOp(binop) => format!(
             "({} {} {})",
@@ -1520,7 +1520,7 @@ fn render_pattern(pattern: &Pattern) -> String {
     base
 }
 
-fn render_locator(locator: &ast::Locator) -> String {
+fn render_locator(locator: &ast::Name) -> String {
     locator.to_string()
 }
 

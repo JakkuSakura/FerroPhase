@@ -13,18 +13,18 @@ impl HirGenerator {
 
     pub(super) fn locator_to_hir_path_with_scope(
         &mut self,
-        locator: &Locator,
+        locator: &Name,
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         // Build segments from the locator
         let segments = match locator {
-            Locator::Ident(ident) => vec![self.make_path_segment(&ident.name, None)],
-            Locator::Path(path) => path
+            Name::Ident(ident) => vec![self.make_path_segment(&ident.name, None)],
+            Name::Path(path) => path
                 .segments
                 .iter()
                 .map(|seg| self.make_path_segment(&seg.name, None))
                 .collect(),
-            Locator::ParameterPath(param_path) => {
+            Name::ParameterPath(param_path) => {
                 let mut segs = Vec::new();
                 for seg in &param_path.segments {
                     let args = if seg.args.is_empty() {
@@ -119,7 +119,7 @@ impl HirGenerator {
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         match expr.kind() {
-            ast::ExprKind::Locator(locator) => self.locator_to_hir_path_with_scope(locator, scope),
+            ast::ExprKind::Name(locator) => self.locator_to_hir_path_with_scope(locator, scope),
             ast::ExprKind::Select(select) => {
                 let mut base = self.ast_expr_to_hir_path(&select.obj, scope)?;
                 let seg = self.make_path_segment(&select.field.name, None);

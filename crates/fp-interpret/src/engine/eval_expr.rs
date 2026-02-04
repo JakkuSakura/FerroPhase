@@ -1,5 +1,6 @@
 use super::*;
-use fp_core::ast::Locator;
+use fp_core::ast::Name;
+use fp_core::module::path::{parse_path, PathPrefix};
 
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
@@ -47,7 +48,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             };
                             self.runtime_value_stack.push(RuntimeFlow::Value(value));
                         }
-                        ExprKind::Locator(_locator) => {
+                        ExprKind::Name(_locator) => {
                             let flow = match self.eval_expr_runtime_inner(expr) {
                                 RuntimeFlow::Value(value) => RuntimeFlow::Value(value),
                                 other => other,
@@ -622,7 +623,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 other => RuntimeFlow::Value(other.clone()),
             },
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 self.apply_local_import_alias(locator);
                 if let Some(variant) = self.resolve_enum_variant(locator) {
                     return RuntimeFlow::Value(variant);
@@ -916,7 +917,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             ExprKind::IntrinsicCall(call) => self.eval_intrinsic_runtime(call),
             ExprKind::Reference(reference) => {
                 if reference.mutable.unwrap_or(false) {
-                    if let ExprKind::Locator(locator) = reference.referee.kind() {
+                    if let ExprKind::Name(locator) = reference.referee.kind() {
                         if let Some(ident) = locator.as_ident() {
                             if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                                 if let Some(shared) = stored.shared_handle() {
@@ -939,7 +940,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Dereference(deref) => {
-                if let ExprKind::Locator(locator) = deref.referee.kind() {
+                if let ExprKind::Name(locator) = deref.referee.kind() {
                     if let Some(ident) = locator.as_ident() {
                         if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                             return RuntimeFlow::Value(stored.value());
@@ -1112,7 +1113,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             };
                             self.const_value_stack.push(value);
                         }
-                        ExprKind::Locator(_) => {
+                        ExprKind::Name(_) => {
                             let value = self.eval_expr_inner(expr);
                             self.const_value_stack.push(value);
                         }
@@ -1374,7 +1375,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         let expr_ty_snapshot = expr.ty().cloned();
 
         // Check if we need to specialize a function reference before matching
-        let should_specialize_fn_ref = if let ExprKind::Locator(_) = expr.kind() {
+        let should_specialize_fn_ref = if let ExprKind::Name(_) = expr.kind() {
             expr_ty_snapshot
                 .as_ref()
                 .map_or(false, |ty| matches!(ty, Ty::Function(_)))
@@ -1436,7 +1437,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Value::Type(ty) => Value::Type(self.materialize_const_type(ty.clone())),
                 other => other.clone(),
             },
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 self.apply_local_import_alias(locator);
                 // First, try to specialize generic function reference if we have type info
                 if should_specialize_fn_ref {
@@ -1450,7 +1451,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.specialize_function_reference(locator, expected_ty)
                         {
                             tracing::debug!("Successfully specialized {} to {}", locator, locator);
-                            // Locator has been updated to point to specialized function
+                            // Name has been updated to point to specialized function
                             // Return unit for now, the reference will be used by caller
                             return Value::unit();
                         } else {
@@ -1653,7 +1654,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let mut assign_target: Option<String> = None;
                 if matches!(kind, IntrinsicCallKind::AddField) {
                     if let Some(first) = call.args.first() {
-                        if let ExprKind::Locator(locator) = first.kind() {
+                        if let ExprKind::Name(locator) = first.kind() {
                             if let Some(ident) = locator.as_ident() {
                                 assign_target = Some(ident.as_str().to_string());
                             }
@@ -1680,7 +1681,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Reference(reference) => {
                 if reference.mutable.unwrap_or(false) {
-                    if let ExprKind::Locator(locator) = reference.referee.kind() {
+                    if let ExprKind::Name(locator) = reference.referee.kind() {
                         if let Some(ident) = locator.as_ident() {
                             if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                                 if let Some(shared) = stored.shared_handle() {
@@ -1701,7 +1702,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Dereference(deref) => {
-                if let ExprKind::Locator(locator) = deref.referee.kind() {
+                if let ExprKind::Name(locator) = deref.referee.kind() {
                     if let Some(ident) = locator.as_ident() {
                         if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                             return stored.value();
@@ -1907,14 +1908,14 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             if select.field.name.as_str() == "push" && invoke.args.len() == 1 {
                 let value = self.eval_expr(&mut invoke.args[0]);
-                if let ExprKind::Locator(locator) = select.obj.kind() {
+                if let ExprKind::Name(locator) = select.obj.kind() {
                     let binding = match locator {
-                        Locator::Ident(ident) => Some(ident.as_str().to_string()),
-                        Locator::Path(path) => path
+                        Name::Ident(ident) => Some(ident.as_str().to_string()),
+                        Name::Path(path) => path
                             .segments
                             .last()
                             .map(|segment| segment.as_str().to_string()),
-                        Locator::ParameterPath(path) => path
+                        Name::ParameterPath(path) => path
                             .segments
                             .last()
                             .map(|segment| segment.ident.as_str().to_string()),
@@ -2184,10 +2185,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn module_stack_from_locator(locator: &Locator) -> Option<Vec<String>> {
+    fn module_stack_from_locator(locator: &Name) -> Option<Vec<String>> {
         let path = match locator {
-            Locator::Path(path) => path,
-            Locator::ParameterPath(param_path) => {
+            Name::Path(path) => path,
+            Name::ParameterPath(param_path) => {
                 if param_path.segments.len() <= 1 {
                     return None;
                 }
@@ -2214,7 +2215,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         )
     }
 
-    fn try_eval_method_chain(&mut self, locator: &Locator) -> Option<Value> {
+    fn try_eval_method_chain(&mut self, locator: &Name) -> Option<Value> {
         let text = locator.to_string();
         if !text.contains('.') {
             return None;
@@ -2693,7 +2694,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     // Helpers moved from interpreter.rs to support const-eval invoke resolution.
-    pub(super) fn lookup_callable_value(&mut self, locator: &Locator) -> Option<Value> {
+    pub(super) fn lookup_callable_value(&mut self, locator: &Name) -> Option<Value> {
         locator
             .as_ident()
             .and_then(|ident| self.lookup_value(ident.as_str()))
@@ -2701,7 +2702,7 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn resolve_function_call(
         &mut self,
-        locator: &mut Locator,
+        locator: &mut Name,
         invoke: &mut ExprInvoke,
         mode: ResolutionMode,
     ) -> Option<ItemDefFunction> {
@@ -2718,7 +2719,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     candidate_names.push(simple);
                 }
             }
-            if let Locator::Path(path) = locator {
+            if let Name::Path(path) = locator {
                 if path.segments.len() >= 2 {
                     let type_name = path.segments[path.segments.len() - 2].as_str();
                     let func_name = path.segments[path.segments.len() - 1].as_str();
@@ -2728,7 +2729,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     }
                 }
             }
-            if let Locator::ParameterPath(path) = locator {
+            if let Name::ParameterPath(path) = locator {
                 if path.segments.len() >= 2 {
                     let type_name = path.segments[path.segments.len() - 2]
                         .ident
@@ -2835,17 +2836,17 @@ impl<'ctx> AstInterpreter<'ctx> {
         true
     }
 
-    fn locator_is_qualified(locator: &Locator) -> bool {
+    fn locator_is_qualified(locator: &Name) -> bool {
         match locator {
-            Locator::Ident(_) => false,
-            Locator::Path(path) => path.segments.len() > 1,
-            Locator::ParameterPath(path) => path.segments.len() > 1,
+            Name::Ident(_) => false,
+            Name::Path(path) => path.segments.len() > 1,
+            Name::ParameterPath(path) => path.segments.len() > 1,
         }
     }
 
-    fn apply_local_import_alias(&mut self, locator: &mut Locator) -> bool {
+    fn apply_local_import_alias(&mut self, locator: &mut Name) -> bool {
         match locator {
-            Locator::Ident(ident) => {
+            Name::Ident(ident) => {
                 let Some(target) = self.local_imports.get(ident.as_str()) else {
                     return false;
                 };
@@ -2855,60 +2856,63 @@ impl<'ctx> AstInterpreter<'ctx> {
                 *locator = new_locator;
                 true
             }
-            Locator::Path(path) => {
+            Name::Path(path) => {
+                if path.prefix != PathPrefix::Plain {
+                    return false;
+                }
                 let Some(first) = path.segments.first() else {
                     return false;
                 };
                 let Some(target) = self.local_imports.get(first.as_str()) else {
                     return false;
                 };
-                let Some(mut segments) = Self::import_target_segments(target) else {
+                let Some(mut target_path) = Self::import_target_path(target) else {
                     return false;
                 };
-                segments.extend(path.segments.iter().skip(1).cloned());
-                *locator = Locator::path(Path::new(segments));
+                target_path
+                    .segments
+                    .extend(path.segments.iter().skip(1).cloned());
+                *locator = Name::path(target_path);
                 true
             }
-            Locator::ParameterPath(param_path) => {
+            Name::ParameterPath(param_path) => {
+                if param_path.prefix != PathPrefix::Plain {
+                    return false;
+                }
                 let Some(first) = param_path.segments.first() else {
                     return false;
                 };
                 let Some(target) = self.local_imports.get(first.ident.as_str()) else {
                     return false;
                 };
-                let Some(mut segments) = Self::import_target_segments(target) else {
+                let Some(mut target_path) = Self::import_target_path(target) else {
                     return false;
                 };
                 for segment in param_path.segments.iter().skip(1) {
-                    segments.push(segment.ident.clone());
+                    target_path.segments.push(segment.ident.clone());
                 }
-                *locator = Locator::path(Path::new(segments));
+                *locator = Name::path(target_path);
                 true
             }
         }
     }
 
-    fn locator_from_import_target(target: &str) -> Option<Locator> {
-        let segments = Self::import_target_segments(target)?;
-        Some(Locator::path(Path::new(segments)))
+    fn locator_from_import_target(target: &str) -> Option<Name> {
+        let path = Self::import_target_path(target)?;
+        Some(Name::path(path))
     }
 
-    fn import_target_segments(target: &str) -> Option<Vec<Ident>> {
-        let segments: Vec<Ident> = target
-            .split("::")
-            .filter(|segment| !segment.is_empty())
-            .map(Ident::new)
-            .collect();
-        if segments.is_empty() {
-            None
-        } else {
-            Some(segments)
-        }
+    fn import_target_path(target: &str) -> Option<Path> {
+        let parsed = parse_path(target).ok()?;
+        Some(Path::new(
+            parsed.prefix,
+            parsed.segments.into_iter().map(Ident::new).collect(),
+        ))
     }
 
     pub(super) fn try_handle_const_collection_invoke(
         &mut self,
-        locator: &Locator,
+        locator: &Name,
         args: &mut [Expr],
     ) -> Option<Value> {
         let segments = Self::locator_segments(locator);

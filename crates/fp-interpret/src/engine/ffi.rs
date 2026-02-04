@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::ffi::{c_void, CString};
 
 use fp_core::ast::{
-    Abi, DecimalType, ExprKind, FunctionSignature, Locator, Ty, TypeInt, TypePrimitive,
+    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive,
     TypeReference, Value, ValueChar, ValuePointer,
 };
 use fp_core::error::{Error, Result};
@@ -319,13 +319,13 @@ fn resolve_ffi_ty(ty: &Ty) -> Option<Ty> {
     let Ty::Expr(expr) = ty else {
         return None;
     };
-    let ExprKind::Locator(locator) = expr.kind() else {
+    let ExprKind::Name(locator) = expr.kind() else {
         return None;
     };
     let name = match locator {
-        Locator::Ident(ident) => ident.as_str(),
-        Locator::Path(path) => path.segments.last().map(|seg| seg.as_str())?,
-        Locator::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str())?,
+        Name::Ident(ident) => ident.as_str(),
+        Name::Path(path) => path.segments.last().map(|seg| seg.as_str())?,
+        Name::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str())?,
     };
 
     let primitive = match name {
@@ -369,13 +369,13 @@ fn locator_name(ty: &Ty) -> Option<&str> {
     let Ty::Expr(expr) = ty else {
         return None;
     };
-    let ExprKind::Locator(locator) = expr.kind() else {
+    let ExprKind::Name(locator) = expr.kind() else {
         return None;
     };
     match locator {
-        Locator::Ident(ident) => Some(ident.as_str()),
-        Locator::Path(path) => path.segments.last().map(|seg| seg.as_str()),
-        Locator::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()),
+        Name::Ident(ident) => Some(ident.as_str()),
+        Name::Path(path) => path.segments.last().map(|seg| seg.as_str()),
+        Name::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()),
     }
 }
 

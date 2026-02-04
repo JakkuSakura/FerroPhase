@@ -1,5 +1,5 @@
 use crate::ast::{
-    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, Locator, MacroInvocation, Path,
+    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, Name, MacroInvocation, Path,
     Ty, TySlot, Value, ValueUnit,
 };
 use crate::span::Span;
@@ -25,7 +25,7 @@ common_enum! {
     pub enum ExprKind {
         /// An id for the expression node
         Id(ExprId),
-        Locator(Locator),
+        Name(Name),
         Value(BValue),
         Block(ExprBlock),
         Match(ExprMatch),
@@ -174,13 +174,13 @@ impl Expr {
         }
     }
     pub fn ident(name: Ident) -> Expr {
-        ExprKind::Locator(Locator::from_ident(name)).into()
+        ExprKind::Name(Name::from_ident(name)).into()
     }
     pub fn path(path: Path) -> Expr {
-        ExprKind::Locator(Locator::path(path)).into()
+        ExprKind::Name(Name::path(path)).into()
     }
-    pub fn locator(locator: Locator) -> Expr {
-        ExprKind::Locator(locator).into()
+    pub fn name(name: Name) -> Expr {
+        ExprKind::Name(name).into()
     }
     pub fn block(block: ExprBlock) -> Expr {
         block.into_expr()
@@ -208,7 +208,7 @@ impl ExprKind {
     pub fn span(&self) -> Span {
         match self {
             ExprKind::Id(_) => Span::null(),
-            ExprKind::Locator(locator) => locator.span(),
+            ExprKind::Name(locator) => locator.span(),
             ExprKind::Value(value) => value.span(),
             ExprKind::Any(_) => Span::null(),
             ExprKind::Block(block) => block.span(),

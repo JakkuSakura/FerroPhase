@@ -2,7 +2,7 @@ use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
 use crate::ast::{
-    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, Locator,
+    get_threadlocal_serializer, BExpr, BPattern, BType, Expr, ExprBlock, ExprKind, Ident, Name,
     Pattern, Ty, Value, ValueFunction,
 };
 use crate::intrinsics::IntrinsicCallKind;
@@ -12,7 +12,7 @@ use crate::span::Span;
 
 #[derive(Debug, Clone, PartialEq, Hash)]
 pub enum ExprInvokeTarget {
-    Function(Locator),
+    Function(Name),
     Type(Ty),
     Method(ExprSelect),
     Closure(ValueFunction),
@@ -20,8 +20,8 @@ pub enum ExprInvokeTarget {
     Expr(BExpr),
 }
 
-impl From<Locator> for ExprInvokeTarget {
-    fn from(value: Locator) -> Self {
+impl From<Name> for ExprInvokeTarget {
+    fn from(value: Name) -> Self {
         ExprInvokeTarget::Function(value)
     }
 }
@@ -59,7 +59,7 @@ impl ExprInvokeTarget {
     pub fn expr(expr: Expr) -> Self {
         let (ty, kind) = expr.into_parts();
         match kind {
-            ExprKind::Locator(locator) => Self::Function(locator),
+            ExprKind::Name(locator) => Self::Function(locator),
             ExprKind::Select(select) => Self::Method(select),
             ExprKind::Value(value) => Self::value(*value),
             other => Self::Expr(Expr::from_parts(ty, other).into()),
@@ -1004,20 +1004,20 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
     }
 }
 
-fn detect_intrinsic_call(locator: &Locator) -> Option<IntrinsicCallKind> {
+fn detect_intrinsic_call(locator: &Name) -> Option<IntrinsicCallKind> {
     if let Some(kind) = crate::lang::lookup_lang_item_intrinsic(locator) {
         return Some(kind);
     }
 
     match locator {
-        Locator::Ident(ident) => match ident.name.as_str() {
+        Name::Ident(ident) => match ident.name.as_str() {
             "print" => Some(IntrinsicCallKind::Print),
             "println" => Some(IntrinsicCallKind::Println),
             "len" => Some(IntrinsicCallKind::Len),
             "catch_unwind" => Some(IntrinsicCallKind::CatchUnwind),
             _ => None,
         },
-        Locator::Path(path) => {
+        Name::Path(path) => {
             let names: Vec<_> = path.segments.iter().map(|seg| seg.name.as_str()).collect();
             match names.as_slice() {
                 ["std", "print"] | ["std", "io", "print"] => Some(IntrinsicCallKind::Print),

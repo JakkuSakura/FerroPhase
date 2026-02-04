@@ -338,10 +338,10 @@ ast::File {
           value: Expr(V)
         }
         pub struct HashMap : _ {
-          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> : _ {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>) : _
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })> : _ {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>) : _
             block (1 stmt) : _
               expr_stmt (value)
                 struct HashMap : _
@@ -2171,10 +2171,10 @@ ast::File {
           value: Expr(V)
         }
         pub struct HashMap : _ {
-          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> : _ {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>) : _
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })> : _ {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>) : _
             block (1 stmt) : _
               expr_stmt (value)
                 struct HashMap : _
@@ -3667,7 +3667,7 @@ ast::File {
       first: Expr(T)
       second: Expr(U)
     }
-    impl<T, U> Pair<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "U" })) })> : _ {
+    impl<T, U> Pair<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "U" })) })> : _ {
       pub fn new(first: Expr(T), second: Expr(U)) -> Expr(Self) : _
         block (1 stmt) : _
           expr_stmt (value)
@@ -3681,7 +3681,7 @@ ast::File {
       Some: (Expr(T))
       None: ()
     }
-    impl<T> Option<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })> : _ {
+    impl<T> Option<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) })> : _ {
       pub fn unwrap_or(self, default: Expr(T)) -> Expr(T) : _
         block (1 stmt) : _
           expr_stmt (value)
@@ -3780,13 +3780,13 @@ ast::File {
                   value 3.5 : _
                   value 2.1 : _
             kwargs: []
-        let some: Expr(Option<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "i64" })) })>)
+        let some: Expr(Option<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "i64" })) })>)
           init:
             invoke : _
               target: Option::Some
               args:
                 value 100 : _
-        let none: Expr(Option<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "i64" })) })>)
+        let none: Expr(Option<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "i64" })) })>)
           init:
             locator Option::None : _
         expr_stmt ;

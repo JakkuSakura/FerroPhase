@@ -146,7 +146,7 @@ fn transform_index_expression_to_hir() -> Result<()> {
 #[test]
 fn transform_type_expr_invoke_to_hir_path() -> Result<()> {
     let mut generator = HirGenerator::new();
-    let target = ast::ExprInvokeTarget::Function(ast::Locator::Ident(ident("Result")));
+    let target = ast::ExprInvokeTarget::Function(ast::Name::Ident(ident("Result")));
     let arg = ast::Expr::path(ast::Path::new(vec![ident("hir"), ident("GenericArgs")]));
     let invoke = ast::ExprInvoke {
         span: Span::null(),

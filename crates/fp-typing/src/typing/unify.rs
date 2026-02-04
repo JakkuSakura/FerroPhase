@@ -2,7 +2,7 @@ use crate::typing::scheme::{SchemeType, TypeScheme};
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
-use fp_core::module::path::QualifiedPath;
+use fp_core::module::path::{PathPrefix, QualifiedPath};
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypeVar {
@@ -700,8 +700,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Boxed(elem) => {
                 let elem_ty = self.resolve_to_ty(elem)?;
                 let segment = ParameterPathSegment::new(Ident::new("Box"), vec![elem_ty]);
-                let path = ParameterPath::new(vec![segment]);
-                Ty::expr(Expr::locator(Locator::parameter_path(path)))
+                let path = ParameterPath::new(PathPrefix::Plain, vec![segment]);
+                Ty::expr(Expr::name(Name::parameter_path(path)))
             }
         })
     }
@@ -914,7 +914,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
                 // Handle path-like type expressions (e.g., i64, bool, usize, str).
-                if let ExprKind::Locator(loc) = expr.kind() {
+                if let ExprKind::Name(loc) = expr.kind() {
                     if self.check_unimplemented_locator(loc) {
                         return Ok(self.error_type_var());
                     }
@@ -934,7 +934,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.record_hashmap_args(map_var, key_var, value_var);
                         return Ok(map_var);
                     }
-                    if let Locator::ParameterPath(path) = loc {
+                    if let Name::ParameterPath(path) = loc {
                         if let Some(segment) = path.segments.last() {
                             if segment.ident.as_str() == "Vec" && segment.args.len() == 1 {
                                 let elem_var = self.type_from_ast_ty(&segment.args[0])?;
@@ -949,7 +949,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                     let name = match loc {
-                        Locator::ParameterPath(path) => path
+                        Name::ParameterPath(path) => path
                             .segments
                             .last()
                             .map(|seg| seg.ident.as_str().to_string())
@@ -1070,9 +1070,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn hashmap_args_from_locator(
         &mut self,
-        locator: &Locator,
+        locator: &Name,
     ) -> Result<Option<(TypeVarId, TypeVarId)>> {
-        let Locator::ParameterPath(path) = locator else {
+        let Name::ParameterPath(path) = locator else {
             return Ok(None);
         };
         let Some(segment) = path.segments.last() else {
@@ -1146,7 +1146,7 @@ fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
     match &invoke.target {
         ExprInvokeTarget::Function(locator) => locator_tail_name(locator),
         ExprInvokeTarget::Expr(expr) => {
-            if let ExprKind::Locator(locator) = expr.kind() {
+            if let ExprKind::Name(locator) = expr.kind() {
                 locator_tail_name(locator)
             } else {
                 None
@@ -1155,7 +1155,7 @@ fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
         ExprInvokeTarget::Type(ty) => match ty {
             Ty::Struct(struct_ty) => Some(struct_ty.name.as_str().to_string()),
             Ty::Expr(expr) => {
-                if let ExprKind::Locator(locator) = expr.kind() {
+                if let ExprKind::Name(locator) = expr.kind() {
                     locator_tail_name(locator)
                 } else {
                     None
@@ -1169,11 +1169,11 @@ fn invoke_target_name(invoke: &ExprInvoke) -> Option<String> {
     }
 }
 
-fn locator_tail_name(locator: &Locator) -> Option<String> {
+fn locator_tail_name(locator: &Name) -> Option<String> {
     match locator {
-        Locator::Ident(ident) => Some(ident.as_str().to_string()),
-        Locator::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
-        Locator::ParameterPath(path) => path
+        Name::Ident(ident) => Some(ident.as_str().to_string()),
+        Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
+        Name::ParameterPath(path) => path
             .segments
             .last()
             .map(|seg| seg.ident.as_str().to_string()),

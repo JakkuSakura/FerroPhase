@@ -296,7 +296,7 @@ fn normalize_expr(expr: &mut Expr, strategy: &dyn IntrinsicNormalizer) -> Result
             }
             ExprKind::Quote(q) => normalize_block(&mut q.block, strategy)?,
             ExprKind::Splice(s) => normalize_expr(s.token.as_mut(), strategy)?,
-            ExprKind::Id(_) | ExprKind::Locator(_) | ExprKind::Any(_) => {}
+            ExprKind::Id(_) | ExprKind::Name(_) | ExprKind::Any(_) => {}
         }
         if let Some(new_expr) = replacement {
             let old_ty = expr.ty.clone();

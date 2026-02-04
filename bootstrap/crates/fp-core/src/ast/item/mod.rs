@@ -384,7 +384,7 @@ impl ItemChunkExt for ItemChunk {
         self.iter()
             .filter_map(|item| match item.kind() {
                 ItemKind::Impl(impl_) if impl_.trait_ty.is_none() => {
-                    if let ExprKind::Locator(Locator::Ident(ident)) = impl_.self_ty.kind() {
+                    if let ExprKind::Name(Name::Ident(ident)) = impl_.self_ty.kind() {
                         if ident.as_str() == self_ty {
                             Some(impl_)
                         } else {
@@ -434,7 +434,7 @@ impl From<ItemImportPath> for Visibility {
 common_struct! {
     pub struct ItemImpl {
         pub attrs: Vec<Attribute>,
-        pub trait_ty: Option<Locator>,
+        pub trait_ty: Option<Name>,
         pub self_ty: Expr,
         pub generics_params: Vec<GenericParam>,
         pub items: ItemChunk,
@@ -451,7 +451,7 @@ impl ItemImpl {
             items,
         }
     }
-    pub fn new(trait_ty: Option<Locator>, self_ty: Expr, items: ItemChunk) -> Self {
+    pub fn new(trait_ty: Option<Name>, self_ty: Expr, items: ItemChunk) -> Self {
         Self {
             attrs: Vec::new(),
             trait_ty,
@@ -464,7 +464,7 @@ impl ItemImpl {
     pub fn span(&self) -> Span {
         Span::union(
             [
-                self.trait_ty.as_ref().map(Locator::span),
+                self.trait_ty.as_ref().map(Name::span),
                 Some(self.self_ty.span()),
                 Some(Span::union(self.items.iter().map(Item::span))),
             ]

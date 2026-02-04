@@ -1,6 +1,6 @@
 use fp_core::ast::{
     Expr, ExprAssign, ExprBinOp, ExprField, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
-    ExprKind, ExprStruct, ExprUnOp, FormatTemplatePart, Locator, Value,
+    ExprKind, ExprStruct, ExprUnOp, FormatTemplatePart, Name, Value,
 };
 
 use super::{utils::escape_zig_string, ZigEmitter};
@@ -9,7 +9,7 @@ impl ZigEmitter {
     pub(crate) fn render_expr(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
             ExprKind::Value(value) => self.render_value(value),
-            ExprKind::Locator(locator) => Some(self.render_locator(locator)),
+            ExprKind::Name(locator) => Some(self.render_locator(locator)),
             ExprKind::Select(select) => {
                 let target = self.render_expr(select.obj.as_ref())?;
                 Some(format!("{}.{}", target, select.field.name))
@@ -24,9 +24,9 @@ impl ZigEmitter {
         }
     }
 
-    fn render_locator(&self, locator: &Locator) -> String {
+    fn render_locator(&self, locator: &Name) -> String {
         match locator {
-            Locator::Ident(ident) => ident.name.clone(),
+            Name::Ident(ident) => ident.name.clone(),
             _ => format!("{}", locator).replace("::", "."),
         }
     }

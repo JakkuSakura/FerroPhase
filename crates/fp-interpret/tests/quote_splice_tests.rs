@@ -358,7 +358,7 @@ fn splice_supports_function_returning_item_list() -> Result<()> {
 
     let invoke = ExprKind::Invoke(ExprInvoke {
         span: Span::null(),
-        target: ExprInvokeTarget::Function(Locator::from_ident(Ident::new("build_items"))),
+        target: ExprInvokeTarget::Function(Name::from_ident(Ident::new("build_items"))),
         args: vec![],
         kwargs: Vec::new(),
     })

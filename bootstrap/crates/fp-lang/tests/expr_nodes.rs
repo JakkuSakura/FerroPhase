@@ -199,7 +199,7 @@ fn parses_try_operator_on_identifier() {
     match e.kind() {
         ExprKind::Try(t) => {
             // Inner expression should be the original identifier.
-            assert!(matches!(t.expr.kind(), ExprKind::Locator(_)));
+            assert!(matches!(t.expr.kind(), ExprKind::Name(_)));
         }
         other => panic!("expected ExprKind::Try, found {:?}", other),
     }

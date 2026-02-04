@@ -1,4 +1,4 @@
-use crate::ast::{Expr, Ident, Locator, QuoteFragmentKind, QuoteItemKind, Ty, TySlot};
+use crate::ast::{Expr, Ident, Name, QuoteFragmentKind, QuoteItemKind, Ty, TySlot};
 use crate::span::Span;
 use crate::{common_enum, common_struct};
 pub type BPattern = Box<Pattern>;
@@ -116,7 +116,7 @@ impl PatternBind {
 }
 common_struct! {
     pub struct PatternTupleStruct {
-        pub name: Locator,
+        pub name: Name,
         pub patterns: Vec<Pattern>,
     }
 }

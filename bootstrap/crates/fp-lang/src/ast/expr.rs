@@ -12,7 +12,7 @@ use fp_core::ast::{
     ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
     ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple,
     ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits,
-    Locator, MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment,
+    Name, MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment,
     Path, Pattern,
     PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
@@ -816,7 +816,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                 "true" => Ok(Expr::value(Value::bool(true))),
                 "false" => Ok(Expr::value(Value::bool(false))),
                 "null" => Ok(Expr::value(Value::null())),
-                _ => Ok(ExprKind::Locator(Locator::from_ident(Ident::new(name))).into()),
+                _ => Ok(ExprKind::Name(Name::from_ident(Ident::new(name))).into()),
             }
         }
         SyntaxKind::ExprPath => {
@@ -843,7 +843,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             if segments.is_empty() {
                 return Err(LowerError::UnexpectedNode(SyntaxKind::ExprPath));
             }
-            Ok(ExprKind::Locator(Locator::path(Path::new(segments))).into())
+            Ok(ExprKind::Name(Name::path(Path::new(segments))).into())
         }
         SyntaxKind::ExprNumber => {
             let raw = direct_first_non_trivia_token_text(node)
@@ -1041,7 +1041,7 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
             let (args, kwargs) = lower_call_args_from_cst(nodes)?;
 
             let target = match callee.kind() {
-                ExprKind::Locator(locator) => ExprInvokeTarget::Function(locator.clone()),
+                ExprKind::Name(locator) => ExprInvokeTarget::Function(locator.clone()),
                 ExprKind::Select(select) => ExprInvokeTarget::Method(select.clone()),
                 _ => ExprInvokeTarget::expr(callee),
             };
@@ -1460,7 +1460,7 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
             }
             let callee_expr = lower_expr_from_cst(callee)?;
             let locator = match callee_expr.kind() {
-                ExprKind::Locator(locator) => locator.clone(),
+                ExprKind::Name(locator) => locator.clone(),
                 _ => return Err(LowerError::UnexpectedNode(SyntaxKind::ExprCall)),
             };
             let mut pattern_nodes = Vec::new();
@@ -1536,7 +1536,7 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
 
             let name_expr = lower_expr_from_cst(name_node)?;
 
-            if let ExprKind::Locator(locator) = name_expr.kind() {
+            if let ExprKind::Name(locator) = name_expr.kind() {
                 if let Some(ident) = locator.as_ident() {
                     let item_kind = match ident.as_str() {
                         "fn" => Some(QuoteItemKind::Function),
@@ -1566,10 +1566,10 @@ fn lower_match_pattern_from_cst(node: &SyntaxNode) -> Result<Pattern, LowerError
                 }
             }
 
-            if let ExprKind::Locator(locator) = name_expr.kind() {
+            if let ExprKind::Name(locator) = name_expr.kind() {
                 let ident = match locator {
-                    Locator::Ident(ident) => Some(ident.clone()),
-                    Locator::Path(path) if path.segments.len() == 1 => {
+                    Name::Ident(ident) => Some(ident.clone()),
+                    Name::Path(path) if path.segments.len() == 1 => {
                         Some(path.segments[0].clone())
                     }
                     _ => None,
@@ -2224,7 +2224,7 @@ fn quote_type_from_type_arg(arg: &Ty) -> Option<Ty> {
     match arg {
         Ty::Quote(_) => Some(arg.clone()),
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 let ident = locator.as_ident()?.as_str().to_string();
                 if ident == "type" {
                     return Some(Ty::Quote(TypeQuote {
@@ -2310,7 +2310,7 @@ fn lower_ty_path(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
     let ppath = ParameterPath::new(param_segments);
     Ok(Ty::expr(
-        Expr::locator(Locator::parameter_path(ppath)).with_span(node.span),
+        Expr::name(Name::parameter_path(ppath)).with_span(node.span),
     ))
 }
 
@@ -2535,7 +2535,7 @@ fn lower_ty_impl_traits(node: &SyntaxNode) -> Result<Ty, LowerError> {
     // Special-case `impl Fn(T) -> U` into a first-class function type.
     // This matches the surface syntax used in `examples/09_higher_order_functions.fp`.
     let is_fn_trait = match &bound_ty {
-        Ty::Expr(expr) => matches!(expr.kind(), ExprKind::Locator(loc) if loc.to_string() == "Fn"),
+        Ty::Expr(expr) => matches!(expr.kind(), ExprKind::Name(loc) if loc.to_string() == "Fn"),
         _ => false,
     };
     let mut trailing_types = type_nodes

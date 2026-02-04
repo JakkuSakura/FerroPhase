@@ -298,13 +298,13 @@ impl HirGenerator {
 
             if let Some(trait_locator) = &impl_block.trait_ty {
                 let trait_name = match trait_locator {
-                    ast::Locator::Ident(ident) => ident.name.clone(),
-                    ast::Locator::Path(path) => path
+                    ast::Name::Ident(ident) => ident.name.clone(),
+                    ast::Name::Path(path) => path
                         .segments
                         .last()
                         .map(|seg| seg.name.clone())
                         .unwrap_or_default(),
-                    ast::Locator::ParameterPath(path) => path
+                    ast::Name::ParameterPath(path) => path
                         .segments
                         .last()
                         .map(|seg| seg.ident.name.clone())

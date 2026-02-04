@@ -338,10 +338,10 @@ ast::File {
           value: Expr(V)
         }
         pub struct HashMap {
-          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)
             block (1 stmt)
               expr_stmt (value)
                 struct HashMap
@@ -2171,10 +2171,10 @@ ast::File {
           value: Expr(V)
         }
         pub struct HashMap {
-          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })> {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)
             block (1 stmt)
               expr_stmt (value)
                 struct HashMap
@@ -3669,7 +3669,7 @@ ast::File {
       left: Expr(T)
       right: Expr(T)
     }
-    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })> + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T)
+    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) })> + Copy> add(a: Expr(T), b: Expr(T)) -> Expr(T)
       block (1 stmt)
         expr_stmt (value)
           binop +
@@ -3677,7 +3677,7 @@ ast::File {
               locator a
             rhs:
               locator b
-    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })> + Copy> double(x: Expr(T)) -> Expr(T)
+    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) })> + Copy> double(x: Expr(T)) -> Expr(T)
       block (1 stmt)
         expr_stmt (value)
           binop +
@@ -3685,7 +3685,7 @@ ast::File {
               locator x
             rhs:
               locator x
-    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })> + Copy + Display> pipeline(a: Expr(T), b: Expr(T)) -> Expr(T)
+    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) })> + Copy + Display> pipeline(a: Expr(T), b: Expr(T)) -> Expr(T)
       block (3 stmts)
         let result
           init:
@@ -3705,7 +3705,7 @@ ast::File {
             kwargs: []
         expr_stmt (value)
           locator result
-    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })> + Copy> sum_pair(pair: Expr(Pair<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })>)) -> Expr(T)
+    pub fn<T: Add<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) })> + Copy> sum_pair(pair: Expr(Pair<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "T" })) })>)) -> Expr(T)
       block (1 stmt)
         expr_stmt (value)
           binop +
