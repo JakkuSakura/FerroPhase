@@ -1893,10 +1893,6 @@ impl MirLowering {
                 kind: TyKind::Never,
             },
             hir::TypeExprKind::Infer => {
-                self.emit_warning(
-                    ty_expr.span,
-                    "type inference markers not supported in HIR→MIR; using error type",
-                );
                 self.error_ty()
             }
             hir::TypeExprKind::Error => self.error_ty(),

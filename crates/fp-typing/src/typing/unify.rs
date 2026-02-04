@@ -400,8 +400,40 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
+    fn is_cstr_var(&mut self, var: TypeVarId) -> bool {
+        let root = self.find(var);
+        match self.type_vars[root].kind.clone() {
+            TypeVarKind::Bound(TypeTerm::Struct(struct_ty)) => struct_ty.name.as_str() == "CStr",
+            TypeVarKind::Bound(TypeTerm::Custom(Ty::Struct(struct_ty))) => {
+                struct_ty.name.as_str() == "CStr"
+            }
+            TypeVarKind::Link(next) => self.is_cstr_var(next),
+            _ => false,
+        }
+    }
+
     fn unify_terms(&mut self, a: TypeTerm, b: TypeTerm) -> Result<()> {
         match (a, b) {
+            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Reference(inner))
+                if self.is_cstr_var(inner) =>
+            {
+                Ok(())
+            }
+            (TypeTerm::Reference(inner), TypeTerm::Primitive(TypePrimitive::String))
+                if self.is_cstr_var(inner) =>
+            {
+                Ok(())
+            }
+            (TypeTerm::Primitive(TypePrimitive::String), TypeTerm::Struct(struct_ty))
+                if struct_ty.name.as_str() == "CStr" =>
+            {
+                Ok(())
+            }
+            (TypeTerm::Struct(struct_ty), TypeTerm::Primitive(TypePrimitive::String))
+                if struct_ty.name.as_str() == "CStr" =>
+            {
+                Ok(())
+            }
             (TypeTerm::Primitive(pa), TypeTerm::Primitive(pb)) => {
                 if pa == pb {
                     Ok(())

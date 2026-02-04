@@ -19,9 +19,9 @@ use fp_core::ast::{
     PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
-    Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeQuote,
-    TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone,
-    ValueString,
+    DecimalType, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt,
+    TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType,
+    TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -835,8 +835,12 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
         SyntaxKind::ExprNumber => {
             let raw = direct_first_non_trivia_token_text(node)
                 .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::ExprNumber))?;
-            let value = parse_numeric_literal(&raw)?;
-            Ok(Expr::value(value))
+            let (value, ty) = parse_numeric_literal(&raw)?;
+            let mut expr = Expr::value(value);
+            if let Some(ty) = ty {
+                expr.ty = Some(ty);
+            }
+            Ok(expr)
         }
         SyntaxKind::ExprString => {
             let raw = direct_first_non_trivia_token_text(node)
@@ -1650,7 +1654,7 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     Some(inner.to_string())
 }
 
-fn parse_numeric_literal(raw: &str) -> Result<Value, LowerError> {
+fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
     let stripped = strip_number_suffix(raw);
     let normalized = stripped.replace('_', "");
     let suffix = &raw[stripped.len()..];
@@ -1663,25 +1667,62 @@ fn parse_numeric_literal(raw: &str) -> Result<Value, LowerError> {
             let value = normalized
                 .parse::<BigInt>()
                 .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok(Value::big_int(value))
+            Ok((Value::big_int(value), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
         }
         "fb" => {
             let value = normalized
                 .parse::<BigDecimal>()
                 .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok(Value::big_decimal(value))
+            Ok((
+                Value::big_decimal(value),
+                Some(Ty::Primitive(TypePrimitive::Decimal(
+                    DecimalType::BigDecimal,
+                ))),
+            ))
+        }
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
+        | "u128" | "usize" => {
+            if normalized.contains('.') {
+                return Err(LowerError::InvalidNumber(raw.to_string()));
+            }
+            let value = normalized
+                .parse::<i64>()
+                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            let ty = match suffix {
+                "i8" => TypeInt::I8,
+                "i16" => TypeInt::I16,
+                "i32" => TypeInt::I32,
+                "i64" => TypeInt::I64,
+                "u8" => TypeInt::U8,
+                "u16" => TypeInt::U16,
+                "u32" => TypeInt::U32,
+                "u64" => TypeInt::U64,
+                "i128" | "u128" | "isize" | "usize" => TypeInt::I64,
+                _ => TypeInt::I64,
+            };
+            Ok((Value::int(value), Some(Ty::Primitive(TypePrimitive::Int(ty)))))
+        }
+        "f32" | "f64" => {
+            let value = normalized
+                .parse::<f64>()
+                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            let ty = match suffix {
+                "f32" => DecimalType::F32,
+                _ => DecimalType::F64,
+            };
+            Ok((Value::decimal(value), Some(Ty::Primitive(TypePrimitive::Decimal(ty)))))
         }
         _ => {
             if normalized.contains('.') {
                 let d = normalized
                     .parse::<f64>()
                     .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-                Ok(Value::decimal(d))
+                Ok((Value::decimal(d), None))
             } else {
                 let i = normalized
                     .parse::<i64>()
                     .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-                Ok(Value::int(i))
+                Ok((Value::int(i), None))
             }
         }
     }
@@ -1868,7 +1909,7 @@ fn lower_ty_value(node: &SyntaxNode) -> Result<Ty, LowerError> {
                 let decoded = decode_string_literal(&raw).unwrap_or(raw);
                 Value::String(ValueString::new_ref(decoded))
             } else {
-                parse_numeric_literal(&raw)?
+                parse_numeric_literal(&raw)?.0
             }
         }
     };

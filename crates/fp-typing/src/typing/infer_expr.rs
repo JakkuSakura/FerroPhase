@@ -1273,6 +1273,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                     let arg_var = self.infer_expr(arg_expr)?;
                     let param_var = self.type_from_ast_ty(&param.ty)?;
+                    let expects_cstr = self
+                        .resolve_to_ty(param_var)
+                        .ok()
+                        .map(|ty| match ty {
+                            Ty::Struct(struct_ty) => struct_ty.name.as_str() == "CStr",
+                            Ty::Reference(reference) => matches!(
+                                reference.ty.as_ref(),
+                                Ty::Struct(struct_ty) if struct_ty.name.as_str() == "CStr"
+                            ),
+                            _ => false,
+                        })
+                        .unwrap_or(false);
+                    if expects_cstr {
+                        if matches!(arg_expr.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))) {
+                            arg_expr.set_ty(param.ty.clone());
+                            continue;
+                        }
+                        if let Some(arg_ty) = arg_expr.ty() {
+                            if self.is_string_like_type(arg_ty) {
+                                arg_expr.set_ty(param.ty.clone());
+                                continue;
+                            }
+                        }
+                        if let Ok(arg_ty) = self.resolve_to_ty(arg_var) {
+                            if self.is_string_like_type(&arg_ty) {
+                                arg_expr.set_ty(param.ty.clone());
+                                continue;
+                            }
+                        }
+                    }
                     self.unify(arg_var, param_var)?;
                 }
                 let ret_var = if let Some(ret_ty) = &sig.ret_ty {
@@ -1293,6 +1323,36 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     for (arg_expr, param) in invoke.args.iter_mut().zip(sig.params.iter()) {
                         let arg_var = self.infer_expr(arg_expr)?;
                         let param_var = self.type_from_ast_ty(&param.ty)?;
+                        let expects_cstr = self
+                            .resolve_to_ty(param_var)
+                            .ok()
+                            .map(|ty| match ty {
+                                Ty::Struct(struct_ty) => struct_ty.name.as_str() == "CStr",
+                                Ty::Reference(reference) => matches!(
+                                    reference.ty.as_ref(),
+                                    Ty::Struct(struct_ty) if struct_ty.name.as_str() == "CStr"
+                                ),
+                                _ => false,
+                            })
+                            .unwrap_or(false);
+                        if expects_cstr {
+                            if matches!(arg_expr.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))) {
+                                arg_expr.set_ty(param.ty.clone());
+                                continue;
+                            }
+                            if let Some(arg_ty) = arg_expr.ty() {
+                                if self.is_string_like_type(arg_ty) {
+                                    arg_expr.set_ty(param.ty.clone());
+                                    continue;
+                                }
+                            }
+                            if let Ok(arg_ty) = self.resolve_to_ty(arg_var) {
+                                if self.is_string_like_type(&arg_ty) {
+                                    arg_expr.set_ty(param.ty.clone());
+                                    continue;
+                                }
+                            }
+                        }
                         self.unify(arg_var, param_var)?;
                     }
                     let ret_var = if let Some(ret_ty) = &sig.ret_ty {
