@@ -151,7 +151,7 @@ pub fn intrinsic_sizeof() -> IntrinsicFunction {
             Value::Type(ast_type) => {
                 let size = match ast_type {
                     Ty::Expr(expr) => {
-                        if let ExprKind::Locator(locator) = expr.as_ref().kind() {
+                        if let ExprKind::Name(locator) = expr.as_ref().kind() {
                             if let Some(ident) = locator.as_ident() {
                                 match ident.name.as_str() {
                                     "i8" | "u8" => 1,
@@ -378,7 +378,7 @@ fn render_type_name(ty: &Ty) -> String {
         Ty::Struct(struct_ty) => format!("struct {}", struct_ty.name),
         Ty::Enum(enum_ty) => format!("enum {}", enum_ty.name),
         Ty::Expr(expr) => match expr.kind() {
-            ExprKind::Locator(locator) => locator.to_string(),
+            ExprKind::Name(locator) => locator.to_string(),
             _ => format!("{}", ty),
         },
         _ => format!("{}", ty),
@@ -680,7 +680,7 @@ pub fn intrinsic_struct_size() -> IntrinsicFunction {
 fn calculate_field_size(ty: &Ty) -> usize {
     match ty {
         Ty::Expr(expr) => {
-            if let ExprKind::Locator(locator) = expr.as_ref().kind() {
+            if let ExprKind::Name(locator) = expr.as_ref().kind() {
                 if let Some(ident) = locator.as_ident() {
                     match ident.name.as_str() {
                         "i8" | "u8" => 1,

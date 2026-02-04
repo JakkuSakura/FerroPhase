@@ -328,7 +328,7 @@ impl PythonEmitter {
     fn render_expr(&mut self, expr: &Expr) -> Result<String> {
         match expr.kind() {
             ExprKind::Value(value) => Ok(self.render_value(value.as_ref())),
-            ExprKind::Locator(locator) => Ok(self.render_locator(locator)),
+            ExprKind::Name(locator) => Ok(self.render_locator(locator)),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
             ExprKind::Select(select) => Ok(format!(
                 "{}.{}",
@@ -562,7 +562,7 @@ impl PythonEmitter {
         template
     }
 
-    fn render_locator(&self, locator: &ast::Locator) -> String {
+    fn render_locator(&self, locator: &ast::Name) -> String {
         locator
             .to_string()
             .split("::")
@@ -689,7 +689,7 @@ impl PythonEmitter {
 
     fn extract_struct_name(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Locator(locator) => locator
+            ExprKind::Name(locator) => locator
                 .to_string()
                 .split("::")
                 .map(|segment| segment.to_string())

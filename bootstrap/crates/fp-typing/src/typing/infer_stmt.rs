@@ -229,12 +229,12 @@ fn qualify_enum_variant_pattern(pat: &mut Pattern, enum_ty: &TypeEnum) {
     let PatternKind::Variant(variant) = pat.kind_mut() else {
         return;
     };
-    let ExprKind::Locator(locator) = variant.name.kind() else {
+    let ExprKind::Name(locator) = variant.name.kind() else {
         return;
     };
     let variant_name = match locator {
-        Locator::Ident(ident) => ident.clone(),
-        Locator::Path(path) if path.segments.len() == 1 => path.segments[0].clone(),
+        Name::Ident(ident) => ident.clone(),
+        Name::Path(path) if path.segments.len() == 1 => path.segments[0].clone(),
         _ => return,
     };
     if !enum_ty

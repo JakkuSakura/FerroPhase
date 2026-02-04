@@ -144,6 +144,7 @@ pub enum ExprKind {
     Path(Path),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Unary(UnOp, Box<Expr>),
+    Reference(ExprReference),
     Call(Box<Expr>, Vec<CallArg>),
     MethodCall(Box<Expr>, Symbol, Vec<CallArg>),
     FieldAccess(Box<Expr>, Symbol),
@@ -172,6 +173,13 @@ pub struct MatchArm {
     pub pat: Pat,
     pub guard: Option<Expr>,
     pub body: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ExprReference {
+    pub hir_id: HirId,
+    pub mutable: crate::hir::ty::Mutability,
+    pub expr: Box<Expr>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -636,6 +644,7 @@ impl ExprKind {
             ExprKind::Path(path) => path.span(),
             ExprKind::Binary(_, lhs, rhs) => Span::union([lhs.span(), rhs.span()]),
             ExprKind::Unary(_, expr) => expr.span(),
+            ExprKind::Reference(reference) => reference.expr.span(),
             ExprKind::Call(func, args) => Span::union(
                 Some(func.span())
                     .into_iter()

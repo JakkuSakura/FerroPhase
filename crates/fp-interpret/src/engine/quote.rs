@@ -423,7 +423,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Item(_) => {}
             ExprKind::Quote(_)
-            | ExprKind::Locator(_)
+            | ExprKind::Name(_)
             | ExprKind::Macro(_)
             | ExprKind::Any(_)
             | ExprKind::Id(_) => {}

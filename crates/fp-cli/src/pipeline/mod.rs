@@ -1636,7 +1636,7 @@ fn main() {
                     }
                     ast::ExprKind::Splice(s) => self.visit_expr(&s.token),
                     ast::ExprKind::Value(_)
-                    | ast::ExprKind::Locator(_)
+                    | ast::ExprKind::Name(_)
                     | ast::ExprKind::Id(_)
                     | ast::ExprKind::Item(_)
                     | ast::ExprKind::Any(_) => {}

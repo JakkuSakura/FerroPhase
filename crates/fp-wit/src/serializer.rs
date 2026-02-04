@@ -3,7 +3,7 @@ use std::fmt::Write;
 
 use fp_core::ast::{
     self, AstSerializer, AttrMeta, Attribute, Expr, ExprInvokeTarget, ExprKind, FunctionSignature,
-    Ident, Item, ItemImpl, ItemKind, Locator, Node, NodeKind, Ty, TypeInt, TypePrimitive,
+    Ident, Item, ItemImpl, ItemKind, Name, Node, NodeKind, Ty, TypeInt, TypePrimitive,
     TypeStructural, Value, Visibility,
 };
 use fp_core::error::{Error as CoreError, Result};
@@ -1174,7 +1174,7 @@ fn collect_type_references(ty: &Ty, out: &mut Vec<(String, String)>) {
 
 fn collect_type_references_expr(expr: &Expr, out: &mut Vec<(String, String)>) {
     match expr.kind() {
-        ExprKind::Locator(locator) => {
+        ExprKind::Name(locator) => {
             if let Some((namespace, name)) = locator_namespace_and_name(locator) {
                 out.push((namespace, name));
             }
@@ -1202,9 +1202,9 @@ fn collect_type_references_expr(expr: &Expr, out: &mut Vec<(String, String)>) {
     }
 }
 
-fn locator_namespace_and_name(locator: &Locator) -> Option<(String, String)> {
+fn locator_namespace_and_name(locator: &Name) -> Option<(String, String)> {
     match locator {
-        Locator::Path(path) => {
+        Name::Path(path) => {
             if path.segments.is_empty() {
                 return None;
             }
@@ -1226,7 +1226,7 @@ fn locator_namespace_and_name(locator: &Locator) -> Option<(String, String)> {
             }
             Some((namespace, name))
         }
-        Locator::ParameterPath(path) => {
+        Name::ParameterPath(path) => {
             if path.segments.is_empty() {
                 return None;
             }
@@ -1402,24 +1402,24 @@ fn impl_interface_name(parent: Option<&str>, impl_block: &ItemImpl) -> Option<St
     }
 
     let target = match impl_block.self_ty.kind() {
-        ExprKind::Locator(locator) => locator_to_ident(locator).cloned(),
+        ExprKind::Name(locator) => locator_to_ident(locator).cloned(),
         _ => None,
     }?;
 
     Some(interface_name(parent, &target))
 }
 
-fn locator_to_ident(locator: &Locator) -> Option<&Ident> {
+fn locator_to_ident(locator: &Name) -> Option<&Ident> {
     match locator {
-        Locator::Ident(ident) => Some(ident),
-        Locator::Path(path) => path.segments.last(),
+        Name::Ident(ident) => Some(ident),
+        Name::Path(path) => path.segments.last(),
         _ => None,
     }
 }
 
 fn locator_to_ident_from_expr(expr: &Expr) -> Option<&Ident> {
     match expr.kind() {
-        ExprKind::Locator(locator) => locator_to_ident(locator),
+        ExprKind::Name(locator) => locator_to_ident(locator),
         _ => None,
     }
 }
@@ -1487,7 +1487,7 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
 
 fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
     match expr.kind() {
-        ExprKind::Locator(locator) => locator_to_wit_type(locator, self_name),
+        ExprKind::Name(locator) => locator_to_wit_type(locator, self_name),
         ExprKind::Value(value) => match value.as_ref() {
             Value::Type(ty) => Some(ty_to_wit_with_self(ty, self_name)),
             _ => None,
@@ -1519,12 +1519,12 @@ fn expr_to_wit_type(expr: &Expr, self_name: Option<&str>) -> Option<String> {
     }
 }
 
-fn locator_to_wit_type(locator: &Locator, self_name: Option<&str>) -> Option<String> {
+fn locator_to_wit_type(locator: &Name, self_name: Option<&str>) -> Option<String> {
     match locator {
-        Locator::Ident(ident) if ident.as_str() == "Self" => {
+        Name::Ident(ident) if ident.as_str() == "Self" => {
             self_name.map(|name| sanitize_identifier(name))
         }
-        Locator::Ident(ident) => {
+        Name::Ident(ident) => {
             if matches!(ident.as_str(), "Error" | "Span") {
                 return Some("string".to_string());
             }
@@ -1532,7 +1532,7 @@ fn locator_to_wit_type(locator: &Locator, self_name: Option<&str>) -> Option<Str
                 ident.as_str(),
             )))
         }
-        Locator::Path(path) => {
+        Name::Path(path) => {
             if let Some(first) = path.segments.first() {
                 if matches!(first.as_str(), "std" | "core" | "alloc") {
                     if path

@@ -3,7 +3,7 @@ use fp_core::ast::{
     ExprSelect, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam, Ty, TySlot,
     TypeAny, TypeInt, TypeNothing, TypePrimitive, TypeUnit, Value,
 };
-use fp_core::ast::{Ident, Locator};
+use fp_core::ast::{Ident, Name};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::intrinsics::{ensure_function_decl, make_function_decl, IntrinsicMaterializer};
@@ -77,7 +77,7 @@ fn build_printf_invoke(expr_ty: TySlot, call: ExprIntrinsicCall) -> Result<Expr>
     invoke_args.push(make_string_literal_expr(printf_format));
     invoke_args.append(&mut args);
 
-    let target = ExprInvokeTarget::Function(Locator::ident(Ident::new("printf")));
+    let target = ExprInvokeTarget::Function(Name::ident(Ident::new("printf")));
     let invoke = ExprKind::Invoke(ExprInvoke {
         target,
         args: invoke_args,
@@ -113,8 +113,8 @@ fn is_missing_printf_type_info(expr: &Expr) -> bool {
                 return !is_string_like_ty(reference.ty.as_ref());
             }
             Ty::Expr(expr_ty) => {
-                if let ExprKind::Locator(locator) = expr_ty.kind() {
-                    if let Locator::Ident(ident) = locator {
+                if let ExprKind::Name(locator) = expr_ty.kind() {
+                    if let Name::Ident(ident) = locator {
                         let known =
                             matches!(ident.as_str(), "Int" | "Bool" | "String" | "Str" | "Char");
                         return !known;
@@ -366,8 +366,8 @@ fn infer_printf_spec_with_replacement(ty: Option<&Ty>) -> Result<(String, Option
             return infer_printf_spec_for_value(value.value.as_ref());
         }
         Ty::Expr(expr) => {
-            if let ExprKind::Locator(locator) = expr.kind() {
-                if let Locator::Ident(ident) = locator {
+            if let ExprKind::Name(locator) = expr.kind() {
+                if let Name::Ident(ident) = locator {
                     let spec = match ident.as_str() {
                         "Int" => "%lld",
                         "Bool" => "%d",

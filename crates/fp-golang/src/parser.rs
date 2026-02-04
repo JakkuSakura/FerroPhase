@@ -520,7 +520,7 @@ fn parse_call_expression(node: TsNode, source: &str) -> Result<Option<Expr>> {
     }
 
     let func_text = func_node.utf8_text(source.as_bytes())?;
-    let locator = fp_core::ast::Locator::Ident(Ident::new(func_text));
+    let locator = fp_core::ast::Name::Ident(Ident::new(func_text));
     let invoke = fp_core::ast::ExprInvoke {
         span: Span::null(),
         target: fp_core::ast::ExprInvokeTarget::Function(locator),

@@ -470,14 +470,14 @@ fn is_hashmap_ty(ty: &ast::Ty) -> bool {
     match ty {
         ast::Ty::Struct(struct_ty) => struct_ty.name.as_str() == "HashMap",
         ast::Ty::Expr(expr) => match expr.kind() {
-            ast::ExprKind::Locator(locator) => match locator {
-                ast::Locator::Ident(ident) => ident.as_str() == "HashMap",
-                ast::Locator::Path(path) => path
+            ast::ExprKind::Name(locator) => match locator {
+                ast::Name::Ident(ident) => ident.as_str() == "HashMap",
+                ast::Name::Path(path) => path
                     .segments
                     .last()
                     .map(|seg| seg.as_str() == "HashMap")
                     .unwrap_or(false),
-                ast::Locator::ParameterPath(path) => path
+                ast::Name::ParameterPath(path) => path
                     .segments
                     .last()
                     .map(|seg| seg.ident.as_str() == "HashMap")
@@ -511,7 +511,7 @@ fn build_hashmap_from_entries(
 ) -> ast::Expr {
     let mut elements = Vec::with_capacity(entries.len());
     for entry in entries {
-        let name = ast::Expr::path(ast::Path::new(vec![
+        let name = ast::Expr::path(ast::Path::plain(vec![
             ast::Ident::new("std"),
             ast::Ident::new("collections"),
             ast::Ident::new("HashMapEntry"),
@@ -528,7 +528,7 @@ fn build_hashmap_from_entries(
         ast::ExprIntrinsicContainer::VecElements { elements },
     ));
 
-    let locator = ast::Locator::path(ast::Path::new(vec![
+    let locator = ast::Name::path(ast::Path::plain(vec![
         ast::Ident::new("std"),
         ast::Ident::new("collections"),
         ast::Ident::new("HashMap"),

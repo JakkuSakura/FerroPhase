@@ -196,7 +196,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 if let Value::Any(any) = value {
                     if let Some(enum_value) = any.downcast_ref::<RuntimeEnum>() {
                         let expected_name = match variant.name.kind() {
-                            ExprKind::Locator(locator) => Self::locator_base_name(locator),
+                            ExprKind::Name(locator) => Self::locator_base_name(locator),
                             _ => variant.name.to_string(),
                         };
                         if enum_value.variant_name != expected_name {

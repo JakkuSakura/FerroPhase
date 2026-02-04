@@ -337,14 +337,14 @@ ast::File {
           key: Expr(K)
           value: Expr(V)
         }
-        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>} {
-          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>} {
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> : () {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
-            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })> : () {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
+            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
               expr_stmt (value)
-                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
                   entries:
                     locator entries : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
           pub fn len(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
@@ -374,7 +374,7 @@ ast::File {
                             value:
                               select .entries [unknown] : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
                                 object:
-                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
                             index:
                               locator idx : i64
                       expr_stmt (value)
@@ -2170,14 +2170,14 @@ ast::File {
           key: Expr(K)
           value: Expr(V)
         }
-        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>} {
-          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
+        pub struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>} {
+          entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>
         }
-        impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> : () {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
-            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+        impl HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })> : () {
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>} : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
+            block (1 stmt) : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
               expr_stmt (value)
-                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+                struct HashMap : HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
                   entries:
                     locator entries : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
           pub fn len(&self) -> Expr(i64) : fn() -> i64 : fn() -> i64
@@ -2207,7 +2207,7 @@ ast::File {
                             value:
                               select .entries [unknown] : Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>
                                 object:
-                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+                                  locator self : &HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Name(Ident(Ident { name: "V" })) })>)>}
                             index:
                               locator idx : i64
                       expr_stmt (value)

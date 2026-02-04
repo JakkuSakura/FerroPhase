@@ -407,6 +407,13 @@ fn format_expr_inline(expr: &Expr, ctx: &PrettyCtx<'_>) -> String {
         ExprKind::Unary(op, inner) => {
             format!("({}{})", fmt_un_op(op), format_expr_inline(inner, ctx))
         }
+        ExprKind::Reference(reference) => {
+            let prefix = match reference.mutable {
+                crate::hir::ty::Mutability::Mut => "&mut ",
+                crate::hir::ty::Mutability::Not => "&",
+            };
+            format!("{}{}", prefix, format_expr_inline(&reference.expr, ctx))
+        }
         ExprKind::Call(callee, args) => {
             let args = args
                 .iter()

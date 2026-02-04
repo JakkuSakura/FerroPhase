@@ -6,7 +6,7 @@ pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
 
 use crate::typing::scheme::TypeScheme;
 use fp_core::ast::*;
-use fp_core::ast::{AttributesExt, Ident, Locator};
+use fp_core::ast::{AttributesExt, Ident, Name};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
@@ -497,7 +497,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     self.contains_illegal_struct_recursion(&op.rhs, target, false, visiting, path)
                 }),
             Ty::Expr(expr) => {
-                let ExprKind::Locator(locator) = expr.kind() else {
+                let ExprKind::Name(locator) = expr.kind() else {
                     return None;
                 };
                 if let Some(inner) = self.heap_inner_ty(ty) {
@@ -548,7 +548,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Reference(reference) => Some(&reference.ty),
             Ty::Vec(vec) => Some(&vec.ty),
             Ty::Expr(expr) => {
-                let ExprKind::Locator(Locator::ParameterPath(path)) = expr.kind() else {
+                let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
                     return None;
                 };
                 let segment = path.segments.last()?;
@@ -564,11 +564,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn locator_tail_name(&self, locator: &Locator) -> Option<String> {
+    fn locator_tail_name(&self, locator: &Name) -> Option<String> {
         match locator {
-            Locator::Ident(ident) => Some(ident.as_str().to_string()),
-            Locator::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
-            Locator::ParameterPath(path) => path
+            Name::Ident(ident) => Some(ident.as_str().to_string()),
+            Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string()),
+            Name::ParameterPath(path) => path
                 .segments
                 .last()
                 .map(|seg| seg.ident.as_str().to_string()),
@@ -637,7 +637,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.unimplemented_symbols.contains(name)
     }
 
-    fn check_unimplemented_locator(&mut self, locator: &Locator) -> bool {
+    fn check_unimplemented_locator(&mut self, locator: &Name) -> bool {
         let mut candidates = Vec::new();
         if let Some(qualified) = self.resolve_alias_locator(locator) {
             candidates.push(qualified);
@@ -652,7 +652,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
         match locator {
-            Locator::Path(path) => {
+            Name::Path(path) => {
                 if let Some(last) = path.segments.last() {
                     candidates.push(last.as_str().to_string());
                     if !self.module_path.is_empty() {
@@ -671,7 +671,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
             }
-            Locator::ParameterPath(path) => {
+            Name::ParameterPath(path) => {
                 if let Some(last) = path.segments.last() {
                     candidates.push(last.ident.as_str().to_string());
                     if !self.module_path.is_empty() {
@@ -681,7 +681,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     }
                 }
             }
-            Locator::Ident(_) => {}
+            Name::Ident(_) => {}
         }
 
         if let Some(name) = candidates
@@ -694,7 +694,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         false
     }
 
-    fn lookup_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {
+    fn lookup_function_signature(&self, locator: &Name) -> Option<FunctionSignature> {
         let mut candidates = Vec::new();
         if let Some(qualified) = self.resolve_alias_locator(locator) {
             candidates.push(qualified);
@@ -703,14 +703,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(ident) = locator.as_ident() {
             candidates.push(ident.as_str().to_string());
         }
-        if let Locator::Path(path) = locator {
+        if let Name::Path(path) = locator {
             if path.segments.len() >= 2 {
                 let type_name = path.segments[path.segments.len() - 2].as_str();
                 let func_name = path.segments[path.segments.len() - 1].as_str();
                 candidates.push(format!("{}::{}", type_name, func_name));
             }
         }
-        if let Locator::ParameterPath(path) = locator {
+        if let Name::ParameterPath(path) = locator {
             if path.segments.len() >= 2 {
                 let type_name = path.segments[path.segments.len() - 2].ident.as_str();
                 let func_name = path.segments[path.segments.len() - 1].ident.as_str();
@@ -1793,7 +1793,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.enter_scope();
 
         if let Some(receiver) = func.sig.receiver.as_ref() {
-            let self_ty = Ty::locator(Locator::ident("Self"));
+            let self_ty = Ty::locator(Name::ident("Self"));
             let receiver_type = match receiver {
                 FunctionParamReceiver::Implicit
                 | FunctionParamReceiver::Value
@@ -1957,10 +1957,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .bounds
             .iter()
             .filter_map(|expr| match expr.kind() {
-                ExprKind::Locator(locator) => Some(locator.to_string()),
+                ExprKind::Name(locator) => Some(locator.to_string()),
                 ExprKind::Value(value) => match value.as_ref() {
                     Value::Type(Ty::Expr(inner)) => match inner.kind() {
-                        ExprKind::Locator(locator) => Some(locator.to_string()),
+                        ExprKind::Name(locator) => Some(locator.to_string()),
                         _ => None,
                     },
                     _ => None,
@@ -2061,8 +2061,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     // type_from_ast_ty moved to typing/unify.rs
 
-    fn lookup_associated_function(&mut self, locator: &Locator) -> Result<Option<TypeVarId>> {
-        if let Locator::Path(path) = locator {
+    fn lookup_associated_function(&mut self, locator: &Name) -> Result<Option<TypeVarId>> {
+        if let Name::Path(path) = locator {
             if path.segments.len() >= 2 {
                 if let (Some(struct_segment), Some(method_segment)) = (
                     path.segments.get(path.segments.len() - 2),
@@ -2127,7 +2127,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(None)
     }
 
-    fn lookup_locator(&mut self, locator: &Locator) -> Result<TypeVarId> {
+    fn lookup_locator(&mut self, locator: &Name) -> Result<TypeVarId> {
         if self.check_unimplemented_locator(locator) {
             return Ok(self.error_type_var());
         }
@@ -2142,7 +2142,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(var);
             }
         }
-        if let Locator::Path(path) = locator {
+        if let Name::Path(path) = locator {
             if let Some(last) = path.segments.last() {
                 let name = last.as_str();
                 if self.struct_defs.contains_key(name) || self.enum_defs.contains_key(name) {
@@ -2165,7 +2165,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(var);
             }
         }
-        if let Locator::Path(path) = locator {
+        if let Name::Path(path) = locator {
             if let Some(first) = path.segments.first() {
                 if let Some(module_path) = self.lookup_module_alias(first.as_str()) {
                     let mut qualified = module_path;
@@ -2216,10 +2216,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         Ok(self.error_type_var())
     }
 
-    fn resolve_alias_locator(&self, locator: &Locator) -> Option<String> {
+    fn resolve_alias_locator(&self, locator: &Name) -> Option<String> {
         match locator {
-            Locator::Ident(ident) => self.lookup_symbol_alias(ident.as_str()),
-            Locator::Path(path) => {
+            Name::Ident(ident) => self.lookup_symbol_alias(ident.as_str()),
+            Name::Path(path) => {
                 if let Some(first) = path.segments.first() {
                     if let Some(module_path) = self.lookup_module_alias(first.as_str()) {
                         let mut qualified = module_path;
@@ -2234,7 +2234,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 None
             }
-            Locator::ParameterPath(path) => {
+            Name::ParameterPath(path) => {
                 if let Some(first) = path.segments.first() {
                     if let Some(module_path) = self.lookup_module_alias(first.ident.as_str()) {
                         let mut qualified = module_path;
@@ -2497,10 +2497,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         match ty {
             Ty::Struct(struct_ty) => Some(struct_ty.name.as_str()),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => match locator {
-                    Locator::Ident(ident) => Some(ident.as_str()),
-                    Locator::Path(path) => path.segments.last().map(|seg| seg.as_str()),
-                    Locator::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()),
+                ExprKind::Name(locator) => match locator {
+                    Name::Ident(ident) => Some(ident.as_str()),
+                    Name::Path(path) => path.segments.last().map(|seg| seg.as_str()),
+                    Name::ParameterPath(path) => path.last().map(|seg| seg.ident.as_str()),
                 },
                 _ => None,
             },
@@ -2510,16 +2510,16 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     fn struct_name_from_expr(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 let name = match locator {
-                    Locator::ParameterPath(path) => path
+                    Name::ParameterPath(path) => path
                         .segments
                         .last()
                         .map(|seg| seg.ident.as_str().to_string())?,
-                    Locator::Path(path) => {
+                    Name::Path(path) => {
                         path.segments.last().map(|seg| seg.as_str().to_string())?
                     }
-                    Locator::Ident(ident) => ident.as_str().to_string(),
+                    Name::Ident(ident) => ident.as_str().to_string(),
                 };
                 if name == "Self" {
                     self.impl_stack

@@ -6,7 +6,7 @@ use fp_core::ast::{
     DecimalType, EnumTypeVariant, Expr, ExprBlock, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportTree, ItemKind, Locator, Module as AstModule, Node, NodeKind,
+    ItemImportRename, ItemImportTree, ItemKind, Name, Module as AstModule, Node, NodeKind,
     StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeTuple,
     TypeVec, Value, Visibility,
 };
@@ -327,7 +327,7 @@ impl TypeLoweringContext {
         visited: &mut HashSet<String>,
     ) -> Option<Vec<StructuralField>> {
         match expr.kind() {
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     self.resolve_struct_fields_inner(ident.as_str(), visited)
                 } else {
@@ -744,7 +744,7 @@ fn lower_interface_member(member: &TsTypeElement) -> Option<StructuralField> {
 fn option_ty(inner: Ty) -> Ty {
     let invoke = ExprInvoke {
         span: fp_core::span::Span::null(),
-        target: ExprInvokeTarget::Function(Locator::ident("option")),
+        target: ExprInvokeTarget::Function(Name::ident("option")),
         args: vec![Expr::value(Value::Type(inner))],
         kwargs: Vec::new(),
     };

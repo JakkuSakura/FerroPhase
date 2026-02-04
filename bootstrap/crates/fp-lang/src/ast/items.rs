@@ -6,7 +6,7 @@ use fp_core::ast::{
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
+    ItemImportTree, ItemKind, ItemMacro, Name, MacroDelimiter, MacroInvocation, Module, Path,
     QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
     Visibility,
 };
@@ -496,7 +496,7 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         .and_then(|_| sig.ret_ty.as_ref())
         .and_then(|ty| match ty {
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => locator.as_ident().and_then(|id| match id.as_str() {
+                ExprKind::Name(locator) => locator.as_ident().and_then(|id| match id.as_str() {
                     "expr" => Some(QuoteFragmentKind::Expr),
                     "stmt" => Some(QuoteFragmentKind::Stmt),
                     "item" => Some(QuoteFragmentKind::Item),
@@ -957,7 +957,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
     let (trait_ty, self_ty_node) = if type_nodes.len() >= 2 {
         let trait_path =
             path_from_ty_node(type_nodes[0]).ok_or(LowerItemsError::MissingToken("trait path"))?;
-        (Some(Locator::path(trait_path)), type_nodes[1])
+        (Some(Name::path(trait_path)), type_nodes[1])
     } else {
         (None, type_nodes[0])
     };
@@ -968,7 +968,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
         let ty = lower_type_from_cst(self_ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
         match ty {
-            Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Locator(_)) => *expr,
+            Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Name(_)) => *expr,
             other => Expr::value(Value::Type(other)),
         }
     };

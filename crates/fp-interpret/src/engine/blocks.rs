@@ -76,7 +76,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Continue(_) => {}
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
                         let mut replacement = Expr::value(value);
@@ -209,15 +209,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 };
 
                                 match &mut locator {
-                                    Locator::Ident(ident) => {
+                                    Name::Ident(ident) => {
                                         *ident = Ident::new(specialization_name.clone());
                                     }
-                                    Locator::Path(path) => {
+                                    Name::Path(path) => {
                                         if let Some(last) = path.segments.last_mut() {
                                             *last = Ident::new(specialization_name.clone());
                                         }
                                     }
-                                    Locator::ParameterPath(path) => {
+                                    Name::ParameterPath(path) => {
                                         if let Some(last) = path.segments.last_mut() {
                                             last.ident = Ident::new(specialization_name.clone());
                                             last.args.clear();
@@ -352,7 +352,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(repeat.len.as_mut());
             }
             ExprKind::Cast(cast) => self.evaluate_function_body(cast.expr.as_mut()),
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 // Try to specialize generic function references
                 if let Some(expected_ty) = &expr_ty_snapshot {
                     if matches!(expected_ty, Ty::Function(_)) {

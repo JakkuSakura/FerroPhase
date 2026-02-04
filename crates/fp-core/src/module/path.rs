@@ -1,5 +1,7 @@
 use std::collections::HashSet;
 
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedPath {
     pub prefix: PathPrefix,
@@ -69,7 +71,7 @@ impl QualifiedPath {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum PathPrefix {
     Root,
     Crate,

@@ -137,8 +137,8 @@ impl Ty {
             bounds: TypeBounds::new(Expr::ident(name)),
         })
     }
-    pub fn locator(locator: Locator) -> Self {
-        Self::expr(Expr::locator(locator))
+    pub fn locator(locator: Name) -> Self {
+        Self::expr(Expr::name(locator))
     }
     pub fn type_bound(expr: Expr) -> Self {
         Self::TypeBounds(TypeBounds::new(expr))

@@ -6,7 +6,7 @@ use eyre::eyre;
 use fp_core::ast::{
     self, AstSerializer, BlockStmt, Expr, ExprBlock, ExprConstBlock, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, ExprStringTemplate, ExprStruct, FormatArgRef, FormatTemplatePart,
-    FunctionParam, Ident, Item, Locator, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
+    FunctionParam, Ident, Item, Name, Node, NodeKind, Pattern, Ty, TypeEnum, TypePrimitive,
     TypeStruct, TypeTuple, TypeVec, Value, ValueList, ValueMap, ValueMapEntry, ValueStruct,
     ValueTuple,
 };
@@ -670,7 +670,7 @@ impl ScriptEmitter {
     fn render_expr(&mut self, expr: &Expr) -> Result<String> {
         match expr.kind() {
             ExprKind::Value(value) => Ok(render_js_value(value.as_ref())),
-            ExprKind::Locator(locator) => Ok(self.render_locator(locator)),
+            ExprKind::Name(locator) => Ok(self.render_locator(locator)),
             ExprKind::Invoke(invoke) => self.render_invoke(invoke),
             ExprKind::Select(select) => Ok(format!(
                 "{}.{}",
@@ -951,7 +951,7 @@ impl ScriptEmitter {
         Ok(template)
     }
 
-    fn render_locator(&self, locator: &Locator) -> String {
+    fn render_locator(&self, locator: &Name) -> String {
         locator
             .to_string()
             .split("::")
@@ -970,7 +970,7 @@ impl ScriptEmitter {
 
     fn extract_struct_name(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Locator(locator) => locator
+            ExprKind::Name(locator) => locator
                 .to_string()
                 .split("::")
                 .map(|segment| segment.to_string())
@@ -981,7 +981,7 @@ impl ScriptEmitter {
 
     fn extract_type_name(&self, expr: &Expr) -> Option<String> {
         match expr.kind() {
-            ExprKind::Locator(_) => self.extract_struct_name(expr),
+            ExprKind::Name(_) => self.extract_struct_name(expr),
             ExprKind::Value(value) => match value.as_ref() {
                 Value::Type(ty) => match ty {
                     Ty::Struct(def) => Some(def.name.name.clone()),
@@ -1107,7 +1107,7 @@ impl ScriptEmitter {
             Ty::Enum(enum_ty) => enum_ty.name.name.clone(),
             Ty::Reference(reference) => self.ts_type_from_ty(&reference.ty),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => {
+                ExprKind::Name(locator) => {
                     if let Some(ident) = locator.as_ident() {
                         map_ident_to_ts(ident.name.as_str())
                     } else {

@@ -9,7 +9,7 @@ use fp_core::ast::{
     ExprContinue, ExprFor, ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget,
     ExprKind, ExprKwArg, ExprReturn, ExprSelect, ExprSelectType, ExprStringTemplate, ExprTuple,
     ExprUnOp, ExprWhile, File, FormatTemplatePart, FunctionParam, FunctionSignature, Ident, Item,
-    ItemDefFunction, ItemKind, Locator, Node, NodeKind, Pattern, PatternIdent, PatternKind,
+    ItemDefFunction, ItemKind, Name, Node, NodeKind, Pattern, PatternIdent, PatternKind,
     PatternTuple, Ty, Value, ValueBytes, ValueMap, ValueTuple,
 };
 use fp_core::diagnostics::DiagnosticManager;
@@ -385,7 +385,7 @@ fn lower_pattern(expr: &PyExpr) -> CoreResult<Pattern> {
 fn lower_expr(expr: &PyExpr) -> CoreResult<Expr> {
     match expr {
         PyExpr::Constant(constant) => lower_constant(&constant.value),
-        PyExpr::Name(name) => Ok(Expr::locator(Locator::ident(name.id.as_str()))),
+        PyExpr::Name(name) => Ok(Expr::name(Name::ident(name.id.as_str()))),
         PyExpr::Call(call) => lower_call(call),
         PyExpr::Attribute(attr) => Ok(Expr::new(ExprKind::Select(ExprSelect {
             span: Span::null(),

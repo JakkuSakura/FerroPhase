@@ -11,7 +11,7 @@ fn parse_expr(src: &str) -> Expr {
 
 fn is_locator(expr: &Expr, name: &str) -> bool {
     match expr.kind() {
-        ExprKind::Locator(loc) => loc
+        ExprKind::Name(loc) => loc
             .as_ident()
             .map(|id| id.as_str() == name)
             .unwrap_or(false),

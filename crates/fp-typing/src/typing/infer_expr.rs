@@ -3,7 +3,7 @@ use crate::{AstTypeInferencer, EnvEntry, PatternBinding, PatternInfo, TypeVarId}
 use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
-use fp_core::module::path::QualifiedPath;
+use fp_core::module::path::{PathPrefix, QualifiedPath};
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -348,7 +348,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.infer_value(value.as_ref())?
                     }
                 }
-                ExprKind::Locator(locator) => {
+                ExprKind::Name(locator) => {
                     let var = self.lookup_locator(locator)?;
                     if let Some(ty) = existing_ty.as_ref() {
                         let annot = self.type_from_ast_ty(ty)?;
@@ -1943,7 +1943,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
     }
 
-    fn locator_matches_suffix(locator: &Locator, suffix: &[&str]) -> bool {
+    fn locator_matches_suffix(locator: &Name, suffix: &[&str]) -> bool {
         let segments = Self::locator_segments(locator);
         if segments.len() < suffix.len() {
             return false;
@@ -1955,15 +1955,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             .all(|(segment, expected)| segment == expected)
     }
 
-    fn locator_segments(locator: &Locator) -> Vec<String> {
+    fn locator_segments(locator: &Name) -> Vec<String> {
         match locator {
-            Locator::Ident(ident) => vec![ident.as_str().to_string()],
-            Locator::Path(path) => path
+            Name::Ident(ident) => vec![ident.as_str().to_string()],
+            Name::Path(path) => path
                 .segments
                 .iter()
                 .map(|s| s.as_str().to_string())
                 .collect(),
-            Locator::ParameterPath(path) => path
+            Name::ParameterPath(path) => path
                 .segments
                 .iter()
                 .map(|seg| seg.ident.as_str().to_string())
@@ -2301,7 +2301,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                 // Try to resolve as an enum variant: `Enum::Variant(...)`.
                 let locator = &tuple_struct.name;
-                if let Locator::Path(path) = locator {
+                if let Name::Path(path) = locator {
                     if path.segments.len() >= 2 {
                         let variant_name = path.segments[path.segments.len() - 1].as_str();
                         let enum_segments = path
@@ -2310,7 +2310,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .take(path.segments.len() - 1)
                             .map(|seg| seg.as_str().to_string())
                             .collect::<Vec<_>>();
-                        if let Some(enum_key) = self.resolve_segments_key(&enum_segments) {
+                        if let Some(enum_key) =
+                            self.resolve_segments_key(path.prefix, &enum_segments)
+                        {
                             if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
                                 if let Some(variant) = enum_def
                                     .variants
@@ -2351,8 +2353,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             PatternKind::Variant(variant) => {
                 // Enum variant patterns (unit and struct-like) and literal patterns.
                 match variant.name.kind() {
-                    ExprKind::Locator(locator) => {
-                        if let Locator::Path(path) = locator {
+                    ExprKind::Name(locator) => {
+                        if let Name::Path(path) = locator {
                             if path.segments.len() >= 2 {
                                 let variant_name = path.segments[path.segments.len() - 1].as_str();
                                 let enum_segments = path
@@ -2361,7 +2363,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     .take(path.segments.len() - 1)
                                     .map(|seg| seg.as_str().to_string())
                                     .collect::<Vec<_>>();
-                                if let Some(enum_key) = self.resolve_segments_key(&enum_segments) {
+                                if let Some(enum_key) =
+                                    self.resolve_segments_key(path.prefix, &enum_segments)
+                                {
                                     if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
                                         let enum_var = self.fresh_type_var();
                                         self.bind(enum_var, TypeTerm::Enum(enum_def.clone()));
@@ -2431,12 +2435,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         // known struct definitions so identifiers enter the environment.
                         let resolved = self.resolve_locator_key(locator);
                         let struct_name = resolved.or_else(|| match locator {
-                            Locator::Path(path) if path.segments.len() == 1 => {
+                            Name::Path(path)
+                                if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                            {
                                 Some(QualifiedPath::new(vec![
                                     path.segments[0].as_str().to_string(),
                                 ]))
                             }
-                            Locator::Ident(ident) => {
+                            Name::Ident(ident) => {
                                 Some(QualifiedPath::new(vec![ident.as_str().to_string()]))
                             }
                             _ => None,
@@ -2846,7 +2852,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         struct_expr: &mut ExprStruct,
     ) -> Result<TypeVarId> {
         let resolved_name = match struct_expr.name.kind() {
-            ExprKind::Locator(locator) => self.resolve_locator_key(locator),
+            ExprKind::Name(locator) => self.resolve_locator_key(locator),
             _ => None,
         };
         let struct_name = match resolved_name
@@ -2859,12 +2865,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.error_type_var());
             }
         };
-        if let ExprKind::Locator(locator) = struct_expr.name.kind() {
+        if let ExprKind::Name(locator) = struct_expr.name.kind() {
             if self.check_unimplemented_locator(locator) {
                 return Ok(self.error_type_var());
             }
         } else if let Some(tail) = struct_name.tail() {
-            if self.check_unimplemented_locator(&Locator::Ident(Ident::new(tail.to_string()))) {
+            if self.check_unimplemented_locator(&Name::Ident(Ident::new(tail.to_string()))) {
                 return Ok(self.error_type_var());
             }
         }
@@ -2908,7 +2914,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ok(var)
         } else {
             // Enum struct variants: `Enum::Variant { ... }`.
-            if let ExprKind::Locator(Locator::Path(path)) = struct_expr.name.kind() {
+            if let ExprKind::Name(Name::Path(path)) = struct_expr.name.kind() {
                 if path.segments.len() >= 2 {
                     let variant_name = path.segments[path.segments.len() - 1].as_str();
                     let enum_segments = path
@@ -2917,7 +2923,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         .take(path.segments.len() - 1)
                         .map(|seg| seg.as_str().to_string())
                         .collect::<Vec<_>>();
-                    if let Some(enum_key) = self.resolve_segments_key(&enum_segments) {
+                    if let Some(enum_key) =
+                        self.resolve_segments_key(path.prefix, &enum_segments)
+                    {
                         if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
                             if let Some(variant) = enum_def
                                 .variants
@@ -3007,7 +3015,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             Ty::Structural(structural) => Some(structural.fields.clone()),
             Ty::Struct(struct_ty) => Some(struct_ty.fields.clone()),
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => self
+                ExprKind::Name(locator) => self
                     .resolve_locator_key(locator)
                     .as_ref()
                     .and_then(|key| self.struct_defs.get(key).cloned())

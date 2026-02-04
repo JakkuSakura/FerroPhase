@@ -509,7 +509,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Reference(reference) => {
-                if let ExprKind::Locator(locator) = reference.referee.kind() {
+                if let ExprKind::Name(locator) = reference.referee.kind() {
                     let key = Self::locator_base_name(locator);
                     if let Some((lifetime, base_name)) =
                         Self::split_static_lifetime_name(key.as_str())
@@ -536,7 +536,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     None
                 }
             }
-            ExprKind::Locator(locator) => {
+            ExprKind::Name(locator) => {
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
                         if matches!(value, Value::Type(_)) {
@@ -584,7 +584,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.evaluate_ty(&mut ty);
         match ty {
             Ty::Expr(expr) => {
-                if let ExprKind::Locator(locator) = expr.kind() {
+                if let ExprKind::Name(locator) = expr.kind() {
                     let key = Self::locator_base_name(locator);
                     if let Some(resolved) = self.resolve_type_binding(&key) {
                         return resolved;

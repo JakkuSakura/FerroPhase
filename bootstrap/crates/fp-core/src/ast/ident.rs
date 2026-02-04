@@ -1,7 +1,7 @@
 //! AST-specific identifier types
 //!
 //! Each compilation stage has its own identifier representation:
-//! - AST: Ident, Path, ParameterPath, Locator (this module)
+//! - AST: Ident, Path, ParameterPath, Name (this module)
 //! - HIR: Symbol (String), hir::Path
 //! - MIR: Symbol (String), Vec<Symbol>
 //! - LIR: String
@@ -237,22 +237,22 @@ impl ParameterPath {
 
 /// A locator can be an identifier, a path, or a parameterized path
 #[derive(Debug, Clone, Hash, PartialEq)]
-pub enum Locator {
+pub enum Name {
     Ident(Ident),
     Path(Path),
     ParameterPath(ParameterPath),
 }
 
-impl Locator {
+impl Name {
     pub fn ident(name: impl Into<String>) -> Self {
-        Locator::Ident(Ident::new(name))
+        Name::Ident(Ident::new(name))
     }
 
     pub fn path(path: Path) -> Self {
         if path.segments.len() == 1 {
-            return Locator::Ident(path.segments[0].clone());
+            return Name::Ident(path.segments[0].clone());
         }
-        Locator::Path(path)
+        Name::Path(path)
     }
 
     pub fn parameter_path(path: ParameterPath) -> Self {
@@ -263,45 +263,45 @@ impl Locator {
                 .into_iter()
                 .map(|seg| seg.ident)
                 .collect::<Vec<_>>();
-            return Locator::path(Path::new(segments));
+            return Name::path(Path::new(segments));
         }
-        Locator::ParameterPath(path)
+        Name::ParameterPath(path)
     }
 
     pub fn from_ident(ident: Ident) -> Self {
-        Locator::Ident(ident)
+        Name::Ident(ident)
     }
 
     pub fn to_path(&self) -> Path {
         match self {
-            Locator::Ident(ident) => Path::from_ident(ident.clone()),
-            Locator::Path(path) => path.clone(),
+            Name::Ident(ident) => Path::from_ident(ident.clone()),
+            Name::Path(path) => path.clone(),
             _ => unreachable!(),
         }
     }
 
     pub fn as_ident(&self) -> Option<&Ident> {
         match self {
-            Locator::Ident(ident) => Some(ident),
+            Name::Ident(ident) => Some(ident),
             _ => None,
         }
     }
 
     pub fn span(&self) -> Span {
         match self {
-            Locator::Ident(ident) => ident.span(),
-            Locator::Path(path) => path.span(),
-            Locator::ParameterPath(path) => path.span(),
+            Name::Ident(ident) => ident.span(),
+            Name::Path(path) => path.span(),
+            Name::ParameterPath(path) => path.span(),
         }
     }
 }
 
-impl std::fmt::Display for Locator {
+impl std::fmt::Display for Name {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Locator::Ident(ident) => write!(f, "{}", ident),
-            Locator::Path(path) => write!(f, "{}", path),
-            Locator::ParameterPath(path) => {
+            Name::Ident(ident) => write!(f, "{}", ident),
+            Name::Path(path) => write!(f, "{}", path),
+            Name::ParameterPath(path) => {
                 for (i, seg) in path.segments.iter().enumerate() {
                     if i > 0 {
                         write!(f, "::")?;

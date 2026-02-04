@@ -6,11 +6,12 @@ use fp_core::ast::{
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, Locator, MacroDelimiter, MacroInvocation, Module, Path,
+    ItemImportTree, ItemKind, ItemMacro, Name, MacroDelimiter, MacroInvocation, Module, Path,
     QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
     Visibility,
 };
 use fp_core::cst::CstCategory;
+use fp_core::module::path::PathPrefix;
 use fp_core::ops::UnOpKind;
 
 #[derive(Debug, thiserror::Error)]
@@ -326,7 +327,7 @@ fn is_const_struct(node: &SyntaxNode) -> bool {
 fn const_struct_attr() -> Attribute {
     Attribute {
         style: AttrStyle::Outer,
-        meta: AttrMeta::Path(Path::new(vec![Ident::new("const".to_string())])),
+        meta: AttrMeta::Path(Path::plain(vec![Ident::new("const".to_string())])),
     }
 }
 
@@ -487,7 +488,7 @@ fn lower_fn(node: &SyntaxNode) -> Result<ItemDefFunction, LowerItemsError> {
         .and_then(|_| sig.ret_ty.as_ref())
         .and_then(|ty| match ty {
             Ty::Expr(expr) => match expr.kind() {
-                ExprKind::Locator(locator) => locator.as_ident().and_then(|id| match id.as_str() {
+                ExprKind::Name(locator) => locator.as_ident().and_then(|id| match id.as_str() {
                     "expr" => Some(QuoteFragmentKind::Expr),
                     "stmt" => Some(QuoteFragmentKind::Stmt),
                     "item" => Some(QuoteFragmentKind::Item),
@@ -657,7 +658,15 @@ fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, us
 
 fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
     let mut segments = Vec::new();
+    let mut saw_root = false;
+    let mut saw_first_token = false;
     while let Some(tok) = tokens.get(idx) {
+        if !saw_first_token && tok == "::" {
+            saw_root = true;
+            saw_first_token = true;
+            idx += 1;
+            continue;
+        }
         if tok == "::" {
             idx += 1;
             continue;
@@ -665,6 +674,7 @@ fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
         if is_attr_ident(tok) {
             segments.push(Ident::new(tok.to_string()));
             idx += 1;
+            saw_first_token = true;
             continue;
         }
         break;
@@ -672,7 +682,39 @@ fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
     if segments.is_empty() {
         None
     } else {
-        Some((Path::new(segments), idx))
+        let (prefix, segments) = split_path_prefix(segments, saw_root);
+        if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
+            return None;
+        }
+        Some((Path::new(prefix, segments), idx))
+    }
+}
+
+fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, Vec<Ident>) {
+    if saw_root {
+        return (PathPrefix::Root, segments);
+    }
+    let Some(first) = segments.first().map(|ident| ident.as_str()) else {
+        return (PathPrefix::Plain, segments);
+    };
+    match first {
+        "crate" => {
+            segments.remove(0);
+            (PathPrefix::Crate, segments)
+        }
+        "self" => {
+            segments.remove(0);
+            (PathPrefix::SelfMod, segments)
+        }
+        "super" => {
+            let mut depth = 0;
+            while segments.first().is_some_and(|ident| ident.as_str() == "super") {
+                segments.remove(0);
+                depth += 1;
+            }
+            (PathPrefix::Super(depth), segments)
+        }
+        _ => (PathPrefix::Plain, segments),
     }
 }
 
@@ -763,7 +805,7 @@ fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {
         return None;
     }
     let tokens_text = inner.join(" ");
-    let path = Path::new(vec![Ident::new("include_str".to_string())]);
+    let path = Path::plain(vec![Ident::new("include_str".to_string())]);
     let invocation = MacroInvocation::new(path, MacroDelimiter::Parenthesis, tokens_text);
     Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(invocation)))))
 }
@@ -948,7 +990,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
     let (trait_ty, self_ty_node) = if type_nodes.len() >= 2 {
         let trait_path =
             path_from_ty_node(type_nodes[0]).ok_or(LowerItemsError::MissingToken("trait path"))?;
-        (Some(Locator::path(trait_path)), type_nodes[1])
+        (Some(Name::path(trait_path)), type_nodes[1])
     } else {
         (None, type_nodes[0])
     };
@@ -959,7 +1001,7 @@ fn lower_impl(node: &SyntaxNode) -> Result<ItemImpl, LowerItemsError> {
         let ty = lower_type_from_cst(self_ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(node.kind))?;
         match ty {
-            Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Locator(_)) => *expr,
+            Ty::Expr(expr) if matches!(expr.kind(), ExprKind::Name(_)) => *expr,
             other => Expr::value(Value::Type(other)),
         }
     };
@@ -1229,11 +1271,18 @@ fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
     }
     let mut segments = Vec::new();
     let mut saw_generic_start = false;
+    let mut saw_root = false;
+    let mut saw_first_token = false;
     for child in &node.children {
         let SyntaxElement::Token(t) = child else {
             continue;
         };
         if t.is_trivia() {
+            continue;
+        }
+        if !saw_first_token && t.text == "::" {
+            saw_root = true;
+            saw_first_token = true;
             continue;
         }
         match t.text.as_str() {
@@ -1253,6 +1302,7 @@ fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
                 }
             }
         }
+        saw_first_token = true;
     }
     if saw_generic_start {
         return None;
@@ -1260,7 +1310,11 @@ fn path_from_ty_node(node: &SyntaxNode) -> Option<Path> {
     if segments.is_empty() {
         None
     } else {
-        Some(Path::new(segments))
+        let (prefix, segments) = split_path_prefix(segments, saw_root);
+        if segments.is_empty() && matches!(prefix, PathPrefix::Plain | PathPrefix::Root) {
+            return None;
+        }
+        Some(Path::new(prefix, segments))
     }
 }
 

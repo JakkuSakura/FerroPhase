@@ -4,25 +4,25 @@ use fp_typing::AstTypeInferencer;
 fn make_box_type(inner: Ty) -> Ty {
     let segment = ParameterPathSegment::new(Ident::new("Box"), vec![inner]);
     let path = ParameterPath::new(vec![segment]);
-    Ty::expr(Expr::locator(Locator::parameter_path(path)))
+    Ty::expr(Expr::name(Name::parameter_path(path)))
 }
 
 fn make_arc_type(inner: Ty) -> Ty {
     let segment = ParameterPathSegment::new(Ident::new("Arc"), vec![inner]);
     let path = ParameterPath::new(vec![segment]);
-    Ty::expr(Expr::locator(Locator::parameter_path(path)))
+    Ty::expr(Expr::name(Name::parameter_path(path)))
 }
 
 fn make_rc_type(inner: Ty) -> Ty {
     let segment = ParameterPathSegment::new(Ident::new("Rc"), vec![inner]);
     let path = ParameterPath::new(vec![segment]);
-    Ty::expr(Expr::locator(Locator::parameter_path(path)))
+    Ty::expr(Expr::name(Name::parameter_path(path)))
 }
 
 fn make_weak_type(inner: Ty) -> Ty {
     let segment = ParameterPathSegment::new(Ident::new("Weak"), vec![inner]);
     let path = ParameterPath::new(vec![segment]);
-    Ty::expr(Expr::locator(Locator::parameter_path(path)))
+    Ty::expr(Expr::name(Name::parameter_path(path)))
 }
 
 #[test]

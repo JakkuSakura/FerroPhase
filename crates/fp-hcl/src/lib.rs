@@ -15,7 +15,7 @@ use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
-use fp_core::ast::{Ident, Locator};
+use fp_core::ast::{Ident, Name};
 use hcl::expr::{
     BinaryOp, BinaryOperator, Conditional, FuncCall, FuncName, ObjectKey, Operation, TemplateExpr,
     Traversal, TraversalOperator, UnaryOp, UnaryOperator,
@@ -189,7 +189,7 @@ fn lower_expression(expr: &Expression) -> CoreResult<Expr> {
             Ok(Expr::value(Value::Map(ValueMap::from_pairs(entries))))
         }
         Expression::TemplateExpr(template) => lower_template_expr(template),
-        Expression::Variable(var) => Ok(Expr::locator(Locator::ident(var.as_str()))),
+        Expression::Variable(var) => Ok(Expr::name(Name::ident(var.as_str()))),
         Expression::Traversal(traversal) => lower_traversal(traversal),
         Expression::FuncCall(call) => lower_func_call(call),
         Expression::Parenthesis(inner) => Ok(Expr::new(ExprKind::Paren(ExprParen {
@@ -320,7 +320,7 @@ fn lower_func_call(call: &FuncCall) -> CoreResult<Expr> {
     })))
 }
 
-fn func_name_to_locator(name: &FuncName) -> Locator {
+fn func_name_to_locator(name: &FuncName) -> Name {
     let mut segments = Vec::new();
     for namespace in &name.namespace {
         segments.push(Ident::new(namespace.as_str()));
@@ -328,9 +328,9 @@ fn func_name_to_locator(name: &FuncName) -> Locator {
     segments.push(Ident::new(name.name.as_str()));
 
     if segments.len() == 1 {
-        Locator::from_ident(segments.remove(0))
+        Name::from_ident(segments.remove(0))
     } else {
-        Locator::path(AstPath::new(segments))
+        Name::path(AstPath::plain(segments))
     }
 }
 
@@ -595,7 +595,7 @@ fn peel_traversal(expr: &Expr, operators: &mut Vec<TraversalOperator>) -> CoreRe
 fn expr_to_hcl_expression_base(expr: &Expr) -> CoreResult<Expression> {
     match expr.kind() {
         ExprKind::Value(value) => value_to_hcl_expression_from_value(value),
-        ExprKind::Locator(locator) => {
+        ExprKind::Name(locator) => {
             let name = locator.to_string();
             let var = hcl::expr::Variable::new(name.as_str())
                 .map_err(|err| CoreError::from(err.to_string()))?;
@@ -677,7 +677,7 @@ fn expr_invoke_to_hcl_expression(call: &ExprInvoke) -> CoreResult<Expression> {
     })))
 }
 
-fn locator_to_func_name(locator: &Locator) -> CoreResult<FuncName> {
+fn locator_to_func_name(locator: &Name) -> CoreResult<FuncName> {
     let path = locator.to_path();
     let mut segments = path.segments.iter();
     let first = segments

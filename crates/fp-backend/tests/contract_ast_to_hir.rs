@@ -22,8 +22,8 @@ fn ty_ident(name: &str) -> fp_core::ast::Ty {
 
 fn call_expr(path: &[&str], args: Vec<fp_core::ast::Expr>) -> fp_core::ast::Expr {
     let segments = path.iter().map(|s| ident(s)).collect();
-    let target = fp_core::ast::ExprInvokeTarget::Function(fp_core::ast::Locator::path(
-        fp_core::ast::Path::new(segments),
+    let target = fp_core::ast::ExprInvokeTarget::Function(fp_core::ast::Name::path(
+        fp_core::ast::Path::plain(segments),
     ));
     fp_core::ast::Expr::from(fp_core::ast::ExprKind::Invoke(fp_core::ast::ExprInvoke {
         span: fp_core::span::Span::null(),

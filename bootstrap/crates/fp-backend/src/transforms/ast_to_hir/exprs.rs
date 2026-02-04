@@ -40,7 +40,7 @@ impl HirGenerator {
 
         let kind = match ast_expr.kind() {
             ExprKind::Value(value) => self.transform_value_to_hir(value)?,
-            ExprKind::Locator(locator) => hir::ExprKind::Path(
+            ExprKind::Name(locator) => hir::ExprKind::Path(
                 self.locator_to_hir_path_with_scope(locator, PathResolutionScope::Value)?,
             ),
             ExprKind::BinOp(binop) => self.transform_binop_to_hir(binop)?,
@@ -487,7 +487,7 @@ impl HirGenerator {
                     );
                     ast::Ident::new("__fp_error".to_string())
                 });
-                let locator = Locator::Ident(name);
+                let locator = Name::Ident(name);
                 let path =
                     self.locator_to_hir_path_with_scope(&locator, PathResolutionScope::Value)?;
                 Ok(hir::ExprKind::Path(path))
@@ -1144,9 +1144,9 @@ impl HirGenerator {
         }
         let segments = match &invoke.target {
             ast::ExprInvokeTarget::Function(locator) => match locator {
-                ast::Locator::Path(path) => path.segments.clone(),
-                ast::Locator::Ident(ident) => vec![ident.clone()],
-                ast::Locator::ParameterPath(path) => {
+                ast::Name::Path(path) => path.segments.clone(),
+                ast::Name::Ident(ident) => vec![ident.clone()],
+                ast::Name::ParameterPath(path) => {
                     path.segments.iter().map(|seg| seg.ident.clone()).collect()
                 }
             },
@@ -1251,9 +1251,9 @@ impl HirGenerator {
         }
         let segments = match &invoke.target {
             ast::ExprInvokeTarget::Function(locator) => match locator {
-                ast::Locator::Path(path) => path.segments.clone(),
-                ast::Locator::Ident(ident) => vec![ident.clone()],
-                ast::Locator::ParameterPath(path) => {
+                ast::Name::Path(path) => path.segments.clone(),
+                ast::Name::Ident(ident) => vec![ident.clone()],
+                ast::Name::ParameterPath(path) => {
                     path.segments.iter().map(|seg| seg.ident.clone()).collect()
                 }
             },
@@ -1320,7 +1320,7 @@ impl HirGenerator {
         let mut stmts = Vec::new();
 
         let base_path = ast::Path::new(spec.base_segments.clone());
-        let base_locator = ast::Locator::path(base_path);
+        let base_locator = ast::Name::path(base_path);
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
@@ -1516,7 +1516,7 @@ impl HirGenerator {
         let mut stmts = Vec::new();
 
         let base_path = ast::Path::new(spec.base_segments.clone());
-        let base_locator = ast::Locator::path(base_path);
+        let base_locator = ast::Name::path(base_path);
         let base_expr = hir::Expr {
             hir_id: self.next_id(),
             kind: hir::ExprKind::Path(
@@ -1685,10 +1685,10 @@ impl HirGenerator {
 
     fn path_segments_from_expr(&self, expr: &ast::Expr) -> Option<Vec<ast::Ident>> {
         match expr.kind() {
-            ast::ExprKind::Locator(locator) => match locator {
-                ast::Locator::Path(path) => Some(path.segments.clone()),
-                ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
-                ast::Locator::ParameterPath(path) => {
+            ast::ExprKind::Name(locator) => match locator {
+                ast::Name::Path(path) => Some(path.segments.clone()),
+                ast::Name::Ident(ident) => Some(vec![ident.clone()]),
+                ast::Name::ParameterPath(path) => {
                     Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                 }
             },
@@ -1700,9 +1700,9 @@ impl HirGenerator {
                 }
                 match &invoke.target {
                     ast::ExprInvokeTarget::Function(locator) => match locator {
-                        ast::Locator::Path(path) => Some(path.segments.clone()),
-                        ast::Locator::Ident(ident) => Some(vec![ident.clone()]),
-                        ast::Locator::ParameterPath(path) => {
+                        ast::Name::Path(path) => Some(path.segments.clone()),
+                        ast::Name::Ident(ident) => Some(vec![ident.clone()]),
+                        ast::Name::ParameterPath(path) => {
                             Some(path.segments.iter().map(|seg| seg.ident.clone()).collect())
                         }
                     },
@@ -2083,7 +2083,7 @@ impl HirGenerator {
                 }
             }
             ast::Ty::Expr(expr) => {
-                if let ast::ExprKind::Locator(locator) = expr.kind() {
+                if let ast::ExprKind::Name(locator) = expr.kind() {
                     let path = locator.to_path();
                     let segments = path
                         .segments
