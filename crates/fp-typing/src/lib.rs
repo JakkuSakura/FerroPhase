@@ -988,7 +988,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .module_path
                     .with_segment(ident.as_str().to_string());
                 if self.is_unimplemented_name(&candidate) {
-                    self.emit_warning(format!("use of unimplemented item: {}", candidate.to_key()));
+                    if !self.is_same_crate_path(&candidate) {
+                        self.emit_warning(format!(
+                            "use of unimplemented item: {}",
+                            candidate.to_key()
+                        ));
+                    }
                     return false;
                 }
             }
@@ -997,10 +1002,22 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return false;
         };
         if self.is_unimplemented_name(&candidate) {
-            self.emit_warning(format!("use of unimplemented item: {}", candidate.to_key()));
+            if !self.is_same_crate_path(&candidate) {
+                self.emit_warning(format!(
+                    "use of unimplemented item: {}",
+                    candidate.to_key()
+                ));
+            }
             return false;
         }
         false
+    }
+
+    fn is_same_crate_path(&self, candidate: &QualifiedPath) -> bool {
+        let Some(current_root) = self.module_path.head() else {
+            return false;
+        };
+        candidate.head() == Some(current_root)
     }
 
     fn lookup_function_signature(&self, locator: &Locator) -> Option<FunctionSignature> {

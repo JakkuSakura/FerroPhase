@@ -6,34 +6,14 @@ ast::File {
           name: Expr(str)
           run: fn() -> ()
         }
-        pub const REGISTRY: Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
+        pub const REGISTRY: Vec<Expr(BenchCase)>
           value [0 values]
-        pub const fn bench(item: Quote<item>) -> Quote<item> : fn(Quote<item>) -> Quote<item>
-          block (3 stmts)
-            let name
-              init:
-                select .name [unknown]
-                  object:
-                    locator item
-            expr_stmt ;
-              invoke
-                target: REGISTRY.push
-                args:
-                  struct BenchCase
-                    name:
-                      locator name
-                    run:
-                      select .value [unknown]
-                        object:
-                          locator item
-            expr_stmt (value)
-              locator item
         pub struct BenchReport {
           total: Expr(i64)
           passed: Expr(i64)
           failed: Expr(i64)
         }
-        pub fn run_benches() -> Expr(BenchReport) : fn() -> BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run_benches() -> Expr(BenchReport)
           block (8 stmts)
             let benches: Vec<Expr(BenchCase)>
               init:
@@ -341,18 +321,18 @@ ast::File {
           entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
         }
         impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)
             block (1 stmt)
               expr_stmt (value)
                 struct HashMap
                   entries:
                     locator entries
-          pub fn len(&self) -> Expr(i64) : fn() -> i64
+          pub fn len(&self) -> Expr(i64)
             block (1 stmt)
               expr_stmt (value)
                 invoke
                   target: self.entries.len
-          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V)
             block (3 stmts)
               let mut idx
                 init:
@@ -414,7 +394,7 @@ ast::File {
         }
       }
       pub module future {
-        pub fn sleep(seconds: Expr(f64)) -> Expr(std::task::Future<Unit(TypeUnit)>) : fn(f64) -> Future{handle: Expr(any)}
+        pub fn sleep(seconds: Expr(f64)) -> Expr(std::task::Future<Unit(TypeUnit)>)
           block (1 stmt)
             expr_stmt (value)
               struct std::task::Future
@@ -442,7 +422,7 @@ ast::File {
           Array: (Vec<Expr(JsonValue)>)
           Object: (Vec<Expr(JsonField)>)
         }
-        pub fn parse(input: &Expr(str)) -> Expr(JsonValue) : fn(&string) -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+        pub fn parse(input: &Expr(str)) -> Expr(JsonValue)
           block (2 stmts)
             let mut parser
               init:
@@ -453,7 +433,7 @@ ast::File {
             expr_stmt (value)
               invoke
                 target: parser.parse_value
-        pub fn print(value: Expr(JsonValue)) -> () : fn(JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]) -> ()
+        pub fn print(value: Expr(JsonValue))
           block (1 stmt)
             expr_stmt ;
               invoke
@@ -461,7 +441,7 @@ ast::File {
                 args:
                   reference (mutable: unspecified)
                     locator value
-        pub fn print_value(value: &Expr(JsonValue)) -> () : fn(&JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]) -> ()
+        pub fn print_value(value: &Expr(JsonValue))
           block (1 stmt)
             expr_stmt (value)
               match
@@ -691,7 +671,7 @@ ast::File {
           pos: Expr(i64)
         }
         impl Parser {
-          pub fn new(src: &Expr(str)) -> Expr(Parser) : fn(&string) -> Parser{src: Vec<&Expr(str)>, pos: Expr(i64)}
+          pub fn new(src: &Expr(str)) -> Expr(Parser)
             block (5 stmts)
               let mut chars
                 init:
@@ -754,7 +734,7 @@ ast::File {
                     locator chars
                   pos:
                     value 0
-          pub fn bump(&mut self, amount: Expr(i64)) -> () : fn(i64) -> ()
+          pub fn bump(&mut self, amount: Expr(i64))
             block (1 stmt)
               expr_stmt ;
                 assign
@@ -770,7 +750,7 @@ ast::File {
                             locator self
                       rhs:
                         locator amount
-          pub fn parse_value(&mut self) -> Expr(JsonValue) : fn() -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+          pub fn parse_value(&mut self) -> Expr(JsonValue)
             block (9 stmts)
               expr_stmt ;
                 invoke
@@ -887,7 +867,7 @@ ast::File {
                   args:
                     invoke
                       target: self.parse_number
-          pub fn parse_array(&mut self) -> Expr(JsonValue) : fn() -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+          pub fn parse_array(&mut self) -> Expr(JsonValue)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -983,7 +963,7 @@ ast::File {
                   target: JsonValue::Array
                   args:
                     locator items
-          pub fn parse_object(&mut self) -> Expr(JsonValue) : fn() -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+          pub fn parse_object(&mut self) -> Expr(JsonValue)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -1098,7 +1078,7 @@ ast::File {
                   target: JsonValue::Object
                   args:
                     locator fields
-          pub fn parse_string(&mut self) -> &Expr(str) : fn() -> &string
+          pub fn parse_string(&mut self) -> &Expr(str)
             block (4 stmts)
               expr_stmt ;
                 invoke
@@ -1209,7 +1189,7 @@ ast::File {
                           select .pos [unknown]
                             object:
                               locator self
-          pub fn parse_number(&mut self) -> &Expr(str) : fn() -> &string
+          pub fn parse_number(&mut self) -> &Expr(str)
             block (3 stmts)
               let start
                 init:
@@ -1263,7 +1243,7 @@ ast::File {
                           select .pos [unknown]
                             object:
                               locator self
-          pub fn skip_ws(&mut self) -> () : fn() -> ()
+          pub fn skip_ws(&mut self)
             block (1 stmt)
               expr_stmt (value)
                 while
@@ -1321,7 +1301,7 @@ ast::File {
                             block (1 stmt)
                               expr_stmt ;
                                 break
-          pub fn expect_char(&mut self, ch: &Expr(str)) -> () : fn(&string) -> ()
+          pub fn expect_char(&mut self, ch: &Expr(str))
             block (1 stmt)
               expr_stmt (value)
                 if
@@ -1339,7 +1319,7 @@ ast::File {
                           target: self.bump
                           args:
                             value 1
-          pub fn starts_with(&self, literal: &Expr(str)) -> Expr(bool) : fn(&string) -> bool
+          pub fn starts_with(&self, literal: &Expr(str)) -> Expr(bool)
             block (7 stmts)
               let pos
                 init:
@@ -1442,7 +1422,7 @@ ast::File {
                                 value 1
               expr_stmt (value)
                 value true
-          pub fn peek(&self) -> &Expr(str) : fn() -> &string
+          pub fn peek(&self) -> &Expr(str)
             block (2 stmts)
               expr_stmt (value)
                 if
@@ -1465,7 +1445,7 @@ ast::File {
                       select .pos [unknown]
                         object:
                           locator self
-          pub fn is_eof(&self) -> Expr(bool) : fn() -> bool
+          pub fn is_eof(&self) -> Expr(bool)
             block (3 stmts)
               let pos
                 init:
@@ -1485,7 +1465,7 @@ ast::File {
                   rhs:
                     locator len
         }
-        pub fn is_number_char(ch: &Expr(str)) -> Expr(bool) : fn(&string) -> bool
+        pub fn is_number_char(ch: &Expr(str)) -> Expr(bool)
           block (1 stmt)
             expr_stmt (value)
               match
@@ -1571,14 +1551,14 @@ ast::File {
                     value false
       }
       pub module intrinsics {
-        pub [attrs] const fn create_struct(name: &Expr(str)) -> type : fn(&string) -> type
+        pub [attrs] const fn create_struct(name: &Expr(str)) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
                 args:
                   value "create_struct is a compiler intrinsic"
                 kwargs: []
-        pub [attrs] const fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type : fn(type, &string, type) -> type
+        pub [attrs] const fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
@@ -1591,7 +1571,7 @@ ast::File {
           ty: type
         }
         impl TypeBuilder {
-          pub const fn new(name: &Expr(str)) -> Expr(TypeBuilder) : fn(&string) -> TypeBuilder{ty: type}
+          pub const fn new(name: &Expr(str)) -> Expr(TypeBuilder)
             block (1 stmt)
               expr_stmt (value)
                 struct TypeBuilder
@@ -1600,13 +1580,13 @@ ast::File {
                       args:
                         locator name
                       kwargs: []
-          pub const fn from(ty: type) -> Expr(TypeBuilder) : fn(type) -> TypeBuilder{ty: type}
+          pub const fn from(ty: type) -> Expr(TypeBuilder)
             block (1 stmt)
               expr_stmt (value)
                 struct TypeBuilder
                   ty:
                     locator ty
-          pub const fn with_field(self, name: &Expr(str), field_ty: type) -> Expr(TypeBuilder) : fn(&string, type) -> TypeBuilder{ty: type}
+          pub const fn with_field(self, name: &Expr(str), field_ty: type) -> Expr(TypeBuilder)
             block (2 stmts)
               let ty
                 init:
@@ -1622,7 +1602,7 @@ ast::File {
                 struct TypeBuilder
                   ty:
                     locator ty
-          pub const fn build(self) -> type : fn() -> type
+          pub const fn build(self) -> type
             block (1 stmt)
               expr_stmt (value)
                 select .ty [unknown]
@@ -1640,25 +1620,25 @@ ast::File {
           pub struct TcpStream {
           }
           impl TcpStream {
-            pub fn connect(addr: Expr(SocketAddr)) -> Expr(TcpStream) : fn(any) -> TcpStream
+            pub fn connect(addr: Expr(SocketAddr)) -> Expr(TcpStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn shutdown(&mut self) -> () : fn() -> ()
+            pub fn shutdown(&mut self) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1668,13 +1648,13 @@ ast::File {
           pub struct TcpListener {
           }
           impl TcpListener {
-            pub fn bind(addr: Expr(SocketAddr)) -> Expr(TcpListener) : fn(any) -> TcpListener
+            pub fn bind(addr: Expr(SocketAddr)) -> Expr(TcpListener)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn accept(&mut self) -> Expr(TcpStream) : fn() -> TcpStream
+            pub fn accept(&mut self) -> Expr(TcpStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1687,19 +1667,19 @@ ast::File {
           pub struct UdpSocket {
           }
           impl UdpSocket {
-            pub fn bind(addr: Expr(SocketAddr)) -> Expr(UdpSocket) : fn(any) -> UdpSocket
+            pub fn bind(addr: Expr(SocketAddr)) -> Expr(UdpSocket)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn send_to(&mut self, buf: &[Expr(u8)], addr: Expr(SocketAddr)) -> Expr(i64) : fn(&[u8], any) -> i64
+            pub fn send_to(&mut self, buf: &[Expr(u8)], addr: Expr(SocketAddr)) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn recv_from(&mut self, buf: &mut [Expr(u8)]) -> (Expr(i64), Expr(SocketAddr)) : fn(&[u8]) -> (i64, any)
+            pub fn recv_from(&mut self, buf: &mut [Expr(u8)]) -> (Expr(i64), Expr(SocketAddr))
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1712,7 +1692,7 @@ ast::File {
           pub struct TlsConnector {
           }
           impl TlsConnector {
-            pub fn connect(&self, domain: &Expr(str), stream: Expr(TcpStream)) -> Expr(TlsStream) : fn(&string, any) -> TlsStream
+            pub fn connect(&self, domain: &Expr(str), stream: Expr(TcpStream)) -> Expr(TlsStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1722,7 +1702,7 @@ ast::File {
           pub struct TlsAcceptor {
           }
           impl TlsAcceptor {
-            pub fn accept(&self, stream: Expr(TcpStream)) -> Expr(TlsStream) : fn(any) -> TlsStream
+            pub fn accept(&self, stream: Expr(TcpStream)) -> Expr(TlsStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1732,19 +1712,19 @@ ast::File {
           pub struct TlsStream {
           }
           impl TlsStream {
-            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn shutdown(&mut self) -> () : fn() -> ()
+            pub fn shutdown(&mut self) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1756,7 +1736,7 @@ ast::File {
           pub struct HttpClient {
           }
           impl HttpClient {
-            pub fn send(&self, request: Expr(HttpRequest)) -> Expr(HttpResponse) : fn(HttpRequest) -> HttpResponse
+            pub fn send(&self, request: Expr(HttpRequest)) -> Expr(HttpResponse)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1766,12 +1746,12 @@ ast::File {
           pub struct HttpRequest {
           }
           impl HttpRequest {
-            pub fn get(url: &Expr(str)) -> Expr(HttpRequest) : fn(&string) -> HttpRequest
+            pub fn get(url: &Expr(str)) -> Expr(HttpRequest)
               block (1 stmt)
                 expr_stmt (value)
                   loop
                     block (0 stmts)
-            pub fn post(url: &Expr(str), body: &[Expr(u8)]) -> Expr(HttpRequest) : fn(&string, &[u8]) -> HttpRequest
+            pub fn post(url: &Expr(str), body: &[Expr(u8)]) -> Expr(HttpRequest)
               block (1 stmt)
                 expr_stmt (value)
                   loop
@@ -1780,12 +1760,12 @@ ast::File {
           pub struct HttpResponse {
           }
           impl HttpResponse {
-            pub fn status(&self) -> Expr(i64) : fn() -> i64
+            pub fn status(&self) -> Expr(i64)
               block (1 stmt)
                 expr_stmt (value)
                   loop
                     block (0 stmts)
-            pub fn body(&self) -> &[Expr(u8)] : fn() -> &[u8]
+            pub fn body(&self) -> &[Expr(u8)]
               block (1 stmt)
                 expr_stmt (value)
                   loop
@@ -1796,19 +1776,19 @@ ast::File {
           pub struct WsStream {
           }
           impl WsStream {
-            pub fn connect(url: &Expr(str)) -> Expr(WsStream) : fn(&string) -> WsStream
+            pub fn connect(url: &Expr(str)) -> Expr(WsStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn send(&mut self, message: Expr(WsMessage)) -> () : fn(WsMessage) -> ()
+            pub fn send(&mut self, message: Expr(WsMessage)) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn recv(&mut self) -> Expr(WsMessage) : fn() -> WsMessage
+            pub fn recv(&mut self) -> Expr(WsMessage)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1818,12 +1798,12 @@ ast::File {
           pub struct WsMessage {
           }
           impl WsMessage {
-            pub fn text(value: &Expr(str)) -> Expr(WsMessage) : fn(&string) -> WsMessage
+            pub fn text(value: &Expr(str)) -> Expr(WsMessage)
               block (1 stmt)
                 expr_stmt (value)
                   loop
                     block (0 stmts)
-            pub fn binary(value: &[Expr(u8)]) -> Expr(WsMessage) : fn(&[u8]) -> WsMessage
+            pub fn binary(value: &[Expr(u8)]) -> Expr(WsMessage)
               block (1 stmt)
                 expr_stmt (value)
                   loop
@@ -1835,13 +1815,13 @@ ast::File {
           pub struct QuicConnection {
           }
           impl QuicConnection {
-            pub fn connect(addr: Expr(SocketAddr), server_name: &Expr(str)) -> Expr(QuicConnection) : fn(any, &string) -> QuicConnection
+            pub fn connect(addr: Expr(SocketAddr), server_name: &Expr(str)) -> Expr(QuicConnection)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn open_bi(&mut self) -> Expr(QuicStream) : fn() -> QuicStream
+            pub fn open_bi(&mut self) -> Expr(QuicStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1851,13 +1831,13 @@ ast::File {
           pub struct QuicListener {
           }
           impl QuicListener {
-            pub fn bind(addr: Expr(SocketAddr)) -> Expr(QuicListener) : fn(any) -> QuicListener
+            pub fn bind(addr: Expr(SocketAddr)) -> Expr(QuicListener)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn accept(&mut self) -> Expr(QuicConnection) : fn() -> QuicConnection
+            pub fn accept(&mut self) -> Expr(QuicConnection)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1867,19 +1847,19 @@ ast::File {
           pub struct QuicStream {
           }
           impl QuicStream {
-            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn finish(&mut self) -> () : fn() -> ()
+            pub fn finish(&mut self) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -1913,14 +1893,14 @@ ast::File {
         }
         pub struct TokenStream {
         }
-        pub const fn token_stream_from_str(text: Expr(str)) -> Expr(TokenStream) : fn(string) -> TokenStream
+        pub const fn token_stream_from_str(text: Expr(str)) -> Expr(TokenStream)
           block (1 stmt)
             expr_stmt (value)
               intrinsic token_stream_from_str
                 args:
                   locator text
                 kwargs: []
-        pub const fn token_stream_to_string(stream: Expr(TokenStream)) -> Expr(str) : fn(TokenStream) -> string
+        pub const fn token_stream_to_string(stream: Expr(TokenStream)) -> Expr(str)
           block (1 stmt)
             expr_stmt (value)
               intrinsic token_stream_to_string
@@ -1928,14 +1908,14 @@ ast::File {
                   locator stream
                 kwargs: []
         impl TokenStream {
-          pub fn from_str(text: Expr(str)) -> Expr(TokenStream) : fn(string) -> TokenStream
+          pub fn from_str(text: Expr(str)) -> Expr(TokenStream)
             block (1 stmt)
               expr_stmt (value)
                 intrinsic token_stream_from_str
                   args:
                     locator text
                   kwargs: []
-          pub fn to_string(self) -> Expr(str) : fn() -> string
+          pub fn to_string(self) -> Expr(str)
             block (1 stmt)
               expr_stmt (value)
                 intrinsic token_stream_to_string
@@ -1951,7 +1931,7 @@ ast::File {
         pub struct Task {
           handle: Expr(any)
         }
-        pub fn<T> spawn(fut: Expr(any)) -> Expr(Task<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })>) : fn<T>(any) -> Task{handle: Expr(any)}
+        pub fn<T> spawn(fut: Expr(any)) -> Expr(Task<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })>)
           block (1 stmt)
             expr_stmt (value)
               struct Task
@@ -1970,34 +1950,14 @@ ast::File {
           name: Expr(str)
           run: fn() -> ()
         }
-        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub const REGISTRY: Vec<Expr(TestCase)>
           value [0 values]
-        pub const fn test(item: Quote<item>) -> Quote<item> : fn(Quote<item>) -> Quote<item>
-          block (3 stmts)
-            let name
-              init:
-                select .name [unknown]
-                  object:
-                    locator item
-            expr_stmt ;
-              invoke
-                target: REGISTRY.push
-                args:
-                  struct TestCase
-                    name:
-                      locator name
-                    run:
-                      select .value [unknown]
-                        object:
-                          locator item
-            expr_stmt (value)
-              locator item
         pub struct TestReport {
           total: Expr(i64)
           passed: Expr(i64)
           failed: Expr(i64)
         }
-        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run_tests() -> Expr(TestReport)
           block (8 stmts)
             let tests: Vec<Expr(TestCase)>
               init:
@@ -2114,20 +2074,20 @@ ast::File {
                   locator passed
                 failed:
                   locator failed
-        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run() -> Expr(TestReport)
           block (1 stmt)
             expr_stmt (value)
               invoke
                 target: run_tests
       }
       pub module time {
-        pub [attrs] fn now() -> Expr(f64) : fn() -> f64
+        pub [attrs] fn now() -> Expr(f64)
           block (1 stmt)
             expr_stmt (value)
               intrinsic time_now
                 args: []
                 kwargs: []
-        pub fn sleep(seconds: Expr(f64)) -> () : fn(f64) -> ()
+        pub fn sleep(seconds: Expr(f64)) -> ()
           block (1 stmt)
             expr_stmt (value)
               intrinsic sleep
@@ -2140,43 +2100,18 @@ ast::File {
           name: Expr(str)
           run: fn() -> ()
         }
-        pub const mut REGISTRY: Vec<BenchCase{name: Expr(str), run: fn() -> ()}>
-          intrinsic_container
-            const_block
-              invoke
-                target: Vec::from
-                args:
-                  array (0 values)
-        pub const fn bench(item: Quote<item>) -> Quote<item> : fn(Quote<item>) -> Quote<item>
-          block (3 stmts)
-            let name
-              init:
-                select .name [unknown]
-                  object:
-                    locator item
-            expr_stmt ;
-              invoke
-                target: REGISTRY.push
-                args:
-                  struct BenchCase
-                    name:
-                      locator name
-                    run:
-                      select .value [unknown]
-                        object:
-                          locator item
-            expr_stmt (value)
-              locator item
+        pub const REGISTRY: Vec<Expr(BenchCase)>
+          value [0 values]
         pub struct BenchReport {
           total: Expr(i64)
           passed: Expr(i64)
           failed: Expr(i64)
         }
-        pub fn run_benches() -> Expr(BenchReport) : fn() -> BenchReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run_benches() -> Expr(BenchReport)
           block (8 stmts)
             let benches: Vec<Expr(BenchCase)>
               init:
-                locator REGISTRY
+                value [0 values]
             let mut passed
               init:
                 value 0
@@ -2480,18 +2415,18 @@ ast::File {
           entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>
         }
         impl HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })> {
-          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>) : fn(Vec<HashMapEntry{key: Expr(K), value: Expr(V)}>) -> HashMap{entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>}
+          pub fn from(entries: Vec<Expr(HashMapEntry<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)>) -> Expr(HashMap<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "K" })) }), Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "V" })) })>)
             block (1 stmt)
               expr_stmt (value)
                 struct HashMap
                   entries:
                     locator entries
-          pub fn len(&self) -> Expr(i64) : fn() -> i64
+          pub fn len(&self) -> Expr(i64)
             block (1 stmt)
               expr_stmt (value)
                 invoke
                   target: self.entries.len
-          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V) : fn(any) -> any
+          pub fn get_unchecked(&self, key: Expr(K)) -> Expr(V)
             block (3 stmts)
               let mut idx
                 init:
@@ -2553,7 +2488,7 @@ ast::File {
         }
       }
       pub module future {
-        pub fn sleep(seconds: Expr(f64)) -> Expr(std::task::Future<Unit(TypeUnit)>) : fn(f64) -> Future{handle: Expr(any)}
+        pub fn sleep(seconds: Expr(f64)) -> Expr(std::task::Future<Unit(TypeUnit)>)
           block (1 stmt)
             expr_stmt (value)
               struct std::task::Future
@@ -2581,7 +2516,7 @@ ast::File {
           Array: (Vec<Expr(JsonValue)>)
           Object: (Vec<Expr(JsonField)>)
         }
-        pub fn parse(input: &Expr(str)) -> Expr(JsonValue) : fn(&string) -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+        pub fn parse(input: &Expr(str)) -> Expr(JsonValue)
           block (2 stmts)
             let mut parser
               init:
@@ -2592,7 +2527,7 @@ ast::File {
             expr_stmt (value)
               invoke
                 target: parser.parse_value
-        pub fn print(value: Expr(JsonValue)) -> () : fn(JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]) -> ()
+        pub fn print(value: Expr(JsonValue))
           block (1 stmt)
             expr_stmt ;
               invoke
@@ -2600,7 +2535,7 @@ ast::File {
                 args:
                   reference (mutable: unspecified)
                     locator value
-        pub fn print_value(value: &Expr(JsonValue)) -> () : fn(&JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]) -> ()
+        pub fn print_value(value: &Expr(JsonValue))
           block (1 stmt)
             expr_stmt (value)
               match
@@ -2830,7 +2765,7 @@ ast::File {
           pos: Expr(i64)
         }
         impl Parser {
-          pub fn new(src: &Expr(str)) -> Expr(Parser) : fn(&string) -> Parser{src: Vec<&Expr(str)>, pos: Expr(i64)}
+          pub fn new(src: &Expr(str)) -> Expr(Parser)
             block (5 stmts)
               let mut chars
                 init:
@@ -2893,7 +2828,7 @@ ast::File {
                     locator chars
                   pos:
                     value 0
-          pub fn bump(&mut self, amount: Expr(i64)) -> () : fn(i64) -> ()
+          pub fn bump(&mut self, amount: Expr(i64))
             block (1 stmt)
               expr_stmt ;
                 assign
@@ -2909,7 +2844,7 @@ ast::File {
                             locator self
                       rhs:
                         locator amount
-          pub fn parse_value(&mut self) -> Expr(JsonValue) : fn() -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+          pub fn parse_value(&mut self) -> Expr(JsonValue)
             block (9 stmts)
               expr_stmt ;
                 invoke
@@ -3026,7 +2961,7 @@ ast::File {
                   args:
                     invoke
                       target: self.parse_number
-          pub fn parse_array(&mut self) -> Expr(JsonValue) : fn() -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+          pub fn parse_array(&mut self) -> Expr(JsonValue)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -3122,7 +3057,7 @@ ast::File {
                   target: JsonValue::Array
                   args:
                     locator items
-          pub fn parse_object(&mut self) -> Expr(JsonValue) : fn() -> JsonValue [Null: () | Bool: (Expr(bool)) | Number: (&Expr(str)) | String: (&Expr(str)) | Array: (Vec<Expr(JsonValue)>) | Object: (Vec<Expr(JsonField)>)]
+          pub fn parse_object(&mut self) -> Expr(JsonValue)
             block (6 stmts)
               expr_stmt ;
                 invoke
@@ -3237,7 +3172,7 @@ ast::File {
                   target: JsonValue::Object
                   args:
                     locator fields
-          pub fn parse_string(&mut self) -> &Expr(str) : fn() -> &string
+          pub fn parse_string(&mut self) -> &Expr(str)
             block (4 stmts)
               expr_stmt ;
                 invoke
@@ -3348,7 +3283,7 @@ ast::File {
                           select .pos [unknown]
                             object:
                               locator self
-          pub fn parse_number(&mut self) -> &Expr(str) : fn() -> &string
+          pub fn parse_number(&mut self) -> &Expr(str)
             block (3 stmts)
               let start
                 init:
@@ -3402,7 +3337,7 @@ ast::File {
                           select .pos [unknown]
                             object:
                               locator self
-          pub fn skip_ws(&mut self) -> () : fn() -> ()
+          pub fn skip_ws(&mut self)
             block (1 stmt)
               expr_stmt (value)
                 while
@@ -3460,7 +3395,7 @@ ast::File {
                             block (1 stmt)
                               expr_stmt ;
                                 break
-          pub fn expect_char(&mut self, ch: &Expr(str)) -> () : fn(&string) -> ()
+          pub fn expect_char(&mut self, ch: &Expr(str))
             block (1 stmt)
               expr_stmt (value)
                 if
@@ -3478,7 +3413,7 @@ ast::File {
                           target: self.bump
                           args:
                             value 1
-          pub fn starts_with(&self, literal: &Expr(str)) -> Expr(bool) : fn(&string) -> bool
+          pub fn starts_with(&self, literal: &Expr(str)) -> Expr(bool)
             block (7 stmts)
               let pos
                 init:
@@ -3581,7 +3516,7 @@ ast::File {
                                 value 1
               expr_stmt (value)
                 value true
-          pub fn peek(&self) -> &Expr(str) : fn() -> &string
+          pub fn peek(&self) -> &Expr(str)
             block (2 stmts)
               expr_stmt (value)
                 if
@@ -3604,7 +3539,7 @@ ast::File {
                       select .pos [unknown]
                         object:
                           locator self
-          pub fn is_eof(&self) -> Expr(bool) : fn() -> bool
+          pub fn is_eof(&self) -> Expr(bool)
             block (3 stmts)
               let pos
                 init:
@@ -3624,7 +3559,7 @@ ast::File {
                   rhs:
                     locator len
         }
-        pub fn is_number_char(ch: &Expr(str)) -> Expr(bool) : fn(&string) -> bool
+        pub fn is_number_char(ch: &Expr(str)) -> Expr(bool)
           block (1 stmt)
             expr_stmt (value)
               match
@@ -3710,14 +3645,14 @@ ast::File {
                     value false
       }
       pub module intrinsics {
-        pub [attrs] const fn create_struct(name: &Expr(str)) -> type : fn(&string) -> type
+        pub [attrs] const fn create_struct(name: &Expr(str)) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
                 args:
                   value "create_struct is a compiler intrinsic"
                 kwargs: []
-        pub [attrs] const fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type : fn(type, &string, type) -> type
+        pub [attrs] const fn addfield(ty: type, name: &Expr(str), field_ty: type) -> type
           block (1 stmt)
             expr_stmt (value)
               intrinsic compile_error
@@ -3730,7 +3665,7 @@ ast::File {
           ty: type
         }
         impl TypeBuilder {
-          pub const fn new(name: &Expr(str)) -> Expr(TypeBuilder) : fn(&string) -> TypeBuilder{ty: type}
+          pub const fn new(name: &Expr(str)) -> Expr(TypeBuilder)
             block (1 stmt)
               expr_stmt (value)
                 struct TypeBuilder
@@ -3739,13 +3674,13 @@ ast::File {
                       args:
                         locator name
                       kwargs: []
-          pub const fn from(ty: type) -> Expr(TypeBuilder) : fn(type) -> TypeBuilder{ty: type}
+          pub const fn from(ty: type) -> Expr(TypeBuilder)
             block (1 stmt)
               expr_stmt (value)
                 struct TypeBuilder
                   ty:
                     locator ty
-          pub const fn with_field(self, name: &Expr(str), field_ty: type) -> Expr(TypeBuilder) : fn(&string, type) -> TypeBuilder{ty: type}
+          pub const fn with_field(self, name: &Expr(str), field_ty: type) -> Expr(TypeBuilder)
             block (2 stmts)
               let ty
                 init:
@@ -3761,7 +3696,7 @@ ast::File {
                 struct TypeBuilder
                   ty:
                     locator ty
-          pub const fn build(self) -> type : fn() -> type
+          pub const fn build(self) -> type
             block (1 stmt)
               expr_stmt (value)
                 select .ty [unknown]
@@ -3779,25 +3714,25 @@ ast::File {
           pub struct TcpStream {
           }
           impl TcpStream {
-            pub fn connect(addr: Expr(SocketAddr)) -> Expr(TcpStream) : fn(any) -> TcpStream
+            pub fn connect(addr: Expr(SocketAddr)) -> Expr(TcpStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn shutdown(&mut self) -> () : fn() -> ()
+            pub fn shutdown(&mut self) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3807,13 +3742,13 @@ ast::File {
           pub struct TcpListener {
           }
           impl TcpListener {
-            pub fn bind(addr: Expr(SocketAddr)) -> Expr(TcpListener) : fn(any) -> TcpListener
+            pub fn bind(addr: Expr(SocketAddr)) -> Expr(TcpListener)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn accept(&mut self) -> Expr(TcpStream) : fn() -> TcpStream
+            pub fn accept(&mut self) -> Expr(TcpStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3826,19 +3761,19 @@ ast::File {
           pub struct UdpSocket {
           }
           impl UdpSocket {
-            pub fn bind(addr: Expr(SocketAddr)) -> Expr(UdpSocket) : fn(any) -> UdpSocket
+            pub fn bind(addr: Expr(SocketAddr)) -> Expr(UdpSocket)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn send_to(&mut self, buf: &[Expr(u8)], addr: Expr(SocketAddr)) -> Expr(i64) : fn(&[u8], any) -> i64
+            pub fn send_to(&mut self, buf: &[Expr(u8)], addr: Expr(SocketAddr)) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn recv_from(&mut self, buf: &mut [Expr(u8)]) -> (Expr(i64), Expr(SocketAddr)) : fn(&[u8]) -> (i64, any)
+            pub fn recv_from(&mut self, buf: &mut [Expr(u8)]) -> (Expr(i64), Expr(SocketAddr))
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3851,7 +3786,7 @@ ast::File {
           pub struct TlsConnector {
           }
           impl TlsConnector {
-            pub fn connect(&self, domain: &Expr(str), stream: Expr(TcpStream)) -> Expr(TlsStream) : fn(&string, any) -> TlsStream
+            pub fn connect(&self, domain: &Expr(str), stream: Expr(TcpStream)) -> Expr(TlsStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3861,7 +3796,7 @@ ast::File {
           pub struct TlsAcceptor {
           }
           impl TlsAcceptor {
-            pub fn accept(&self, stream: Expr(TcpStream)) -> Expr(TlsStream) : fn(any) -> TlsStream
+            pub fn accept(&self, stream: Expr(TcpStream)) -> Expr(TlsStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3871,19 +3806,19 @@ ast::File {
           pub struct TlsStream {
           }
           impl TlsStream {
-            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn shutdown(&mut self) -> () : fn() -> ()
+            pub fn shutdown(&mut self) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3895,7 +3830,7 @@ ast::File {
           pub struct HttpClient {
           }
           impl HttpClient {
-            pub fn send(&self, request: Expr(HttpRequest)) -> Expr(HttpResponse) : fn(HttpRequest) -> HttpResponse
+            pub fn send(&self, request: Expr(HttpRequest)) -> Expr(HttpResponse)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3905,12 +3840,12 @@ ast::File {
           pub struct HttpRequest {
           }
           impl HttpRequest {
-            pub fn get(url: &Expr(str)) -> Expr(HttpRequest) : fn(&string) -> HttpRequest
+            pub fn get(url: &Expr(str)) -> Expr(HttpRequest)
               block (1 stmt)
                 expr_stmt (value)
                   loop
                     block (0 stmts)
-            pub fn post(url: &Expr(str), body: &[Expr(u8)]) -> Expr(HttpRequest) : fn(&string, &[u8]) -> HttpRequest
+            pub fn post(url: &Expr(str), body: &[Expr(u8)]) -> Expr(HttpRequest)
               block (1 stmt)
                 expr_stmt (value)
                   loop
@@ -3919,12 +3854,12 @@ ast::File {
           pub struct HttpResponse {
           }
           impl HttpResponse {
-            pub fn status(&self) -> Expr(i64) : fn() -> i64
+            pub fn status(&self) -> Expr(i64)
               block (1 stmt)
                 expr_stmt (value)
                   loop
                     block (0 stmts)
-            pub fn body(&self) -> &[Expr(u8)] : fn() -> &[u8]
+            pub fn body(&self) -> &[Expr(u8)]
               block (1 stmt)
                 expr_stmt (value)
                   loop
@@ -3935,19 +3870,19 @@ ast::File {
           pub struct WsStream {
           }
           impl WsStream {
-            pub fn connect(url: &Expr(str)) -> Expr(WsStream) : fn(&string) -> WsStream
+            pub fn connect(url: &Expr(str)) -> Expr(WsStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn send(&mut self, message: Expr(WsMessage)) -> () : fn(WsMessage) -> ()
+            pub fn send(&mut self, message: Expr(WsMessage)) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn recv(&mut self) -> Expr(WsMessage) : fn() -> WsMessage
+            pub fn recv(&mut self) -> Expr(WsMessage)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3957,12 +3892,12 @@ ast::File {
           pub struct WsMessage {
           }
           impl WsMessage {
-            pub fn text(value: &Expr(str)) -> Expr(WsMessage) : fn(&string) -> WsMessage
+            pub fn text(value: &Expr(str)) -> Expr(WsMessage)
               block (1 stmt)
                 expr_stmt (value)
                   loop
                     block (0 stmts)
-            pub fn binary(value: &[Expr(u8)]) -> Expr(WsMessage) : fn(&[u8]) -> WsMessage
+            pub fn binary(value: &[Expr(u8)]) -> Expr(WsMessage)
               block (1 stmt)
                 expr_stmt (value)
                   loop
@@ -3974,13 +3909,13 @@ ast::File {
           pub struct QuicConnection {
           }
           impl QuicConnection {
-            pub fn connect(addr: Expr(SocketAddr), server_name: &Expr(str)) -> Expr(QuicConnection) : fn(any, &string) -> QuicConnection
+            pub fn connect(addr: Expr(SocketAddr), server_name: &Expr(str)) -> Expr(QuicConnection)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn open_bi(&mut self) -> Expr(QuicStream) : fn() -> QuicStream
+            pub fn open_bi(&mut self) -> Expr(QuicStream)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -3990,13 +3925,13 @@ ast::File {
           pub struct QuicListener {
           }
           impl QuicListener {
-            pub fn bind(addr: Expr(SocketAddr)) -> Expr(QuicListener) : fn(any) -> QuicListener
+            pub fn bind(addr: Expr(SocketAddr)) -> Expr(QuicListener)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn accept(&mut self) -> Expr(QuicConnection) : fn() -> QuicConnection
+            pub fn accept(&mut self) -> Expr(QuicConnection)
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -4006,19 +3941,19 @@ ast::File {
           pub struct QuicStream {
           }
           impl QuicStream {
-            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn read(&mut self, buf: &mut [Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64) : fn(&[u8]) -> i64
+            pub fn write(&mut self, buf: &[Expr(u8)]) -> Expr(i64)
               async
                 block (1 stmt)
                   expr_stmt (value)
                     loop
                       block (0 stmts)
-            pub fn finish(&mut self) -> () : fn() -> ()
+            pub fn finish(&mut self) -> ()
               async
                 block (1 stmt)
                   expr_stmt (value)
@@ -4052,14 +3987,14 @@ ast::File {
         }
         pub struct TokenStream {
         }
-        pub const fn token_stream_from_str(text: Expr(str)) -> Expr(TokenStream) : fn(string) -> TokenStream
+        pub const fn token_stream_from_str(text: Expr(str)) -> Expr(TokenStream)
           block (1 stmt)
             expr_stmt (value)
               intrinsic token_stream_from_str
                 args:
                   locator text
                 kwargs: []
-        pub const fn token_stream_to_string(stream: Expr(TokenStream)) -> Expr(str) : fn(TokenStream) -> string
+        pub const fn token_stream_to_string(stream: Expr(TokenStream)) -> Expr(str)
           block (1 stmt)
             expr_stmt (value)
               intrinsic token_stream_to_string
@@ -4067,14 +4002,14 @@ ast::File {
                   locator stream
                 kwargs: []
         impl TokenStream {
-          pub fn from_str(text: Expr(str)) -> Expr(TokenStream) : fn(string) -> TokenStream
+          pub fn from_str(text: Expr(str)) -> Expr(TokenStream)
             block (1 stmt)
               expr_stmt (value)
                 intrinsic token_stream_from_str
                   args:
                     locator text
                   kwargs: []
-          pub fn to_string(self) -> Expr(str) : fn() -> string
+          pub fn to_string(self) -> Expr(str)
             block (1 stmt)
               expr_stmt (value)
                 intrinsic token_stream_to_string
@@ -4090,7 +4025,7 @@ ast::File {
         pub struct Task {
           handle: Expr(any)
         }
-        pub fn<T> spawn(fut: Expr(any)) -> Expr(Task<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })>) : fn<T>(any) -> Task{handle: Expr(any)}
+        pub fn<T> spawn(fut: Expr(any)) -> Expr(Task<Expr(Expr { ty: None, span: None, kind: Locator(Ident(Ident { name: "T" })) })>)
           block (1 stmt)
             expr_stmt (value)
               struct Task
@@ -4109,38 +4044,18 @@ ast::File {
           name: Expr(str)
           run: fn() -> ()
         }
-        pub const REGISTRY: Vec<TestCase{name: Expr(str), run: fn() -> ()}>
+        pub const REGISTRY: Vec<Expr(TestCase)>
           value [0 values]
-        pub const fn test(item: Quote<item>) -> Quote<item> : fn(Quote<item>) -> Quote<item>
-          block (3 stmts)
-            let name
-              init:
-                select .name [unknown]
-                  object:
-                    locator item
-            expr_stmt ;
-              invoke
-                target: REGISTRY.push
-                args:
-                  struct TestCase
-                    name:
-                      locator name
-                    run:
-                      select .value [unknown]
-                        object:
-                          locator item
-            expr_stmt (value)
-              locator item
         pub struct TestReport {
           total: Expr(i64)
           passed: Expr(i64)
           failed: Expr(i64)
         }
-        pub fn run_tests() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run_tests() -> Expr(TestReport)
           block (8 stmts)
             let tests: Vec<Expr(TestCase)>
               init:
-                locator REGISTRY
+                value [0 values]
             let mut passed
               init:
                 value 0
@@ -4253,20 +4168,20 @@ ast::File {
                   locator passed
                 failed:
                   locator failed
-        pub fn run() -> Expr(TestReport) : fn() -> TestReport{total: Expr(i64), passed: Expr(i64), failed: Expr(i64)}
+        pub fn run() -> Expr(TestReport)
           block (1 stmt)
             expr_stmt (value)
               invoke
                 target: run_tests
       }
       pub module time {
-        pub [attrs] fn now() -> Expr(f64) : fn() -> f64
+        pub [attrs] fn now() -> Expr(f64)
           block (1 stmt)
             expr_stmt (value)
               intrinsic time_now
                 args: []
                 kwargs: []
-        pub fn sleep(seconds: Expr(f64)) -> () : fn(f64) -> ()
+        pub fn sleep(seconds: Expr(f64)) -> ()
           block (1 stmt)
             expr_stmt (value)
               intrinsic sleep
@@ -4282,29 +4197,31 @@ ast::File {
       sin_family: Expr(u16)
       sin_port: Expr(u16)
       sin_addr: Expr(InAddr)
-      sin_zero: [Expr(u8); 8]
+      sin_zero0: Expr(u32)
+      sin_zero1: Expr(u32)
     }
-    declare extern "C" fn socket(domain: Expr(i32), sock_type: Expr(i32), protocol: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32)
-    declare extern "C" fn bind(fd: Expr(i32), addr: &Expr(SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), &Expr(SockAddrIn), Expr(u32)) -> Expr(i32)
-    declare extern "C" fn listen(fd: Expr(i32), backlog: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32)
-    declare extern "C" fn accept(fd: Expr(i32), addr: &mut Expr(SockAddrIn), addrlen: &mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), &mut Expr(SockAddrIn), &mut Expr(u32)) -> Expr(i32)
-    declare extern "C" fn read(fd: Expr(i32), buf: &Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(u8), Expr(usize)) -> Expr(i64)
-    declare extern "C" fn write(fd: Expr(i32), buf: &Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(u8), Expr(usize)) -> Expr(i64)
-    declare extern "C" fn close(fd: Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32)
-    declare extern "C" fn htons(hostshort: Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16)
-    pub const AF_INET: i32
+    pub module libc {
+      declare extern "C" fn socket(domain: Expr(i32), sock_type: Expr(i32), protocol: Expr(i32)) -> Expr(i32)
+      declare extern "C" fn bind(fd: Expr(i32), addr: &Expr(SockAddrIn), addrlen: Expr(u32)) -> Expr(i32)
+      declare extern "C" fn listen(fd: Expr(i32), backlog: Expr(i32)) -> Expr(i32)
+      declare extern "C" fn accept(fd: Expr(i32), addr: &mut Expr(SockAddrIn), addrlen: &mut Expr(u32)) -> Expr(i32)
+      declare extern "C" fn write(fd: Expr(i32), buf: &Expr(u8), count: Expr(usize)) -> Expr(i64)
+      declare extern "C" fn close(fd: Expr(i32)) -> Expr(i32)
+      declare extern "C" fn htons(hostshort: Expr(u16)) -> Expr(u16)
+    }
+    pub const AF_INET: Expr(i32)
       value 2
-    pub const SOCK_STREAM: i32
+    pub const SOCK_STREAM: Expr(i32)
       value 1
-    pub const INADDR_ANY: u32
+    pub const INADDR_ANY: Expr(u32)
       value 0
-    pub const SOCKADDR_LEN: u32
+    pub const SOCKADDR_LEN: Expr(u32)
       value 16
-    pub const RESPONSE_LEN: u64
+    pub const RESPONSE_LEN: Expr(usize)
       value 70
-    pub const RESPONSE: [u8; 70]
+    pub const RESPONSE: [Expr(u8); 70]
       value [70 values]
-    pub fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn) : fn(u16) -> SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero: [Expr(u8); 8]}
+    pub fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn)
       block (1 stmt)
         expr_stmt (value)
           struct SockAddrIn
@@ -4313,25 +4230,23 @@ ast::File {
                 value 2
             sin_port:
               invoke
-                target: htons
+                target: libc::htons
                 args:
                   locator port
             sin_addr:
               struct InAddr
                 s_addr:
                   value 0
-            sin_zero:
-              array_repeat
-                elem:
-                  value 0
-                len:
-                  value 8
-    pub fn main() -> () : fn() -> ()
+            sin_zero0:
+              value 0
+            sin_zero1:
+              value 0
+    pub fn main()
       block (7 stmts)
         let server_fd
           init:
             invoke
-              target: socket
+              target: libc::socket
               args:
                 value 2
                 value 1
@@ -4365,7 +4280,7 @@ ast::File {
               binop <
                 lhs:
                   invoke
-                    target: bind
+                    target: libc::bind
                     args:
                       locator server_fd
                       reference (mutable: unspecified)
@@ -4382,7 +4297,7 @@ ast::File {
                     kwargs: []
                 expr_stmt ;
                   invoke
-                    target: close
+                    target: libc::close
                     args:
                       locator server_fd
                 expr_stmt ;
@@ -4393,7 +4308,7 @@ ast::File {
               binop <
                 lhs:
                   invoke
-                    target: listen
+                    target: libc::listen
                     args:
                       locator server_fd
                       value 16
@@ -4408,7 +4323,7 @@ ast::File {
                     kwargs: []
                 expr_stmt ;
                   invoke
-                    target: close
+                    target: libc::close
                     args:
                       locator server_fd
                 expr_stmt ;
@@ -4420,7 +4335,7 @@ ast::File {
             kwargs: []
         expr_stmt (value)
           loop
-            block (8 stmts)
+            block (6 stmts)
               let mut client_addr
                 init:
                   invoke
@@ -4433,7 +4348,7 @@ ast::File {
               let client_fd
                 init:
                   invoke
-                    target: accept
+                    target: libc::accept
                     args:
                       locator server_fd
                       reference (mutable: mut)
@@ -4457,30 +4372,10 @@ ast::File {
                           kwargs: []
                       expr_stmt ;
                         continue
-              let mut buffer: [Expr(u8); 1024]
-                init:
-                  array_repeat
-                    elem:
-                      value 0
-                    len:
-                      value 1024
               let _
                 init:
                   invoke
-                    target: read
-                    args:
-                      locator client_fd
-                      reference (mutable: unspecified)
-                        index
-                          value:
-                            locator buffer
-                          index:
-                            value 0
-                      value 1024
-              let _
-                init:
-                  invoke
-                    target: write
+                    target: libc::write
                     args:
                       locator client_fd
                       reference (mutable: unspecified)
@@ -4492,7 +4387,7 @@ ast::File {
                       value 70
               expr_stmt ;
                 invoke
-                  target: close
+                  target: libc::close
                   args:
                     locator client_fd
 }

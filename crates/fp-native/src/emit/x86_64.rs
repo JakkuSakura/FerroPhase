@@ -3610,11 +3610,20 @@ fn emit_store(
             other => other,
         };
         let elem_size = size_of(elem_ty) as i32;
-        if elem_size != 8 {
-            return Err(Error::from(
-                "unsupported array element size in constant store",
-            ));
-        }
+        let store_elem = |asm: &mut Assembler, base: Reg, offset: i32| -> Result<()> {
+            match elem_size {
+                1 => emit_mov_mr8(asm, base, offset, Reg::R10),
+                2 => emit_mov_mr16(asm, base, offset, Reg::R10),
+                4 => emit_mov_mr32(asm, base, offset, Reg::R10),
+                8 => emit_mov_mr64(asm, base, offset, Reg::R10),
+                _ => {
+                    return Err(Error::from(
+                        "unsupported array element size in constant store",
+                    ))
+                }
+            }
+            Ok(())
+        };
         match address {
             LirValue::StackSlot(id) => {
                 let dst_offset = stack_slot_offset(layout, *id)?;
@@ -3633,7 +3642,7 @@ fn emit_store(
                             emit_mov_imm64(asm, Reg::R10, bits);
                         }
                     }
-                    emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+                    store_elem(asm, Reg::Rbp, offset)?;
                 }
             }
             LirValue::Register(id) => {
@@ -3656,7 +3665,7 @@ fn emit_store(
                     }
                     emit_mov_rr(asm, Reg::Rax, Reg::R11);
                     emit_add_ri32(asm, Reg::Rax, offset);
-                    emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
+                    store_elem(asm, Reg::Rax, 0)?;
                 }
             }
             LirValue::Local(id) => {
@@ -3679,7 +3688,7 @@ fn emit_store(
                     }
                     emit_mov_rr(asm, Reg::Rax, Reg::R11);
                     emit_add_ri32(asm, Reg::Rax, offset);
-                    emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
+                    store_elem(asm, Reg::Rax, 0)?;
                 }
             }
             _ => return Err(Error::from("unsupported store address for x86_64")),
@@ -4483,54 +4492,117 @@ fn aggregate_field_offset(ty: &LirType, indices: &[u32]) -> Result<(i64, LirType
 }
 
 fn copy_sp_to_sp(asm: &mut Assembler, src: i32, dst: i32, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_rm64(asm, Reg::R10, Reg::Rbp, src + offset);
         emit_mov_mr64(asm, Reg::Rbp, dst + offset, Reg::R10);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_movsxd_rm32(asm, Reg::R10, Reg::Rbp, src + offset);
+        emit_mov_mr32(asm, Reg::Rbp, dst + offset, Reg::R10);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_movsx_rm16(asm, Reg::R10, Reg::Rbp, src + offset);
+        emit_mov_mr16(asm, Reg::Rbp, dst + offset, Reg::R10);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_movsx_rm8(asm, Reg::R10, Reg::Rbp, src + offset);
+        emit_mov_mr8(asm, Reg::Rbp, dst + offset, Reg::R10);
     }
     Ok(())
 }
 
 fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_rm64(asm, Reg::R10, Reg::Rbp, src + offset);
         emit_mov_rr(asm, Reg::R11, dst);
         emit_add_ri32(asm, Reg::R11, offset);
         emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
         offset += 8;
     }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_movsxd_rm32(asm, Reg::R10, Reg::Rbp, src + offset);
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr32(asm, Reg::R11, 0, Reg::R10);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_movsx_rm16(asm, Reg::R10, Reg::Rbp, src + offset);
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr16(asm, Reg::R11, 0, Reg::R10);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_movsx_rm8(asm, Reg::R10, Reg::Rbp, src + offset);
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr8(asm, Reg::R11, 0, Reg::R10);
+    }
     Ok(())
 }
 
 fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_rr(asm, Reg::R11, src);
         emit_add_ri32(asm, Reg::R11, offset);
         emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
         emit_mov_mr64(asm, Reg::Rbp, dst + offset, Reg::R10);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_rr(asm, Reg::R11, src);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_movsxd_rm32(asm, Reg::R10, Reg::R11, 0);
+        emit_mov_mr32(asm, Reg::Rbp, dst + offset, Reg::R10);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_rr(asm, Reg::R11, src);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_movsx_rm16(asm, Reg::R10, Reg::R11, 0);
+        emit_mov_mr16(asm, Reg::Rbp, dst + offset, Reg::R10);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_rr(asm, Reg::R11, src);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_movsx_rm8(asm, Reg::R10, Reg::R11, 0);
+        emit_mov_mr8(asm, Reg::Rbp, dst + offset, Reg::R10);
     }
     Ok(())
 }
 
 fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_rr(asm, Reg::R11, src);
         emit_add_ri32(asm, Reg::R11, offset);
         emit_mov_rm64(asm, Reg::R10, Reg::R11, 0);
@@ -4539,33 +4611,96 @@ fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result
         emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
         offset += 8;
     }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_rr(asm, Reg::R11, src);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_movsxd_rm32(asm, Reg::R10, Reg::R11, 0);
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr32(asm, Reg::R11, 0, Reg::R10);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_rr(asm, Reg::R11, src);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_movsx_rm16(asm, Reg::R10, Reg::R11, 0);
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr16(asm, Reg::R11, 0, Reg::R10);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_rr(asm, Reg::R11, src);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_movsx_rm8(asm, Reg::R10, Reg::R11, 0);
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr8(asm, Reg::R11, 0, Reg::R10);
+    }
     Ok(())
 }
 
 fn zero_sp_range(asm: &mut Assembler, dst: i32, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate zero size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
     emit_mov_imm64(asm, Reg::R10, 0);
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_mr64(asm, Reg::Rbp, dst + offset, Reg::R10);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_mr32(asm, Reg::Rbp, dst + offset, Reg::R10);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_mr16(asm, Reg::Rbp, dst + offset, Reg::R10);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_mr8(asm, Reg::Rbp, dst + offset, Reg::R10);
     }
     Ok(())
 }
 
 fn zero_reg_range(asm: &mut Assembler, dst: Reg, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate zero size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
     emit_mov_imm64(asm, Reg::R10, 0);
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_rr(asm, Reg::R11, dst);
         emit_add_ri32(asm, Reg::R11, offset);
         emit_mov_mr64(asm, Reg::R11, 0, Reg::R10);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr32(asm, Reg::R11, 0, Reg::R10);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr16(asm, Reg::R11, 0, Reg::R10);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_rr(asm, Reg::R11, dst);
+        emit_add_ri32(asm, Reg::R11, offset);
+        emit_mov_mr8(asm, Reg::R11, 0, Reg::R10);
     }
     Ok(())
 }

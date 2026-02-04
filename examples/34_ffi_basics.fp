@@ -4,7 +4,7 @@
 extern "C" fn strlen(s: &std::ffi::CStr) -> i64;
 
 fn main() {
-    let input = "hello from ffi";
+    let input: &std::ffi::CStr = "hello from ffi\0";
     let length = strlen(input);
     println!("strlen('{}') = {}", input, length);
 }

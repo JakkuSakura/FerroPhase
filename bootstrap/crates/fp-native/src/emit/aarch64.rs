@@ -1646,11 +1646,39 @@ fn emit_store(
             other => other,
         };
         let elem_size = size_of(elem_ty) as i32;
-        if elem_size != 8 {
-            return Err(Error::from(
-                "unsupported array element size in constant store",
-            ));
-        }
+        let store_elem_sp = |asm: &mut Assembler, offset: i32| -> Result<()> {
+            match elem_size {
+                1 => emit_store8_to_sp(asm, Reg::X16, offset),
+                2 => emit_store16_to_sp(asm, Reg::X16, offset),
+                4 => emit_store32_to_sp(asm, Reg::X16, offset),
+                8 => {
+                    emit_store_to_sp(asm, Reg::X16, offset);
+                    Ok(())
+                }
+                _ => Err(Error::from("unsupported array element size in constant store")),
+            }
+        };
+        let store_elem_reg = |asm: &mut Assembler| -> Result<()> {
+            match elem_size {
+                1 => {
+                    emit_store8_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                2 => {
+                    emit_store16_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                4 => {
+                    emit_store32_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                8 => {
+                    emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                _ => Err(Error::from("unsupported array element size in constant store")),
+            }
+        };
         match address {
             LirValue::StackSlot(id) => {
                 let dst_offset = stack_slot_offset(layout, *id)?;
@@ -1669,7 +1697,7 @@ fn emit_store(
                             emit_mov_imm64(asm, Reg::X16, bits);
                         }
                     }
-                    emit_store_to_sp(asm, Reg::X16, offset);
+                    store_elem_sp(asm, offset)?;
                 }
             }
             LirValue::Register(id) => {
@@ -1692,7 +1720,7 @@ fn emit_store(
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
                     add_immediate_offset(asm, Reg::X9, offset as i64)?;
-                    emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                    store_elem_reg(asm)?;
                 }
             }
             LirValue::Local(id) => {
@@ -1715,7 +1743,7 @@ fn emit_store(
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
                     add_immediate_offset(asm, Reg::X9, offset as i64)?;
-                    emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                    store_elem_reg(asm)?;
                 }
             }
             _ => return Err(Error::from("unsupported store address for aarch64")),

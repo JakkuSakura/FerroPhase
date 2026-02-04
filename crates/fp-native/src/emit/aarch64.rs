@@ -1646,11 +1646,39 @@ fn emit_store(
             other => other,
         };
         let elem_size = size_of(elem_ty) as i32;
-        if elem_size != 8 {
-            return Err(Error::from(
-                "unsupported array element size in constant store",
-            ));
-        }
+        let store_elem_sp = |asm: &mut Assembler, offset: i32| -> Result<()> {
+            match elem_size {
+                1 => emit_store8_to_sp(asm, Reg::X16, offset),
+                2 => emit_store16_to_sp(asm, Reg::X16, offset),
+                4 => emit_store32_to_sp(asm, Reg::X16, offset),
+                8 => {
+                    emit_store_to_sp(asm, Reg::X16, offset);
+                    Ok(())
+                }
+                _ => Err(Error::from("unsupported array element size in constant store")),
+            }
+        };
+        let store_elem_reg = |asm: &mut Assembler| -> Result<()> {
+            match elem_size {
+                1 => {
+                    emit_store8_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                2 => {
+                    emit_store16_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                4 => {
+                    emit_store32_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                8 => {
+                    emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                    Ok(())
+                }
+                _ => Err(Error::from("unsupported array element size in constant store")),
+            }
+        };
         match address {
             LirValue::StackSlot(id) => {
                 let dst_offset = stack_slot_offset(layout, *id)?;
@@ -1669,7 +1697,7 @@ fn emit_store(
                             emit_mov_imm64(asm, Reg::X16, bits);
                         }
                     }
-                    emit_store_to_sp(asm, Reg::X16, offset);
+                    store_elem_sp(asm, offset)?;
                 }
             }
             LirValue::Register(id) => {
@@ -1692,7 +1720,7 @@ fn emit_store(
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
                     add_immediate_offset(asm, Reg::X9, offset as i64)?;
-                    emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                    store_elem_reg(asm)?;
                 }
             }
             LirValue::Local(id) => {
@@ -1715,7 +1743,7 @@ fn emit_store(
                     }
                     emit_mov_reg(asm, Reg::X9, Reg::X17);
                     add_immediate_offset(asm, Reg::X9, offset as i64)?;
-                    emit_store_to_reg(asm, Reg::X16, Reg::X9);
+                    store_elem_reg(asm)?;
                 }
             }
             _ => return Err(Error::from("unsupported store address for aarch64")),
@@ -3102,54 +3130,117 @@ fn aggregate_field_offset(ty: &LirType, indices: &[u32]) -> Result<(i64, LirType
 }
 
 fn copy_sp_to_sp(asm: &mut Assembler, src: i32, dst: i32, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_load_from_sp(asm, Reg::X16, src + offset);
         emit_store_to_sp(asm, Reg::X16, dst + offset);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_load32u_from_sp(asm, Reg::X16, src + offset)?;
+        emit_store32_to_sp(asm, Reg::X16, dst + offset)?;
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_load16u_from_sp(asm, Reg::X16, src + offset)?;
+        emit_store16_to_sp(asm, Reg::X16, dst + offset)?;
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_load8u_from_sp(asm, Reg::X16, src + offset)?;
+        emit_store8_to_sp(asm, Reg::X16, dst + offset)?;
     }
     Ok(())
 }
 
 fn copy_sp_to_reg(asm: &mut Assembler, src: i32, dst: Reg, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_load_from_sp(asm, Reg::X16, src + offset);
         emit_mov_reg(asm, Reg::X9, dst);
         add_immediate_offset(asm, Reg::X9, offset as i64)?;
         emit_store_to_reg(asm, Reg::X16, Reg::X9);
         offset += 8;
     }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_load32u_from_sp(asm, Reg::X16, src + offset)?;
+        emit_mov_reg(asm, Reg::X9, dst);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_store32_to_reg(asm, Reg::X16, Reg::X9);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_load16u_from_sp(asm, Reg::X16, src + offset)?;
+        emit_mov_reg(asm, Reg::X9, dst);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_store16_to_reg(asm, Reg::X16, Reg::X9);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_load8u_from_sp(asm, Reg::X16, src + offset)?;
+        emit_mov_reg(asm, Reg::X9, dst);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_store8_to_reg(asm, Reg::X16, Reg::X9);
+    }
     Ok(())
 }
 
 fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_reg(asm, Reg::X9, src);
         add_immediate_offset(asm, Reg::X9, offset as i64)?;
         emit_load_from_reg(asm, Reg::X16, Reg::X9);
         emit_store_to_sp(asm, Reg::X16, dst + offset);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load32u_from_reg(asm, Reg::X16, Reg::X9);
+        emit_store32_to_sp(asm, Reg::X16, dst + offset)?;
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load16u_from_reg(asm, Reg::X16, Reg::X9);
+        emit_store16_to_sp(asm, Reg::X16, dst + offset)?;
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load8u_from_reg(asm, Reg::X16, Reg::X9);
+        emit_store8_to_sp(asm, Reg::X16, dst + offset)?;
     }
     Ok(())
 }
 
 fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate copy size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_reg(asm, Reg::X9, src);
         add_immediate_offset(asm, Reg::X9, offset as i64)?;
         emit_load_from_reg(asm, Reg::X16, Reg::X9);
@@ -3158,33 +3249,96 @@ fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result
         emit_store_to_reg(asm, Reg::X16, Reg::X17);
         offset += 8;
     }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load32u_from_reg(asm, Reg::X16, Reg::X9);
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store32_to_reg(asm, Reg::X16, Reg::X17);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load16u_from_reg(asm, Reg::X16, Reg::X9);
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store16_to_reg(asm, Reg::X16, Reg::X17);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_reg(asm, Reg::X9, src);
+        add_immediate_offset(asm, Reg::X9, offset as i64)?;
+        emit_load8u_from_reg(asm, Reg::X16, Reg::X9);
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store8_to_reg(asm, Reg::X16, Reg::X17);
+    }
     Ok(())
 }
 
 fn zero_sp_range(asm: &mut Assembler, dst: i32, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate zero size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
     emit_mov_imm16(asm, Reg::X16, 0);
-    while offset < size {
+    while offset + 8 <= size {
         emit_store_to_sp(asm, Reg::X16, dst + offset);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_store32_to_sp(asm, Reg::X16, dst + offset)?;
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_store16_to_sp(asm, Reg::X16, dst + offset)?;
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_store8_to_sp(asm, Reg::X16, dst + offset)?;
     }
     Ok(())
 }
 
 fn zero_reg_range(asm: &mut Assembler, dst: Reg, size: i32) -> Result<()> {
-    if size % 8 != 0 {
-        return Err(Error::from("aggregate zero size must be 8-byte aligned"));
+    if size <= 0 {
+        return Ok(());
     }
     let mut offset = 0;
     emit_mov_imm16(asm, Reg::X16, 0);
-    while offset < size {
+    while offset + 8 <= size {
         emit_mov_reg(asm, Reg::X17, dst);
         add_immediate_offset(asm, Reg::X17, offset as i64)?;
         emit_store_to_reg(asm, Reg::X16, Reg::X17);
         offset += 8;
+    }
+    let mut remaining = size - offset;
+    if remaining >= 4 {
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store32_to_reg(asm, Reg::X16, Reg::X17);
+        offset += 4;
+        remaining -= 4;
+    }
+    if remaining >= 2 {
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store16_to_reg(asm, Reg::X16, Reg::X17);
+        offset += 2;
+        remaining -= 2;
+    }
+    if remaining >= 1 {
+        emit_mov_reg(asm, Reg::X17, dst);
+        add_immediate_offset(asm, Reg::X17, offset as i64)?;
+        emit_store8_to_reg(asm, Reg::X16, Reg::X17);
     }
     Ok(())
 }

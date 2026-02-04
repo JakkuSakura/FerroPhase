@@ -3610,11 +3610,20 @@ fn emit_store(
             other => other,
         };
         let elem_size = size_of(elem_ty) as i32;
-        if elem_size != 8 {
-            return Err(Error::from(
-                "unsupported array element size in constant store",
-            ));
-        }
+        let store_elem = |asm: &mut Assembler, base: Reg, offset: i32| -> Result<()> {
+            match elem_size {
+                1 => emit_mov_mr8(asm, base, offset, Reg::R10),
+                2 => emit_mov_mr16(asm, base, offset, Reg::R10),
+                4 => emit_mov_mr32(asm, base, offset, Reg::R10),
+                8 => emit_mov_mr64(asm, base, offset, Reg::R10),
+                _ => {
+                    return Err(Error::from(
+                        "unsupported array element size in constant store",
+                    ))
+                }
+            }
+            Ok(())
+        };
         match address {
             LirValue::StackSlot(id) => {
                 let dst_offset = stack_slot_offset(layout, *id)?;
@@ -3633,7 +3642,7 @@ fn emit_store(
                             emit_mov_imm64(asm, Reg::R10, bits);
                         }
                     }
-                    emit_mov_mr64(asm, Reg::Rbp, offset, Reg::R10);
+                    store_elem(asm, Reg::Rbp, offset)?;
                 }
             }
             LirValue::Register(id) => {
@@ -3656,7 +3665,7 @@ fn emit_store(
                     }
                     emit_mov_rr(asm, Reg::Rax, Reg::R11);
                     emit_add_ri32(asm, Reg::Rax, offset);
-                    emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
+                    store_elem(asm, Reg::Rax, 0)?;
                 }
             }
             LirValue::Local(id) => {
@@ -3679,7 +3688,7 @@ fn emit_store(
                     }
                     emit_mov_rr(asm, Reg::Rax, Reg::R11);
                     emit_add_ri32(asm, Reg::Rax, offset);
-                    emit_mov_mr64(asm, Reg::Rax, 0, Reg::R10);
+                    store_elem(asm, Reg::Rax, 0)?;
                 }
             }
             _ => return Err(Error::from("unsupported store address for x86_64")),
