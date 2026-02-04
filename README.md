@@ -74,4 +74,5 @@ fp syntax-transpile src/service.fp --target typescript --output service.ts
 - `docs/Types.md` – phased type system
 - `docs/ConstEval.md` – const evaluation semantics
 - `docs/Intrinsics.md` – intrinsic normalisation across languages
+- `docs/QualityAssurance.md` – QA framework for AI-generated code
 - `examples/` – end-to-end scenarios (flat, renumbered catalog)
