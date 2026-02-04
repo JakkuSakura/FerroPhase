@@ -17,9 +17,9 @@ struct SockAddrIn {
 
 mod libc {
     extern "C" fn socket(domain: i32, sock_type: i32, protocol: i32) -> i32;
-    extern "C" fn bind(fd: i32, addr: &SockAddrIn, addrlen: u32) -> i32;
+    extern "C" fn bind(fd: i32, addr: &crate::SockAddrIn, addrlen: u32) -> i32;
     extern "C" fn listen(fd: i32, backlog: i32) -> i32;
-    extern "C" fn accept(fd: i32, addr: &mut SockAddrIn, addrlen: &mut u32) -> i32;
+    extern "C" fn accept(fd: i32, addr: &mut crate::SockAddrIn, addrlen: &mut u32) -> i32;
     extern "C" fn write(fd: i32, buf: &u8, count: usize) -> i64;
     extern "C" fn close(fd: i32) -> i32;
     extern "C" fn htons(hostshort: u16) -> u16;
