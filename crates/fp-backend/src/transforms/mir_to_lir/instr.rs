@@ -12,6 +12,8 @@ use fp_core::mir::ty::{
 use fp_core::{lir, mir};
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use crate::abi;
+
 // Internal submodules; items are used via inherent methods
 
 /// Generator for transforming MIR to LIR (Low-level IR)
@@ -278,6 +280,22 @@ impl LirGenerator {
 
         if let Some(existing) = self.function_symbol_map.get(&base) {
             return existing.clone();
+        }
+
+        if mir_func.is_extern || abi::is_c_abi_mir(&mir_func.abi) {
+            let extern_name = abi::extern_symbol_name(&base);
+            self.function_symbol_map
+                .insert(base.clone(), extern_name.clone());
+            if !mir_func.name.as_str().is_empty() {
+                self.function_symbol_map
+                    .entry(String::from(mir_func.name.clone()))
+                    .or_insert(extern_name.clone());
+                let short_name = abi::extern_symbol_name(mir_func.name.as_str());
+                self.function_symbol_map
+                    .entry(short_name)
+                    .or_insert(extern_name.clone());
+            }
+            return extern_name;
         }
 
         let sanitized = Self::sanitize_symbol(&base);
@@ -1719,10 +1737,7 @@ impl LirGenerator {
 
                 if let Some(const_value) = self.cast_constant_value(&operand_value, &target_ty) {
                     result_value = Some(const_value);
-                    return Ok(instructions);
-                }
-
-                if let Some(src_ty) = source_ty.clone() {
+                } else if let Some(src_ty) = source_ty.clone() {
                     let target_is_ptr = matches!(target_ty, lir::LirType::Ptr(_));
                     if self.is_float_type(&src_ty) && target_is_ptr {
                         let int_ty = lir::LirType::I64;
@@ -2208,6 +2223,20 @@ impl LirGenerator {
                 })?;
 
             if let Some(storage) = self.local_storage.get(&place.local).cloned() {
+                if let Some(value) = self.register_map.get(&place.local).cloned() {
+                    let store_id = self.next_id();
+                    self.queued_instructions.push(lir::LirInstruction {
+                        id: store_id,
+                        kind: lir::LirInstructionKind::Store {
+                            value,
+                            address: storage.ptr_value.clone(),
+                            alignment: Some(storage.alignment),
+                            volatile: false,
+                        },
+                        type_hint: None,
+                        debug_info: None,
+                    });
+                }
                 return Ok(PlaceAccess::Address(PlaceAddress {
                     ptr: storage.ptr_value,
                     ty,
@@ -4249,8 +4278,48 @@ impl LirGenerator {
         });
 
         if let Some((dest_place, dest_bb)) = destination.as_ref() {
-            match result_type {
-                Some(ref ty) if !matches!(ty, lir::LirType::Void) => {
+            if let Some(ref ty) = result_type {
+                if matches!(ty, lir::LirType::Struct { .. } | lir::LirType::Array(_, _) | lir::LirType::Vector(_, _)) {
+                    let alignment = Self::alignment_for_lir_type(ty);
+                    let ptr = if let Some(storage) = self.local_storage.get(&dest_place.local) {
+                        storage.ptr_value.clone()
+                    } else {
+                        let pointer_type = lir::LirType::Ptr(Box::new(ty.clone()));
+                        let size_value = lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                        let alloca_id = self.next_id();
+                        block.instructions.push(lir::LirInstruction {
+                            id: alloca_id,
+                            kind: lir::LirInstructionKind::Alloca {
+                                size: size_value,
+                                alignment,
+                            },
+                            type_hint: Some(pointer_type),
+                            debug_info: None,
+                        });
+                        let ptr_value = lir::LirValue::Register(alloca_id);
+                        self.local_storage.insert(
+                            dest_place.local,
+                            LocalStorage {
+                                ptr_value: ptr_value.clone(),
+                                element_type: ty.clone(),
+                                alignment,
+                            },
+                        );
+                        ptr_value
+                    };
+                    block.instructions.push(lir::LirInstruction {
+                        id: self.next_id(),
+                        kind: lir::LirInstructionKind::Store {
+                            value: lir::LirValue::Register(call_id),
+                            address: ptr,
+                            alignment: Some(alignment),
+                            volatile: false,
+                        },
+                        type_hint: None,
+                        debug_info: None,
+                    });
+                    self.register_map.remove(&dest_place.local);
+                } else if !matches!(ty, lir::LirType::Void) {
                     self.register_map
                         .insert(dest_place.local, lir::LirValue::Register(call_id));
 
@@ -4269,19 +4338,17 @@ impl LirGenerator {
                             debug_info: None,
                         });
                     }
-                }
-                Some(ref ty) => {
+                } else {
                     self.register_map.insert(
                         dest_place.local,
                         lir::LirValue::Constant(lir::LirConstant::Undef(ty.clone())),
                     );
                 }
-                None => {
-                    self.register_map.insert(
-                        dest_place.local,
-                        lir::LirValue::Constant(lir::LirConstant::Undef(lir::LirType::Void)),
-                    );
-                }
+            } else {
+                self.register_map.insert(
+                    dest_place.local,
+                    lir::LirValue::Constant(lir::LirConstant::Undef(lir::LirType::Void)),
+                );
             }
             return Ok(lir::LirTerminator::Br(*dest_bb));
         }

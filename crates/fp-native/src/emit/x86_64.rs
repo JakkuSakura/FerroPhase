@@ -341,6 +341,9 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
     let mut entry_offset = None;
 
     for (index, func) in program.functions.iter().enumerate() {
+        if func.is_declaration {
+            continue;
+        }
         asm.bind(Label::Function(index as u32));
         if entry_offset.is_none() && func.name.as_str() == "main" {
             entry_offset = Some(asm.buf.len() as u64);
@@ -2802,6 +2805,9 @@ enum Label {
 fn build_function_map(program: &LirProgram) -> Result<HashMap<String, u32>> {
     let mut map = HashMap::new();
     for (idx, func) in program.functions.iter().enumerate() {
+        if func.is_declaration {
+            continue;
+        }
         let name = String::from(func.name.clone());
         map.insert(name, idx as u32);
     }

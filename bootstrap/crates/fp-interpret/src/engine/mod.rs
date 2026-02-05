@@ -29,7 +29,7 @@ use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnO
 use fp_core::package::graph::PackageGraph;
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
-use fp_typing::{AstTypeInferencer, TypeResolutionHook};
+use fp_typing::{AstTypeInferencer, TypeEvaluationHook, TypeResolutionHook};
 use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
 use crate::engine::ffi::FfiRuntime;
 mod blocks;
@@ -101,6 +101,21 @@ impl<'ctx> TypeResolutionHook for InterpreterTypeHook<'ctx> {
                 .as_mut()
                 .map(|interpreter| interpreter.materialize_symbol(name))
                 .unwrap_or(false)
+        }
+    }
+}
+
+struct InterpreterTypeEvalHook<'ctx> {
+    interpreter: *mut AstInterpreter<'ctx>,
+}
+
+impl<'ctx> TypeEvaluationHook for InterpreterTypeEvalHook<'ctx> {
+    fn eval_type_expr(&mut self, expr: &Expr) -> Result<Option<Ty>> {
+        unsafe {
+            self.interpreter
+                .as_mut()
+                .map(|interpreter| interpreter.eval_type_expr_bridge(expr))
+                .unwrap_or(Ok(None))
         }
     }
 }
@@ -679,7 +694,25 @@ impl<'ctx> AstInterpreter<'ctx> {
         typer.set_resolution_hook(Box::new(InterpreterTypeHook {
             interpreter: self as *mut _,
         }));
+        typer.set_type_eval_hook(Box::new(InterpreterTypeEvalHook {
+            interpreter: self as *mut _,
+        }));
         self.typer = Some(typer);
+    }
+
+    fn eval_type_expr_bridge(&mut self, expr: &Expr) -> Result<Option<Ty>> {
+        if !matches!(self.mode, InterpreterMode::CompileTime) {
+            return Ok(None);
+        }
+        let mut expr = expr.clone();
+        let value = self.evaluate_expression(&mut expr);
+        match value {
+            Value::Type(ty) => Ok(Some(ty)),
+            other => Err(fp_core::error::Error::from(format!(
+                "type evaluation expected a type value, found {}",
+                other
+            ))),
+        }
     }
 
     pub fn interpret(&mut self, node: &mut Node) {

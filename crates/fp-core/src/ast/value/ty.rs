@@ -71,6 +71,7 @@ common_enum! {
         Type(TypeType),
         Reference(TypeReference),
         Slice(TypeSlice),
+        RawPtr(TypeRawPtr),
         Expr(BExpr),
         Quote(TypeQuote),
         TypeBinaryOp(Box<TypeBinaryOp>),
@@ -128,6 +129,15 @@ impl Ty {
             .into(),
         )
     }
+    pub fn raw_ptr(ty: Ty, mutability: Option<bool>) -> Self {
+        Ty::RawPtr(
+            TypeRawPtr {
+                ty: Box::new(ty),
+                mutability,
+            }
+            .into(),
+        )
+    }
     pub fn any_box<T: AnyBoxable>(any: T) -> Self {
         Self::AnyBox(AnyBox::new(any))
     }
@@ -152,6 +162,7 @@ impl Ty {
     pub fn unwrap_reference(&self) -> &Ty {
         match self {
             Ty::Reference(r) => &r.ty,
+            Ty::RawPtr(r) => &r.ty,
             _ => self,
         }
     }
@@ -171,6 +182,7 @@ impl Ty {
             Ty::Array(ty) => ty.span(),
             Ty::Type(ty) => ty.span(),
             Ty::Reference(ty) => ty.span(),
+            Ty::RawPtr(ty) => ty.span(),
             Ty::Slice(ty) => ty.span(),
             Ty::Expr(expr) => expr.span(),
             Ty::Quote(ty) => ty.span(),
@@ -412,7 +424,7 @@ impl TypeType {
 }
 
 common_struct! {
-    pub struct TypeReference {
+pub struct TypeReference {
         pub ty: BType,
         pub mutability: Option<bool>,
         pub lifetime: Option<Ident>,
@@ -421,6 +433,26 @@ common_struct! {
 impl TypeReference {
     pub fn span(&self) -> Span {
         self.ty.span()
+    }
+}
+
+common_struct! {
+    pub struct TypeRawPtr {
+        pub ty: BType,
+        pub mutability: Option<bool>,
+    }
+}
+impl TypeRawPtr {
+    pub fn span(&self) -> Span {
+        self.ty.span()
+    }
+}
+impl Display for TypeRawPtr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        let s = get_threadlocal_serializer()
+            .serialize_type(&Ty::RawPtr(self.clone().into()))
+            .unwrap();
+        f.write_str(&s)
     }
 }
 impl Display for TypeReference {

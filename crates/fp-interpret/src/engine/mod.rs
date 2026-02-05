@@ -17,8 +17,9 @@ use fp_core::ast::{
     ItemKind, MacroDelimiter, MacroGroup,
     MacroInvocation, MacroToken, MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind,
     QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny, TypeTokenStream, TypeArray,
-    TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
-    TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value, ValueField,
+    TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeRawPtr, TypeReference,
+    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value,
+    ValueField,
     ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream, ValueTuple,
 };
 use fp_core::ast::{Ident, Name};
@@ -33,7 +34,7 @@ use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnO
 use fp_core::package::graph::PackageGraph;
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
-use fp_typing::{AstTypeInferencer, TypeResolutionHook};
+use fp_typing::{AstTypeInferencer, TypeEvaluationHook, TypeResolutionHook};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
 use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
@@ -114,6 +115,21 @@ impl<'ctx> TypeResolutionHook for InterpreterTypeHook<'ctx> {
                 .as_mut()
                 .map(|interpreter| interpreter.materialize_symbol(name))
                 .unwrap_or(false)
+        }
+    }
+}
+
+struct InterpreterTypeEvalHook<'ctx> {
+    interpreter: *mut AstInterpreter<'ctx>,
+}
+
+impl<'ctx> TypeEvaluationHook for InterpreterTypeEvalHook<'ctx> {
+    fn eval_type_expr(&mut self, expr: &Expr) -> Result<Option<Ty>> {
+        unsafe {
+            self.interpreter
+                .as_mut()
+                .map(|interpreter| interpreter.eval_type_expr_bridge(expr))
+                .unwrap_or(Ok(None))
         }
     }
 }
@@ -730,7 +746,34 @@ impl<'ctx> AstInterpreter<'ctx> {
         typer.set_resolution_hook(Box::new(InterpreterTypeHook {
             interpreter: self as *mut _,
         }));
+        typer.set_type_eval_hook(Box::new(InterpreterTypeEvalHook {
+            interpreter: self as *mut _,
+        }));
         self.typer = Some(typer);
+    }
+
+    fn eval_type_expr_bridge(&mut self, expr: &Expr) -> Result<Option<Ty>> {
+        if !matches!(self.mode, InterpreterMode::CompileTime) {
+            return Ok(None);
+        }
+        if let ExprKind::Name(locator) = expr.kind() {
+            let name = locator.to_string();
+            if let Some(resolved) = self.resolve_type_binding(&name) {
+                return Ok(Some(resolved));
+            }
+            // Avoid evaluating bare names as const expressions here; unresolved generics
+            // should be handled by the typer rather than triggering const-eval errors.
+            return Ok(None);
+        }
+        let mut expr = expr.clone();
+        let value = self.evaluate_expression(&mut expr);
+        match value {
+            Value::Type(ty) => Ok(Some(ty)),
+            other => Err(fp_core::error::Error::from(format!(
+                "type evaluation expected a type value, found {}",
+                other
+            ))),
+        }
     }
 
     pub fn interpret(&mut self, node: &mut Node) {
@@ -1954,6 +1997,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             Ty::Slice(slice) => self.clear_ty(&mut slice.elem),
             Ty::Vec(vec) => self.clear_ty(&mut vec.ty),
             Ty::Reference(reference) => self.clear_ty(&mut reference.ty),
+            Ty::RawPtr(raw_ptr) => self.clear_ty(&mut raw_ptr.ty),
             Ty::Type(_) => {}
             Ty::Struct(def) => {
                 for field in &mut def.fields {
@@ -1998,8 +2042,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.clear_expr_types(expr);
                 }
             }
-            Ty::Primitive(_) | Ty::Unit(_) | Ty::Unknown(_) | Ty::Any(_) | Ty::TokenStream(_)
-            | Ty::ImplTraits(_) | Ty::Value(_) | Ty::Nothing(_) | Ty::AnyBox(_) => {}
+            Ty::Primitive(_)
+            | Ty::Unit(_)
+            | Ty::Unknown(_)
+            | Ty::Any(_)
+            | Ty::TokenStream(_)
+            | Ty::ImplTraits(_)
+            | Ty::Value(_)
+            | Ty::Nothing(_)
+            | Ty::AnyBox(_) => {}
         }
     }
 
@@ -3240,6 +3291,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         sig: &FunctionSignature,
         args: &[Value],
     ) -> RuntimeFlow {
+        let resolved_sig = self.resolve_ffi_signature(sig);
         let ffi = match self.ensure_ffi_runtime() {
             Ok(ffi) => ffi,
             Err(err) => {
@@ -3247,12 +3299,76 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return RuntimeFlow::Value(Value::undefined());
             }
         };
-        match ffi.call(name, sig, args) {
+        match ffi.call(name, &resolved_sig, args) {
             Ok(value) => RuntimeFlow::Value(value),
             Err(err) => {
                 self.emit_error(err.to_string());
                 RuntimeFlow::Value(Value::undefined())
             }
+        }
+    }
+
+    fn resolve_ffi_signature(&mut self, sig: &FunctionSignature) -> FunctionSignature {
+        let mut resolved = sig.clone();
+        for param in &mut resolved.params {
+            param.ty = self.resolve_ffi_type(param.ty.clone());
+        }
+        if let Some(ret_ty) = &mut resolved.ret_ty {
+            *ret_ty = self.resolve_ffi_type(ret_ty.clone());
+        }
+        resolved
+    }
+
+    fn resolve_ffi_type(&mut self, ty: Ty) -> Ty {
+        match ty {
+            Ty::Reference(reference) => Ty::Reference(TypeReference {
+                ty: Box::new(self.resolve_ffi_type(*reference.ty)),
+                mutability: reference.mutability,
+                lifetime: reference.lifetime,
+            }),
+            Ty::Tuple(tuple) => Ty::Tuple(TypeTuple {
+                types: tuple
+                    .types
+                    .into_iter()
+                    .map(|ty| self.resolve_ffi_type(ty))
+                    .collect(),
+            }),
+            Ty::Struct(struct_ty) => Ty::Struct(TypeStruct {
+                name: struct_ty.name,
+                generics_params: struct_ty.generics_params,
+                fields: struct_ty
+                    .fields
+                    .into_iter()
+                    .map(|field| StructuralField::new(
+                        field.name,
+                        self.resolve_ffi_type(field.value),
+                    ))
+                    .collect(),
+            }),
+            Ty::Structural(structural) => Ty::Structural(TypeStructural {
+                fields: structural
+                    .fields
+                    .into_iter()
+                    .map(|field| StructuralField::new(
+                        field.name,
+                        self.resolve_ffi_type(field.value),
+                    ))
+                    .collect(),
+            }),
+            Ty::Array(array) => Ty::Array(TypeArray {
+                elem: Box::new(self.resolve_ffi_type(*array.elem)),
+                len: array.len,
+            }),
+            Ty::Expr(expr) => {
+                if let ExprKind::Name(locator) = expr.kind() {
+                    let name = locator.to_string();
+                    if let Some(resolved) = self.resolve_type_binding(&name) {
+                        return resolved;
+                    }
+                }
+                Ty::Expr(expr)
+            }
+            other => other,
         }
     }
 
@@ -4054,6 +4170,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 ty: Box::new(self.substitute_ty(&reference.ty, subst)),
                 mutability: reference.mutability,
                 lifetime: reference.lifetime.clone(),
+            }),
+            Ty::RawPtr(raw_ptr) => Ty::RawPtr(TypeRawPtr {
+                ty: Box::new(self.substitute_ty(&raw_ptr.ty, subst)),
+                mutability: raw_ptr.mutability,
             }),
             Ty::Vec(vec_ty) => Ty::Vec(TypeVec {
                 ty: Box::new(self.substitute_ty(&vec_ty.ty, subst)),

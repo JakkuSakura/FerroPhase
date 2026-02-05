@@ -1281,6 +1281,14 @@ impl HirGenerator {
                     Span::new(self.current_file, 0, 0),
                 ))
             }
+            ast::Ty::RawPtr(raw_ptr) => {
+                let inner = self.transform_type_to_hir(&raw_ptr.ty)?;
+                Ok(hir::TypeExpr::new(
+                    self.next_id(),
+                    hir::TypeExprKind::Ptr(Box::new(inner)),
+                    Span::new(self.current_file, 0, 0),
+                ))
+            }
             ast::Ty::Unit(_) => Ok(self.create_unit_type()),
             ast::Ty::Nothing(_) => Ok(self.create_null_type()),
             ast::Ty::Any(_) => Ok(hir::TypeExpr::new(
@@ -2136,6 +2144,7 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
         ast::Ty::Array(array) => ty_contains_quote(&array.elem),
         ast::Ty::Vec(vec) => ty_contains_quote(&vec.ty),
         ast::Ty::Reference(reference) => ty_contains_quote(&reference.ty),
+        ast::Ty::RawPtr(raw_ptr) => ty_contains_quote(&raw_ptr.ty),
         ast::Ty::Slice(slice) => ty_contains_quote(&slice.elem),
         ast::Ty::Struct(def) => def.fields.iter().any(|field| ty_contains_quote(&field.value)),
         ast::Ty::Structural(def) => def.fields.iter().any(|field| ty_contains_quote(&field.value)),
@@ -2176,6 +2185,7 @@ fn ty_contains_type_type(ty: &ast::Ty) -> bool {
         ast::Ty::Array(array) => ty_contains_type_type(&array.elem),
         ast::Ty::Vec(vec) => ty_contains_type_type(&vec.ty),
         ast::Ty::Reference(reference) => ty_contains_type_type(&reference.ty),
+        ast::Ty::RawPtr(raw_ptr) => ty_contains_type_type(&raw_ptr.ty),
         ast::Ty::Slice(slice) => ty_contains_type_type(&slice.elem),
         ast::Ty::Struct(def) => def.fields.iter().any(|field| ty_contains_type_type(&field.value)),
         ast::Ty::Structural(def) => def

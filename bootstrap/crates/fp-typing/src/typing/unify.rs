@@ -975,6 +975,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                     }
                 }
+                if let Some(hook) = self.type_eval_hook.as_mut() {
+                    match hook.eval_type_expr(expr) {
+                        Ok(Some(ty)) => {
+                            let resolved = self.type_from_ast_ty(&ty)?;
+                            self.unify(var, resolved)?;
+                            return Ok(var);
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            self.emit_error_with_span(self.span_option(expr.span()), err.to_string());
+                            return Ok(self.error_type_var());
+                        }
+                    }
+                }
                 // Fallback: treat as any to allow later constraints to refine.
                 self.bind(var, TypeTerm::Any);
             }

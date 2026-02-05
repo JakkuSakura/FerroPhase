@@ -360,6 +360,7 @@ fn normalize_ty(ty: &mut Ty, strategy: &dyn IntrinsicNormalizer) -> Result<()> {
             }
         }
         Ty::Reference(reference) => normalize_ty(reference.ty.as_mut(), strategy)?,
+        Ty::RawPtr(raw_ptr) => normalize_ty(raw_ptr.ty.as_mut(), strategy)?,
         Ty::Slice(slice) => normalize_ty(slice.elem.as_mut(), strategy)?,
         Ty::Value(value) => {
             if let Value::Expr(expr) = value.value.as_mut() {

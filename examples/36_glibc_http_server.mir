@@ -1,35 +1,24 @@
 mir::Program {
     items:
-        fn printf(arg0: <??>, arg1: <??>) -> () [body: body0]
+        fn libc::socket(arg0: i32, arg1: i32, arg2: i32) -> i32 [body: body0]
 
-        fn libc::socket(arg0: i32, arg1: i32, arg2: i32) -> i32 [body: body1]
+        fn libc::bind(arg0: i32, arg1: <??>, arg2: u32) -> i32 [body: body1]
 
-        fn libc::bind(arg0: i32, arg1: <??>, arg2: u32) -> i32 [body: body2]
+        fn libc::listen(arg0: i32, arg1: i32) -> i32 [body: body2]
 
-        fn libc::listen(arg0: i32, arg1: i32) -> i32 [body: body3]
+        fn libc::accept(arg0: i32, arg1: <??>, arg2: <??>) -> i32 [body: body3]
 
-        fn libc::accept(arg0: i32, arg1: <??>, arg2: <??>) -> i32 [body: body4]
+        fn libc::write(arg0: i32, arg1: <??>, arg2: usize) -> i64 [body: body4]
 
-        fn libc::write(arg0: i32, arg1: <??>, arg2: usize) -> i64 [body: body5]
+        fn libc::close(arg0: i32) -> i32 [body: body5]
 
-        fn libc::close(arg0: i32) -> i32 [body: body6]
+        fn libc::htons(arg0: u16) -> u16 [body: body6]
 
-        fn libc::htons(arg0: u16) -> u16 [body: body7]
+        fn make_addr(arg0: u16) -> (u16, u16, (u32), u32, u32) [body: body7]
 
-        fn make_addr(arg0: u16) -> (u16, u16, (u32), u32, u32) [body: body8]
-
-        fn main() -> () [body: body9]
+        fn main() -> () [body: body8]
     bodies:
-        body0 { arg_count: 2, locals: 3 }
-            return_local: _0
-            locals:
-                _0: ()
-                _1: <??>
-                _2: <??>
-            blocks:
-                bb0:
-                    terminator: return
-        body1 { arg_count: 3, locals: 4 }
+        body0 { arg_count: 3, locals: 4 }
             return_local: _0
             locals:
                 _0: i32
@@ -40,7 +29,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0
                     terminator: return
-        body2 { arg_count: 3, locals: 4 }
+        body1 { arg_count: 3, locals: 4 }
             return_local: _0
             locals:
                 _0: i32
@@ -51,7 +40,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0
                     terminator: return
-        body3 { arg_count: 2, locals: 3 }
+        body2 { arg_count: 2, locals: 3 }
             return_local: _0
             locals:
                 _0: i32
@@ -61,7 +50,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0
                     terminator: return
-        body4 { arg_count: 3, locals: 4 }
+        body3 { arg_count: 3, locals: 4 }
             return_local: _0
             locals:
                 _0: i32
@@ -72,7 +61,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0
                     terminator: return
-        body5 { arg_count: 3, locals: 4 }
+        body4 { arg_count: 3, locals: 4 }
             return_local: _0
             locals:
                 _0: i64
@@ -83,7 +72,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0
                     terminator: return
-        body6 { arg_count: 1, locals: 2 }
+        body5 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
                 _0: i32
@@ -92,7 +81,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0
                     terminator: return
-        body7 { arg_count: 1, locals: 2 }
+        body6 { arg_count: 1, locals: 2 }
             return_local: _0
             locals:
                 _0: u16
@@ -101,7 +90,7 @@ mir::Program {
                 bb0:
                     s0: _0 = 0u
                     terminator: return
-        body8 { arg_count: 1, locals: 5 }
+        body7 { arg_count: 1, locals: 5 }
             return_local: _0
             locals:
                 _0: (u16, u16, (u32), u32, u32)
@@ -117,34 +106,34 @@ mir::Program {
                     s0: _4 = aggregate(tuple; [0u])
                     s1: _0 = aggregate(tuple; [copy _2, copy _3, copy _4, 0u, 0u])
                     terminator: return
-        body9 { arg_count: 0, locals: 108 }
+        body8 { arg_count: 0, locals: 105 }
             return_local: _0
             locals:
                 _0: ()
                 _1: i32
                 _2: bool
-                _3: <??>
-                _4: <??>
-                _5: ()
-                _6: (u16, u16, (u32), u32, u32)
-                _7: bool
+                _3: ()
+                _4: (u16, u16, (u32), u32, u32)
+                _5: <??>
+                _6: <??>
+                _7: <??>
                 _8: i32
-                _9: <??>
-                _10: <??>
-                _11: <??>
-                _12: ()
-                _13: i32
-                _14: bool
+                _9: bool
+                _10: ()
+                _11: i32
+                _12: i32
+                _13: bool
+                _14: ()
                 _15: i32
-                _16: <??>
+                _16: ()
                 _17: <??>
-                _18: ()
-                _19: i32
-                _20: <??>
-                _21: <??>
-                _22: ()
-                _23: <??>
-                _24: <??>
+                _18: <??>
+                _19: u8
+                _20: u8
+                _21: u8
+                _22: u8
+                _23: u8
+                _24: u8
                 _25: u8
                 _26: u8
                 _27: u8
@@ -209,173 +198,171 @@ mir::Program {
                 _86: u8
                 _87: u8
                 _88: u8
-                _89: u8
-                _90: u8
-                _91: u8
-                _92: u8
-                _93: u8
-                _94: u8
-                _95: (u16, u16, (u32), u32, u32)
-                _96: u32
+                _89: (u16, u16, (u32), u32, u32)
+                _90: u32
+                _91: <??>
+                _92: <??>
+                _93: <??>
+                _94: <??>
+                _95: <??>
+                _96: <??>
                 _97: i32
-                _98: <??>
-                _99: <??>
-                _100: bool
+                _98: bool
+                _99: ()
+                _100: <??>
                 _101: <??>
                 _102: <??>
-                _103: ()
-                _104: i64
-                _105: usize
-                _106: <??>
-                _107: i32
+                _103: i64
+                _104: i32
             blocks:
                 bb0:
                     terminator: call fn libc::socket(2, 1, 0) -> _1 then bb1
                 bb1:
                     terminator: switch copy _2 [1 -> bb2] otherwise -> bb3
                 bb2:
-                    terminator: call fn printf(copy _4) -> _5 then bb5
+                    s0: intrinsic Println "socket failed
+" []
+                    terminator: return
                 bb3:
                     terminator: goto -> bb4
                 bb4:
-                    terminator: call fn make_addr(8080u) -> _6 then bb7
+                    terminator: call fn make_addr(8080u) -> _4 then bb6
                 bb5:
-                    terminator: return
-                bb6:
                     terminator: goto -> bb4
+                bb6:
+                    terminator: call fn libc::bind(copy _1, copy _7, 16u) -> _8 then bb7
                 bb7:
-                    terminator: call fn libc::bind(copy _1, copy _9, 16u) -> _8 then bb8
+                    terminator: switch copy _9 [1 -> bb8] otherwise -> bb9
                 bb8:
-                    terminator: switch copy _7 [1 -> bb9] otherwise -> bb10
+                    s0: intrinsic Println "bind failed
+" []
+                    terminator: call fn libc::close(copy _1) -> _11 then bb11
                 bb9:
-                    terminator: call fn printf(copy _11) -> _12 then bb12
+                    terminator: goto -> bb10
                 bb10:
-                    terminator: goto -> bb11
+                    terminator: call fn libc::listen(copy _1, 16) -> _12 then bb13
                 bb11:
-                    terminator: call fn libc::listen(copy _1, 16) -> _15 then bb15
+                    terminator: return
                 bb12:
-                    terminator: call fn libc::close(copy _1) -> _13 then bb13
+                    terminator: goto -> bb10
                 bb13:
-                    terminator: return
+                    terminator: switch copy _13 [1 -> bb14] otherwise -> bb15
                 bb14:
-                    terminator: goto -> bb11
+                    s0: intrinsic Println "listen failed
+" []
+                    terminator: call fn libc::close(copy _1) -> _15 then bb17
                 bb15:
-                    terminator: switch copy _14 [1 -> bb16] otherwise -> bb17
+                    terminator: goto -> bb16
                 bb16:
-                    terminator: call fn printf(copy _17) -> _18 then bb19
+                    s0: intrinsic Println "listening on 0.0.0.0:8080
+" []
+                    s1: _19 = cast(Misc, 72, u8)
+                    s2: _20 = cast(Misc, 84, u8)
+                    s3: _21 = cast(Misc, 84, u8)
+                    s4: _22 = cast(Misc, 80, u8)
+                    s5: _23 = cast(Misc, 47, u8)
+                    s6: _24 = cast(Misc, 49, u8)
+                    s7: _25 = cast(Misc, 46, u8)
+                    s8: _26 = cast(Misc, 49, u8)
+                    s9: _27 = cast(Misc, 32, u8)
+                    s10: _28 = cast(Misc, 50, u8)
+                    s11: _29 = cast(Misc, 48, u8)
+                    s12: _30 = cast(Misc, 48, u8)
+                    s13: _31 = cast(Misc, 32, u8)
+                    s14: _32 = cast(Misc, 79, u8)
+                    s15: _33 = cast(Misc, 75, u8)
+                    s16: _34 = cast(Misc, 13, u8)
+                    s17: _35 = cast(Misc, 10, u8)
+                    s18: _36 = cast(Misc, 67, u8)
+                    s19: _37 = cast(Misc, 111, u8)
+                    s20: _38 = cast(Misc, 110, u8)
+                    s21: _39 = cast(Misc, 116, u8)
+                    s22: _40 = cast(Misc, 101, u8)
+                    s23: _41 = cast(Misc, 110, u8)
+                    s24: _42 = cast(Misc, 116, u8)
+                    s25: _43 = cast(Misc, 45, u8)
+                    s26: _44 = cast(Misc, 76, u8)
+                    s27: _45 = cast(Misc, 101, u8)
+                    s28: _46 = cast(Misc, 110, u8)
+                    s29: _47 = cast(Misc, 103, u8)
+                    s30: _48 = cast(Misc, 116, u8)
+                    s31: _49 = cast(Misc, 104, u8)
+                    s32: _50 = cast(Misc, 58, u8)
+                    s33: _51 = cast(Misc, 32, u8)
+                    s34: _52 = cast(Misc, 49, u8)
+                    s35: _53 = cast(Misc, 50, u8)
+                    s36: _54 = cast(Misc, 13, u8)
+                    s37: _55 = cast(Misc, 10, u8)
+                    s38: _56 = cast(Misc, 67, u8)
+                    s39: _57 = cast(Misc, 111, u8)
+                    s40: _58 = cast(Misc, 110, u8)
+                    s41: _59 = cast(Misc, 110, u8)
+                    s42: _60 = cast(Misc, 101, u8)
+                    s43: _61 = cast(Misc, 99, u8)
+                    s44: _62 = cast(Misc, 116, u8)
+                    s45: _63 = cast(Misc, 105, u8)
+                    s46: _64 = cast(Misc, 111, u8)
+                    s47: _65 = cast(Misc, 110, u8)
+                    s48: _66 = cast(Misc, 58, u8)
+                    s49: _67 = cast(Misc, 32, u8)
+                    s50: _68 = cast(Misc, 99, u8)
+                    s51: _69 = cast(Misc, 108, u8)
+                    s52: _70 = cast(Misc, 111, u8)
+                    s53: _71 = cast(Misc, 115, u8)
+                    s54: _72 = cast(Misc, 101, u8)
+                    s55: _73 = cast(Misc, 13, u8)
+                    s56: _74 = cast(Misc, 10, u8)
+                    s57: _75 = cast(Misc, 13, u8)
+                    s58: _76 = cast(Misc, 10, u8)
+                    s59: _77 = cast(Misc, 72, u8)
+                    s60: _78 = cast(Misc, 101, u8)
+                    s61: _79 = cast(Misc, 108, u8)
+                    s62: _80 = cast(Misc, 108, u8)
+                    s63: _81 = cast(Misc, 111, u8)
+                    s64: _82 = cast(Misc, 32, u8)
+                    s65: _83 = cast(Misc, 119, u8)
+                    s66: _84 = cast(Misc, 111, u8)
+                    s67: _85 = cast(Misc, 114, u8)
+                    s68: _86 = cast(Misc, 108, u8)
+                    s69: _87 = cast(Misc, 100, u8)
+                    s70: _88 = cast(Misc, 10, u8)
+                    s71: _18 = aggregate(array [u8]; [copy _19, copy _20, copy _21, copy _22, copy _23, copy _24, copy _25, copy _26, copy _27, copy _28, copy _29, copy _30, copy _31, copy _32, copy _33, copy _34, copy _35, copy _36, copy _37, copy _38, copy _39, copy _40, copy _41, copy _42, copy _43, copy _44, copy _45, copy _46, copy _47, copy _48, copy _49, copy _50, copy _51, copy _52, copy _53, copy _54, copy _55, copy _56, copy _57, copy _58, copy _59, copy _60, copy _61, copy _62, copy _63, copy _64, copy _65, copy _66, copy _67, copy _68, copy _69, copy _70, copy _71, copy _72, copy _73, copy _74, copy _75, copy _76, copy _77, copy _78, copy _79, copy _80, copy _81, copy _82, copy _83, copy _84, copy _85, copy _86, copy _87, copy _88])
+                    s72: _17 = copy _18
+                    terminator: goto -> bb19
                 bb17:
-                    terminator: goto -> bb18
-                bb18:
-                    terminator: call fn printf(copy _21) -> _22 then bb22
-                bb19:
-                    terminator: call fn libc::close(copy _1) -> _19 then bb20
-                bb20:
                     terminator: return
+                bb18:
+                    terminator: goto -> bb16
+                bb19:
+                    terminator: goto -> bb20
+                bb20:
+                    terminator: call fn make_addr(0u) -> _89 then bb22
                 bb21:
-                    terminator: goto -> bb18
-                bb22:
-                    s0: _25 = cast(Misc, 72, u8)
-                    s1: _26 = cast(Misc, 84, u8)
-                    s2: _27 = cast(Misc, 84, u8)
-                    s3: _28 = cast(Misc, 80, u8)
-                    s4: _29 = cast(Misc, 47, u8)
-                    s5: _30 = cast(Misc, 49, u8)
-                    s6: _31 = cast(Misc, 46, u8)
-                    s7: _32 = cast(Misc, 49, u8)
-                    s8: _33 = cast(Misc, 32, u8)
-                    s9: _34 = cast(Misc, 50, u8)
-                    s10: _35 = cast(Misc, 48, u8)
-                    s11: _36 = cast(Misc, 48, u8)
-                    s12: _37 = cast(Misc, 32, u8)
-                    s13: _38 = cast(Misc, 79, u8)
-                    s14: _39 = cast(Misc, 75, u8)
-                    s15: _40 = cast(Misc, 13, u8)
-                    s16: _41 = cast(Misc, 10, u8)
-                    s17: _42 = cast(Misc, 67, u8)
-                    s18: _43 = cast(Misc, 111, u8)
-                    s19: _44 = cast(Misc, 110, u8)
-                    s20: _45 = cast(Misc, 116, u8)
-                    s21: _46 = cast(Misc, 101, u8)
-                    s22: _47 = cast(Misc, 110, u8)
-                    s23: _48 = cast(Misc, 116, u8)
-                    s24: _49 = cast(Misc, 45, u8)
-                    s25: _50 = cast(Misc, 76, u8)
-                    s26: _51 = cast(Misc, 101, u8)
-                    s27: _52 = cast(Misc, 110, u8)
-                    s28: _53 = cast(Misc, 103, u8)
-                    s29: _54 = cast(Misc, 116, u8)
-                    s30: _55 = cast(Misc, 104, u8)
-                    s31: _56 = cast(Misc, 58, u8)
-                    s32: _57 = cast(Misc, 32, u8)
-                    s33: _58 = cast(Misc, 49, u8)
-                    s34: _59 = cast(Misc, 50, u8)
-                    s35: _60 = cast(Misc, 13, u8)
-                    s36: _61 = cast(Misc, 10, u8)
-                    s37: _62 = cast(Misc, 67, u8)
-                    s38: _63 = cast(Misc, 111, u8)
-                    s39: _64 = cast(Misc, 110, u8)
-                    s40: _65 = cast(Misc, 110, u8)
-                    s41: _66 = cast(Misc, 101, u8)
-                    s42: _67 = cast(Misc, 99, u8)
-                    s43: _68 = cast(Misc, 116, u8)
-                    s44: _69 = cast(Misc, 105, u8)
-                    s45: _70 = cast(Misc, 111, u8)
-                    s46: _71 = cast(Misc, 110, u8)
-                    s47: _72 = cast(Misc, 58, u8)
-                    s48: _73 = cast(Misc, 32, u8)
-                    s49: _74 = cast(Misc, 99, u8)
-                    s50: _75 = cast(Misc, 108, u8)
-                    s51: _76 = cast(Misc, 111, u8)
-                    s52: _77 = cast(Misc, 115, u8)
-                    s53: _78 = cast(Misc, 101, u8)
-                    s54: _79 = cast(Misc, 13, u8)
-                    s55: _80 = cast(Misc, 10, u8)
-                    s56: _81 = cast(Misc, 13, u8)
-                    s57: _82 = cast(Misc, 10, u8)
-                    s58: _83 = cast(Misc, 72, u8)
-                    s59: _84 = cast(Misc, 101, u8)
-                    s60: _85 = cast(Misc, 108, u8)
-                    s61: _86 = cast(Misc, 108, u8)
-                    s62: _87 = cast(Misc, 111, u8)
-                    s63: _88 = cast(Misc, 32, u8)
-                    s64: _89 = cast(Misc, 119, u8)
-                    s65: _90 = cast(Misc, 111, u8)
-                    s66: _91 = cast(Misc, 114, u8)
-                    s67: _92 = cast(Misc, 108, u8)
-                    s68: _93 = cast(Misc, 100, u8)
-                    s69: _94 = cast(Misc, 10, u8)
-                    s70: _24 = aggregate(array [u8]; [copy _25, copy _26, copy _27, copy _28, copy _29, copy _30, copy _31, copy _32, copy _33, copy _34, copy _35, copy _36, copy _37, copy _38, copy _39, copy _40, copy _41, copy _42, copy _43, copy _44, copy _45, copy _46, copy _47, copy _48, copy _49, copy _50, copy _51, copy _52, copy _53, copy _54, copy _55, copy _56, copy _57, copy _58, copy _59, copy _60, copy _61, copy _62, copy _63, copy _64, copy _65, copy _66, copy _67, copy _68, copy _69, copy _70, copy _71, copy _72, copy _73, copy _74, copy _75, copy _76, copy _77, copy _78, copy _79, copy _80, copy _81, copy _82, copy _83, copy _84, copy _85, copy _86, copy _87, copy _88, copy _89, copy _90, copy _91, copy _92, copy _93, copy _94])
-                    s71: _23 = copy _24
-                    terminator: goto -> bb23
-                bb23:
-                    terminator: goto -> bb24
-                bb24:
-                    terminator: call fn make_addr(0u) -> _95 then bb26
-                bb25:
                     terminator: <none>
+                bb22:
+                    s0: _90 = 16u
+                    s1: _92 = ref(Mut { allow_two_phase_borrow: false }, _89)
+                    s2: _93 = cast(Misc, copy _92, <??>)
+                    s3: _95 = ref(Mut { allow_two_phase_borrow: false }, _90)
+                    s4: _96 = cast(Misc, copy _95, <??>)
+                    terminator: call fn libc::accept(copy _1, copy _93, copy _96) -> _97 then bb23
+                bb23:
+                    s0: _98 = Lt(copy _97, 0)
+                    terminator: switch copy _98 [1 -> bb24] otherwise -> bb25
+                bb24:
+                    s0: intrinsic Println "accept failed
+" []
+                    terminator: goto -> bb19
+                bb25:
+                    terminator: goto -> bb26
                 bb26:
-                    s0: _96 = 16u
-                    s1: _98 = address_of(Not, _95)
-                    s2: _99 = address_of(Not, _96)
-                    terminator: call fn libc::accept(copy _1, copy _98, copy _99) -> _97 then bb27
+                    s0: _101 = ref(Shared, _17)
+                    s1: _102 = cast(Misc, copy _101, <??>)
+                    terminator: call fn libc::write(copy _97, copy _102, 70u) -> _103 then bb28
                 bb27:
-                    s0: _100 = Lt(copy _97, 0)
-                    terminator: switch copy _100 [1 -> bb28] otherwise -> bb29
+                    terminator: goto -> bb26
                 bb28:
-                    s0: _101 = "accept failed\n"
-                    s1: _102 = address_of(Not, _101)
-                    terminator: call fn printf(copy _102) -> _103 then bb31
+                    terminator: call fn libc::close(copy _97) -> _104 then bb29
                 bb29:
-                    terminator: goto -> bb30
-                bb30:
-                    s0: _106 = address_of(Not, _23[Index(105)])
-                    terminator: call fn libc::write(copy _97, copy _106, 70u) -> _104 then bb33
-                bb31:
-                    terminator: goto -> bb23
-                bb32:
-                    terminator: goto -> bb30
-                bb33:
-                    terminator: call fn libc::close(copy _97) -> _107 then bb34
-                bb34:
-                    terminator: goto -> bb23
+                    terminator: goto -> bb19
 }

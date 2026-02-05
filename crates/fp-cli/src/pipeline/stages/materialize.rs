@@ -75,11 +75,22 @@ impl IntrinsicMaterializer for NoopIntrinsicMaterializer {}
 impl IntrinsicsMaterializer {
     fn for_target(target: &BackendKind, backend: Option<&str>) -> Self {
         match target {
-            BackendKind::Llvm | BackendKind::Binary => {
+            BackendKind::Llvm => Self {
+                strategy: Box::new(LlvmRuntimeIntrinsicMaterializer),
+            },
+            BackendKind::Binary => {
                 let wants_cranelift = backend
-                    .map(|value| value.eq_ignore_ascii_case("cranelift") || value.eq_ignore_ascii_case("fp-cranelift"))
+                    .map(|value| {
+                        value.eq_ignore_ascii_case("cranelift")
+                            || value.eq_ignore_ascii_case("fp-cranelift")
+                    })
                     .unwrap_or(false);
-                if wants_cranelift {
+                let wants_llvm = backend
+                    .map(|value| {
+                        value.eq_ignore_ascii_case("llvm") || value.eq_ignore_ascii_case("fp-llvm")
+                    })
+                    .unwrap_or(false);
+                if wants_cranelift || !wants_llvm {
                     Self {
                         strategy: Box::new(NoopIntrinsicMaterializer),
                     }

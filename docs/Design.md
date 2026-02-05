@@ -68,6 +68,11 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
   and backends can read principal types without repeating inference.
 - Works hand-in-hand with intrinsic normalisation: canonical symbols simplify
   constraint generation.
+- Provides two explicit hooks for interpreter inter-op:
+  - **Resolution hook**: lazily materialises missing symbols during incremental
+    typing.
+  - **Type-eval bridge**: evaluates type-level expressions/functions that
+    require execution, while keeping type inference as the authority.
 
 ## Multi-Mode Support
 

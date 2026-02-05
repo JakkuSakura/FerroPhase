@@ -17,10 +17,10 @@ struct SockAddrIn {
 
 mod libc {
     extern "C" fn socket(domain: i32, sock_type: i32, protocol: i32) -> i32;
-    extern "C" fn bind(fd: i32, addr: &crate::SockAddrIn, addrlen: u32) -> i32;
+    extern "C" fn bind(fd: i32, addr: *crate::SockAddrIn, addrlen: u32) -> i32;
     extern "C" fn listen(fd: i32, backlog: i32) -> i32;
-    extern "C" fn accept(fd: i32, addr: &mut crate::SockAddrIn, addrlen: &mut u32) -> i32;
-    extern "C" fn write(fd: i32, buf: &u8, count: usize) -> i64;
+    extern "C" fn accept(fd: i32, addr: *mut crate::SockAddrIn, addrlen: *mut u32) -> i32;
+    extern "C" fn write(fd: i32, buf: *u8, count: usize) -> i64;
     extern "C" fn close(fd: i32) -> i32;
     extern "C" fn htons(hostshort: u16) -> u16;
 }
@@ -49,13 +49,16 @@ fn main() {
     }
 
     let addr = make_addr(8080);
-    if libc::bind(server_fd, &addr, SOCKADDR_LEN) < 0 {
+    let addr_ptr = (&addr as *SockAddrIn);
+    let bind_rc = libc::bind(server_fd, addr_ptr, SOCKADDR_LEN);
+    if bind_rc < 0 {
         println!("bind failed");
         libc::close(server_fd);
         return;
     }
 
-    if libc::listen(server_fd, 16) < 0 {
+    let listen_rc = libc::listen(server_fd, 16);
+    if listen_rc < 0 {
         println!("listen failed");
         libc::close(server_fd);
         return;
@@ -78,13 +81,16 @@ fn main() {
     loop {
         let mut client_addr = make_addr(0);
         let mut client_len: u32 = SOCKADDR_LEN;
-        let client_fd = libc::accept(server_fd, &mut client_addr, &mut client_len);
+        let client_addr_ptr = (&mut client_addr as *mut SockAddrIn);
+        let client_len_ptr = (&mut client_len as *mut u32);
+        let client_fd = libc::accept(server_fd, client_addr_ptr, client_len_ptr);
         if client_fd < 0 {
             println!("accept failed");
             continue;
         }
 
-        let _ = libc::write(client_fd, &response[0], RESPONSE_LEN);
+        let response_ptr = (&response as *u8);
+        let _ = libc::write(client_fd, response_ptr, RESPONSE_LEN);
         libc::close(client_fd);
     }
 }

@@ -611,6 +611,13 @@ impl InterfaceBuilder {
                 current_package,
                 receiver_ctx,
             ),
+            Ty::RawPtr(raw_ptr) => self.wit_type_for(
+                raw_ptr.ty.as_ref(),
+                hint,
+                receiver_scope,
+                current_package,
+                receiver_ctx,
+            ),
             Ty::TokenStream(_) => "json".to_string(),
             Ty::Tuple(tuple) => {
                 let mut parts = Vec::new();
@@ -1449,6 +1456,7 @@ fn ty_to_wit_with_self(ty: &Ty, self_name: Option<&str>) -> String {
             TypePrimitive::List => "list<string>".to_string(),
         },
         Ty::Reference(reference) => ty_to_wit_with_self(&reference.ty, self_name),
+        Ty::RawPtr(raw_ptr) => ty_to_wit_with_self(&raw_ptr.ty, self_name),
         Ty::Tuple(tuple) => {
             let inner = tuple
                 .types

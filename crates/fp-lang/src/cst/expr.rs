@@ -1277,6 +1277,7 @@ impl Parser {
             }
             Some("(") => self.parse_paren_type(stops),
             Some("&") => self.parse_ref_type(stops),
+            Some("*") => self.parse_ptr_type(stops),
             Some("[") => self.parse_array_or_slice_type(),
             Some("fn") => {
                 if self.peek_second_non_trivia_raw() == Some("(") {
@@ -1440,6 +1441,24 @@ impl Parser {
         self.bump_token_into(&mut children);
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TySlice, children, span))
+    }
+
+    fn parse_ptr_type(&mut self, stops: &[&str]) -> Result<SyntaxNode, ExprCstParseError> {
+        let mut children = Vec::new();
+        self.bump_trivia_into(&mut children);
+        self.expect_token_raw("*")?;
+        self.bump_token_into(&mut children);
+        self.bump_trivia_into(&mut children);
+
+        if self.peek_non_trivia_normalized() == Some("mut") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
+
+        let inner = self.parse_type_bp_until(0, stops)?;
+        children.push(SyntaxElement::Node(Box::new(inner)));
+        let span = span_for_children(&children);
+        Ok(SyntaxNode::new(SyntaxKind::TyPtr, children, span))
     }
 
     fn parse_fn_type(&mut self) -> Result<SyntaxNode, ExprCstParseError> {

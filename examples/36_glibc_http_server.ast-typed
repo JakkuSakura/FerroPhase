@@ -4202,10 +4202,10 @@ ast::File {
     }
     pub module libc : () {
       declare extern "C" fn socket(domain: Expr(i32), sock_type: Expr(i32), protocol: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn bind(fd: Expr(i32), addr: &Expr(crate::SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), &Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32) : fn(Expr(i32), &Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32)
+      declare extern "C" fn bind(fd: Expr(i32), addr: *Expr(crate::SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), *Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32) : fn(Expr(i32), *Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32)
       declare extern "C" fn listen(fd: Expr(i32), backlog: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn accept(fd: Expr(i32), addr: &mut Expr(crate::SockAddrIn), addrlen: &mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), &mut Expr(crate::SockAddrIn), &mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), &mut Expr(crate::SockAddrIn), &mut Expr(u32)) -> Expr(i32)
-      declare extern "C" fn write(fd: Expr(i32), buf: &Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(u8), Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(u8), Expr(usize)) -> Expr(i64)
+      declare extern "C" fn accept(fd: Expr(i32), addr: *mut Expr(crate::SockAddrIn), addrlen: *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(crate::SockAddrIn), *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(crate::SockAddrIn), *mut Expr(u32)) -> Expr(i32)
+      declare extern "C" fn write(fd: Expr(i32), buf: *Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), *Expr(u8), Expr(usize)) -> Expr(i64) : fn(Expr(i32), *Expr(u8), Expr(usize)) -> Expr(i64)
       declare extern "C" fn close(fd: Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32)
       declare extern "C" fn htons(hostshort: Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16)
     }
@@ -4240,7 +4240,7 @@ ast::File {
             sin_zero1:
               value 0 : i64
     pub fn main() -> () : fn() -> () : fn() -> ()
-      block (8 stmts) : !
+      block (11 stmts) : !
         let server_fd
           init:
             invoke : i32
@@ -4272,18 +4272,25 @@ ast::File {
               target: make_addr
               args:
                 value 8080 : u16
+        let addr_ptr
+          init:
+            cast : *SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)} -> *Expr(SockAddrIn)
+              reference (mutable: unspecified) : &SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                locator addr : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+        let bind_rc
+          init:
+            invoke : i32
+              target: libc::bind
+              args:
+                locator server_fd : i32
+                locator addr_ptr : *SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                value 16 : i64
         expr_stmt (value)
           if : ()
             cond:
               binop < : bool
                 lhs:
-                  invoke : i32
-                    target: libc::bind
-                    args:
-                      locator server_fd : i32
-                      reference (mutable: unspecified) : &SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                        locator addr : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                      value 16 : i64
+                  locator bind_rc : i32
                 rhs:
                   value 0 : i64
             then:
@@ -4300,16 +4307,19 @@ ast::File {
                       locator server_fd : i32
                 expr_stmt ;
                   return : !
+        let listen_rc
+          init:
+            invoke : i32
+              target: libc::listen
+              args:
+                locator server_fd : i32
+                value 16 : i64
         expr_stmt (value)
           if : ()
             cond:
               binop < : bool
                 lhs:
-                  invoke : i32
-                    target: libc::listen
-                    args:
-                      locator server_fd : i32
-                      value 16 : i64
+                  locator listen_rc : i32
                 rhs:
                   value 0 : i64
             then:
@@ -4476,7 +4486,7 @@ ast::File {
                 value 10 : i64
         expr_stmt (value)
           loop : !
-            block (6 stmts) : ()
+            block (9 stmts) : ()
               let mut client_addr
                 init:
                   invoke : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
@@ -4486,16 +4496,24 @@ ast::File {
               let mut client_len: Expr(u32)
                 init:
                   value 16 : u32
+              let client_addr_ptr
+                init:
+                  cast : *mut SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)} -> *mut Expr(SockAddrIn)
+                    reference (mutable: mut) : &SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                      locator client_addr : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+              let client_len_ptr
+                init:
+                  cast : *mut u32 -> *mut Expr(u32)
+                    reference (mutable: mut) : &u32
+                      locator client_len : u32
               let client_fd
                 init:
                   invoke : i32
                     target: libc::accept
                     args:
                       locator server_fd : i32
-                      reference (mutable: mut) : &SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                        locator client_addr : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                      reference (mutable: mut) : &u32
-                        locator client_len : u32
+                      locator client_addr_ptr : *mut SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                      locator client_len_ptr : *mut u32
               expr_stmt (value)
                 if : ()
                   cond:
@@ -4513,18 +4531,18 @@ ast::File {
                           kwargs: []
                       expr_stmt ;
                         continue : !
+              let response_ptr
+                init:
+                  cast : *u8 -> *Expr(u8)
+                    reference (mutable: unspecified) : &[u8; 0]
+                      locator response : [u8; 0]
               let _
                 init:
                   invoke : i64
                     target: libc::write
                     args:
                       locator client_fd : i32
-                      reference (mutable: unspecified) : &u8
-                        index : u8
-                          value:
-                            locator response : [u8; 0]
-                          index:
-                            value 0 : i64
+                      locator response_ptr : *u8
                       value 70 : i64
               expr_stmt ;
                 invoke : i32

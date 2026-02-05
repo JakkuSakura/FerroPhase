@@ -20,8 +20,8 @@ use fp_core::ast::{
     PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
     PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
     DecimalType, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType,
-    TypeVec, Value, ValueNone, ValueString,
+    TypePrimitive, TypeQuote, TypeRawPtr, TypeReference, TypeSlice, TypeStructural, TypeTuple,
+    TypeType, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -1918,6 +1918,7 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyUnknown => Ok(Ty::unknown()),
         SyntaxKind::TyPath => lower_ty_path(node),
         SyntaxKind::TyRef => lower_ty_ref(node),
+        SyntaxKind::TyPtr => lower_ty_ptr(node),
         SyntaxKind::TySlice => lower_ty_slice(node),
         SyntaxKind::TyArray => lower_ty_array(node),
         SyntaxKind::TyFn => lower_ty_fn(node),
@@ -2446,6 +2447,33 @@ fn lower_ty_ref(node: &SyntaxNode) -> Result<Ty, LowerError> {
             ty: Box::new(inner),
             mutability: is_mut.then_some(true),
             lifetime,
+        }
+        .into(),
+    ))
+}
+
+fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let mut is_mut = false;
+    for child in &node.children {
+        let crate::syntax::SyntaxElement::Token(tok) = child else {
+            continue;
+        };
+        if tok.is_trivia() {
+            continue;
+        }
+        if tok.text == "mut" {
+            is_mut = true;
+        }
+    }
+
+    let inner = node_children_types(node)
+        .next()
+        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
+    let inner = lower_type_from_cst(inner)?;
+    Ok(Ty::RawPtr(
+        TypeRawPtr {
+            ty: Box::new(inner),
+            mutability: is_mut.then_some(true),
         }
         .into(),
     ))

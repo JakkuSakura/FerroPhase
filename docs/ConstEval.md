@@ -2,7 +2,9 @@
 
 Const evaluation now operates directly on the typed AST. The interpreter runs in
 const mode over the same structures used by runtime execution and backend
-lowerings, requesting types lazily as it evaluates expressions.
+lowerings, requesting types lazily as it evaluates expressions. When a type
+expression requires execution (e.g., a type-level function), the typer can ask
+the interpreter to evaluate it through the type-eval bridge.
 
 ```
 Source → LAST → AST → ASTᵗ → (Const Evaluation) → ASTᵗ′
@@ -11,8 +13,8 @@ Source → LAST → AST → ASTᵗ → (Const Evaluation) → ASTᵗ′
 - `ASTᵗ` is the canonical AST annotated with types by the Algorithm W inferencer.
 - Const evaluation mutates the AST when necessary (constant folding, generated
   declarations, intrinsic rewrites) and returns `ASTᵗ′`. The interpreter can
-  infer missing types on demand and registers any generated items with the
-  incremental typer.
+  infer missing types on demand, evaluate type-level expressions via the bridge,
+  and registers any generated items with the incremental typer.
 - `ASTᵗ′` is the authoritative programme for all downstream stages (HIRᵗ, MIR,
   LIR, transpilers).
 
@@ -89,8 +91,9 @@ const GENERATED: Type = {
    - Parse and normalise the AST, then initialize the incremental type
      environment (predeclare items, prepare query hooks).
    - The interpreter requests type info as needed, using the same Algorithm W
-     solver, and can resolve missing symbols by materialising const-generated
-     items.
+     solver, can resolve missing symbols by materialising const-generated
+     items, and can execute type-level expressions via the bridge when the
+     typer needs runtime assistance.
 
 2. **Const execution**
    - Build dependency order from the typed AST (const items, const blocks,
@@ -160,4 +163,4 @@ new typed HIR/MIR pipeline is reinstated.
   different configuration flags.
 - The typed AST is the single source of truth; THIR is no longer produced.
 - Intrinsic handling and type queries operate through shared resolver/query
-  infrastructure.
+  infrastructure, with a bridge for type-level evaluation when required.

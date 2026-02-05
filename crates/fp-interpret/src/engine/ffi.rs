@@ -2,8 +2,9 @@ use std::collections::HashMap;
 use std::ffi::{c_void, CString};
 
 use fp_core::ast::{
-    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive,
-    TypeReference, Value, ValueChar, ValuePointer,
+    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeArray, TypeInt, TypePrimitive,
+    TypeReference, TypeStruct, TypeStructural, TypeTuple, Value, ValueChar, ValueEscaped,
+    ValueList, ValuePointer, ValueStruct, ValueStructural, ValueTuple,
 };
 use fp_core::error::{Error, Result};
 use libffi::middle::{Arg, Cif, CodePtr, Type};
@@ -28,6 +29,19 @@ enum FfiArgValue {
     F32(f32),
     F64(f64),
     Ptr(*mut c_void),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct FfiSliceRef {
+    pub values: Vec<Value>,
+    pub index: usize,
+}
+
+#[derive(Debug, Clone)]
+struct CAbiLayout {
+    size: usize,
+    align: usize,
+    field_offsets: Vec<usize>,
 }
 
 impl FfiRuntime {
@@ -56,7 +70,7 @@ impl FfiRuntime {
         }
 
         let func_ptr = self.resolve_symbol(name)?;
-        let (arg_types, arg_values, _cstrings) = self.build_args(sig, args)?;
+        let (arg_types, arg_values, _cstrings, _escapes) = self.build_args(sig, args)?;
         let ret_ty = ffi_type_for_return(sig.ret_ty.as_ref())?;
 
         let cif = Cif::new(arg_types, ret_ty.clone());
@@ -99,19 +113,20 @@ impl FfiRuntime {
         &self,
         sig: &FunctionSignature,
         args: &[Value],
-    ) -> Result<(Vec<Type>, Vec<FfiArgValue>, Vec<CString>)> {
+    ) -> Result<(Vec<Type>, Vec<FfiArgValue>, Vec<CString>, Vec<ValueEscaped>)> {
         let mut arg_types = Vec::with_capacity(sig.params.len());
         let mut arg_values = Vec::with_capacity(sig.params.len());
         let mut cstrings = Vec::new();
+        let mut escapes = Vec::new();
 
         for (param, value) in sig.params.iter().zip(args.iter()) {
             let ty = &param.ty;
             let ffi_ty = ffi_type_for_arg(ty)?;
             arg_types.push(ffi_ty);
-            push_arg_value(ty, value, &mut arg_values, &mut cstrings)?;
+            push_arg_value(ty, value, &mut arg_values, &mut cstrings, &mut escapes)?;
         }
 
-        Ok((arg_types, arg_values, cstrings))
+        Ok((arg_types, arg_values, cstrings, escapes))
     }
 
     unsafe fn invoke(
@@ -232,6 +247,7 @@ fn push_arg_value(
     value: &Value,
     args: &mut Vec<FfiArgValue>,
     cstrings: &mut Vec<CString>,
+    escapes: &mut Vec<ValueEscaped>,
 ) -> Result<()> {
     if is_cstr_reference(ty) {
         match value {
@@ -250,7 +266,7 @@ fn push_arg_value(
     }
 
     let resolved = resolve_ffi_ty(ty).unwrap_or_else(|| ty.clone());
-    match &resolved {
+        match &resolved {
         Ty::Primitive(TypePrimitive::Bool) => match value {
             Value::Bool(v) => args.push(FfiArgValue::U8(if v.value { 1 } else { 0 })),
             _ => return Err(Error::from("expected bool argument")),
@@ -278,16 +294,333 @@ fn push_arg_value(
             if resolves_to_string(ty.as_ref()) {
                 return Err(Error::from("unsupported extern &str arg type; use &CStr"));
             }
-            match value {
-                Value::Pointer(ptr) => args.push(FfiArgValue::Ptr(ptr.value as *mut c_void)),
-                Value::Null(_) => args.push(FfiArgValue::Ptr(std::ptr::null_mut())),
-                _ => return Err(Error::from("expected pointer argument")),
+            if let Value::Pointer(ptr) = value {
+                args.push(FfiArgValue::Ptr(ptr.value as *mut c_void));
+                return Ok(());
             }
+            if let Value::Null(_) = value {
+                args.push(FfiArgValue::Ptr(std::ptr::null_mut()));
+                return Ok(());
+            }
+            if let Value::Escaped(escaped) = value {
+                args.push(FfiArgValue::Ptr(escaped.ptr.value as *mut c_void));
+                return Ok(());
+            }
+            if let Value::Any(any) = value {
+                if let Some(slice_ref) = any.downcast_ref::<FfiSliceRef>() {
+                    let elem_ty = ty.as_ref();
+                    let elem_layout = c_abi_layout(elem_ty)?;
+                    let buf_size = elem_layout
+                        .size
+                        .checked_mul(slice_ref.values.len())
+                        .ok_or_else(|| Error::from("ffi slice buffer size overflow"))?;
+                    let mut escaped =
+                        ValueEscaped::new(buf_size as i64, elem_layout.align as i64);
+                    {
+                        let buf = unsafe { escaped.as_slice_mut() };
+                        for (idx, value) in slice_ref.values.iter().enumerate() {
+                            let offset = idx
+                                .checked_mul(elem_layout.size)
+                                .ok_or_else(|| Error::from("ffi slice offset overflow"))?;
+                            write_c_abi_value(elem_ty, value, buf, offset)?;
+                        }
+                    }
+                    let offset = slice_ref
+                        .index
+                        .checked_mul(elem_layout.size)
+                        .ok_or_else(|| Error::from("ffi slice index overflow"))?;
+                    let ptr = unsafe { escaped.as_ptr().add(offset) } as *mut c_void;
+                    args.push(FfiArgValue::Ptr(ptr));
+                    escapes.push(escaped);
+                    return Ok(());
+                }
+            }
+
+            let layout = c_abi_layout(ty.as_ref())?;
+            let mut escaped = ValueEscaped::new(layout.size as i64, layout.align as i64);
+            {
+                let buf = unsafe { escaped.as_slice_mut() };
+                write_c_abi_value(ty.as_ref(), value, buf, 0)?;
+            }
+            args.push(FfiArgValue::Ptr(escaped.ptr.value as *mut c_void));
+            escapes.push(escaped);
         }
         Ty::Unit(_) => return Err(Error::from("unit cannot be passed as extern arg")),
         _ => return Err(Error::from("unsupported extern argument type")),
     }
 
+    Ok(())
+}
+
+fn c_abi_layout(ty: &Ty) -> Result<CAbiLayout> {
+    let resolved = resolve_ffi_ty(ty).unwrap_or_else(|| ty.clone());
+    match &resolved {
+        Ty::Primitive(primitive) => c_abi_layout_for_primitive(*primitive),
+        Ty::Tuple(TypeTuple { types }) => c_abi_layout_for_fields(types),
+        Ty::Struct(TypeStruct { fields, .. }) => {
+            let field_tys: Vec<Ty> = fields.iter().map(|field| field.value.clone()).collect();
+            c_abi_layout_for_fields(&field_tys)
+        }
+        Ty::Structural(TypeStructural { fields }) => {
+            let field_tys: Vec<Ty> = fields.iter().map(|field| field.value.clone()).collect();
+            c_abi_layout_for_fields(&field_tys)
+        }
+        Ty::Array(TypeArray { elem, len }) => {
+            let elem_layout = c_abi_layout(elem)?;
+            let count = array_len_from_expr(len)?;
+            let size = elem_layout
+                .size
+                .checked_mul(count)
+                .ok_or_else(|| Error::from("array size overflow"))?;
+            Ok(CAbiLayout {
+                size,
+                align: elem_layout.align,
+                field_offsets: Vec::new(),
+            })
+        }
+        Ty::Reference(_) => Ok(CAbiLayout {
+            size: std::mem::size_of::<usize>(),
+            align: std::mem::align_of::<usize>(),
+            field_offsets: Vec::new(),
+        }),
+        _ => Err(Error::from("unsupported C ABI layout for type")),
+    }
+}
+
+fn c_abi_layout_for_fields(fields: &[Ty]) -> Result<CAbiLayout> {
+    let mut offsets = Vec::with_capacity(fields.len());
+    let mut offset = 0usize;
+    let mut max_align = 1usize;
+    for field in fields {
+        let layout = c_abi_layout(field)?;
+        max_align = max_align.max(layout.align);
+        offset = align_to(offset, layout.align);
+        offsets.push(offset);
+        offset = offset
+            .checked_add(layout.size)
+            .ok_or_else(|| Error::from("struct size overflow"))?;
+    }
+    let size = align_to(offset, max_align);
+    Ok(CAbiLayout {
+        size,
+        align: max_align,
+        field_offsets: offsets,
+    })
+}
+
+fn align_to(value: usize, alignment: usize) -> usize {
+    if alignment <= 1 {
+        return value;
+    }
+    let rem = value % alignment;
+    if rem == 0 {
+        value
+    } else {
+        value + (alignment - rem)
+    }
+}
+
+fn c_abi_layout_for_primitive(primitive: TypePrimitive) -> Result<CAbiLayout> {
+    let (size, align) = match primitive {
+        TypePrimitive::Bool => (1, 1),
+        TypePrimitive::Char => (4, 4),
+        TypePrimitive::Int(int_ty) => match int_ty {
+            TypeInt::I8 => (1, 1),
+            TypeInt::U8 => (1, 1),
+            TypeInt::I16 => (2, 2),
+            TypeInt::U16 => (2, 2),
+            TypeInt::I32 => (4, 4),
+            TypeInt::U32 => (4, 4),
+            TypeInt::I64 => (8, 8),
+            TypeInt::U64 => (8, 8),
+            TypeInt::BigInt => (8, 8),
+        },
+        TypePrimitive::Decimal(decimal_ty) => match decimal_ty {
+            DecimalType::F32 => (4, 4),
+            DecimalType::F64 => (8, 8),
+            _ => (8, 8),
+        },
+        TypePrimitive::String => (std::mem::size_of::<usize>(), std::mem::align_of::<usize>()),
+        TypePrimitive::List => {
+            return Err(Error::from("unsupported C ABI primitive list type"));
+        }
+    };
+    Ok(CAbiLayout {
+        size,
+        align,
+        field_offsets: Vec::new(),
+    })
+}
+
+fn array_len_from_expr(expr: &fp_core::ast::Expr) -> Result<usize> {
+    if let ExprKind::Value(value) = expr.kind() {
+        match &**value {
+            Value::Int(v) if v.value >= 0 => {
+                return usize::try_from(v.value)
+                    .map_err(|_| Error::from("array length out of range"));
+            }
+            _ => {}
+        }
+    }
+    Err(Error::from("array length must be a non-negative integer literal"))
+}
+
+fn write_c_abi_value(ty: &Ty, value: &Value, buf: &mut [u8], base: usize) -> Result<()> {
+    let resolved = resolve_ffi_ty(ty).unwrap_or_else(|| ty.clone());
+    match &resolved {
+        Ty::Primitive(primitive) => write_primitive_value(*primitive, value, buf, base),
+        Ty::Tuple(TypeTuple { types }) => {
+            let layout = c_abi_layout_for_fields(types)?;
+            let tuple = match value {
+                Value::Tuple(ValueTuple { values }) => values,
+                _ => return Err(Error::from("expected tuple value for C ABI tuple")),
+            };
+            if tuple.len() != types.len() {
+                return Err(Error::from("tuple length mismatch for C ABI tuple"));
+            }
+            for ((field_ty, field_value), offset) in types
+                .iter()
+                .zip(tuple.iter())
+                .zip(layout.field_offsets.iter())
+            {
+                write_c_abi_value(field_ty, field_value, buf, base + *offset)?;
+            }
+            Ok(())
+        }
+        Ty::Struct(TypeStruct { fields, .. }) => write_struct_value(fields, value, buf, base),
+        Ty::Structural(TypeStructural { fields }) => write_struct_value(fields, value, buf, base),
+        Ty::Array(TypeArray { elem, len }) => {
+            let count = array_len_from_expr(len)?;
+            let elem_layout = c_abi_layout(elem)?;
+            let list = match value {
+                Value::List(ValueList { values }) => values,
+                _ => return Err(Error::from("expected list value for C ABI array")),
+            };
+            if list.len() != count {
+                return Err(Error::from("array length mismatch for C ABI array"));
+            }
+            for (idx, item) in list.iter().enumerate() {
+                let offset = idx
+                    .checked_mul(elem_layout.size)
+                    .ok_or_else(|| Error::from("array element offset overflow"))?;
+                write_c_abi_value(elem, item, buf, base + offset)?;
+            }
+            Ok(())
+        }
+        _ => Err(Error::from("unsupported C ABI value type")),
+    }
+}
+
+fn write_struct_value(
+    fields: &[fp_core::ast::StructuralField],
+    value: &Value,
+    buf: &mut [u8],
+    base: usize,
+) -> Result<()> {
+    let field_tys: Vec<Ty> = fields.iter().map(|field| field.value.clone()).collect();
+    let layout = c_abi_layout_for_fields(&field_tys)?;
+    let struct_fields = match value {
+        Value::Struct(ValueStruct { structural, .. }) => &structural.fields,
+        Value::Structural(ValueStructural { fields }) => fields,
+        _ => return Err(Error::from("expected struct value for C ABI struct")),
+    };
+    if struct_fields.len() != fields.len() {
+        return Err(Error::from("struct field count mismatch for C ABI struct"));
+    }
+    for (field_def, offset) in fields.iter().zip(layout.field_offsets.iter()) {
+        let Some(field_value) = struct_fields
+            .iter()
+            .find(|field| field.name == field_def.name)
+        else {
+            return Err(Error::from("missing field value for C ABI struct"));
+        };
+        write_c_abi_value(&field_def.value, &field_value.value, buf, base + *offset)?;
+    }
+    Ok(())
+}
+
+fn write_primitive_value(
+    primitive: TypePrimitive,
+    value: &Value,
+    buf: &mut [u8],
+    base: usize,
+) -> Result<()> {
+    match primitive {
+        TypePrimitive::Bool => match value {
+            Value::Bool(v) => {
+                buf[base] = if v.value { 1 } else { 0 };
+                Ok(())
+            }
+            _ => Err(Error::from("expected bool value")),
+        },
+        TypePrimitive::Char => match value {
+            Value::Char(ValueChar { value }) => {
+                let bytes = (*value as u32).to_ne_bytes();
+                buf[base..base + 4].copy_from_slice(&bytes);
+                Ok(())
+            }
+            _ => Err(Error::from("expected char value")),
+        },
+        TypePrimitive::Int(int_ty) => match value {
+            Value::Int(v) => write_int_value(int_ty, v.value, buf, base),
+            Value::Bool(v) => write_int_value(int_ty, if v.value { 1 } else { 0 }, buf, base),
+            Value::Char(v) => write_int_value(int_ty, v.value as i64, buf, base),
+            _ => Err(Error::from("expected integer value")),
+        },
+        TypePrimitive::Decimal(decimal_ty) => match value {
+            Value::Decimal(v) => match decimal_ty {
+                DecimalType::F32 => {
+                    let bytes = (v.value as f32).to_ne_bytes();
+                    buf[base..base + 4].copy_from_slice(&bytes);
+                    Ok(())
+                }
+                DecimalType::F64 => {
+                    let bytes = (v.value as f64).to_ne_bytes();
+                    buf[base..base + 8].copy_from_slice(&bytes);
+                    Ok(())
+                }
+                _ => Err(Error::from("unsupported decimal value for C ABI")),
+            },
+            _ => Err(Error::from("expected decimal value")),
+        },
+        TypePrimitive::String => Err(Error::from("unsupported C ABI string value")),
+        TypePrimitive::List => Err(Error::from("unsupported C ABI list value")),
+    }
+}
+
+fn write_int_value(int_ty: TypeInt, value: i64, buf: &mut [u8], base: usize) -> Result<()> {
+    match int_ty {
+        TypeInt::I8 => buf[base] = value as i8 as u8,
+        TypeInt::U8 => buf[base] = value as u8,
+        TypeInt::I16 => {
+            let bytes = (value as i16).to_ne_bytes();
+            buf[base..base + 2].copy_from_slice(&bytes);
+        }
+        TypeInt::U16 => {
+            let bytes = (value as u16).to_ne_bytes();
+            buf[base..base + 2].copy_from_slice(&bytes);
+        }
+        TypeInt::I32 => {
+            let bytes = (value as i32).to_ne_bytes();
+            buf[base..base + 4].copy_from_slice(&bytes);
+        }
+        TypeInt::U32 => {
+            let bytes = (value as u32).to_ne_bytes();
+            buf[base..base + 4].copy_from_slice(&bytes);
+        }
+        TypeInt::I64 => {
+            let bytes = (value as i64).to_ne_bytes();
+            buf[base..base + 8].copy_from_slice(&bytes);
+        }
+        TypeInt::U64 => {
+            let bytes = (value as u64).to_ne_bytes();
+            buf[base..base + 8].copy_from_slice(&bytes);
+        }
+        TypeInt::BigInt => {
+            let bytes = (value as i64).to_ne_bytes();
+            buf[base..base + 8].copy_from_slice(&bytes);
+        }
+    }
     Ok(())
 }
 

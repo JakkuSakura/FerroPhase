@@ -34,6 +34,10 @@ pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
 }
 
+pub trait TypeEvaluationHook {
+    fn eval_type_expr(&mut self, expr: &Expr) -> Result<Option<Ty>>;
+}
+
 use crate::typing::unify::{FunctionTerm, TypeTerm, TypeVar, TypeVarKind};
 
 // TypeScheme moved to typing/scheme.rs
@@ -136,6 +140,7 @@ pub struct AstTypeInferencer<'ctx> {
     hashmap_args: HashMap<TypeVarId, (TypeVarId, TypeVarId)>,
     current_span: Option<Span>,
     resolution_hook: Option<Box<dyn TypeResolutionHook + 'ctx>>,
+    type_eval_hook: Option<Box<dyn TypeEvaluationHook + 'ctx>>,
 }
 
 impl<'ctx> AstTypeInferencer<'ctx> {
@@ -205,6 +210,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             hashmap_args: HashMap::new(),
             current_span: None,
             resolution_hook: None,
+            type_eval_hook: None,
             unimplemented_symbols: HashSet::new(),
         }
     }
@@ -216,6 +222,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub fn set_resolution_hook(&mut self, hook: Box<dyn TypeResolutionHook + 'ctx>) {
         self.resolution_hook = Some(hook);
+    }
+
+    pub fn set_type_eval_hook(&mut self, hook: Box<dyn TypeEvaluationHook + 'ctx>) {
+        self.type_eval_hook = Some(hook);
     }
 
     fn record_hashmap_args(

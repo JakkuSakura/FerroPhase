@@ -908,6 +908,14 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
             out.push_str(&render_ty_brief(reference.ty.as_ref()));
             out
         }
+        ast::Ty::RawPtr(raw_ptr) => {
+            let mut out = String::from("*");
+            if raw_ptr.mutability.unwrap_or(false) {
+                out.push_str("mut ");
+            }
+            out.push_str(&render_ty_brief(raw_ptr.ty.as_ref()));
+            out
+        }
         ast::Ty::Slice(slice) => format!("[{}]", render_ty_brief(slice.elem.as_ref())),
         ast::Ty::Expr(expr) => format!("Expr({})", render_expr_inline(expr)),
         ast::Ty::Quote(quote) => {

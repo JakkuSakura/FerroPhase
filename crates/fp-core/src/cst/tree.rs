@@ -106,6 +106,7 @@ pub enum CstKind {
     TyUnknown,
     TyPath,
     TyRef,
+    TyPtr,
     TySlice,
     TyArray,
     TyFn,
@@ -199,6 +200,7 @@ impl CstKind {
             | CstKind::TyUnknown
             | CstKind::TyPath
             | CstKind::TyRef
+            | CstKind::TyPtr
             | CstKind::TySlice
             | CstKind::TyArray
             | CstKind::TyFn

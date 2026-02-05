@@ -1,6 +1,4 @@
 hir::Program {
-    pub fn printf(fmt: &str, args: _) -> ();
-
     pub struct std::bench::BenchCase {
         pub name: str,
         pub run: fn() -> (),
@@ -619,13 +617,13 @@ hir::Program {
 
     pub fn libc::socket(domain: i32, sock_type: i32, protocol: i32) -> i32;
 
-    pub fn libc::bind(fd: i32, addr: &SockAddrIn, addrlen: u32) -> i32;
+    pub fn libc::bind(fd: i32, addr: *SockAddrIn, addrlen: u32) -> i32;
 
     pub fn libc::listen(fd: i32, backlog: i32) -> i32;
 
-    pub fn libc::accept(fd: i32, addr: &SockAddrIn, addrlen: &u32) -> i32;
+    pub fn libc::accept(fd: i32, addr: *SockAddrIn, addrlen: *u32) -> i32;
 
-    pub fn libc::write(fd: i32, buf: &u8, count: usize) -> i64;
+    pub fn libc::write(fd: i32, buf: *u8, count: usize) -> i64;
 
     pub fn libc::close(fd: i32) -> i32;
 
@@ -658,35 +656,41 @@ hir::Program {
             let server_fd = libc::socket(domain = 2, sock_type = 1, protocol = 0);
             if ((server_fd < 0))
                 {
-                    printf(arg0 = "socket failed\n");
+                    std::println(arg0 = format_string("socket failed"));
                     return;
                 }
             let addr = make_addr(port = 8080);
-            if ((libc::bind(fd = server_fd, addr = &addr, addrlen = 16) < 0))
+            let addr_ptr = (&addr as *SockAddrIn);
+            let bind_rc = libc::bind(fd = server_fd, addr = addr_ptr, addrlen = 16);
+            if ((bind_rc < 0))
                 {
-                    printf(arg0 = "bind failed\n");
+                    std::println(arg0 = format_string("bind failed"));
                     libc::close(fd = server_fd);
                     return;
                 }
-            if ((libc::listen(fd = server_fd, backlog = 16) < 0))
+            let listen_rc = libc::listen(fd = server_fd, backlog = 16);
+            if ((listen_rc < 0))
                 {
-                    printf(arg0 = "listen failed\n");
+                    std::println(arg0 = format_string("listen failed"));
                     libc::close(fd = server_fd);
                     return;
                 }
-            printf(arg0 = "listening on 0.0.0.0:8080\n");
+            std::println(arg0 = format_string("listening on 0.0.0.0:8080"));
             let response: [u8; 70] = [(72 as u8), (84 as u8), (84 as u8), (80 as u8), (47 as u8), (49 as u8), (46 as u8), (49 as u8), (32 as u8), (50 as u8), (48 as u8), (48 as u8), (32 as u8), (79 as u8), (75 as u8), (13 as u8), (10 as u8), (67 as u8), (111 as u8), (110 as u8), (116 as u8), (101 as u8), (110 as u8), (116 as u8), (45 as u8), (76 as u8), (101 as u8), (110 as u8), (103 as u8), (116 as u8), (104 as u8), (58 as u8), (32 as u8), (49 as u8), (50 as u8), (13 as u8), (10 as u8), (67 as u8), (111 as u8), (110 as u8), (110 as u8), (101 as u8), (99 as u8), (116 as u8), (105 as u8), (111 as u8), (110 as u8), (58 as u8), (32 as u8), (99 as u8), (108 as u8), (111 as u8), (115 as u8), (101 as u8), (13 as u8), (10 as u8), (13 as u8), (10 as u8), (72 as u8), (101 as u8), (108 as u8), (108 as u8), (111 as u8), (32 as u8), (119 as u8), (111 as u8), (114 as u8), (108 as u8), (100 as u8), (10 as u8)];
             loop
                 {
                     let mut client_addr = make_addr(port = 0);
                     let mut client_len: u32 = 16;
-                    let client_fd = libc::accept(fd = server_fd, addr = &mut client_addr, addrlen = &mut client_len);
+                    let client_addr_ptr = (&mut client_addr as *SockAddrIn);
+                    let client_len_ptr = (&mut client_len as *u32);
+                    let client_fd = libc::accept(fd = server_fd, addr = client_addr_ptr, addrlen = client_len_ptr);
                     if ((client_fd < 0))
                         {
-                            printf(arg0 = "accept failed\n");
+                            std::println(arg0 = format_string("accept failed"));
                             continue;
                         }
-                    let _ = libc::write(fd = client_fd, buf = &response[0], count = 70);
+                    let response_ptr = (&response as *u8);
+                    let _ = libc::write(fd = client_fd, buf = response_ptr, count = 70);
                     libc::close(fd = client_fd);
                 }
         }

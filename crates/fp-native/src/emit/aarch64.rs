@@ -522,6 +522,9 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
     let mut entry_offset = None;
 
     for (index, func) in program.functions.iter().enumerate() {
+        if func.is_declaration {
+            continue;
+        }
         asm.bind(Label::Function(index as u32));
         if entry_offset.is_none() && func.name.as_str() == "main" {
             entry_offset = Some(asm.buf.len() as u64);
@@ -3052,6 +3055,7 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
     if offset == 0 {
         return Ok(());
     }
+    let scratch = if base == Reg::X17 { Reg::X9 } else { Reg::X17 };
     if offset < 0 {
         let abs = (-offset) as u64;
         if abs <= 4095 {
@@ -3059,11 +3063,11 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
             return Ok(());
         }
         if let Ok(imm) = u16::try_from(abs) {
-            emit_mov_imm16(asm, Reg::X17, imm);
-            emit_sub_reg(asm, base, base, Reg::X17);
+            emit_mov_imm16(asm, scratch, imm);
+            emit_sub_reg(asm, base, base, scratch);
         } else {
-            emit_mov_imm64(asm, Reg::X9, abs as u64);
-            emit_sub_reg(asm, base, base, Reg::X9);
+            emit_mov_imm64(asm, scratch, abs as u64);
+            emit_sub_reg(asm, base, base, scratch);
         }
         return Ok(());
     }
@@ -3072,11 +3076,11 @@ fn add_immediate_offset(asm: &mut Assembler, base: Reg, offset: i64) -> Result<(
         return Ok(());
     }
     if let Ok(imm) = u16::try_from(offset) {
-        emit_mov_imm16(asm, Reg::X17, imm);
-        emit_add_reg(asm, base, base, Reg::X17);
+        emit_mov_imm16(asm, scratch, imm);
+        emit_add_reg(asm, base, base, scratch);
     } else {
-        emit_mov_imm64(asm, Reg::X9, offset as u64);
-        emit_add_reg(asm, base, base, Reg::X9);
+        emit_mov_imm64(asm, scratch, offset as u64);
+        emit_add_reg(asm, base, base, scratch);
     }
     Ok(())
 }
@@ -5681,6 +5685,9 @@ enum CallTarget {
 fn build_function_map(program: &LirProgram) -> Result<HashMap<String, u32>> {
     let mut map = HashMap::new();
     for (idx, func) in program.functions.iter().enumerate() {
+        if func.is_declaration {
+            continue;
+        }
         let name = String::from(func.name.clone());
         map.insert(name, idx as u32);
     }

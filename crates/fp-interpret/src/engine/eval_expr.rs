@@ -936,6 +936,29 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("mutable reference target must be a named binding");
                     RuntimeFlow::Value(Value::undefined())
                 } else {
+                    if let ExprKind::Index(index_expr) = reference.referee.kind() {
+                        let mut obj_expr = index_expr.obj.clone();
+                        let base_value = match self.eval_value_runtime(obj_expr.as_mut()) {
+                            Ok(value) => value,
+                            Err(flow) => return flow,
+                        };
+                        let mut index_expr_value = index_expr.index.clone();
+                        let index_value = match self.eval_value_runtime(index_expr_value.as_mut()) {
+                            Ok(value) => value,
+                            Err(flow) => return flow,
+                        };
+                        if let Value::List(list) = base_value {
+                            if let Some(index) =
+                                self.numeric_to_non_negative_usize(&index_value, "index")
+                            {
+                                let slice_ref = crate::engine::ffi::FfiSliceRef {
+                                    values: list.values.clone(),
+                                    index,
+                                };
+                                return RuntimeFlow::Value(Value::Any(AnyBox::new(slice_ref)));
+                            }
+                        }
+                    }
                     self.eval_expr_runtime(reference.referee.as_mut())
                 }
             }

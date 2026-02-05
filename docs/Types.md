@@ -52,6 +52,20 @@ The `TypeQueryEngine` exposes memoised queries over the shared type tables:
 - Diagnostics: failures produce structured messages reused across evaluation and
   lowering.
 
+## Type-Eval Bridge
+
+Some type expressions require execution (for example, type-level functions that
+compute a type from values). The typer delegates those cases to a narrow
+type-eval bridge:
+
+- The typer initiates evaluation when it encounters `Ty::Expr` that cannot be
+  resolved purely from the current symbol/type environment.
+- The interpreter implements the bridge and evaluates the expression in a
+  constrained, compile-time-only context.
+- Results are cached by the typer and re-used across incremental queries.
+- The bridge does not replace whole-program typing; it provides a controlled
+  escape hatch for type-level computation.
+
 ## Flow Through the Pipeline
 
 ```
@@ -80,8 +94,8 @@ The Hindley–Milner solver lives in a dedicated crate and offers:
 - In-place annotation of AST nodes.
 - Query APIs (`expr_ty`, `pattern_ty`) for tooling.
 - Incremental hooks so the interpreter can resolve missing symbols during
-  const evaluation and request generalisations or specialisations when
-  intrinsics introduce new constraints.
+  const evaluation, plus a type-eval bridge for executing type-level
+  expressions when the typer needs runtime support.
 
 ## Future Work
 

@@ -41,6 +41,7 @@ pub(crate) enum TypeTerm {
     // caused mismatches with slice/array unification and generic substitution.
     Array(TypeVarId, Option<BExpr>),
     Reference(TypeVarId),
+    RawPtr(TypeVarId, Option<bool>),
     Boxed(TypeVarId),
     Any,
     Custom(Ty),
@@ -136,6 +137,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             TypeTerm::Reference(elem) => {
                 let elem = self.build_scheme_type(elem, mapping, next)?;
                 SchemeType::Reference(Box::new(elem))
+            }
+            TypeTerm::RawPtr(elem, mutability) => {
+                let elem = self.build_scheme_type(elem, mapping, next)?;
+                SchemeType::RawPtr(Box::new(elem), mutability)
             }
             TypeTerm::Boxed(elem) => {
                 let elem = self.build_scheme_type(elem, mapping, next)?;
@@ -261,6 +266,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.bind(var, TypeTerm::Reference(elem_var));
                 var
             }
+            SchemeType::RawPtr(elem, mutability) => {
+                let elem_var = self.instantiate_scheme_type(elem, mapping);
+                let var = self.fresh_type_var();
+                self.bind(var, TypeTerm::RawPtr(elem_var, *mutability));
+                var
+            }
             SchemeType::Boxed(elem) => {
                 let elem_var = self.instantiate_scheme_type(elem, mapping);
                 let var = self.fresh_type_var();
@@ -383,6 +394,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             | TypeTerm::Vec(elem)
             | TypeTerm::Array(elem, _)
             | TypeTerm::Reference(elem)
+            | TypeTerm::RawPtr(elem, _)
             | TypeTerm::Boxed(elem) => self.occurs_in(var, *elem),
             _ => false,
         }
@@ -545,9 +557,15 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.unify(a_func.ret, b_func.ret)
             }
+            (TypeTerm::RawPtr(_, m1), TypeTerm::RawPtr(_, m2))
+                if matches!((m1, m2), (Some(a), Some(b)) if a != b) =>
+            {
+                Err(self.error_with_current_span("raw pointer mutability mismatch"))
+            }
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
             | (TypeTerm::Vec(a), TypeTerm::Vec(b))
             | (TypeTerm::Reference(a), TypeTerm::Reference(b))
+            | (TypeTerm::RawPtr(a, _), TypeTerm::RawPtr(b, _))
             | (TypeTerm::Boxed(a), TypeTerm::Boxed(b)) => self.unify(a, b),
             (TypeTerm::Slice(a), TypeTerm::Vec(b)) | (TypeTerm::Vec(a), TypeTerm::Slice(b)) => {
                 self.unify(a, b)
@@ -695,6 +713,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     ty: Box::new(elem_ty),
                     mutability: None,
                     lifetime: None,
+                })
+            }
+            TypeTerm::RawPtr(elem, mutability) => {
+                let elem_ty = self.resolve_to_ty(elem)?;
+                Ty::RawPtr(TypeRawPtr {
+                    ty: Box::new(elem_ty),
+                    mutability,
                 })
             }
             TypeTerm::Boxed(elem) => {
@@ -891,6 +916,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 let inner = self.type_from_ast_ty(&r.ty)?;
                 self.bind(var, TypeTerm::Reference(inner));
             }
+            Ty::RawPtr(r) => {
+                let inner = self.type_from_ast_ty(&r.ty)?;
+                self.bind(var, TypeTerm::RawPtr(inner, r.mutability));
+            }
             Ty::Slice(s) => {
                 let inner = self.type_from_ast_ty(&s.elem)?;
                 self.bind(var, TypeTerm::Slice(inner));
@@ -1033,6 +1062,20 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             };
                             self.bind(var, TypeTerm::Struct(struct_ty));
                             return Ok(var);
+                        }
+                    }
+                }
+                if let Some(hook) = self.type_eval_hook.as_mut() {
+                    match hook.eval_type_expr(expr) {
+                        Ok(Some(ty)) => {
+                            let resolved = self.type_from_ast_ty(&ty)?;
+                            self.unify(var, resolved)?;
+                            return Ok(var);
+                        }
+                        Ok(None) => {}
+                        Err(err) => {
+                            self.emit_error_with_span(self.span_option(expr.span()), err.to_string());
+                            return Ok(self.error_type_var());
                         }
                     }
                 }

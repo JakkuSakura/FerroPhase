@@ -1942,6 +1942,15 @@ impl MirLowering {
                     kind: TyKind::Slice(Box::new(elem_ty)),
                 }
             }
+            hir::TypeExprKind::Ptr(inner) => {
+                let inner_ty = self.lower_type_expr(inner);
+                Ty {
+                    kind: TyKind::RawPtr(TypeAndMut {
+                        ty: Box::new(inner_ty),
+                        mutbl: Mutability::Not,
+                    }),
+                }
+            }
             hir::TypeExprKind::Ref(inner) => {
                 if self.is_string_slice_ref(inner) {
                     return self.raw_string_ptr_ty();
@@ -7748,19 +7757,164 @@ impl<'a> BodyBuilder<'a> {
             .and_then(|name| self.lowering.method_lookup.get(name))
             .and_then(|info| info.struct_def);
         let mut callee_abi = None;
+        let mut callee_is_extern = false;
         if let hir::ExprKind::Path(path) = &callee.kind {
             callee_abi = self.callee_abi_from_path(path);
+        }
+        if callee_abi.is_none() {
+            if let Some(name) = callee_name.as_ref() {
+                for item in self.program.def_map.values() {
+                    if let hir::ItemKind::Function(func) = &item.kind {
+                        if func.sig.name.as_str() == name {
+                            callee_abi = Some(func.sig.abi.clone());
+                            callee_is_extern = func.is_extern;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        if !callee_is_extern {
+            if let Some(name) = callee_name.as_ref() {
+                for item in self.program.def_map.values() {
+                    if let hir::ItemKind::Function(func) = &item.kind {
+                        if func.sig.name.as_str() == name {
+                            callee_is_extern = func.is_extern;
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         let mut lowered_args = Vec::with_capacity(args.len());
         let mut arg_types = Vec::with_capacity(args.len());
         for (idx, arg) in args.iter().enumerate() {
             let expected_ty = sig.inputs.get(idx);
-            if let hir::ExprKind::Reference(reference) = &arg.value.kind {
-                let abi_is_c = matches!(
+            let abi_is_c = callee_is_extern
+                || matches!(
                     callee_abi,
                     Some(hir::Abi::C { .. } | hir::Abi::System { .. })
                 );
+            if abi_is_c {
+                if let hir::ExprKind::Cast(inner, ty_expr) = &arg.value.kind {
+                    let cast_ty = self.lower_type_expr(ty_expr);
+                    if matches!(cast_ty.kind, TyKind::RawPtr(_)) {
+                        let operand = self.lower_operand(inner, None)?;
+                        let temp_local = self.allocate_temp(cast_ty.clone(), arg.value.span);
+                        let temp_place = mir::Place::from_local(temp_local);
+                        self.push_statement(mir::Statement {
+                            source_info: arg.value.span,
+                            kind: mir::StatementKind::Assign(
+                                temp_place.clone(),
+                                mir::Rvalue::Cast(
+                                    mir::CastKind::Misc,
+                                    operand.operand,
+                                    cast_ty.clone(),
+                                ),
+                            ),
+                        });
+                        lowered_args.push(mir::Operand::copy(temp_place));
+                        arg_types.push(cast_ty);
+                        continue;
+                    }
+                }
+            }
+            if abi_is_c {
+                if let Some(expected_ty) = expected_ty {
+                    if let TyKind::RawPtr(type_and_mut) = &expected_ty.kind {
+                        let direct_operand = self.lower_operand(&arg.value, Some(expected_ty))?;
+                        if matches!(direct_operand.ty.kind, TyKind::RawPtr(_)) {
+                            lowered_args.push(direct_operand.operand);
+                            arg_types.push(expected_ty.clone());
+                            continue;
+                        }
+                        let borrow_expr =
+                            if let hir::ExprKind::Reference(reference) = &arg.value.kind {
+                                reference.expr.as_ref()
+                            } else {
+                                &arg.value
+                            };
+                        let mut place = if let Some(place) = self.lower_place(borrow_expr)? {
+                            place
+                        } else {
+                            self.materialize_expr_place(borrow_expr)?
+                        };
+                        if let TyKind::Ref(_, inner_ty, _) = &place.ty.kind {
+                            place.place.projection.push(mir::PlaceElem::Deref);
+                            place.ty = inner_ty.as_ref().clone();
+                            place.struct_def = self.struct_def_from_ty(&place.ty);
+                        }
+                        let addr_mutability = match type_and_mut.mutbl {
+                            mir::ty::Mutability::Mut => mir::Mutability::Mut,
+                            mir::ty::Mutability::Not => mir::Mutability::Not,
+                        };
+                        let temp_local = self.allocate_temp(expected_ty.clone(), arg.value.span);
+                        let temp_place = mir::Place::from_local(temp_local);
+                        self.push_statement(mir::Statement {
+                            source_info: arg.value.span,
+                            kind: mir::StatementKind::Assign(
+                                temp_place.clone(),
+                                mir::Rvalue::AddressOf(addr_mutability, place.place.clone()),
+                            ),
+                        });
+                        lowered_args.push(mir::Operand::copy(temp_place));
+                        arg_types.push(expected_ty.clone());
+                        continue;
+                    }
+                    if let TyKind::Ref(_region, inner, mutability) = &expected_ty.kind {
+                        let borrow_expr =
+                            if let hir::ExprKind::Reference(reference) = &arg.value.kind {
+                                reference.expr.as_ref()
+                            } else {
+                                &arg.value
+                            };
+                        let mut place = if let Some(place) = self.lower_place(borrow_expr)? {
+                            place
+                        } else {
+                            self.materialize_expr_place(borrow_expr)?
+                        };
+                        if let TyKind::Ref(_, inner_ty, _) = &place.ty.kind {
+                            place.place.projection.push(mir::PlaceElem::Deref);
+                            place.ty = inner_ty.as_ref().clone();
+                            place.struct_def = self.struct_def_from_ty(&place.ty);
+                        }
+                        let resolved_inner = if self.lowering.is_opaque_ty(inner.as_ref())
+                            && !self.lowering.is_opaque_ty(&place.ty)
+                        {
+                            place.ty.clone()
+                        } else {
+                            inner.as_ref().clone()
+                        };
+                        let ptr_ty = Ty {
+                            kind: TyKind::RawPtr(TypeAndMut {
+                                ty: Box::new(resolved_inner),
+                                mutbl: match mutability {
+                                    Mutability::Mut => mir::ty::Mutability::Mut,
+                                    Mutability::Not => mir::ty::Mutability::Not,
+                                },
+                            }),
+                        };
+                        let addr_mutability = match mutability {
+                            Mutability::Mut => mir::Mutability::Mut,
+                            Mutability::Not => mir::Mutability::Not,
+                        };
+                        let temp_local = self.allocate_temp(ptr_ty.clone(), arg.value.span);
+                        let temp_place = mir::Place::from_local(temp_local);
+                        self.push_statement(mir::Statement {
+                            source_info: arg.value.span,
+                            kind: mir::StatementKind::Assign(
+                                temp_place.clone(),
+                                mir::Rvalue::AddressOf(addr_mutability, place.place.clone()),
+                            ),
+                        });
+                        lowered_args.push(mir::Operand::copy(temp_place));
+                        arg_types.push(ptr_ty);
+                        continue;
+                    }
+                }
+            }
+            if let hir::ExprKind::Reference(reference) = &arg.value.kind {
                 if let Some(expected_ty) = expected_ty {
                     if let TyKind::RawPtr(type_and_mut) = &expected_ty.kind {
                         let mut place = if let Some(place) = self.lower_place(&reference.expr)? {
@@ -7831,6 +7985,47 @@ impl<'a> BodyBuilder<'a> {
                             continue;
                         }
                     }
+                }
+                if abi_is_c
+                    && expected_ty
+                        .map(|ty| self.lowering.has_unresolved_ty(ty))
+                        .unwrap_or(true)
+                {
+                    let mut place = if let Some(place) = self.lower_place(&reference.expr)? {
+                        place
+                    } else {
+                        self.materialize_expr_place(&reference.expr)?
+                    };
+                    if let TyKind::Ref(_, inner_ty, _) = &place.ty.kind {
+                        place.place.projection.push(mir::PlaceElem::Deref);
+                        place.ty = inner_ty.as_ref().clone();
+                        place.struct_def = self.struct_def_from_ty(&place.ty);
+                    }
+                    let addr_mutability = match reference.mutable {
+                        hir::ty::Mutability::Mut => mir::Mutability::Mut,
+                        hir::ty::Mutability::Not => mir::Mutability::Not,
+                    };
+                    let ptr_ty = Ty {
+                        kind: TyKind::RawPtr(TypeAndMut {
+                            ty: Box::new(place.ty.clone()),
+                            mutbl: match reference.mutable {
+                                hir::ty::Mutability::Mut => mir::ty::Mutability::Mut,
+                                hir::ty::Mutability::Not => mir::ty::Mutability::Not,
+                            },
+                        }),
+                    };
+                    let temp_local = self.allocate_temp(ptr_ty.clone(), arg.value.span);
+                    let temp_place = mir::Place::from_local(temp_local);
+                    self.push_statement(mir::Statement {
+                        source_info: arg.value.span,
+                        kind: mir::StatementKind::Assign(
+                            temp_place.clone(),
+                            mir::Rvalue::AddressOf(addr_mutability, place.place.clone()),
+                        ),
+                    });
+                    lowered_args.push(mir::Operand::copy(temp_place));
+                    arg_types.push(ptr_ty);
+                    continue;
                 }
                 let operand = self.lower_reference_operand(reference, arg.value.span)?;
                 let inferred_ty = if let Some(expected_ty) = expected_ty {
@@ -8257,6 +8452,43 @@ impl<'a> BodyBuilder<'a> {
                 if let hir::ItemKind::Function(func) = &item.kind {
                     return Some(func.sig.abi.clone());
                 }
+            }
+        }
+        let mut resolved_path = path.clone();
+        self.resolve_self_path(&mut resolved_path);
+        let qualified = resolved_path
+            .segments
+            .iter()
+            .map(|seg| seg.name.as_str())
+            .collect::<Vec<_>>()
+            .join("::");
+        if qualified.is_empty() {
+            return None;
+        }
+        for item in self.program.def_map.values() {
+            if let hir::ItemKind::Function(func) = &item.kind {
+                if func.sig.name.as_str() == qualified {
+                    return Some(func.sig.abi.clone());
+                }
+            }
+        }
+        let tail = resolved_path.segments.last().map(|seg| seg.name.as_str());
+        if let Some(tail) = tail {
+            let mut candidate: Option<hir::Abi> = None;
+            for item in self.program.def_map.values() {
+                if let hir::ItemKind::Function(func) = &item.kind {
+                    let name = func.sig.name.as_str();
+                    let matches_tail = name == tail || name.ends_with(&format!("::{}", tail));
+                    if matches_tail {
+                        if candidate.is_some() {
+                            return None;
+                        }
+                        candidate = Some(func.sig.abi.clone());
+                    }
+                }
+            }
+            if candidate.is_some() {
+                return candidate;
             }
         }
         None

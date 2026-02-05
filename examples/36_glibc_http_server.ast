@@ -4202,10 +4202,10 @@ ast::File {
     }
     pub module libc {
       declare extern "C" fn socket(domain: Expr(i32), sock_type: Expr(i32), protocol: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn bind(fd: Expr(i32), addr: &Expr(crate::SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), &Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32)
+      declare extern "C" fn bind(fd: Expr(i32), addr: *Expr(crate::SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), *Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32)
       declare extern "C" fn listen(fd: Expr(i32), backlog: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn accept(fd: Expr(i32), addr: &mut Expr(crate::SockAddrIn), addrlen: &mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), &mut Expr(crate::SockAddrIn), &mut Expr(u32)) -> Expr(i32)
-      declare extern "C" fn write(fd: Expr(i32), buf: &Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(u8), Expr(usize)) -> Expr(i64)
+      declare extern "C" fn accept(fd: Expr(i32), addr: *mut Expr(crate::SockAddrIn), addrlen: *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(crate::SockAddrIn), *mut Expr(u32)) -> Expr(i32)
+      declare extern "C" fn write(fd: Expr(i32), buf: *Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), *Expr(u8), Expr(usize)) -> Expr(i64)
       declare extern "C" fn close(fd: Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32)
       declare extern "C" fn htons(hostshort: Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16)
     }
@@ -4240,7 +4240,7 @@ ast::File {
             sin_zero1:
               value 0
     pub fn main() -> () : fn() -> ()
-      block (8 stmts)
+      block (11 stmts)
         let server_fd
           init:
             invoke
@@ -4272,18 +4272,25 @@ ast::File {
               target: make_addr
               args:
                 value 8080
+        let addr_ptr
+          init:
+            cast -> *Expr(SockAddrIn)
+              reference (mutable: unspecified)
+                locator addr
+        let bind_rc
+          init:
+            invoke
+              target: libc::bind
+              args:
+                locator server_fd
+                locator addr_ptr
+                value 16
         expr_stmt (value)
           if
             cond:
               binop <
                 lhs:
-                  invoke
-                    target: libc::bind
-                    args:
-                      locator server_fd
-                      reference (mutable: unspecified)
-                        locator addr
-                      value 16
+                  locator bind_rc
                 rhs:
                   value 0
             then:
@@ -4300,16 +4307,19 @@ ast::File {
                       locator server_fd
                 expr_stmt ;
                   return
+        let listen_rc
+          init:
+            invoke
+              target: libc::listen
+              args:
+                locator server_fd
+                value 16
         expr_stmt (value)
           if
             cond:
               binop <
                 lhs:
-                  invoke
-                    target: libc::listen
-                    args:
-                      locator server_fd
-                      value 16
+                  locator listen_rc
                 rhs:
                   value 0
             then:
@@ -4476,7 +4486,7 @@ ast::File {
                 value 10
         expr_stmt (value)
           loop
-            block (6 stmts)
+            block (9 stmts)
               let mut client_addr
                 init:
                   invoke
@@ -4486,16 +4496,24 @@ ast::File {
               let mut client_len: Expr(u32)
                 init:
                   value 16
+              let client_addr_ptr
+                init:
+                  cast -> *mut Expr(SockAddrIn)
+                    reference (mutable: mut)
+                      locator client_addr
+              let client_len_ptr
+                init:
+                  cast -> *mut Expr(u32)
+                    reference (mutable: mut)
+                      locator client_len
               let client_fd
                 init:
                   invoke
                     target: libc::accept
                     args:
                       locator server_fd
-                      reference (mutable: mut)
-                        locator client_addr
-                      reference (mutable: mut)
-                        locator client_len
+                      locator client_addr_ptr
+                      locator client_len_ptr
               expr_stmt (value)
                 if
                   cond:
@@ -4513,18 +4531,18 @@ ast::File {
                           kwargs: []
                       expr_stmt ;
                         continue
+              let response_ptr
+                init:
+                  cast -> *Expr(u8)
+                    reference (mutable: unspecified)
+                      locator response
               let _
                 init:
                   invoke
                     target: libc::write
                     args:
                       locator client_fd
-                      reference (mutable: unspecified)
-                        index
-                          value:
-                            locator response
-                          index:
-                            value 0
+                      locator response_ptr
                       value 70
               expr_stmt ;
                 invoke
