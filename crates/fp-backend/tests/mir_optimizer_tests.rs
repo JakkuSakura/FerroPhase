@@ -1,4 +1,4 @@
-use fp_backend::optimizer::{MirOptimizer, OptimizationPlan};
+use fp_backend::optimizer::{MirOptimizer, MirPassName, OptimizationPlan};
 use fp_core::mir::{
     self,
     ty::{IntTy, Ty},
@@ -260,6 +260,19 @@ fn copy_propagate_rewrites_alias_copy() {
         panic!("expected copy operand");
     };
     assert_eq!(place.local, 2);
+}
+
+#[test]
+fn optimizer_query_parses_multiline_from_clause() {
+    let query = QueryDocument::sql(
+        "SELECT const_fold,\n  const_propagate\nFROM mir",
+        SqlDialect::Generic,
+    );
+    let plan = OptimizationPlan::from_query(query).expect("plan should parse");
+    assert_eq!(
+        plan.passes,
+        vec![MirPassName::ConstFold, MirPassName::ConstPropagate]
+    );
 }
 
 #[test]
