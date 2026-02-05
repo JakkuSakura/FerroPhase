@@ -20,6 +20,8 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 
 ## Stage Responsibilities
 
+> See also: [Glossary](Glossary.md) for shared domain terminology.
+
 | Stage | Responsibilities |
 |-------|------------------|
 | **Frontend** | Parse source into LAST, produce canonical AST, record serializer + provenance. |
@@ -28,6 +30,14 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 | **Interpretation** | Runs on the typed AST; const mode mutates the tree, runtime mode reads it without changes. Shares intrinsic registry across modes. |
 | **Typed Projection** | Converts evaluated AST into `HIRᵗ`, handling desugaring, ownership bookkeeping, and preparing for optimisation passes. |
 | **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (LLVM, bytecode, transpilers). |
+
+## Bounded Contexts (at a glance)
+
+- **Frontend Context**: parsing + LAST + canonical AST + provenance.
+- **Typing Context**: Algorithm W inference and AST annotation (ASTᵗ).
+- **Interpretation Context**: const/runtime evaluation and intrinsic execution (ASTᵗ′).
+- **Lowering/Backend Context**: HIRᵗ → MIR → LIR → backend artifacts.
+- **Tooling/CLI Context**: orchestration + diagnostics (no domain rules).
 
 ## Intrinsic Handling
 

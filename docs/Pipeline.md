@@ -11,6 +11,8 @@ lowerings consume the already-typed structures.
 
 ## Stage Overview
 
+> See also: [Glossary](Glossary.md) for shared domain terminology.
+
 1. **Frontend (Source → LAST → Annotated AST)**
    - Each `LanguageFrontend` normalises source into a language-specific LAST
      snapshot and the canonical AST (`fp_core::ast::Node`).
@@ -69,6 +71,14 @@ diagnostics after each stage while also retaining them for aggregate reporting.
 7. **Binary Emission**
    - The LLVM bridge writes `*.ll` artefacts and invokes `clang` to link final
      executables when native targets are selected.
+
+## Context Boundaries (DDD lens)
+
+- **Frontend Context**: owns LAST/AST production and provenance.
+- **Typing Context**: owns AST typing (ASTᵗ) and type queries.
+- **Interpretation Context**: owns const/runtime evaluation (ASTᵗ′).
+- **Lowering Context**: owns HIR/MIR/LIR and backend emission.
+- **Tooling/CLI Context**: hosts orchestration and diagnostics output.
 
 ## Pipeline State
 
