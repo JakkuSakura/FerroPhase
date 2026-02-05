@@ -82,7 +82,7 @@ impl ManifestManager {
                 warn!("No matching crates found for dependency '{}'", name);
                 return Ok(dep);
             }
-            dep.path = Some(diff_path(manifest_root_path, &matching_crates[0].root_path));
+            dep.path = Some(diff_path(manifest_root_path, &matching_crates[0].root_path)?);
             dep.nexus = None;
             dep.workspace = None;
             return Ok(dep);
@@ -117,7 +117,7 @@ impl ManifestManager {
                 dep.path = Some(dep_path);
             } else {
                 dep_path = workspace.root_path.join(dep_path);
-                dep.path = Some(diff_path(manifest_root_path, &dep_path));
+                dep.path = Some(diff_path(manifest_root_path, &dep_path)?);
             }
 
             dep.nexus = None;
