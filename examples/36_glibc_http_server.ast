@@ -4218,7 +4218,9 @@ ast::File {
     pub const SOCKADDR_LEN: u32
       value 16
     pub const RESPONSE_LEN: u64
-      value 70
+      value 111
+    pub const RESPONSE: [u8; 111]
+      value [111 values]
     pub fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn) : fn(u16) -> SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
       block (1 stmt)
         expr_stmt (value)
@@ -4240,7 +4242,7 @@ ast::File {
             sin_zero1:
               value 0
     pub fn main() -> () : fn() -> ()
-      block (11 stmts)
+      block (10 stmts)
         let server_fd
           init:
             invoke
@@ -4341,149 +4343,6 @@ ast::File {
             args:
               format_string "listening on 0.0.0.0:8080"
             kwargs: []
-        let response: [Expr(u8); 70]
-          init:
-            array (70 values)
-              cast -> Expr(u8)
-                value 72
-              cast -> Expr(u8)
-                value 84
-              cast -> Expr(u8)
-                value 84
-              cast -> Expr(u8)
-                value 80
-              cast -> Expr(u8)
-                value 47
-              cast -> Expr(u8)
-                value 49
-              cast -> Expr(u8)
-                value 46
-              cast -> Expr(u8)
-                value 49
-              cast -> Expr(u8)
-                value 32
-              cast -> Expr(u8)
-                value 50
-              cast -> Expr(u8)
-                value 48
-              cast -> Expr(u8)
-                value 48
-              cast -> Expr(u8)
-                value 32
-              cast -> Expr(u8)
-                value 79
-              cast -> Expr(u8)
-                value 75
-              cast -> Expr(u8)
-                value 13
-              cast -> Expr(u8)
-                value 10
-              cast -> Expr(u8)
-                value 67
-              cast -> Expr(u8)
-                value 111
-              cast -> Expr(u8)
-                value 110
-              cast -> Expr(u8)
-                value 116
-              cast -> Expr(u8)
-                value 101
-              cast -> Expr(u8)
-                value 110
-              cast -> Expr(u8)
-                value 116
-              cast -> Expr(u8)
-                value 45
-              cast -> Expr(u8)
-                value 76
-              cast -> Expr(u8)
-                value 101
-              cast -> Expr(u8)
-                value 110
-              cast -> Expr(u8)
-                value 103
-              cast -> Expr(u8)
-                value 116
-              cast -> Expr(u8)
-                value 104
-              cast -> Expr(u8)
-                value 58
-              cast -> Expr(u8)
-                value 32
-              cast -> Expr(u8)
-                value 49
-              cast -> Expr(u8)
-                value 50
-              cast -> Expr(u8)
-                value 13
-              cast -> Expr(u8)
-                value 10
-              cast -> Expr(u8)
-                value 67
-              cast -> Expr(u8)
-                value 111
-              cast -> Expr(u8)
-                value 110
-              cast -> Expr(u8)
-                value 110
-              cast -> Expr(u8)
-                value 101
-              cast -> Expr(u8)
-                value 99
-              cast -> Expr(u8)
-                value 116
-              cast -> Expr(u8)
-                value 105
-              cast -> Expr(u8)
-                value 111
-              cast -> Expr(u8)
-                value 110
-              cast -> Expr(u8)
-                value 58
-              cast -> Expr(u8)
-                value 32
-              cast -> Expr(u8)
-                value 99
-              cast -> Expr(u8)
-                value 108
-              cast -> Expr(u8)
-                value 111
-              cast -> Expr(u8)
-                value 115
-              cast -> Expr(u8)
-                value 101
-              cast -> Expr(u8)
-                value 13
-              cast -> Expr(u8)
-                value 10
-              cast -> Expr(u8)
-                value 13
-              cast -> Expr(u8)
-                value 10
-              cast -> Expr(u8)
-                value 72
-              cast -> Expr(u8)
-                value 101
-              cast -> Expr(u8)
-                value 108
-              cast -> Expr(u8)
-                value 108
-              cast -> Expr(u8)
-                value 111
-              cast -> Expr(u8)
-                value 32
-              cast -> Expr(u8)
-                value 119
-              cast -> Expr(u8)
-                value 111
-              cast -> Expr(u8)
-                value 114
-              cast -> Expr(u8)
-                value 108
-              cast -> Expr(u8)
-                value 100
-              cast -> Expr(u8)
-                value 10
         expr_stmt (value)
           loop
             block (9 stmts)
@@ -4535,7 +4394,11 @@ ast::File {
                 init:
                   cast -> *Expr(u8)
                     reference (mutable: unspecified)
-                      locator response
+                      index
+                        value:
+                          value [111 values]
+                        index:
+                          value 0
               let _
                 init:
                   invoke
@@ -4543,7 +4406,7 @@ ast::File {
                     args:
                       locator client_fd
                       locator response_ptr
-                      value 70
+                      value 111
               expr_stmt ;
                 invoke
                   target: libc::close

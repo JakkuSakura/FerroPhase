@@ -1042,7 +1042,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);
                     }
-                    let key = QualifiedPath::new(vec![name.clone()]);
+                    let key = self.qualify_path(QualifiedPath::new(vec![name.clone()]));
                     if let Some(struct_ty) = self.struct_defs.get(&key) {
                         self.bind(var, TypeTerm::Struct(struct_ty.clone()));
                         return Ok(var);

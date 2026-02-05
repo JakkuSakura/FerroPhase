@@ -93,6 +93,7 @@ pub struct EmitPlan {
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
     pub symbols: HashMap<String, u64>,
+    pub rodata_symbols: HashMap<String, u64>,
     pub entry_offset: u64,
 }
 
@@ -101,6 +102,7 @@ pub struct CodegenOutput {
     pub rodata: Vec<u8>,
     pub relocs: Vec<Relocation>,
     pub symbols: HashMap<String, u64>,
+    pub rodata_symbols: HashMap<String, u64>,
     pub entry_offset: u64,
 }
 
@@ -139,6 +141,7 @@ pub fn emit_plan(
         rodata: output.rodata,
         relocs: output.relocs,
         symbols: output.symbols,
+        rodata_symbols: output.rodata_symbols,
         entry_offset: output.entry_offset,
     })
 }

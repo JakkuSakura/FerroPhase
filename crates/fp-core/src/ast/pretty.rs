@@ -910,8 +910,10 @@ fn render_ty_brief(ty: &ast::Ty) -> String {
         }
         ast::Ty::RawPtr(raw_ptr) => {
             let mut out = String::from("*");
-            if raw_ptr.mutability.unwrap_or(false) {
+            if raw_ptr.mutability == Some(true) {
                 out.push_str("mut ");
+            } else {
+                out.push_str("const ");
             }
             out.push_str(&render_ty_brief(raw_ptr.ty.as_ref()));
             out

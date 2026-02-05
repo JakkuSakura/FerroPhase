@@ -2453,7 +2453,7 @@ fn lower_ty_ref(node: &SyntaxNode) -> Result<Ty, LowerError> {
 }
 
 fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut is_mut = false;
+    let mut mutability: Option<bool> = None;
     for child in &node.children {
         let crate::syntax::SyntaxElement::Token(tok) = child else {
             continue;
@@ -2462,7 +2462,9 @@ fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
             continue;
         }
         if tok.text == "mut" {
-            is_mut = true;
+            mutability = Some(true);
+        } else if tok.text == "const" {
+            mutability = Some(false);
         }
     }
 
@@ -2473,7 +2475,7 @@ fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
     Ok(Ty::RawPtr(
         TypeRawPtr {
             ty: Box::new(inner),
-            mutability: is_mut.then_some(true),
+            mutability,
         }
         .into(),
     ))

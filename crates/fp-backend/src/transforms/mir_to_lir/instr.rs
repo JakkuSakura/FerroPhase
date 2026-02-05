@@ -25,6 +25,7 @@ pub struct LirGenerator {
     pub(crate) const_values: HashMap<mir::LocalId, lir::LirConstant>,
     extra_globals: Vec<lir::LirGlobal>,
     const_global_counter: u64,
+    const_string_globals: HashMap<String, lir::Name>,
     local_types: Vec<Ty>,
     current_return_type: Option<lir::LirType>,
     return_local: Option<mir::LocalId>,
@@ -84,6 +85,7 @@ impl LirGenerator {
             const_values: HashMap::new(),
             extra_globals: Vec::new(),
             const_global_counter: 0,
+            const_string_globals: HashMap::new(),
             local_types: Vec::new(),
             current_return_type: None,
             return_local: None,
@@ -414,11 +416,11 @@ impl LirGenerator {
                 if let TyKind::Slice(elem_ty) = &ty_hint.kind {
                     let elem_lir_ty = self.lir_type_from_ty(elem_ty);
                     let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                    let ptr_const = lir::LirConstant::String(value.clone());
+                    let ptr_const = self.const_string_ptr(value);
                     let len_const = lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
                     lir::LirConstant::Struct(vec![ptr_const, len_const], slice_ty)
                 } else {
-                    lir::LirConstant::String(value.clone())
+                    self.const_string_ptr(value)
                 }
             }
             mir::ConstantKind::Null => lir::LirConstant::Null(target_ty.clone()),
@@ -470,14 +472,14 @@ impl LirGenerator {
                 if let TyKind::Slice(elem_ty) = &ty.kind {
                     let elem_lir_ty = self.lir_type_from_ty(elem_ty);
                     let slice_ty = self.slice_lir_type(&elem_lir_ty);
-                    let ptr_const = lir::LirConstant::String(value.clone());
+                    let ptr_const = self.const_string_ptr(value);
                     let len_const = lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
                     return Ok(lir::LirConstant::Struct(
                         vec![ptr_const, len_const],
                         slice_ty,
                     ));
                 }
-                Ok(lir::LirConstant::String(value.clone()))
+                Ok(self.const_string_ptr(value))
             }
             mir::ConstValue::Null => Ok(lir::LirConstant::Null(self.lir_type_from_ty(ty))),
             mir::ConstValue::Fn(name) => Ok(lir::LirConstant::FunctionRef(
@@ -613,7 +615,7 @@ impl LirGenerator {
                         && matches!(&fields[0], lir::LirType::Ptr(inner) if **inner == lir::LirType::I8)
                         && fields[1] == lir::LirType::I64
                     {
-                        let ptr_const = lir::LirConstant::String(value.clone());
+                        let ptr_const = self.const_string_ptr(value);
                         let len_const =
                             lir::LirConstant::UInt(value.len() as u64, lir::LirType::I64);
                         return Ok(lir::LirConstant::Struct(
@@ -622,7 +624,7 @@ impl LirGenerator {
                         ));
                     }
                 }
-                Ok(lir::LirConstant::String(value.clone()))
+                Ok(self.const_string_ptr(value))
             }
             mir::ConstValue::Null => Ok(lir::LirConstant::Null(lir_ty.clone())),
             mir::ConstValue::Fn(name) => Ok(lir::LirConstant::FunctionRef(
@@ -703,6 +705,29 @@ impl LirGenerator {
         };
         self.extra_globals.push(global.clone());
         global
+    }
+
+    fn const_string_ptr(&mut self, value: &str) -> lir::LirConstant {
+        let name = if let Some(existing) = self.const_string_globals.get(value) {
+            existing.clone()
+        } else {
+            let mut bytes = Vec::with_capacity(value.len() + 1);
+            for byte in value.as_bytes() {
+                bytes.push(lir::LirConstant::UInt(*byte as u64, lir::LirType::I8));
+            }
+            bytes.push(lir::LirConstant::UInt(0, lir::LirType::I8));
+            let global = self.allocate_const_array_global(lir::LirType::I8, bytes);
+            let name = global.name.clone();
+            self.const_string_globals
+                .insert(value.to_string(), name.clone());
+            name
+        };
+
+        lir::LirConstant::GlobalRef(
+            name,
+            lir::LirType::Ptr(Box::new(lir::LirType::I8)),
+            vec![0, 0],
+        )
     }
 
     /// Transform a basic block
@@ -1996,9 +2021,9 @@ impl LirGenerator {
                         self.lir_type_from_ty(ty),
                     ))
                 }
-                mir::ConstantKind::Str(s) => {
-                    Ok(lir::LirValue::Constant(lir::LirConstant::String(s.clone())))
-                }
+            mir::ConstantKind::Str(s) => {
+                    Ok(lir::LirValue::Constant(self.const_string_ptr(s)))
+            }
                 mir::ConstantKind::Int(value) => Ok(lir::LirValue::Constant(
                     lir::LirConstant::Int(*value, lir::LirType::I64),
                 )),
@@ -4867,6 +4892,8 @@ impl LirGenerator {
             | lir::LirValue::Constant(lir::LirConstant::Float(_, ty))
             | lir::LirValue::Constant(lir::LirConstant::Struct(_, ty))
             | lir::LirValue::Constant(lir::LirConstant::Array(_, ty))
+            | lir::LirValue::Constant(lir::LirConstant::GlobalRef(_, ty, _))
+            | lir::LirValue::Constant(lir::LirConstant::FunctionRef(_, ty))
             | lir::LirValue::Constant(lir::LirConstant::Null(ty))
             | lir::LirValue::Constant(lir::LirConstant::Undef(ty)) => Some(ty.clone()),
             lir::LirValue::Constant(lir::LirConstant::Bool(_)) => Some(lir::LirType::I1),

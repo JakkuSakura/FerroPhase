@@ -122,6 +122,32 @@ fn code_splice_produces_ast_splice() {
     }
 }
 
+#[test]
+fn raw_ptr_requires_const_or_mut() {
+    let fe = FerroFrontend::new();
+    let ok_const = fe.parse("fn f(x: *const i32) {}", None);
+    assert!(ok_const.is_ok(), "expected *const to parse");
+    let ok_mut = fe.parse("fn f(x: *mut i32) {}", None);
+    assert!(ok_mut.is_ok(), "expected *mut to parse");
+    let ok_path = fe.parse("fn f(x: *const SockAddrIn) {}", None);
+    assert!(ok_path.is_ok(), "expected *const path type to parse");
+    let ok_extern = fe.parse(
+        r#"extern "C" fn bind(fd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32;"#,
+        None,
+    );
+    assert!(ok_extern.is_ok(), "expected *const in extern fn to parse");
+    let ok_extern_in_mod = fe.parse(
+        r#"mod libc { extern "C" fn bind(fd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32; }"#,
+        None,
+    );
+    assert!(
+        ok_extern_in_mod.is_ok(),
+        "expected *const in extern fn inside mod to parse"
+    );
+    let err_bare = fe.parse("fn f(x: *i32) {}", None);
+    assert!(err_bare.is_err(), "expected bare * to be rejected");
+}
+
 fn node_contains_splice_quote(node: &Node) -> bool {
     fn expr_contains(e: &Expr) -> bool {
         match e.kind() {

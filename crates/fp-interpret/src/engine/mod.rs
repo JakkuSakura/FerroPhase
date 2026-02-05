@@ -28,10 +28,10 @@ use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer};
 use fp_core::module::path::PathPrefix;
-use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
+use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError};
+use fp_core::module::resolution::ModuleResolutionContext;
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
-use fp_core::package::graph::PackageGraph;
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_typing::{AstTypeInferencer, TypeEvaluationHook, TypeResolutionHook};
@@ -166,13 +166,6 @@ impl Default for InterpreterOptions {
 pub enum StdoutMode {
     Capture,
     Inherit,
-}
-
-#[derive(Debug, Clone)]
-pub struct ModuleResolutionContext {
-    pub graph: Arc<PackageGraph>,
-    pub resolvers: Arc<ResolverRegistry>,
-    pub current_module: Option<ModuleId>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -749,6 +742,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         typer.set_type_eval_hook(Box::new(InterpreterTypeEvalHook {
             interpreter: self as *mut _,
         }));
+        if let Some(ctx) = self.module_resolution.clone() {
+            typer.set_module_resolution(Some(ctx));
+        }
         self.typer = Some(typer);
     }
 

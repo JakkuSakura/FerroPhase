@@ -350,6 +350,8 @@ pub fn emit_executable_elf64(path: &Path, arch: TargetArch, plan: &EmitPlan) -> 
     let resolve_symbol = |name: &str, addend: i64| -> Result<u64> {
         if name == ".rodata" {
             Ok(rodata_addr.wrapping_add(addend as u64))
+        } else if let Some(offset) = plan.rodata_symbols.get(name) {
+            Ok(rodata_addr.wrapping_add(*offset).wrapping_add(addend as u64))
         } else if let Some(offset) = plan.symbols.get(name) {
             Ok(text_addr.wrapping_add(*offset).wrapping_add(addend as u64))
         } else {

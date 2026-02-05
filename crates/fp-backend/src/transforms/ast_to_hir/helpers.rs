@@ -1,5 +1,6 @@
 use super::*;
 use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
+use fp_core::module::resolution::resolve_symbol_path;
 
 impl HirGenerator {
     pub(super) fn convert_generic_args(&mut self, args: &[ast::Ty]) -> Result<hir::GenericArgs> {
@@ -138,6 +139,59 @@ impl HirGenerator {
                 PathResolutionScope::Value => self.resolve_value_symbol(name).is_some(),
                 PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             };
+            if let Some(ctx) = &self.module_resolution {
+                if let Some(qualified) = resolve_symbol_path(
+                    &parsed,
+                    ctx,
+                    scope_contains,
+                    |candidate| {
+                        let key = candidate.path.to_key();
+                        match scope {
+                            PathResolutionScope::Value => {
+                                if self.global_value_defs.contains_key(&key) {
+                                    return true;
+                                }
+                                if candidate.path.segments.len() > 1 {
+                                    if let Some(parent) = candidate.path.parent_n(1) {
+                                        if self.global_type_defs.contains_key(&parent.to_key()) {
+                                            return true;
+                                        }
+                                    }
+                                }
+                            }
+                            PathResolutionScope::Type => {
+                                if self.global_type_defs.contains_key(&key) {
+                                    return true;
+                                }
+                            }
+                        }
+                        false
+                    },
+                ) {
+                    let canonical = qualified.path;
+                    let mut canonical_segments =
+                        Vec::with_capacity(canonical.segments.len());
+                    let offset =
+                        canonical.segments.len().saturating_sub(segments.len());
+                    for (idx, seg) in canonical.segments.iter().enumerate() {
+                        let args = if idx >= offset {
+                            segments[idx - offset].args.clone()
+                        } else {
+                            None
+                        };
+                        canonical_segments.push(self.make_path_segment(seg, args));
+                    }
+                    let mut canonical_res =
+                        self.lookup_global_res(&canonical, scope);
+                    if canonical_res.is_none() && self.module_defs.contains(&canonical) {
+                        canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
+                    }
+                    return Ok(hir::Path {
+                        segments: canonical_segments,
+                        res: canonical_res.or(resolved),
+                    });
+                }
+            }
             if let Some(canonical) = resolve_item_path(
                 &parsed,
                 &self.module_path,

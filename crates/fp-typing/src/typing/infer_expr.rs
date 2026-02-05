@@ -4,6 +4,7 @@ use fp_core::ast::*;
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::{PathPrefix, QualifiedPath};
+use fp_core::module::resolution::QualifiedSymbol;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
 
@@ -1932,7 +1933,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     }
 
     pub(crate) fn make_hashmap_struct(&self) -> TypeStruct {
-        let key = QualifiedPath::new(vec!["HashMap".to_string()]);
+        let key = self.qualify_path(QualifiedPath::new(vec!["HashMap".to_string()]));
         if let Some(existing) = self.struct_defs.get(&key) {
             return existing.clone();
         }
@@ -2247,6 +2248,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .unwrap_or_else(|| {
                         QualifiedPath::new(vec![struct_pat.name.as_str().to_string()])
                     });
+                let struct_name = self.qualify_path(struct_name);
                 let struct_var = self.fresh_type_var();
                 if let Some(struct_def) = self.struct_defs.get(&struct_name).cloned() {
                     self.bind(struct_var, TypeTerm::Struct(struct_def.clone()));
@@ -2438,13 +2440,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             Name::Path(path)
                                 if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
                             {
-                                Some(QualifiedPath::new(vec![
+                                Some(self.qualify_path(QualifiedPath::new(vec![
                                     path.segments[0].as_str().to_string(),
-                                ]))
+                                ])))
                             }
-                            Name::Ident(ident) => {
-                                Some(QualifiedPath::new(vec![ident.as_str().to_string()]))
-                            }
+                            Name::Ident(ident) => Some(self.qualify_path(QualifiedPath::new(vec![
+                                ident.as_str().to_string(),
+                            ]))),
                             _ => None,
                         });
                         if let Some(struct_name) = struct_name {
@@ -2517,12 +2519,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty.clone());
         let struct_path = match resolved_ty {
-            Ty::Struct(struct_ty) => {
-                QualifiedPath::new(vec![struct_ty.name.as_str().to_string()])
-            }
-            Ty::Enum(enum_ty) => {
-                QualifiedPath::new(vec![enum_ty.name.as_str().to_string()])
-            }
+            Ty::Struct(struct_ty) => self.qualify_path(QualifiedPath::new(vec![
+                struct_ty.name.as_str().to_string(),
+            ])),
+            Ty::Enum(enum_ty) => self.qualify_path(QualifiedPath::new(vec![
+                enum_ty.name.as_str().to_string(),
+            ])),
             other => {
                 if let Some(var) = self.lookup_trait_method_for_receiver(obj_var, field)? {
                     return Ok(var);
@@ -2544,11 +2546,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 return Ok(self.error_type_var());
             }
         };
-        let candidates = self.struct_name_variants_for_path(&struct_path, true);
+        let candidates = self.struct_name_variants_for_path(&struct_path.path, true);
         let mut struct_key = None;
         let mut record = None;
         for candidate in &candidates {
-            if let Some(methods) = self.struct_methods.get(candidate) {
+            let candidate =
+                QualifiedSymbol::new(struct_path.package.clone(), candidate.clone());
+            if let Some(methods) = self.struct_methods.get(&candidate) {
                 if let Some(found) = methods.get(field.as_str()) {
                     struct_key = Some(candidate.clone());
                     record = Some(found.clone());
@@ -2571,7 +2575,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         if let Some(struct_key) = struct_key.as_ref() {
-            let qualified = struct_key.with_segment(field.as_str().to_string());
+            let qualified = struct_key
+                .path
+                .with_segment(field.as_str().to_string());
             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                 return Ok(var);
             }
@@ -2869,7 +2875,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             if self.check_unimplemented_locator(locator) {
                 return Ok(self.error_type_var());
             }
-        } else if let Some(tail) = struct_name.tail() {
+        } else if let Some(tail) = struct_name.path.tail() {
             if self.check_unimplemented_locator(&Name::Ident(Ident::new(tail.to_string()))) {
                 return Ok(self.error_type_var());
             }
@@ -2879,9 +2885,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             candidates.push(resolved);
         }
         for candidate in self.struct_name_variants_for_path(
-            &struct_name,
-            struct_name.segments.len() == 1,
+            &struct_name.path,
+            struct_name.path.segments.len() == 1,
         ) {
+            let candidate =
+                QualifiedSymbol::new(struct_name.package.clone(), candidate);
             if !candidates.contains(&candidate) {
                 candidates.push(candidate);
             }
@@ -3005,7 +3013,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
 
         let variant = enum_ty.variants.iter().find(|variant| {
-            struct_name.tail() == Some(variant.name.as_str())
+            struct_name.path.tail() == Some(variant.name.as_str())
         });
         let Some(variant) = variant else {
             return Ok(None);
@@ -3024,7 +3032,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             .as_ident()
                             .and_then(|ident| {
                                 self.struct_defs
-                                    .get(&QualifiedPath::new(vec![ident.as_str().to_string()]))
+                                    .get(&self.qualify_path(QualifiedPath::new(vec![
+                                        ident.as_str().to_string(),
+                                    ])))
                                     .cloned()
                             })
                     })

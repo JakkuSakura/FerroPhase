@@ -519,7 +519,10 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
     let mut asm = Assembler::new(format);
     let mut rodata = Vec::new();
     let mut rodata_pool = HashMap::new();
+    let mut rodata_symbols = HashMap::new();
     let mut entry_offset = None;
+
+    emit_const_globals(program, &mut rodata, &mut rodata_symbols)?;
 
     for (index, func) in program.functions.iter().enumerate() {
         if func.is_declaration {
@@ -579,9 +582,60 @@ pub fn emit_text(program: &LirProgram, format: TargetFormat) -> Result<CodegenOu
         rodata,
         relocs,
         symbols,
+        rodata_symbols,
         entry_offset,
     })
 }
+
+fn emit_const_globals(
+    program: &LirProgram,
+    rodata: &mut Vec<u8>,
+    rodata_symbols: &mut HashMap<String, u64>,
+) -> Result<()> {
+    for global in &program.globals {
+        let Some(initializer) = &global.initializer else {
+            continue;
+        };
+        let align = global
+            .alignment
+            .map(|value| value as i32)
+            .unwrap_or_else(|| align_of(&global.ty) as i32);
+        let offset = align_to(rodata.len() as i32, align) as usize;
+        if offset > rodata.len() {
+            rodata.resize(offset, 0);
+        }
+        let bytes = encode_const_bytes(initializer, &global.ty)?;
+        rodata.extend_from_slice(&bytes);
+        rodata_symbols.insert(global.name.to_string(), offset as u64);
+    }
+    Ok(())
+}
+
+fn encode_const_bytes(constant: &LirConstant, ty: &LirType) -> Result<Vec<u8>> {
+    match (constant, ty) {
+        (LirConstant::Array(values, elem_ty), LirType::Array(elem, _))
+            if **elem == LirType::I8 && *elem_ty == LirType::I8 =>
+        {
+            let mut out = Vec::with_capacity(values.len());
+            for value in values {
+                out.push(const_to_u8(value)?);
+            }
+            Ok(out)
+        }
+        _ => Err(Error::from("unsupported global initializer for native rodata")),
+    }
+}
+
+fn const_to_u8(constant: &LirConstant) -> Result<u8> {
+    match constant {
+        LirConstant::Int(value, _) => Ok(*value as u8),
+        LirConstant::UInt(value, _) => Ok(*value as u8),
+        LirConstant::Bool(value) => Ok(if *value { 1 } else { 0 }),
+        LirConstant::Null(_) | LirConstant::Undef(_) => Ok(0),
+        _ => Err(Error::from("unsupported global array element for native rodata")),
+    }
+}
+
 
 enum BinOp {
     Add,
@@ -1091,6 +1145,13 @@ fn load_value(
             }
             if matches!(constant_type(constant), LirType::I128) {
                 return Err(Error::from("use i128 helper to load 128-bit values"));
+            }
+            if let LirConstant::GlobalRef(name, _, indices) = constant {
+                if indices.iter().any(|idx| *idx != 0) {
+                    return Err(Error::from("unsupported non-zero GlobalRef indices for aarch64"));
+                }
+                emit_load_symbol_addr(asm, dst, name.as_str(), 0)?;
+                return Ok(());
             }
             let imm = constant_to_i64(constant)?;
             if imm < 0 || imm > u16::MAX as i64 {

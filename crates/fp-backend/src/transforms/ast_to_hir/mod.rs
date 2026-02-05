@@ -45,6 +45,7 @@ pub struct HirGenerator {
     module_defs: HashSet<fp_core::module::path::QualifiedPath>,
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
+    module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
 }
 
 enum MaterializedTypeAlias {
@@ -293,7 +294,16 @@ impl HirGenerator {
             module_defs: HashSet::new(),
             program_def_map: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
+            module_resolution: None,
         }
+    }
+
+    pub fn with_module_resolution(
+        mut self,
+        module_resolution: fp_core::module::resolution::ModuleResolutionContext,
+    ) -> Self {
+        self.module_resolution = Some(module_resolution);
+        self
     }
 
     fn reset_file_context<P: AsRef<Path>>(&mut self, file_path: P) {

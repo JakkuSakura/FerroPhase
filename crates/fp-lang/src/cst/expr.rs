@@ -1405,7 +1405,7 @@ impl Parser {
             }
         }
 
-        let inner = self.parse_type_bp_until(0, stops)?;
+        let inner = self.parse_type_atom(stops)?;
         children.push(SyntaxElement::Node(Box::new(inner)));
         let span = span_for_children(&children);
         Ok(SyntaxNode::new(SyntaxKind::TyRef, children, span))
@@ -1450,9 +1450,16 @@ impl Parser {
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
 
-        if self.peek_non_trivia_normalized() == Some("mut") {
-            self.bump_token_into(&mut children);
-            self.bump_trivia_into(&mut children);
+        match self.peek_non_trivia_normalized() {
+            Some("mut") | Some("const") => {
+                self.bump_token_into(&mut children);
+                self.bump_trivia_into(&mut children);
+            }
+            _ => {
+                return Err(self.error(
+                    "raw pointer types require `*const` or `*mut`",
+                ));
+            }
         }
 
         let inner = self.parse_type_bp_until(0, stops)?;
