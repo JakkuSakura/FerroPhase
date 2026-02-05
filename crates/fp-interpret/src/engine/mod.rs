@@ -6,6 +6,7 @@ use std::io::Write;
 
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
+use crate::intrinsics::IntrinsicFunction;
 use fp_core::ast::DecimalType;
 use fp_core::ast::{Pattern, PatternKind};
 use fp_core::ast::{
@@ -716,6 +717,10 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub fn set_typer(&mut self, typer: AstTypeInferencer<'ctx>) {
         self.typer = Some(typer);
+    }
+
+    pub fn register_intrinsic(&mut self, name: impl Into<String>, func: IntrinsicFunction) {
+        self.intrinsics.register(name, func);
     }
 
     pub fn enable_incremental_typing(&mut self, ast: &Node) {
