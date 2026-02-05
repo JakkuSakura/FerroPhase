@@ -286,18 +286,33 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
     for (idx, ch) in input.char_indices().skip(start) {
         match ch {
             '\'' if !in_double && !in_backtick => {
+                if let Some(start_idx) = word_start.take() {
+                    let word = &input[start_idx..idx];
+                    if word.eq_ignore_ascii_case(keyword) {
+                        return Some(start_idx);
+                    }
+                }
                 in_single = !in_single;
-                word_start = None;
                 continue;
             }
             '"' if !in_single && !in_backtick => {
+                if let Some(start_idx) = word_start.take() {
+                    let word = &input[start_idx..idx];
+                    if word.eq_ignore_ascii_case(keyword) {
+                        return Some(start_idx);
+                    }
+                }
                 in_double = !in_double;
-                word_start = None;
                 continue;
             }
             '`' if !in_single && !in_double => {
+                if let Some(start_idx) = word_start.take() {
+                    let word = &input[start_idx..idx];
+                    if word.eq_ignore_ascii_case(keyword) {
+                        return Some(start_idx);
+                    }
+                }
                 in_backtick = !in_backtick;
-                word_start = None;
                 continue;
             }
             _ => {}
