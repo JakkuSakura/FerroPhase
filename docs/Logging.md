@@ -21,10 +21,10 @@ work captured in `specs/003-compile/tasks.md` (T027).
 
 | Stage            | Location                                             | Notes                                     |
 |------------------|------------------------------------------------------|-------------------------------------------|
-| Parsing          | `fp-cli/src/pipeline.rs:parse_source`                | Emits source path and module count        |
-| Type Enrichment  | `fp-cli/src/pipeline.rs:run_type_enrichment_stage`   | Logs typed AST cloning and HIR output     |
-| Const Evaluation | `fp-cli/src/pipeline.rs:run_const_eval_stage`        | Logs stubbed const-eval (AST focus)       |
-| HIR Emission     | `fp-backend/src/transformations/ast_to_hir.rs`      | Span-preserving logs, TODO for modules    |
+| Parsing          | `crates/fp-cli/src/pipeline.rs:parse_source`                | Emits source path and module count        |
+| Type Enrichment  | `crates/fp-cli/src/pipeline.rs:run_type_enrichment_stage`   | Logs typed AST cloning and HIR output     |
+| Const Evaluation | `crates/fp-cli/src/pipeline.rs:run_const_eval_stage`        | Logs stubbed const-eval (AST focus)       |
+| HIR Emission     | `crates/fp-backend/src/transforms/ast_to_hir/mod.rs`        | Span-preserving logs, TODO for modules    |
 | Future Backends  | _pending rewrite_                                    | MIR/LIR/LLVM hooks will return once ready |
 
 ## Tracing Roadmap (T027)
