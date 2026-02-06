@@ -210,7 +210,5 @@ pub fn maybe_join(root: &Path, path: &Path) -> PathBuf {
     }
 }
 pub fn diff_path(root: &Path, path: &Path) -> PathBuf {
-    pathdiff::diff_paths(path, root)
-        .with_context(|| format!("Could not diff path: {} {}", root.display(), path.display()))
-        .unwrap()
+    pathdiff::diff_paths(path, root).unwrap_or_else(|| path.to_path_buf())
 }

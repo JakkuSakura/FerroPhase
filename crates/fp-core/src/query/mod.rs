@@ -10,6 +10,8 @@ use crate::ast::AstSerializer;
 use crate::sql_ast;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
+use sqlparser::dialect::GenericDialect;
+use sqlparser::tokenizer::{Token, Tokenizer};
 use std::fmt::{self, Display, Formatter};
 
 // Dialects supported by the SQL frontend.
@@ -266,24 +268,91 @@ impl Display for PrqlQuery {
     }
 }
 
-/// Basic SQL statement splitter that respects string literals.
+/// Basic SQL statement splitter that respects SQL string literals and comments.
 pub fn split_sql_statements(source: &str) -> Vec<String> {
+    let mut tokenizer = Tokenizer::new(&GenericDialect {}, source).with_unescape(false);
+    let tokens = match tokenizer.tokenize_with_location() {
+        Ok(tokens) => tokens,
+        Err(_) => return split_sql_statements_fallback(source),
+    };
+
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
+    let line_offsets = line_start_offsets(source);
+    let mut offsets = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        let location = token.location;
+        offsets.push(line_col_to_index(
+            source,
+            &line_offsets,
+            location.line,
+            location.column,
+        ));
+    }
+
+    let mut statements = Vec::new();
+    let mut current_start = 0usize;
+
+    for (idx, token) in tokens.iter().enumerate() {
+        if matches!(token.token, Token::SemiColon) {
+            let start = offsets[idx];
+            let text = source[current_start..start].trim();
+            if !text.is_empty() {
+                statements.push(text.to_string());
+            }
+            let end = offsets.get(idx + 1).copied().unwrap_or_else(|| source.len());
+            current_start = end;
+        }
+    }
+
+    let tail = source[current_start..].trim();
+    if !tail.is_empty() {
+        statements.push(tail.to_string());
+    }
+
+    statements
+}
+
+fn split_sql_statements_fallback(source: &str) -> Vec<String> {
     let mut statements = Vec::new();
     let mut current = String::new();
     let mut single_quote = false;
     let mut double_quote = false;
     let mut backtick = false;
     let mut prev_char: Option<char> = None;
+    let mut chars = source.chars().peekable();
 
-    for ch in source.chars() {
+    while let Some(ch) = chars.next() {
         match ch {
-            '\'' if !double_quote && !backtick && prev_char != Some('\\') => {
-                single_quote = !single_quote;
-                current.push(ch);
+            '\'' if !double_quote && !backtick => {
+                if single_quote
+                    && prev_char != Some('\\')
+                    && chars.peek().copied() == Some('\'')
+                {
+                    current.push(ch);
+                    current.push(chars.next().unwrap());
+                } else if prev_char != Some('\\') {
+                    single_quote = !single_quote;
+                    current.push(ch);
+                } else {
+                    current.push(ch);
+                }
             }
-            '"' if !single_quote && !backtick && prev_char != Some('\\') => {
-                double_quote = !double_quote;
-                current.push(ch);
+            '"' if !single_quote && !backtick => {
+                if double_quote
+                    && prev_char != Some('\\')
+                    && chars.peek().copied() == Some('"')
+                {
+                    current.push(ch);
+                    current.push(chars.next().unwrap());
+                } else if prev_char != Some('\\') {
+                    double_quote = !double_quote;
+                    current.push(ch);
+                } else {
+                    current.push(ch);
+                }
             }
             '`' if !single_quote && !double_quote && prev_char != Some('\\') => {
                 backtick = !backtick;
@@ -307,6 +376,41 @@ pub fn split_sql_statements(source: &str) -> Vec<String> {
     }
 
     statements
+}
+
+fn line_start_offsets(source: &str) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    offsets.push(0);
+    for (idx, ch) in source.char_indices() {
+        if ch == '\n' {
+            offsets.push(idx + ch.len_utf8());
+        }
+    }
+    offsets
+}
+
+fn line_col_to_index(source: &str, line_offsets: &[usize], line: u64, col: u64) -> usize {
+    let line_idx = line.saturating_sub(1) as usize;
+    if line_idx >= line_offsets.len() {
+        return source.len();
+    }
+    let start = line_offsets[line_idx];
+    if col <= 1 {
+        return start;
+    }
+    let mut current_col = 1u64;
+    let mut last = start;
+    for (offset, ch) in source[start..].char_indices() {
+        if current_col == col {
+            return start + offset;
+        }
+        if ch == '\n' {
+            break;
+        }
+        current_col += 1;
+        last = start + offset + ch.len_utf8();
+    }
+    last
 }
 
 /// Minimal serializer that renders a query document back to text.
@@ -347,6 +451,15 @@ mod tests {
             statements[2],
             "UPDATE t SET name = \"semi;colon\" WHERE id = 1"
         );
+    }
+
+    #[test]
+    fn split_sql_statements_handles_escaped_quotes() {
+        let source = "SELECT 'a''b;still'; SELECT \"c\"\"d;still\";";
+        let statements = split_sql_statements(source);
+        assert_eq!(statements.len(), 2, "expected two statements: {statements:?}");
+        assert_eq!(statements[0], "SELECT 'a''b;still'");
+        assert_eq!(statements[1], "SELECT \"c\"\"d;still\"");
     }
 
     #[test]

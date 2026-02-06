@@ -56,12 +56,16 @@ impl WorkspaceModel {
                 .workspace
                 .clone()
                 .with_context(|| format!("No workspace found in {}", source_path.display()))?;
-            let root_path = source_path.parent().unwrap().canonicalize()?.to_owned();
+            let root_path = source_path
+                .parent()
+                .with_context(|| format!("Missing parent for {}", source_path.display()))?
+                .canonicalize()?
+                .to_owned();
             let name = root_path
                 .file_name()
-                .unwrap()
-                .to_string_lossy()
-                .into_owned();
+                .and_then(|name| name.to_str())
+                .with_context(|| format!("Missing workspace name for {}", root_path.display()))?
+                .to_string();
 
             let model = WorkspaceModel {
                 name,
@@ -89,12 +93,16 @@ impl WorkspaceModel {
             .workspace
             .clone()
             .with_context(|| format!("No workspace found in {}", source_path.display()))?;
-        let root_path = source_path.parent().unwrap().canonicalize()?.to_owned();
+        let root_path = source_path
+            .parent()
+            .with_context(|| format!("Missing parent for {}", source_path.display()))?
+            .canonicalize()?
+            .to_owned();
         let name = root_path
             .file_name()
-            .unwrap()
-            .to_string_lossy()
-            .into_owned();
+            .and_then(|name| name.to_str())
+            .with_context(|| format!("Missing workspace name for {}", root_path.display()))?
+            .to_string();
 
         let model = WorkspaceModel {
             name,

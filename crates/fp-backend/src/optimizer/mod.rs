@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use fp_core::error::Error;
 use fp_core::mir;
 use fp_core::query::{QueryDocument, QueryKind, SqlDialect};
+use fp_sql::extract_select_projection;
 
 use crate::error::optimization_error;
 
@@ -241,37 +242,8 @@ fn parse_sql_statement(statement: &str, passes: &mut Vec<MirPassName>) -> Result
         return Ok(());
     }
 
-    let lower = trimmed.to_ascii_lowercase();
-    if !lower.starts_with("select") {
-        return Err(optimization_error(format!(
-            "unsupported MIR optimization query: {trimmed}"
-        )));
-    }
-
-    let select_len = "select".len();
-    let from_idx = lower.find(" from ");
-    let selection = match from_idx {
-        Some(idx) => {
-            if idx < select_len {
-                return Err(optimization_error(format!(
-                    "invalid MIR optimization query: {trimmed}"
-                )));
-            }
-            let (_, tail) = trimmed.split_at(select_len);
-            let offset = idx - select_len;
-            if offset > tail.len() || !tail.is_char_boundary(offset) {
-                return Err(optimization_error(format!(
-                    "invalid MIR optimization query: {trimmed}"
-                )));
-            }
-            let (selection, _) = tail.split_at(offset);
-            selection
-        }
-        None => {
-            let (_, tail) = trimmed.split_at(select_len);
-            tail
-        }
-    };
+    let selection = extract_select_projection(trimmed)
+        .map_err(|err| optimization_error(format!("unsupported MIR optimization query: {err}")))?;
 
     parse_pass_list(selection, passes)
 }

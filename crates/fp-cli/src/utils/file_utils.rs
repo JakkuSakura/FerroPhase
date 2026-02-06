@@ -145,7 +145,9 @@ impl FileWatcher {
     pub fn watch(&mut self, path: PathBuf) -> Result<()> {
         let modified_time = FileUtils::modification_time(&path)?;
         self.last_modified.insert(path.clone(), modified_time);
-        self.watched_files.push(path);
+        if !self.watched_files.contains(&path) {
+            self.watched_files.push(path);
+        }
         Ok(())
     }
 
@@ -153,16 +155,27 @@ impl FileWatcher {
     pub fn check_for_changes(&mut self) -> Result<Vec<PathBuf>> {
         let mut changed_files = Vec::new();
 
-        for file in &self.watched_files {
-            if let Ok(current_time) = FileUtils::modification_time(file) {
-                if let Some(&last_time) = self.last_modified.get(file) {
-                    if current_time > last_time {
-                        changed_files.push(file.clone());
+        self.watched_files.retain(|file| {
+            match FileUtils::modification_time(file) {
+                Ok(current_time) => {
+                    if let Some(&last_time) = self.last_modified.get(file) {
+                        if current_time > last_time {
+                            changed_files.push(file.clone());
+                            self.last_modified.insert(file.clone(), current_time);
+                        }
+                    } else {
                         self.last_modified.insert(file.clone(), current_time);
                     }
+                    true
                 }
+                Err(CliError::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => {
+                    changed_files.push(file.clone());
+                    self.last_modified.remove(file);
+                    false
+                }
+                Err(_) => true,
             }
-        }
+        });
 
         Ok(changed_files)
     }
@@ -217,6 +230,24 @@ mod tests {
             FileUtils::find_files(root, &["**/*.fp".to_string()], &["tests/**".to_string()])
                 .unwrap();
         assert_eq!(files.len(), 1);
+    }
+
+    #[test]
+    fn test_file_watcher_reports_deletions() {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let test_file = root.join("watch.txt");
+        fs::write(&test_file, "initial content").unwrap();
+
+        let mut watcher = FileWatcher::new();
+        watcher.watch(test_file.clone()).unwrap();
+
+        fs::remove_file(&test_file).unwrap();
+        let changes = watcher.check_for_changes().unwrap();
+        assert_eq!(changes, vec![test_file.clone()]);
+
+        let changes = watcher.check_for_changes().unwrap();
+        assert!(changes.is_empty());
     }
 
     #[test]
