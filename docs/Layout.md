@@ -9,35 +9,35 @@ This document reviews the current code layout and proposes a focused refactor pl
 - Terminology (Collection → Container) is not uniformly applied.
 
 Approximate line counts (for scale):
-- `crates/fp-cli/src/pipeline.rs` ≈ 3,936
-- `crates/fp-backend/src/transforms/hir_to_mir/mod.rs` ≈ 3,796
-- `crates/fp-llvm/src/codegen.rs` ≈ 2,417
-- `crates/fp-rust/src/parser/expr.rs` ≈ 1,877
-- `crates/fp-cli/src/bin/fp.rs` ≈ 517
+- `crates/fp-cli/src/pipeline/mod.rs` ≈ 2,261
+- `crates/fp-backend/src/transforms/hir_to_mir/expr.rs` ≈ 13,066
+- `crates/fp-llvm/src/llvm/codegen.rs` ≈ 2,346
+- `crates/fp-lang/src/lexer/tokenizer.rs` ≈ 522
+- `crates/fp-cli/src/bin/fp.rs` ≈ 199
 
 ## 2) File Reviews and Refactor Steps
 
-- `crates/fp-cli/src/pipeline.rs`
-  - Problem: Monolithic; mixes frontend selection, stage orchestration, diagnostics, workspace replay/merge, snapshot I/O, and linking. Public functions return private types.
+- `crates/fp-cli/src/pipeline/mod.rs`
+  - Problem: Still large; mixes frontend selection, stage orchestration, diagnostics, workspace replay/merge, snapshot I/O, and linking.
   - Refactor:
-    - Split into: `mod.rs` (API), `input.rs`, `frontend.rs`, `stages.rs`, `workspace.rs`, `diagnostics.rs`, `blocking.rs`, `artifacts.rs`.
+    - Continue splitting into: `mod.rs` (API), `input.rs`, `frontend.rs`, `stages.rs`, `workspace.rs`, `diagnostics.rs`, `blocking.rs`, `artifacts.rs`.
     - Fix visibility: artifacts are `pub(crate)` or hidden behind the API.
 
-- `crates/fp-backend/src/transforms/hir_to_mir/mod.rs`
-  - Problem: One file contains context, type lowering, body/call lowering, impl/methods, consts, diagnostics.
+- `crates/fp-backend/src/transforms/hir_to_mir/expr.rs`
+  - Problem: Expression lowering is centralized; the file dwarfs the surrounding modules.
   - Refactor:
-    - Submodule into: `context.rs`, `types.rs`, `body.rs`, `calls.rs`, `consts.rs`, `impls.rs`, `diag.rs`; keep `mod.rs` as facade.
+    - Split into focused modules (e.g., `expr/assign.rs`, `expr/call.rs`, `expr/literal.rs`, `expr/patterns.rs`) with a facade in `expr/mod.rs`.
     - Establish explicit fallback points that never erase bodies; keep control flow and calls intact.
 
-- `crates/fp-llvm/src/codegen.rs`
+- `crates/fp-llvm/src/llvm/codegen.rs`
   - Problem: Functions/globals/constants/strings/verification all in one unit; hard to test narrowly.
   - Refactor:
     - Split into: `functions.rs`, `globals.rs`, `constants.rs`, `strings.rs`, `verify.rs`; keep `LlvmCompiler` small.
 
-- `crates/fp-rust/src/parser/expr.rs`
-  - Problem: Parser includes macro/desugar concerns; parser should be AST‑only.
+- `crates/fp-lang/src/lexer/tokenizer.rs`
+  - Problem: Tokenizer is the de facto policy hub for literal and keyword handling.
   - Refactor:
-    - Move desugar/diagnostic policy to a normalization pass; keep parser building AST nodes only.
+    - Keep tokenization strictly lexical; push semantic rewrites into normalization where possible.
 
 - `crates/fp-cli/src/bin/fp.rs`
   - Problem: Main mixes setup (logging/diagnostics) and dispatch.
