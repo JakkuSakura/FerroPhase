@@ -2,7 +2,7 @@
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
 use crate::pipeline::{
-    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
+    AstPreparationOptions, BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
 };
 use crate::{
     CliError, Result,
@@ -11,6 +11,15 @@ use crate::{
 };
 use console::style;
 use fp_core::config;
+use fp_core::ast::{AstTarget, AstTargetOutput, Node};
+use fp_csharp::CSharpSerializer;
+use fp_golang::GoSerializer;
+use fp_lang::PrettyAstSerializer;
+use fp_python::PythonSerializer;
+use fp_sycl::SyclSerializer;
+use fp_typescript::{JavaScriptSerializer, TypeScriptSerializer};
+use fp_wit::{WitOptions, WitSerializer, WorldMode};
+use fp_zig::ZigSerializer;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use tokio::{fs as async_fs, process::Command};
@@ -29,6 +38,10 @@ pub struct CompileArgs {
     #[arg(short = 'b', long = "backend", default_value = "binary")]
     pub backend: BackendKind,
 
+    /// Explicit output target (typescript, javascript, python, go, zig, sycl, rust, wit)
+    #[arg(short = 't', long = "target")]
+    pub target: Option<String>,
+
     /// Codegen emitter engine (e.g. "llvm", "native", "cranelift").
     ///
     /// This is only used for native codegen targets (like `--backend binary`).
@@ -37,7 +50,7 @@ pub struct CompileArgs {
     pub emitter: EmitterKind,
 
     /// Target triple for codegen (defaults to host if omitted)
-    #[arg(long = "target")]
+    #[arg(long = "target-triple")]
     pub target_triple: Option<String>,
 
     /// Target CPU for codegen (optional)
@@ -113,6 +126,24 @@ pub struct CompileArgs {
     /// Disable pipeline stages by name (repeatable).
     #[arg(long = "disable-stage", action = ArgAction::Append)]
     pub disable_stage: Vec<String>,
+
+    /// Perform const evaluation before AST target emission.
+    #[arg(long, default_value_t = true)]
+    pub const_eval: bool,
+
+    /// Generate type definitions for TypeScript target.
+    #[arg(long)]
+    pub type_defs: bool,
+
+    /// Generate a single WIT world instead of per-package worlds.
+    #[arg(long)]
+    pub single_world: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CompileTarget {
+    Backend(BackendKind),
+    Ast(crate::languages::backend::AstLanguageTarget),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -134,9 +165,14 @@ impl EmitterKind {
 
 /// Execute the compile command
 pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()> {
+    let target = resolve_compile_target(&args)?;
+    let target_label = match target {
+        CompileTarget::Backend(backend) => backend.as_str().to_string(),
+        CompileTarget::Ast(ast_target) => format!("{:?}", ast_target),
+    };
     info!(
-        "Starting compilation with backend: {}",
-        args.backend.as_str()
+        "Starting compilation with target: {}",
+        target_label
     );
 
     // Validate inputs
@@ -149,12 +185,18 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
     let progress = setup_progress_bar(args.input.len());
 
     let mut compiled_files = Vec::new();
+    let target = resolve_compile_target(&args)?;
 
-    let is_text_backend = matches!(args.backend, BackendKind::TextBytecode);
-    let target_backend = if is_text_backend {
-        BackendKind::Bytecode
-    } else {
-        args.backend
+    let is_text_backend = matches!(target, CompileTarget::Backend(BackendKind::TextBytecode));
+    let target_backend = match target {
+        CompileTarget::Backend(backend) => {
+            if is_text_backend {
+                BackendKind::Bytecode
+            } else {
+                backend
+            }
+        }
+        CompileTarget::Ast(_) => BackendKind::Interpret,
     };
     let emit_text_bytecode = is_text_backend;
 
@@ -169,15 +211,15 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         let output_file = determine_output_path(
             input_file,
             args.output.as_ref(),
-            target_backend,
+            target,
             args.target_triple.as_deref(),
             emit_text_bytecode,
             output_is_dir,
         )?;
 
         // Compile single file
-        if let Some(artifact_path) =
-            compile_file(input_file, &output_file, &args, target_backend, config).await?
+        if let Some(artifact_path) = compile_file(input_file, &output_file, &args, target, config)
+            .await?
         {
             compiled_files.push(artifact_path);
         }
@@ -192,6 +234,11 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
 
     // Execute if requested
     if args.exec {
+        if matches!(target, CompileTarget::Ast(_)) {
+            return Err(CliError::InvalidInput(
+                "--exec is not supported for AST targets".to_string(),
+            ));
+        }
         match target_backend {
             BackendKind::Binary => match compiled_files.as_slice() {
                 [] => {
@@ -239,10 +286,20 @@ async fn compile_file(
     input: &Path,
     output: &Path,
     args: &CompileArgs,
-    backend: BackendKind,
+    target: CompileTarget,
     _config: &CliConfig,
 ) -> Result<Option<PathBuf>> {
     info!("Compiling: {} -> {}", input.display(), output.display());
+
+    if let CompileTarget::Ast(ast_target) = target {
+        compile_ast_target(input, output, args, ast_target).await?;
+        return Ok(Some(output.to_path_buf()));
+    }
+
+    let backend = match target {
+        CompileTarget::Backend(backend) => backend,
+        CompileTarget::Ast(_) => unreachable!("AST target should return early"),
+    };
 
     // Configure pipeline for compilation with new options
     let target = match backend {
@@ -356,6 +413,213 @@ async fn compile_file(
     Ok(artifact)
 }
 
+async fn compile_ast_target(
+    input: &Path,
+    output: &Path,
+    args: &CompileArgs,
+    target: crate::languages::backend::AstLanguageTarget,
+) -> Result<()> {
+    if is_package_manifest(input) || is_tsconfig(input) {
+        return Err(CliError::Compilation(
+            "fp compile --target only accepts source files; use magnet for package manifests"
+                .to_string(),
+        ));
+    }
+
+    let mut pipeline = Pipeline::new();
+    use crate::languages::frontend::{LanguageSource, detect_language_source_by_path};
+    let detected = detect_language_source_by_path(input);
+    let is_wit_input = matches!(detected, Some(LanguageSource::Wit));
+    let is_typescript_input = matches!(
+        detected,
+        Some(LanguageSource::TypeScript | LanguageSource::JavaScript)
+    );
+
+    let source = std::fs::read_to_string(input).map_err(CliError::Io)?;
+    let mut ast = pipeline.parse_source_public(&source, Some(input))?;
+
+    let prep_options = AstPreparationOptions {
+        run_const_eval: args.const_eval,
+        save_intermediates: false,
+        base_path: None,
+    };
+    if !is_wit_input && !is_typescript_input {
+        pipeline.prepare_for_ast_target(&mut ast, &prep_options)?;
+    }
+
+    let result = emit_ast_target(&ast, target, args.type_defs, input, args.single_world)?;
+
+    if let Some(parent) = output.parent() {
+        std::fs::create_dir_all(parent).map_err(CliError::Io)?;
+    }
+    std::fs::write(output, &result.code).map_err(CliError::Io)?;
+
+    for side_file in result.side_files {
+        let mut side_path = output.to_path_buf();
+        let file_stem = side_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or_else(|| CliError::InvalidInput("Invalid output file name".to_string()))?;
+        side_path.set_file_name(format!("{}.{}", file_stem, side_file.extension));
+        std::fs::write(side_path, side_file.contents).map_err(CliError::Io)?;
+    }
+
+    info!("Generated AST target output: {}", output.display());
+    Ok(())
+}
+
+fn emit_ast_target(
+    node: &Node,
+    target: crate::languages::backend::AstLanguageTarget,
+    emit_type_defs: bool,
+    input: &Path,
+    single_world: bool,
+) -> Result<AstTargetOutput> {
+    match target {
+        crate::languages::backend::AstLanguageTarget::TypeScript => {
+            let serializer = TypeScriptSerializer::new(emit_type_defs);
+            let mut result = serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))?;
+            if let Some(defs) = serializer.take_type_defs() {
+                result.side_files.push(fp_core::ast::AstTargetSideFile {
+                    extension: "d.ts".to_string(),
+                    contents: defs,
+                });
+            }
+            Ok(result)
+        }
+        crate::languages::backend::AstLanguageTarget::JavaScript => {
+            let serializer = JavaScriptSerializer;
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::CSharp => {
+            let serializer = CSharpSerializer;
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Python => {
+            let serializer = PythonSerializer;
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Go => {
+            let serializer = GoSerializer::default();
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Zig => {
+            let serializer = ZigSerializer;
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Sycl => {
+            let serializer = SyclSerializer;
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Rust => {
+            let serializer = PrettyAstSerializer::new();
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+        crate::languages::backend::AstLanguageTarget::Wit => {
+            let serializer = WitSerializer::with_options(build_wit_options(input, single_world));
+            serializer
+                .emit_node(node)
+                .map_err(|e| CliError::TargetEmit(e.to_string()))
+        }
+    }
+}
+
+fn build_wit_options(input: &Path, single_world: bool) -> WitOptions {
+    let namespace = input
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|os| os.to_str())
+        .map(sanitize_wit_component)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "ferrophase".to_string());
+
+    let interface = input
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .map(sanitize_wit_component)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "module".to_string());
+
+    let mut options = WitOptions::default();
+    options.package = format!("{namespace}:{interface}");
+    options.root_interface = interface.clone();
+    if single_world {
+        options.world_mode = WorldMode::Single {
+            world_name: interface,
+        };
+    }
+    options
+}
+
+fn sanitize_wit_component(raw: &str) -> String {
+    let mut result = String::new();
+    for ch in raw.chars() {
+        match ch {
+            'a'..='z' | '0'..='9' => result.push(ch),
+            'A'..='Z' => result.push(ch.to_ascii_lowercase()),
+            '_' | '-' => result.push('_'),
+            '/' | ':' | '.' | '@' => result.push('_'),
+            _ => {}
+        }
+    }
+    if result.is_empty() {
+        result.push_str("module");
+    }
+    if result
+        .chars()
+        .next()
+        .map(|ch| ch.is_ascii_digit())
+        .unwrap_or(false)
+    {
+        result.insert(0, '_');
+    }
+    result
+}
+
+fn is_package_manifest(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            matches!(lower.as_str(), "cargo.toml" | "package.json" | "magnet.toml")
+        })
+        .unwrap_or(false)
+}
+
+fn is_tsconfig(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| {
+            let lower = name.to_ascii_lowercase();
+            lower == "tsconfig.json" || lower.ends_with(".tsconfig.json")
+        })
+        .unwrap_or(false)
+}
+
+fn resolve_compile_target(args: &CompileArgs) -> Result<CompileTarget> {
+    if let Some(target) = args.target.as_deref() {
+        let ast_target = crate::languages::backend::parse_ast_target(target)?;
+        return Ok(CompileTarget::Ast(ast_target));
+    }
+    Ok(CompileTarget::Backend(args.backend))
+}
+
 async fn exec_compiled_binary(path: &Path) -> Result<()> {
     let is_executable = path
         .extension()
@@ -426,11 +690,31 @@ fn validate_inputs(args: &CompileArgs) -> Result<()> {
 fn determine_output_path(
     input: &Path,
     output: Option<&PathBuf>,
-    backend: BackendKind,
+    target: CompileTarget,
     target_triple: Option<&str>,
     emit_text_bytecode: bool,
     output_is_dir: bool,
 ) -> Result<PathBuf> {
+    let backend = match target {
+        CompileTarget::Backend(backend) => backend,
+        CompileTarget::Ast(ast_target) => {
+            let extension = crate::languages::backend::ast_output_extension_for(ast_target);
+            if let Some(output) = output {
+                if output_is_dir {
+                    let stem = input
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+                    let mut path = output.join(stem);
+                    path.set_extension(extension);
+                    return Ok(path);
+                }
+                return Ok(output.clone());
+            }
+            return Ok(input.with_extension(extension));
+        }
+    };
+
     if let Some(output) = output {
         if output_is_dir {
             let extension = match backend {

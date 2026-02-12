@@ -210,11 +210,11 @@ impl LanguageResolver for FerroResolver {
 }
 
 #[derive(Debug, Clone)]
-pub struct TranspileResolver {
+pub struct AstTargetResolver {
     language: ModuleLanguage,
 }
 
-impl TranspileResolver {
+impl AstTargetResolver {
     pub fn new(language: ModuleLanguage) -> Self {
         Self { language }
     }
@@ -279,7 +279,7 @@ impl TranspileResolver {
     }
 }
 
-impl LanguageResolver for TranspileResolver {
+impl LanguageResolver for AstTargetResolver {
     fn resolve_module(
         &self,
         import: &ModuleImport,

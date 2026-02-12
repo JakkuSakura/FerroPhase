@@ -32,7 +32,6 @@ use fp_cli::{
     commands::{
         self, check::CheckArgs, compile::CompileArgs, completions::CompletionsArgs, eval::EvalArgs,
         interpret::InterpretArgs, parse::ParseArgs, run::RunArgs,
-        syntax_transpile::SyntaxTranspileArgs, transpile::TranspileArgs,
     },
     diagnostics::setup_error_reporting,
 };
@@ -81,12 +80,6 @@ enum Commands {
     /// Compile FerroPhase code to various targets
     Compile(CompileArgs),
 
-    /// Compile to a backend code target (shorthand for `compile --emitter ...`)
-    Transpile(TranspileArgs),
-
-    /// AST-level transpilation (no backend lowering)
-    SyntaxTranspile(SyntaxTranspileArgs),
-
     /// Evaluate expressions using the interpreter
     Eval(EvalArgs),
 
@@ -127,8 +120,6 @@ async fn main() -> Result<()> {
     // Execute command
     let result = match cli.command {
         Commands::Compile(args) => commands::compile_command(args, &config).await,
-        Commands::Transpile(args) => commands::transpile_command(args, &config).await,
-        Commands::SyntaxTranspile(args) => commands::syntax_transpile_command(args, &config).await,
         Commands::Eval(args) => commands::eval_command(args, &config).await,
         Commands::Parse(args) => commands::parse_command(args, &config).await,
         Commands::Run(args) => commands::run_command(args, &config).await,

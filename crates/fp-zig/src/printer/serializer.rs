@@ -2,7 +2,7 @@ use fp_core::ast::{AstSerializer, Node};
 
 use super::ZigEmitter;
 
-/// Public entry point used by the CLI transpiler.
+/// Public entry point used by the CLI target emitter.
 pub struct ZigSerializer;
 
 impl AstSerializer for ZigSerializer {

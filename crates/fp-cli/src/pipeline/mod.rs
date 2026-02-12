@@ -99,7 +99,7 @@ pub struct Pipeline {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct TranspilePreparationOptions {
+pub struct AstPreparationOptions {
     pub run_const_eval: bool,
     pub save_intermediates: bool,
     pub base_path: Option<PathBuf>,
@@ -498,10 +498,10 @@ impl Pipeline {
         self.parse_with_frontend(frontend, &source, Some(path), options)
     }
 
-    pub fn prepare_for_transpile(
+    pub fn prepare_for_ast_target(
         &mut self,
         ast: &mut Node,
-        options: &TranspilePreparationOptions,
+        options: &AstPreparationOptions,
     ) -> Result<(), CliError> {
         let mut pipeline_options = PipelineOptions::default();
         pipeline_options.save_intermediates = options.save_intermediates;

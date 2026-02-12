@@ -32,7 +32,7 @@ pub const HCL: &str = fp_hcl::HCL;
 pub struct Language {
     pub name: &'static str,
     pub extensions: &'static [&'static str],
-    pub transpile_supported: bool,
+    pub ast_target_supported: bool,
 }
 
 /// All supported languages
@@ -40,112 +40,112 @@ pub const SUPPORTED_LANGUAGES: &[Language] = &[
     Language {
         name: RUST,
         extensions: &["rs"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: TYPESCRIPT,
         extensions: &["ts", "tsx", "js", "jsx", "mjs", "mts", "cts"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: JAVASCRIPT,
         extensions: &["js"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: CSHARP,
         extensions: &["cs"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: PYTHON,
         extensions: &["py"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: GO,
         extensions: &["go"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: ZIG,
         extensions: &["zig"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: SYCL,
         extensions: &["sycl"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: CPP,
         extensions: &["cpp", "cc", "cxx"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: C,
         extensions: &["c"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: JAVA,
         extensions: &["java"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: KOTLIN,
         extensions: &["kt"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: SWIFT,
         extensions: &["swift"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: FERROPHASE,
         extensions: &["fp"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: WIT,
         extensions: &["wit"],
-        transpile_supported: true,
+        ast_target_supported: true,
     },
     Language {
         name: SQL,
         extensions: &["sql"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: PRQL,
         extensions: &["prql"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: JSONSCHEMA,
         extensions: &["jsonschema"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: JSON,
         extensions: &["json"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: FLATBUFFERS,
         extensions: &["fbs"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: TOML,
         extensions: &["toml"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
     Language {
         name: HCL,
         extensions: &["hcl"],
-        transpile_supported: false,
+        ast_target_supported: false,
     },
 ];
 
@@ -177,14 +177,14 @@ pub fn detect_target_language(target: &str) -> Option<&'static Language> {
 
 /// Get file extension for a target language
 pub fn get_target_extension(target: &str) -> Option<&'static str> {
-    backend::parse_language_target(target)
+    backend::parse_ast_target(target)
         .ok()
-        .map(backend::output_extension_for)
+        .map(backend::ast_output_extension_for)
 }
 
-/// Check if a target language is supported for transpilation
-pub fn is_transpile_supported(target: &str) -> bool {
+/// Check if a target language is supported as an AST output target.
+pub fn is_ast_target_supported(target: &str) -> bool {
     detect_target_language(target)
-        .map(|lang| lang.transpile_supported)
+        .map(|lang| lang.ast_target_supported)
         .unwrap_or(false)
 }

@@ -92,6 +92,35 @@ pub trait AstSerializer: Send + Sync {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct AstTargetOutput {
+    pub code: String,
+    pub side_files: Vec<AstTargetSideFile>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AstTargetSideFile {
+    pub extension: String,
+    pub contents: String,
+}
+
+pub trait AstTarget: Send + Sync {
+    fn emit_node(&self, node: &Node) -> Result<AstTargetOutput, crate::Error>;
+}
+
+impl<T> AstTarget for T
+where
+    T: AstSerializer + Send + Sync,
+{
+    fn emit_node(&self, node: &Node) -> Result<AstTargetOutput, crate::Error> {
+        let code = self.serialize_node(node)?;
+        Ok(AstTargetOutput {
+            code,
+            side_files: Vec::new(),
+        })
+    }
+}
+
 thread_local! {
     static SERIALIZER: RefCell<Option<Arc<dyn AstSerializer >>> = RefCell::new(None);
 }

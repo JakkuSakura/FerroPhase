@@ -278,7 +278,7 @@ impl PythonEmitter {
             BlockStmt::Noop => {}
             BlockStmt::Any(_) => {
                 return Err(eyre!(
-                    "Normalization cannot process placeholder statements during transpile"
+                    "Normalization cannot process placeholder statements during target emission"
                 )
                 .into());
             }
@@ -376,10 +376,10 @@ impl PythonEmitter {
             ExprKind::Dereference(deref) => self.render_expr(deref.referee.as_ref()),
             ExprKind::Cast(cast) => self.render_expr(cast.expr.as_ref()),
             ExprKind::Any(_) => Err(eyre!(
-                "Normalization cannot process placeholder expressions during transpile"
+                "Normalization cannot process placeholder expressions during target emission"
             )
             .into()),
-            other => Err(eyre!("Unsupported expression in transpiler: {:?}", other).into()),
+            other => Err(eyre!("Unsupported expression in target emitter: {:?}", other).into()),
         }
     }
 

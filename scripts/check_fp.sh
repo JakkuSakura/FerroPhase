@@ -90,18 +90,18 @@ RUST_OUT="$WORK_DIR/$(basename "$FP_FILE" .fp).rs"
 CS_OUT="$WORK_DIR/$(basename "$FP_FILE" .fp).cs"
 TS_OUT="$WORK_DIR/$(basename "$FP_FILE" .fp).ts"
 
-if ! fp transpile "$FP_FILE" --target rust --output "$RUST_OUT" >/"$WORK_DIR/rust.log" 2>&1; then
-    echo "fp transpile --target rust failed; see $WORK_DIR/rust.log" >&2
+if ! fp compile "$FP_FILE" --target rust --output "$RUST_OUT" >/"$WORK_DIR/rust.log" 2>&1; then
+    echo "fp compile --target rust failed; see $WORK_DIR/rust.log" >&2
     exit 1
 fi
 
-if ! fp transpile "$FP_FILE" --target csharp --output "$CS_OUT" >/"$WORK_DIR/csharp.log" 2>&1; then
-    echo "fp transpile --target csharp failed; see $WORK_DIR/csharp.log" >&2
+if ! fp compile "$FP_FILE" --target csharp --output "$CS_OUT" >/"$WORK_DIR/csharp.log" 2>&1; then
+    echo "fp compile --target csharp failed; see $WORK_DIR/csharp.log" >&2
     exit 1
 fi
 
-if ! fp transpile "$FP_FILE" --target typescript --output "$TS_OUT" >/"$WORK_DIR/ts.log" 2>&1; then
-    echo "fp transpile --target typescript failed; see $WORK_DIR/ts.log" >&2
+if ! fp compile "$FP_FILE" --target typescript --output "$TS_OUT" >/"$WORK_DIR/ts.log" 2>&1; then
+    echo "fp compile --target typescript failed; see $WORK_DIR/ts.log" >&2
     exit 1
 fi
 

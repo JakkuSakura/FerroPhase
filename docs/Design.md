@@ -7,7 +7,7 @@ Frontends emit a canonical AST; Algorithm W inference annotates it in place; t
 interpreter, const evaluator, and backend lowerings consume that same structure.
 By eliminating THIR we reduce the number of intermediate projections while still
 supporting multi-language inputs and multiple execution modes (compile, run,
-transpile, bytecode).
+AST-target emission, bytecode).
 
 ```
 SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ → HIRᵗ → MIR → LIR → backend
@@ -29,7 +29,7 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 | **Type Enrichment** | Algorithm W inference attaches types directly to AST nodes (expressions, patterns, declarations). |
 | **Interpretation** | Runs on the typed AST; const mode mutates the tree, runtime mode reads it without changes. Shares intrinsic registry across modes. |
 | **Typed Projection** | Converts evaluated AST into `HIRᵗ`, handling desugaring, ownership bookkeeping, and preparing for optimisation passes. |
-| **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (LLVM, bytecode, transpilers). |
+| **Optimisation & Codegen** | Lowers `HIRᵗ` → `MIR` → `LIR` → target backends (LLVM, bytecode, native). |
 
 ## Bounded Contexts (at a glance)
 
@@ -48,7 +48,7 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 3. **Interpreter** uses the resolver's identity flavour to execute intrinsics in
    both const and runtime modes.
 4. **Backends** call the resolver during projection/lowering to materialise the
-   intrinsic into runtime calls, transpiler constructs, or inline code.
+   intrinsic into runtime calls, target constructs, or inline code.
 
 ## Evaluation Engine
 
@@ -81,7 +81,7 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 | **Compile** | AST → ASTᵗ → ASTᵗ′ (const) → HIRᵗ → MIR → LIR → LLVM | Const evaluation folds code before optimisation; backends consume typed IR. |
 | **Run (Interpreter)** | AST → ASTᵗ → Interpreter (runtime) | Shares evaluator with const mode; no MIR generation. |
 | **Bytecode** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → MIR → LIR → VM bytecode | Bytecode generator reuses the same typed IR pipeline. |
-| **Transpile** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → target AST | Typed metadata is preserved for optional annotation in the output language. |
+| **AST Target Emit** | AST → ASTᵗ → ASTᵗ′ → HIRᵗ → target AST | Typed metadata is preserved for optional annotation in the output language. |
 
 ## Diagnostics
 
@@ -95,7 +95,7 @@ SOURCE → LAST → AST → ASTᵗ → (const/runtime evaluation) → ASTᵗ′ 
 1. Expand `hir_to_mir` to cover richer control flow, method dispatch, and
    runtime array operations.
 2. Harden intrinsic materialisation across backends with regression coverage for
-   interpreter, MIR/LIR, and transpiler outputs.
+   interpreter, MIR/LIR, and target outputs.
 3. Deduplicate CLI pipeline target handling so `binary`, `llvm`, and `bytecode`
    share the same staged driver.
 4. Continue updating tooling/docs as the AST-centric pipeline stabilises.

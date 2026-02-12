@@ -105,7 +105,7 @@ $ cat target/ast/src_main.ast-eval
 - **Missing LLVM tools**: `fp compile` reports if `llc`/`clang` are unavailable. Install via your package manager or set
   `FP_LLVM_PATH`.
 - **Const eval errors**: Review the `ast-eval` artefact. Diagnostics map back to original spans.
-- **Transpile mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—the evaluated AST should match quoted/spliced code.
+- **Target mismatch**: Ensure `docs/Design.md` cross-stage guarantees hold—the evaluated AST should match quoted/spliced code.
 
 ## Next Steps
 

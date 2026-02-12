@@ -5,7 +5,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 ## Why FerroPhase
 
 - Structural metaprogramming: generate fields, methods, and whole types with hygienic transformations.
-- Multi-mode toolchain: interpret, compile to native backends, or transpile to backend code targets without changing source.
+- Multi-mode toolchain: interpret, compile to native backends, or emit AST targets without changing source.
 - Compile-time intelligence: query layouts, traits, and type metadata during const evaluation to shape emitted code.
 
 ## Quick Start
@@ -26,7 +26,7 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
    fp run src/main.fp
 
    # Or generate Rust via the backend pipeline
-   fp transpile src/main.fp --output src/main.rs
+   fp compile src/main.fp --backend rust --output src/main.rs
    ```
 
 ## Core Capabilities
@@ -55,16 +55,16 @@ fp parse examples/05_struct_generation.fp
 # Interpret
 fp run examples/09_metaprogramming_patterns.fp
 
-# Transpile (backend shorthand; defaults to Rust)
-fp transpile src/service.fp --output service.rs
+# Compile to Rust backend source
+fp compile src/service.fp --backend rust --output service.rs
 
-# Syntax-level transpile (AST serializer; e.g. TypeScript)
-fp syntax-transpile src/service.fp --target typescript --output service.ts
+# Emit AST target output (e.g. TypeScript)
+fp compile src/service.fp --target typescript --output service.ts
 ```
 
 ## Roadmap
 
-- ✅ Core AST infrastructure, const evaluation intrinsics, Rust transpiler, CLI templates.
+- ✅ Core AST infrastructure, const evaluation intrinsics, Rust target emission, CLI templates.
 - 🚧 Parser upgrades for advanced macros, side-effect tracking, refinements to three-phase const evaluation.
 - 📋 Planned: LLVM/WASM backends, language server integration, richer bytecode tooling.
 

@@ -12,7 +12,7 @@ use fp_core::ast::{
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 
-/// Public entry point used by the CLI transpiler.
+/// Public entry point used by the CLI target emitter.
 #[derive(Clone, Debug)]
 pub struct GoSerializer {
     package: String,

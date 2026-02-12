@@ -621,7 +621,7 @@ impl ScriptEmitter {
             BlockStmt::Noop => {}
             BlockStmt::Any(_) => {
                 return Err(eyre!(
-                    "Normalization cannot process placeholder statements during transpile"
+                    "Normalization cannot process placeholder statements during target emission"
                 )
                 .into());
             }
@@ -691,7 +691,7 @@ impl ScriptEmitter {
             ExprKind::UnOp(un_op) => match &un_op.op {
                 UnOpKind::Neg => Ok(format!("(-{})", self.render_expr(un_op.val.as_ref())?)),
                 UnOpKind::Not => Ok(format!("(!{})", self.render_expr(un_op.val.as_ref())?)),
-                other => Err(eyre!("Unsupported unary op in transpiler: {:?}", other).into()),
+                other => Err(eyre!("Unsupported unary op in target emitter: {:?}", other).into()),
             },
             ExprKind::FormatString(format) => Ok(render_template_literal(format)),
             ExprKind::Struct(struct_expr) => self.render_struct_literal(struct_expr),
@@ -734,10 +734,10 @@ impl ScriptEmitter {
                 Ok(format!("({params}) => {body}"))
             }
             ExprKind::Any(_) => Err(eyre!(
-                "Normalization cannot process placeholder expressions during transpile"
+                "Normalization cannot process placeholder expressions during target emission"
             )
             .into()),
-            other => Err(eyre!("Unsupported expression in transpiler: {:?}", other).into()),
+            other => Err(eyre!("Unsupported expression in target emitter: {:?}", other).into()),
         }
     }
 
