@@ -643,17 +643,28 @@ fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, us
 
     if tokens.get(idx).is_some_and(|tok| tok == "=") {
         idx += 1;
-        let value_expr = parse_attr_value_expr(&tokens[idx..])?;
+        let end = find_attr_value_end(tokens, idx);
+        let value_expr = parse_attr_value_expr(&tokens[idx..end])?;
         return Some((
             AttrMeta::NameValue(AttrMetaNameValue {
                 name: path,
                 value: value_expr,
             }),
-            tokens.len(),
+            end,
         ));
     }
 
     Some((AttrMeta::Path(path), idx))
+}
+
+fn find_attr_value_end(tokens: &[String], mut idx: usize) -> usize {
+    while let Some(tok) = tokens.get(idx) {
+        if tok == "," || tok == ")" {
+            break;
+        }
+        idx += 1;
+    }
+    idx
 }
 
 fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {

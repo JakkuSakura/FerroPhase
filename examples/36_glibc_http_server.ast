@@ -4190,67 +4190,91 @@ ast::File {
                 kwargs: []
       }
     }
-    pub struct InAddr {
-      s_addr: Expr(u32)
-    }
-    pub struct SockAddrIn {
-      sin_family: Expr(u16)
-      sin_port: Expr(u16)
-      sin_addr: Expr(InAddr)
-      sin_zero0: Expr(u32)
-      sin_zero1: Expr(u32)
-    }
+    pub type SockAddrIn = [Expr(u8); 16]
     pub module libc {
       declare extern "C" fn socket(domain: Expr(i32), sock_type: Expr(i32), protocol: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn bind(fd: Expr(i32), addr: *Expr(crate::SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), *Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32)
+      declare extern "C" fn setsockopt(fd: Expr(i32), level: Expr(i32), optname: Expr(i32), optval: *const Expr(u8), optlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32), *const Expr(u8), Expr(u32)) -> Expr(i32)
+      declare extern "C" fn bind(fd: Expr(i32), addr: *const Expr(u8), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), *const Expr(u8), Expr(u32)) -> Expr(i32)
       declare extern "C" fn listen(fd: Expr(i32), backlog: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn accept(fd: Expr(i32), addr: *mut Expr(crate::SockAddrIn), addrlen: *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(crate::SockAddrIn), *mut Expr(u32)) -> Expr(i32)
-      declare extern "C" fn write(fd: Expr(i32), buf: *Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), *Expr(u8), Expr(usize)) -> Expr(i64)
+      declare extern "C" fn accept(fd: Expr(i32), addr: *mut Expr(u8), addrlen: *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(u8), *mut Expr(u32)) -> Expr(i32)
+      declare extern "C" fn write(fd: Expr(i32), buf: &Expr(std::ffi::CStr), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(std::ffi::CStr), Expr(usize)) -> Expr(i64)
+      declare extern "C" fn strlen(s: &Expr(std::ffi::CStr)) -> Expr(usize) : fn(&Expr(std::ffi::CStr)) -> Expr(usize)
+      declare extern "C" fn perror(s: &Expr(std::ffi::CStr)) : fn(&Expr(std::ffi::CStr)) -> ()
       declare extern "C" fn close(fd: Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32)
-      declare extern "C" fn htons(hostshort: Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16)
     }
     pub const AF_INET: i32
       value 2
     pub const SOCK_STREAM: i32
       value 1
-    pub const INADDR_ANY: u32
-      value 0
+    pub const SOL_SOCKET: i32
+      value 1
+    pub const SO_REUSEADDR: i32
+      value 2
     pub const SOCKADDR_LEN: u32
       value 16
-    pub const RESPONSE_LEN: u64
-      value 111
-    pub const RESPONSE: [u8; 111]
-      value [111 values]
-    pub fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn) : fn(u16) -> SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+    pub const RESPONSE: &string
+      value "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n"
+    pub const SOCKET_ERR: &string
+      value "socket"
+    pub const BIND_ERR: &string
+      value "bind"
+    pub const LISTEN_ERR: &string
+      value "listen"
+    pub const ACCEPT_ERR: &string
+      value "accept"
+    pub [attrs] fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn) : fn(u16) -> any
       block (1 stmt)
         expr_stmt (value)
-          struct SockAddrIn
-            sin_family:
-              cast -> Expr(u16)
-                value 2
-            sin_port:
-              invoke
-                target: libc::htons
-                args:
+          array (16 values)
+            cast -> Expr(u8)
+              value 16
+            cast -> Expr(u8)
+              value 2
+            cast -> Expr(u8)
+              binop &
+                lhs:
+                  binop >>
+                    lhs:
+                      locator port
+                    rhs:
+                      value 8
+                rhs:
+                  value 255
+            cast -> Expr(u8)
+              binop &
+                lhs:
                   locator port
-            sin_addr:
-              struct InAddr
-                s_addr:
-                  value 0
-            sin_zero0:
-              value 0
-            sin_zero1:
-              value 0
-    pub fn main() -> () : fn() -> ()
-      block (10 stmts)
+                rhs:
+                  value 255
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+            value 0
+    pub [attrs] fn main() -> () : fn() -> ()
+      block (16 stmts)
         let server_fd
           init:
-            invoke
-              target: libc::socket
-              args:
-                value 2
-                value 1
-                value 0
+            cast -> Expr(i32)
+              invoke
+                target: libc::socket
+                args:
+                  value 2
+                  value 1
+                  value 0
+        expr_stmt ;
+          intrinsic println
+            args:
+              format_string "socket fd: {}"
+              locator server_fd
+            kwargs: []
         expr_stmt (value)
           if
             cond:
@@ -4258,26 +4282,47 @@ ast::File {
                 lhs:
                   locator server_fd
                 rhs:
-                  value 0
+                  cast -> Expr(i32)
+                    value 0
             then:
               block (2 stmts)
                 expr_stmt ;
-                  intrinsic println
+                  invoke
+                    target: libc::perror
                     args:
-                      format_string "socket failed"
-                    kwargs: []
+                      value "socket"
                 expr_stmt ;
                   return
-        let addr
+        let reuse: Expr(i32)
+          init:
+            value 1
+        let reuse_ptr
+          init:
+            cast -> *const Expr(i32)
+              reference (mutable: unspecified)
+                locator reuse
+        let _
+          init:
+            invoke
+              target: libc::setsockopt
+              args:
+                locator server_fd
+                value 1
+                value 2
+                cast -> *const Expr(u8)
+                  locator reuse_ptr
+                value 4
+        let mut addr
           init:
             invoke
               target: make_addr
               args:
-                value 8080
+                cast -> Expr(u16)
+                  value 8080
         let addr_ptr
           init:
-            cast -> *Expr(SockAddrIn)
-              reference (mutable: unspecified)
+            cast -> *mut Expr(SockAddrIn)
+              reference (mutable: mut)
                 locator addr
         let bind_rc
           init:
@@ -4285,23 +4330,31 @@ ast::File {
               target: libc::bind
               args:
                 locator server_fd
-                locator addr_ptr
+                cast -> *const Expr(u8)
+                  locator addr_ptr
                 value 16
+        expr_stmt ;
+          intrinsic println
+            args:
+              format_string "bind rc: {}"
+              locator bind_rc
+            kwargs: []
         expr_stmt (value)
           if
             cond:
-              binop <
+              binop !=
                 lhs:
                   locator bind_rc
                 rhs:
-                  value 0
+                  cast -> Expr(i32)
+                    value 0
             then:
               block (3 stmts)
                 expr_stmt ;
-                  intrinsic println
+                  invoke
+                    target: libc::perror
                     args:
-                      format_string "bind failed"
-                    kwargs: []
+                      value "bind"
                 expr_stmt ;
                   invoke
                     target: libc::close
@@ -4316,28 +4369,28 @@ ast::File {
               args:
                 locator server_fd
                 value 16
+        expr_stmt ;
+          intrinsic println
+            args:
+              format_string "listen rc: {}"
+              locator listen_rc
+            kwargs: []
         expr_stmt (value)
           if
             cond:
-              binop <
+              binop !=
                 lhs:
                   locator listen_rc
                 rhs:
-                  value 0
+                  cast -> Expr(i32)
+                    value 0
             then:
-              block (3 stmts)
-                expr_stmt ;
-                  intrinsic println
-                    args:
-                      format_string "listen failed"
-                    kwargs: []
+              block (1 stmt)
                 expr_stmt ;
                   invoke
-                    target: libc::close
+                    target: libc::perror
                     args:
-                      locator server_fd
-                expr_stmt ;
-                  return
+                      value "listen"
         expr_stmt ;
           intrinsic println
             args:
@@ -4351,7 +4404,8 @@ ast::File {
                   invoke
                     target: make_addr
                     args:
-                      value 0
+                      cast -> Expr(u16)
+                        value 0
               let mut client_len: Expr(u32)
                 init:
                   value 16
@@ -4367,12 +4421,14 @@ ast::File {
                       locator client_len
               let client_fd
                 init:
-                  invoke
-                    target: libc::accept
-                    args:
-                      locator server_fd
-                      locator client_addr_ptr
-                      locator client_len_ptr
+                  cast -> Expr(i32)
+                    invoke
+                      target: libc::accept
+                      args:
+                        locator server_fd
+                        cast -> *mut Expr(u8)
+                          locator client_addr_ptr
+                        locator client_len_ptr
               expr_stmt (value)
                 if
                   cond:
@@ -4380,33 +4436,31 @@ ast::File {
                       lhs:
                         locator client_fd
                       rhs:
-                        value 0
+                        cast -> Expr(i32)
+                          value 0
                   then:
                     block (2 stmts)
                       expr_stmt ;
-                        intrinsic println
+                        invoke
+                          target: libc::perror
                           args:
-                            format_string "accept failed"
-                          kwargs: []
+                            value "accept"
                       expr_stmt ;
                         continue
-              let response_ptr
+              let response_len
                 init:
-                  cast -> *Expr(u8)
-                    reference (mutable: unspecified)
-                      index
-                        value:
-                          value [111 values]
-                        index:
-                          value 0
+                  invoke
+                    target: libc::strlen
+                    args:
+                      value "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n"
               let _
                 init:
                   invoke
                     target: libc::write
                     args:
                       locator client_fd
-                      locator response_ptr
-                      value 111
+                      value "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n"
+                      locator response_len
               expr_stmt ;
                 invoke
                   target: libc::close

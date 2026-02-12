@@ -1126,6 +1126,7 @@ dependencies = [
  "eyre",
  "fp-core",
  "fp-interpret",
+ "fp-sql",
  "fp-typing",
  "itertools 0.12.1",
  "pretty_assertions",

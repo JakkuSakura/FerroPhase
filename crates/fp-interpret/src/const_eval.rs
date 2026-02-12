@@ -78,6 +78,7 @@ impl ConstEvaluationOrchestrator {
             macro_parser,
             intrinsic_normalizer,
             stdout_mode: StdoutMode::Capture,
+            target_env: fp_core::cfg::TargetEnv::host(),
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);

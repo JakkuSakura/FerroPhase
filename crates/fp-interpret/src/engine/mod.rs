@@ -34,6 +34,7 @@ use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
+use fp_core::cfg::{TargetEnv, item_enabled_by_cfg};
 use fp_typing::{AstTypeInferencer, TypeEvaluationHook, TypeResolutionHook};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
@@ -145,6 +146,7 @@ pub struct InterpreterOptions {
     pub macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
     pub intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     pub stdout_mode: StdoutMode,
+    pub target_env: TargetEnv,
 }
 
 impl Default for InterpreterOptions {
@@ -158,6 +160,7 @@ impl Default for InterpreterOptions {
             macro_parser: None,
             intrinsic_normalizer: None,
             stdout_mode: StdoutMode::Capture,
+            target_env: TargetEnv::host(),
         }
     }
 }
@@ -586,6 +589,7 @@ pub struct AstInterpreter<'ctx> {
     macro_parser: Option<Arc<dyn fp_core::ast::MacroExpansionParser>>,
     intrinsic_normalizer: Option<Arc<dyn IntrinsicNormalizer>>,
     stdout_mode: StdoutMode,
+    target_env: TargetEnv,
 
     module_stack: Vec<String>,
     value_env: Vec<HashMap<String, StoredValue>>,
@@ -664,6 +668,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             macro_parser: options.macro_parser.clone(),
             intrinsic_normalizer: options.intrinsic_normalizer.clone(),
             stdout_mode: options.stdout_mode,
+            target_env: options.target_env.clone(),
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
@@ -781,11 +786,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.pending_items.push(Vec::new());
                 if let Some(typer) = self.typer.as_mut() {
                     for item in &file.items {
-                        typer.initialize_from_item(item);
+                        if item_enabled_by_cfg(item, &self.target_env) {
+                            typer.initialize_from_item(item);
+                        }
                     }
                 }
                 let mut idx = 0;
                 while idx < file.items.len() {
+                    if !item_enabled_by_cfg(&file.items[idx], &self.target_env) {
+                        file.items.remove(idx);
+                        self.mark_mutated();
+                        continue;
+                    }
                     if self.should_skip_lazy_item(&file.items[idx]) {
                         idx += 1;
                         continue;
@@ -1409,7 +1421,9 @@ impl<'ctx> AstInterpreter<'ctx> {
     fn register_items_with_typer(&mut self, items: &[Item]) {
         if let Some(typer) = self.typer.as_mut() {
             for item in items {
-                typer.initialize_from_item(item);
+                if item_enabled_by_cfg(item, &self.target_env) {
+                    typer.initialize_from_item(item);
+                }
             }
         }
     }
@@ -1499,6 +1513,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         for scope_ptr in scopes.into_iter().rev() {
             let items = unsafe { &mut *scope_ptr };
             for item in items.iter_mut() {
+                if !item_enabled_by_cfg(item, &self.target_env) {
+                    continue;
+                }
                 let item_name = match item.kind() {
                     ItemKind::DefStruct(def) => Some(def.name.as_str().to_string()),
                     ItemKind::DefStructural(def) => Some(def.name.as_str().to_string()),
@@ -1566,6 +1583,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             let items = &mut *items_ptr;
             if path.len() == 1 {
                 for item in items.iter_mut() {
+                    if !item_enabled_by_cfg(item, &self.target_env) {
+                        continue;
+                    }
                     let name = match item.kind() {
                         ItemKind::DefStruct(def) => Some(def.name.as_str()),
                         ItemKind::DefStructural(def) => Some(def.name.as_str()),
@@ -1584,6 +1604,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return None;
             }
             for item in items.iter_mut() {
+                if !item_enabled_by_cfg(item, &self.target_env) {
+                    continue;
+                }
                 if let ItemKind::Module(module) = item.kind_mut() {
                     if module.name.as_str() == path[0] {
                         return self.find_item_by_path_mut(&mut module.items as *mut Vec<Item>, &path[1..]);
@@ -3014,11 +3037,18 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.pending_items.push(Vec::new());
                 if let Some(typer) = self.typer.as_mut() {
                     for item in &module.items {
-                        typer.initialize_from_item(item);
+                        if item_enabled_by_cfg(item, &self.target_env) {
+                            typer.initialize_from_item(item);
+                        }
                     }
                 }
                 let mut idx = 0;
                 while idx < module.items.len() {
+                    if !item_enabled_by_cfg(&module.items[idx], &self.target_env) {
+                        module.items.remove(idx);
+                        self.mark_mutated();
+                        continue;
+                    }
                     if self.should_skip_lazy_item(&module.items[idx]) {
                         idx += 1;
                         continue;

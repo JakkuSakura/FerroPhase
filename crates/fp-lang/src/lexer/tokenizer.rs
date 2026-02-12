@@ -143,6 +143,32 @@ impl LexerError {
 // The lexer/token layer preserves the raw literal text, while the parser/value layer currently
 // parses only the numeric portion into i64/f64 and ignores any suffix.
 pub(crate) fn strip_number_suffix(lexeme: &str) -> &str {
+    if let Some((radix, prefix_len)) = if lexeme.starts_with("0x") || lexeme.starts_with("0X") {
+        Some((16, 2))
+    } else if lexeme.starts_with("0b") || lexeme.starts_with("0B") {
+        Some((2, 2))
+    } else if lexeme.starts_with("0o") || lexeme.starts_with("0O") {
+        Some((8, 2))
+    } else {
+        None
+    } {
+        let mut end = prefix_len;
+        for (idx, ch) in lexeme[prefix_len..].char_indices() {
+            let is_digit = match radix {
+                2 => ch == '0' || ch == '1',
+                8 => ch.is_ascii_digit() && ch < '8',
+                16 => ch.is_ascii_hexdigit(),
+                _ => false,
+            };
+            if is_digit || ch == '_' {
+                end = prefix_len + idx + ch.len_utf8();
+            } else {
+                break;
+            }
+        }
+        return &lexeme[..end];
+    }
+
     let mut numeric_part = lexeme;
     for (idx, ch) in lexeme.char_indices() {
         if ch.is_ascii_alphabetic() {

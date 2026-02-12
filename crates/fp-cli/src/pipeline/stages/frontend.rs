@@ -30,6 +30,7 @@ impl PipelineStage for FrontendStage {
             Some(path) => HirGenerator::with_file(path),
             None => HirGenerator::new(),
         };
+        generator.set_target_triple(context.options.target_triple.as_deref());
 
         if matches!(
             context.ast.kind(),

@@ -1,639 +1,333 @@
 lir::Program {
+    globals:
+        @__const_data_0: [7 x i8] [linkage: internal] [visibility: hidden] const align 1 = [7 x i8] { i8 115, i8 111, i8 99, i8 107, i8 101, i8 116, i8 0 }
+        @__const_data_1: [5 x i8] [linkage: internal] [visibility: hidden] const align 1 = [5 x i8] { i8 98, i8 105, i8 110, i8 100, i8 0 }
+        @__const_data_2: [7 x i8] [linkage: internal] [visibility: hidden] const align 1 = [7 x i8] { i8 108, i8 105, i8 115, i8 116, i8 101, i8 110, i8 0 }
+        @__const_data_3: [7 x i8] [linkage: internal] [visibility: hidden] const align 1 = [7 x i8] { i8 97, i8 99, i8 99, i8 101, i8 112, i8 116, i8 0 }
+        @__const_data_4: [112 x i8] [linkage: internal] [visibility: hidden] const align 1 = [112 x i8] { i8 72, i8 84, i8 84, i8 80, i8 47, i8 49, i8 46, i8 49, i8 32, i8 50, i8 48, i8 48, i8 32, i8 79, i8 75, i8 13, i8 10, i8 67, i8 111, i8 110, i8 116, i8 101, i8 110, i8 116, i8 45, i8 76, i8 101, i8 110, i8 103, i8 116, i8 104, i8 58, i8 32, i8 49, i8 50, i8 13, i8 10, i8 67, i8 111, i8 110, i8 116, i8 101, i8 110, i8 116, i8 45, i8 84, i8 121, i8 112, i8 101, i8 58, i8 32, i8 116, i8 101, i8 120, i8 116, i8 47, i8 112, i8 108, i8 97, i8 105, i8 110, i8 59, i8 32, i8 99, i8 104, i8 97, i8 114, i8 115, i8 101, i8 116, i8 61, i8 117, i8 116, i8 102, i8 45, i8 56, i8 13, i8 10, i8 67, i8 111, i8 110, i8 110, i8 101, i8 99, i8 116, i8 105, i8 111, i8 110, i8 58, i8 32, i8 99, i8 108, i8 111, i8 115, i8 101, i8 13, i8 10, i8 13, i8 10, i8 72, i8 101, i8 108, i8 108, i8 111, i8 32, i8 119, i8 111, i8 114, i8 108, i8 100, i8 10, i8 0 }
     functions:
         fn socket(arg0: i32, arg1: i32, arg2: i32) -> i32 [cc: c, linkage: external, decl] {
         }
 
-        fn bind(arg0: i32, arg1: ptr { i16, i16, { i32 }, i32, i32 }, arg2: i32) -> i32 [cc: c, linkage: external, decl] {
+        fn setsockopt(arg0: i32, arg1: i32, arg2: i32, arg3: ptr i8, arg4: i32) -> i32 [cc: c, linkage: external, decl] {
+        }
+
+        fn bind(arg0: i32, arg1: ptr i8, arg2: i32) -> i32 [cc: c, linkage: external, decl] {
         }
 
         fn listen(arg0: i32, arg1: i32) -> i32 [cc: c, linkage: external, decl] {
         }
 
-        fn accept(arg0: i32, arg1: ptr { i16, i16, { i32 }, i32, i32 }, arg2: ptr i32) -> i32 [cc: c, linkage: external, decl] {
+        fn accept(arg0: i32, arg1: ptr i8, arg2: ptr i32) -> i32 [cc: c, linkage: external, decl] {
         }
 
-        fn write(arg0: i32, arg1: ptr i8, arg2: i64) -> i64 [cc: c, linkage: external, decl] {
+        fn write(arg0: i32, arg1: ptr void, arg2: i64) -> i64 [cc: c, linkage: external, decl] {
+        }
+
+        fn strlen(arg0: ptr void) -> i64 [cc: c, linkage: external, decl] {
+        }
+
+        fn perror(arg0: ptr void) -> void [cc: c, linkage: external, decl] {
         }
 
         fn close(arg0: i32) -> i32 [cc: c, linkage: external, decl] {
         }
 
-        fn htons(arg0: i16) -> i16 [cc: c, linkage: external, decl] {
-        }
-
-        fn make_addr(arg0: i16) -> { i16, i16, { i32 }, i32, i32 } [cc: c, linkage: internal] {
+        fn make_addr(arg0: i16) -> [16 x i8] [cc: c, linkage: internal] {
             locals:
-                %0: { i16, i16, { i32 }, i32, i32 }
+                %0: [16 x i8]
                 %1: i16 // arg
                 %2: i16
                 %3: i16
-                %4: { i32 }
-            bb0 // label: bb0 // succs: [bb1]:
-                i0: %r0 = alloca i32 1 align 4 : ptr { i16, i16, { i32 }, i32, i32 }
-                i1: %r1 = alloca i32 1 align 2 : ptr i16
-                i2: %r2 = sext_or_trunc i64 2 to i16 : i16
-                i3: store %r2, %r1 align 2
-                i4: %r4 = call c @htons(%local1) : i16
-                terminator: br bb1
-            bb1 // label: bb1 // preds: [bb0]:
-                i5: %r5 = alloca i32 1 align 4 : ptr { i32 }
-                i6: store struct { i32 } { i32 0 }, %r5 align 4
-                i7: %r7 = load %r1 align 2 : i16
-                i8: %r8 = load %r5 align 4 : { i32 }
-                i9: %r9 = insertvalue undef { i16, i16, { i32 }, i32, i32 }, %r7, [0] : { i16, i16, { i32 }, i32, i32 }
-                i10: %r10 = insertvalue %r9, %r4, [1] : { i16, i16, { i32 }, i32, i32 }
-                i11: %r11 = insertvalue %r10, %r8, [2] : { i16, i16, { i32 }, i32, i32 }
-                i12: %r12 = insertvalue %r11, i32 0, [3] : { i16, i16, { i32 }, i32, i32 }
-                i13: %r13 = insertvalue %r12, i32 0, [4] : { i16, i16, { i32 }, i32, i32 }
-                i14: store %r13, %r0 align 4
-                i15: %r15 = load %r0 align 4 : { i16, i16, { i32 }, i32, i32 }
-                terminator: ret %r15
+                %4: i8
+                %5: i16
+                %6: i8
+            bb0 // label: bb0:
+                i0: %r0 = alloca i32 1 align 2 : ptr i16
+                i1: %r1 = shr %local1, i64 8 : i16
+                i2: store %r1, %r0 align 2
+                i3: %r3 = alloca i32 1 align 2 : ptr i16
+                i4: %r4 = load %r0 align 2 : i16
+                i5: %r5 = and %r4, i64 255 : i16
+                i6: store %r5, %r3 align 2
+                i7: %r7 = alloca i32 1 align 1 : ptr i8
+                i8: %r8 = load %r3 align 2 : i16
+                i9: %r9 = sext_or_trunc %r8 to i8 : i8
+                i10: store %r9, %r7 align 1
+                i11: %r11 = alloca i32 1 align 2 : ptr i16
+                i12: %r12 = and %local1, i64 255 : i16
+                i13: store %r12, %r11 align 2
+                i14: %r14 = alloca i32 1 align 1 : ptr i8
+                i15: %r15 = load %r11 align 2 : i16
+                i16: %r16 = sext_or_trunc %r15 to i8 : i8
+                i17: store %r16, %r14 align 1
+                i18: %r18 = load %r7 align 1 : i8
+                i19: %r19 = load %r14 align 1 : i8
+                i20: %r20 = insertvalue undef [16 x i8], i8 16, [0] : [16 x i8]
+                i21: %r21 = insertvalue %r20, i8 2, [1] : [16 x i8]
+                i22: %r22 = insertvalue %r21, %r18, [2] : [16 x i8]
+                i23: %r23 = insertvalue %r22, %r19, [3] : [16 x i8]
+                i24: %r24 = insertvalue %r23, i8 0, [4] : [16 x i8]
+                i25: %r25 = insertvalue %r24, i8 0, [5] : [16 x i8]
+                i26: %r26 = insertvalue %r25, i8 0, [6] : [16 x i8]
+                i27: %r27 = insertvalue %r26, i8 0, [7] : [16 x i8]
+                i28: %r28 = insertvalue %r27, i8 0, [8] : [16 x i8]
+                i29: %r29 = insertvalue %r28, i8 0, [9] : [16 x i8]
+                i30: %r30 = insertvalue %r29, i8 0, [10] : [16 x i8]
+                i31: %r31 = insertvalue %r30, i8 0, [11] : [16 x i8]
+                i32: %r32 = insertvalue %r31, i8 0, [12] : [16 x i8]
+                i33: %r33 = insertvalue %r32, i8 0, [13] : [16 x i8]
+                i34: %r34 = insertvalue %r33, i8 0, [14] : [16 x i8]
+                i35: %r35 = insertvalue %r34, i8 0, [15] : [16 x i8]
+                terminator: ret %r35
         }
 
         fn main() -> void [cc: c, linkage: internal] {
             locals:
                 %0: void
                 %1: i32
-                %2: i1
-                %3: void
-                %4: { i16, i16, { i32 }, i32, i32 }
-                %5: ptr { i16, i16, { i32 }, i32, i32 }
-                %6: ptr { i16, i16, { i32 }, i32, i32 }
-                %7: ptr { i16, i16, { i32 }, i32, i32 }
-                %8: i32
-                %9: i1
-                %10: void
+                %2: i32
+                %3: i32
+                %4: void
+                %5: i1
+                %6: void
+                %7: i32
+                %8: ptr i32
+                %9: ptr i32
+                %10: ptr i32
                 %11: i32
-                %12: i32
-                %13: i1
-                %14: void
-                %15: i32
-                %16: void
-                %17: [70 x i8]
-                %18: [70 x i8]
-                %19: i8
-                %20: i8
-                %21: i8
-                %22: i8
-                %23: i8
-                %24: i8
-                %25: i8
-                %26: i8
-                %27: i8
-                %28: i8
-                %29: i8
-                %30: i8
-                %31: i8
-                %32: i8
-                %33: i8
-                %34: i8
-                %35: i8
-                %36: i8
-                %37: i8
-                %38: i8
-                %39: i8
-                %40: i8
-                %41: i8
-                %42: i8
-                %43: i8
-                %44: i8
-                %45: i8
-                %46: i8
-                %47: i8
-                %48: i8
-                %49: i8
-                %50: i8
-                %51: i8
-                %52: i8
-                %53: i8
-                %54: i8
-                %55: i8
-                %56: i8
-                %57: i8
-                %58: i8
-                %59: i8
-                %60: i8
-                %61: i8
-                %62: i8
-                %63: i8
-                %64: i8
-                %65: i8
-                %66: i8
-                %67: i8
-                %68: i8
-                %69: i8
-                %70: i8
-                %71: i8
-                %72: i8
-                %73: i8
-                %74: i8
-                %75: i8
-                %76: i8
-                %77: i8
-                %78: i8
-                %79: i8
-                %80: i8
-                %81: i8
-                %82: i8
-                %83: i8
-                %84: i8
-                %85: i8
-                %86: i8
-                %87: i8
-                %88: i8
-                %89: { i16, i16, { i32 }, i32, i32 }
-                %90: i32
-                %91: ptr { i16, i16, { i32 }, i32, i32 }
-                %92: ptr { i16, i16, { i32 }, i32, i32 }
-                %93: ptr { i16, i16, { i32 }, i32, i32 }
-                %94: ptr i32
-                %95: ptr i32
-                %96: ptr i32
-                %97: i32
-                %98: i1
-                %99: void
-                %100: ptr i8
-                %101: ptr [70 x i8]
-                %102: ptr i8
-                %103: i64
-                %104: i32
+                %12: ptr i8
+                %13: [16 x i8]
+                %14: ptr [16 x i8]
+                %15: ptr [16 x i8]
+                %16: ptr [16 x i8]
+                %17: i32
+                %18: ptr i8
+                %19: void
+                %20: i1
+                %21: void
+                %22: i32
+                %23: i32
+                %24: void
+                %25: i1
+                %26: void
+                %27: void
+                %28: void
+                %29: [16 x i8]
+                %30: i32
+                %31: ptr [16 x i8]
+                %32: ptr [16 x i8]
+                %33: ptr [16 x i8]
+                %34: ptr i32
+                %35: ptr i32
+                %36: ptr i32
+                %37: i32
+                %38: i32
+                %39: ptr i8
+                %40: i32
+                %41: i1
+                %42: void
+                %43: i64
+                %44: i64
+                %45: i32
             bb0 // label: bb0 // succs: [bb1]:
-                i16: %r16 = call c @socket(i32 2, i32 1, i32 0) : i32
+                i36: %r36 = call c @socket(i32 2, i32 1, i32 0) : i32
                 terminator: br bb1
             bb1 // label: bb1 // preds: [bb0] // succs: [bb2, bb3]:
-                i17: %r17 = alloca i32 1 align 1 : ptr i1
-                i18: %r18 = load %r17 align 1 : i1
-                i19: %r19 = eq %r18, bool true : i1
-                terminator: cond_br %r19, bb2, bb3
-            bb2 // label: bb2 // preds: [bb1]:
-                i20: %r20 = intrinsic Println "socket failed
-" ()
-                terminator: ret void
+                i37: %r37 = alloca i32 1 align 4 : ptr i32
+                i38: %r38 = bitcast %r36 to i32 : i32
+                i39: store %r38, %r37 align 4
+                i40: %r40 = alloca i32 1 align 4 : ptr i32
+                i41: %r41 = load %r37 align 4 : i32
+                i42: store %r41, %r40 align 4
+                i43: %r43 = load %r37 align 4 : i32
+                i44: %r44 = intrinsic Println "socket fd: %d
+" (%r43)
+                i45: %r45 = alloca i32 1 align 1 : ptr i1
+                i46: %r46 = load %r37 align 4 : i32
+                i47: %r47 = lt %r46, i64 0 : i1
+                i48: store %r47, %r45 align 1
+                i49: %r49 = load %r45 align 1 : i1
+                i50: %r50 = eq %r49, bool true : i1
+                terminator: cond_br %r50, bb2, bb3
+            bb2 // label: bb2 // preds: [bb1] // succs: [bb5]:
+                i51: %r51 = bitcast global __const_data_0[0, 0] as ptr i8 to ptr void : ptr void
+                i52: %r52 = call c @perror(%r51)
+                terminator: br bb5
             bb3 // label: bb3 // preds: [bb1] // succs: [bb4]:
                 terminator: br bb4
-            bb4 // label: bb4 // preds: [bb3, bb5] // succs: [bb6]:
-                i21: %r21 = call c @make_addr(i16 8080) : { i16, i16, { i32 }, i32, i32 }
-                i22: %r22 = alloca i32 1 align 4 : ptr { i16, i16, { i32 }, i32, i32 }
-                i23: store %r21, %r22 align 4
-                terminator: br bb6
-            bb6 // label: bb6 // preds: [bb4] // succs: [bb7]:
-                i24: %r24 = alloca i32 1 align 8 : ptr ptr { i16, i16, { i32 }, i32, i32 }
-                i25: %r25 = load %r24 align 8 : ptr { i16, i16, { i32 }, i32, i32 }
-                i26: %r26 = call c @bind(%r16, %r25, i32 16) : i32
+            bb5 // label: bb5 // preds: [bb2]:
+                terminator: ret void
+            bb4 // label: bb4 // preds: [bb3, bb6] // succs: [bb7]:
+                i53: %r53 = alloca i32 1 align 4 : ptr i32
+                i54: store i32 1, %r53 align 4
+                i55: %r55 = alloca i32 1 align 8 : ptr ptr i32
+                i56: store %r53, %r55 align 8
+                i57: %r57 = alloca i32 1 align 8 : ptr ptr i32
+                i58: %r58 = load %r55 align 8 : ptr i32
+                i59: %r59 = bitcast %r58 to ptr i32 : ptr i32
+                i60: store %r59, %r57 align 8
+                i61: %r61 = alloca i32 1 align 8 : ptr ptr i32
+                i62: %r62 = load %r57 align 8 : ptr i32
+                i63: store %r62, %r61 align 8
+                i64: %r64 = alloca i32 1 align 8 : ptr ptr i8
+                i65: %r65 = load %r57 align 8 : ptr i32
+                i66: %r66 = bitcast %r65 to ptr i8 : ptr i8
+                i67: store %r66, %r64 align 8
+                i68: %r68 = load %r40 align 4 : i32
+                i69: %r69 = load %r64 align 8 : ptr i8
+                i70: %r70 = call c @setsockopt(%r68, i32 1, i32 2, %r69, i32 4) : i32
                 terminator: br bb7
-            bb7 // label: bb7 // preds: [bb6] // succs: [bb8, bb9]:
-                i27: %r27 = alloca i32 1 align 1 : ptr i1
-                i28: %r28 = load %r27 align 1 : i1
-                i29: %r29 = eq %r28, bool true : i1
-                terminator: cond_br %r29, bb8, bb9
-            bb8 // label: bb8 // preds: [bb7] // succs: [bb11]:
-                i30: %r30 = intrinsic Println "bind failed
-" ()
-                i31: %r31 = call c @close(%r16) : i32
-                terminator: br bb11
-            bb9 // label: bb9 // preds: [bb7] // succs: [bb10]:
-                terminator: br bb10
-            bb11 // label: bb11 // preds: [bb8]:
-                terminator: ret void
-            bb10 // label: bb10 // preds: [bb9, bb12] // succs: [bb13]:
-                i32: %r32 = call c @listen(%r16, i32 16) : i32
+            bb7 // label: bb7 // preds: [bb4] // succs: [bb8]:
+                i71: %r71 = call c @make_addr(i16 8080) : [16 x i8]
+                i72: %r72 = alloca i32 1 align 1 : ptr [16 x i8]
+                i73: store %r71, %r72 align 1
+                terminator: br bb8
+            bb8 // label: bb8 // preds: [bb7] // succs: [bb9]:
+                i74: %r74 = alloca i32 1 align 8 : ptr ptr [16 x i8]
+                i75: store %r72, %r74 align 8
+                i76: %r76 = alloca i32 1 align 8 : ptr ptr [16 x i8]
+                i77: %r77 = load %r74 align 8 : ptr [16 x i8]
+                i78: %r78 = bitcast %r77 to ptr [16 x i8] : ptr [16 x i8]
+                i79: store %r78, %r76 align 8
+                i80: %r80 = alloca i32 1 align 8 : ptr ptr [16 x i8]
+                i81: %r81 = load %r76 align 8 : ptr [16 x i8]
+                i82: store %r81, %r80 align 8
+                i83: %r83 = alloca i32 1 align 8 : ptr ptr i8
+                i84: %r84 = load %r76 align 8 : ptr [16 x i8]
+                i85: %r85 = bitcast %r84 to ptr i8 : ptr i8
+                i86: store %r85, %r83 align 8
+                i87: %r87 = load %r40 align 4 : i32
+                i88: %r88 = load %r83 align 8 : ptr i8
+                i89: %r89 = call c @bind(%r87, %r88, i32 16) : i32
+                terminator: br bb9
+            bb9 // label: bb9 // preds: [bb8] // succs: [bb10, bb11]:
+                i90: %r90 = intrinsic Println "bind rc: %d
+" (%r89)
+                i91: %r91 = alloca i32 1 align 1 : ptr i1
+                i92: %r92 = ne %r89, i64 0 : i1
+                i93: store %r92, %r91 align 1
+                i94: %r94 = load %r91 align 1 : i1
+                i95: %r95 = eq %r94, bool true : i1
+                terminator: cond_br %r95, bb10, bb11
+            bb10 // label: bb10 // preds: [bb9] // succs: [bb13]:
+                i96: %r96 = bitcast global __const_data_1[0, 0] as ptr i8 to ptr void : ptr void
+                i97: %r97 = call c @perror(%r96)
                 terminator: br bb13
-            bb13 // label: bb13 // preds: [bb10] // succs: [bb14, bb15]:
-                i33: %r33 = alloca i32 1 align 1 : ptr i1
-                i34: %r34 = load %r33 align 1 : i1
-                i35: %r35 = eq %r34, bool true : i1
-                terminator: cond_br %r35, bb14, bb15
-            bb14 // label: bb14 // preds: [bb13] // succs: [bb17]:
-                i36: %r36 = intrinsic Println "listen failed
-" ()
-                i37: %r37 = call c @close(%r16) : i32
-                terminator: br bb17
-            bb15 // label: bb15 // preds: [bb13] // succs: [bb16]:
+            bb11 // label: bb11 // preds: [bb9] // succs: [bb12]:
+                terminator: br bb12
+            bb13 // label: bb13 // preds: [bb10] // succs: [bb14]:
+                i98: %r98 = load %r40 align 4 : i32
+                i99: %r99 = call c @close(%r98) : i32
+                terminator: br bb14
+            bb12 // label: bb12 // preds: [bb11, bb15] // succs: [bb16]:
+                i100: %r100 = load %r40 align 4 : i32
+                i101: %r101 = call c @listen(%r100, i32 16) : i32
                 terminator: br bb16
-            bb17 // label: bb17 // preds: [bb14]:
+            bb14 // label: bb14 // preds: [bb13]:
                 terminator: ret void
-            bb16 // label: bb16 // preds: [bb15, bb18] // succs: [bb19]:
-                i38: %r38 = intrinsic Println "listening on 0.0.0.0:8080
-" ()
-                i39: %r39 = alloca i32 1 align 1 : ptr i8
-                i40: %r40 = sext_or_trunc i64 72 to i8 : i8
-                i41: store %r40, %r39 align 1
-                i42: %r42 = alloca i32 1 align 1 : ptr i8
-                i43: %r43 = sext_or_trunc i64 84 to i8 : i8
-                i44: store %r43, %r42 align 1
-                i45: %r45 = alloca i32 1 align 1 : ptr i8
-                i46: %r46 = sext_or_trunc i64 84 to i8 : i8
-                i47: store %r46, %r45 align 1
-                i48: %r48 = alloca i32 1 align 1 : ptr i8
-                i49: %r49 = sext_or_trunc i64 80 to i8 : i8
-                i50: store %r49, %r48 align 1
-                i51: %r51 = alloca i32 1 align 1 : ptr i8
-                i52: %r52 = sext_or_trunc i64 47 to i8 : i8
-                i53: store %r52, %r51 align 1
-                i54: %r54 = alloca i32 1 align 1 : ptr i8
-                i55: %r55 = sext_or_trunc i64 49 to i8 : i8
-                i56: store %r55, %r54 align 1
-                i57: %r57 = alloca i32 1 align 1 : ptr i8
-                i58: %r58 = sext_or_trunc i64 46 to i8 : i8
-                i59: store %r58, %r57 align 1
-                i60: %r60 = alloca i32 1 align 1 : ptr i8
-                i61: %r61 = sext_or_trunc i64 49 to i8 : i8
-                i62: store %r61, %r60 align 1
-                i63: %r63 = alloca i32 1 align 1 : ptr i8
-                i64: %r64 = sext_or_trunc i64 32 to i8 : i8
-                i65: store %r64, %r63 align 1
-                i66: %r66 = alloca i32 1 align 1 : ptr i8
-                i67: %r67 = sext_or_trunc i64 50 to i8 : i8
-                i68: store %r67, %r66 align 1
-                i69: %r69 = alloca i32 1 align 1 : ptr i8
-                i70: %r70 = sext_or_trunc i64 48 to i8 : i8
-                i71: store %r70, %r69 align 1
-                i72: %r72 = alloca i32 1 align 1 : ptr i8
-                i73: %r73 = sext_or_trunc i64 48 to i8 : i8
-                i74: store %r73, %r72 align 1
-                i75: %r75 = alloca i32 1 align 1 : ptr i8
-                i76: %r76 = sext_or_trunc i64 32 to i8 : i8
-                i77: store %r76, %r75 align 1
-                i78: %r78 = alloca i32 1 align 1 : ptr i8
-                i79: %r79 = sext_or_trunc i64 79 to i8 : i8
-                i80: store %r79, %r78 align 1
-                i81: %r81 = alloca i32 1 align 1 : ptr i8
-                i82: %r82 = sext_or_trunc i64 75 to i8 : i8
-                i83: store %r82, %r81 align 1
-                i84: %r84 = alloca i32 1 align 1 : ptr i8
-                i85: %r85 = sext_or_trunc i64 13 to i8 : i8
-                i86: store %r85, %r84 align 1
-                i87: %r87 = alloca i32 1 align 1 : ptr i8
-                i88: %r88 = sext_or_trunc i64 10 to i8 : i8
-                i89: store %r88, %r87 align 1
-                i90: %r90 = alloca i32 1 align 1 : ptr i8
-                i91: %r91 = sext_or_trunc i64 67 to i8 : i8
-                i92: store %r91, %r90 align 1
-                i93: %r93 = alloca i32 1 align 1 : ptr i8
-                i94: %r94 = sext_or_trunc i64 111 to i8 : i8
-                i95: store %r94, %r93 align 1
-                i96: %r96 = alloca i32 1 align 1 : ptr i8
-                i97: %r97 = sext_or_trunc i64 110 to i8 : i8
-                i98: store %r97, %r96 align 1
-                i99: %r99 = alloca i32 1 align 1 : ptr i8
-                i100: %r100 = sext_or_trunc i64 116 to i8 : i8
-                i101: store %r100, %r99 align 1
-                i102: %r102 = alloca i32 1 align 1 : ptr i8
-                i103: %r103 = sext_or_trunc i64 101 to i8 : i8
-                i104: store %r103, %r102 align 1
-                i105: %r105 = alloca i32 1 align 1 : ptr i8
-                i106: %r106 = sext_or_trunc i64 110 to i8 : i8
-                i107: store %r106, %r105 align 1
-                i108: %r108 = alloca i32 1 align 1 : ptr i8
-                i109: %r109 = sext_or_trunc i64 116 to i8 : i8
-                i110: store %r109, %r108 align 1
-                i111: %r111 = alloca i32 1 align 1 : ptr i8
-                i112: %r112 = sext_or_trunc i64 45 to i8 : i8
-                i113: store %r112, %r111 align 1
-                i114: %r114 = alloca i32 1 align 1 : ptr i8
-                i115: %r115 = sext_or_trunc i64 76 to i8 : i8
-                i116: store %r115, %r114 align 1
-                i117: %r117 = alloca i32 1 align 1 : ptr i8
-                i118: %r118 = sext_or_trunc i64 101 to i8 : i8
-                i119: store %r118, %r117 align 1
-                i120: %r120 = alloca i32 1 align 1 : ptr i8
-                i121: %r121 = sext_or_trunc i64 110 to i8 : i8
-                i122: store %r121, %r120 align 1
-                i123: %r123 = alloca i32 1 align 1 : ptr i8
-                i124: %r124 = sext_or_trunc i64 103 to i8 : i8
-                i125: store %r124, %r123 align 1
-                i126: %r126 = alloca i32 1 align 1 : ptr i8
-                i127: %r127 = sext_or_trunc i64 116 to i8 : i8
-                i128: store %r127, %r126 align 1
-                i129: %r129 = alloca i32 1 align 1 : ptr i8
-                i130: %r130 = sext_or_trunc i64 104 to i8 : i8
-                i131: store %r130, %r129 align 1
-                i132: %r132 = alloca i32 1 align 1 : ptr i8
-                i133: %r133 = sext_or_trunc i64 58 to i8 : i8
-                i134: store %r133, %r132 align 1
-                i135: %r135 = alloca i32 1 align 1 : ptr i8
-                i136: %r136 = sext_or_trunc i64 32 to i8 : i8
-                i137: store %r136, %r135 align 1
-                i138: %r138 = alloca i32 1 align 1 : ptr i8
-                i139: %r139 = sext_or_trunc i64 49 to i8 : i8
-                i140: store %r139, %r138 align 1
-                i141: %r141 = alloca i32 1 align 1 : ptr i8
-                i142: %r142 = sext_or_trunc i64 50 to i8 : i8
-                i143: store %r142, %r141 align 1
-                i144: %r144 = alloca i32 1 align 1 : ptr i8
-                i145: %r145 = sext_or_trunc i64 13 to i8 : i8
-                i146: store %r145, %r144 align 1
-                i147: %r147 = alloca i32 1 align 1 : ptr i8
-                i148: %r148 = sext_or_trunc i64 10 to i8 : i8
-                i149: store %r148, %r147 align 1
-                i150: %r150 = alloca i32 1 align 1 : ptr i8
-                i151: %r151 = sext_or_trunc i64 67 to i8 : i8
-                i152: store %r151, %r150 align 1
-                i153: %r153 = alloca i32 1 align 1 : ptr i8
-                i154: %r154 = sext_or_trunc i64 111 to i8 : i8
-                i155: store %r154, %r153 align 1
-                i156: %r156 = alloca i32 1 align 1 : ptr i8
-                i157: %r157 = sext_or_trunc i64 110 to i8 : i8
-                i158: store %r157, %r156 align 1
-                i159: %r159 = alloca i32 1 align 1 : ptr i8
-                i160: %r160 = sext_or_trunc i64 110 to i8 : i8
-                i161: store %r160, %r159 align 1
-                i162: %r162 = alloca i32 1 align 1 : ptr i8
-                i163: %r163 = sext_or_trunc i64 101 to i8 : i8
-                i164: store %r163, %r162 align 1
-                i165: %r165 = alloca i32 1 align 1 : ptr i8
-                i166: %r166 = sext_or_trunc i64 99 to i8 : i8
-                i167: store %r166, %r165 align 1
-                i168: %r168 = alloca i32 1 align 1 : ptr i8
-                i169: %r169 = sext_or_trunc i64 116 to i8 : i8
-                i170: store %r169, %r168 align 1
-                i171: %r171 = alloca i32 1 align 1 : ptr i8
-                i172: %r172 = sext_or_trunc i64 105 to i8 : i8
-                i173: store %r172, %r171 align 1
-                i174: %r174 = alloca i32 1 align 1 : ptr i8
-                i175: %r175 = sext_or_trunc i64 111 to i8 : i8
-                i176: store %r175, %r174 align 1
-                i177: %r177 = alloca i32 1 align 1 : ptr i8
-                i178: %r178 = sext_or_trunc i64 110 to i8 : i8
-                i179: store %r178, %r177 align 1
-                i180: %r180 = alloca i32 1 align 1 : ptr i8
-                i181: %r181 = sext_or_trunc i64 58 to i8 : i8
-                i182: store %r181, %r180 align 1
-                i183: %r183 = alloca i32 1 align 1 : ptr i8
-                i184: %r184 = sext_or_trunc i64 32 to i8 : i8
-                i185: store %r184, %r183 align 1
-                i186: %r186 = alloca i32 1 align 1 : ptr i8
-                i187: %r187 = sext_or_trunc i64 99 to i8 : i8
-                i188: store %r187, %r186 align 1
-                i189: %r189 = alloca i32 1 align 1 : ptr i8
-                i190: %r190 = sext_or_trunc i64 108 to i8 : i8
-                i191: store %r190, %r189 align 1
-                i192: %r192 = alloca i32 1 align 1 : ptr i8
-                i193: %r193 = sext_or_trunc i64 111 to i8 : i8
-                i194: store %r193, %r192 align 1
-                i195: %r195 = alloca i32 1 align 1 : ptr i8
-                i196: %r196 = sext_or_trunc i64 115 to i8 : i8
-                i197: store %r196, %r195 align 1
-                i198: %r198 = alloca i32 1 align 1 : ptr i8
-                i199: %r199 = sext_or_trunc i64 101 to i8 : i8
-                i200: store %r199, %r198 align 1
-                i201: %r201 = alloca i32 1 align 1 : ptr i8
-                i202: %r202 = sext_or_trunc i64 13 to i8 : i8
-                i203: store %r202, %r201 align 1
-                i204: %r204 = alloca i32 1 align 1 : ptr i8
-                i205: %r205 = sext_or_trunc i64 10 to i8 : i8
-                i206: store %r205, %r204 align 1
-                i207: %r207 = alloca i32 1 align 1 : ptr i8
-                i208: %r208 = sext_or_trunc i64 13 to i8 : i8
-                i209: store %r208, %r207 align 1
-                i210: %r210 = alloca i32 1 align 1 : ptr i8
-                i211: %r211 = sext_or_trunc i64 10 to i8 : i8
-                i212: store %r211, %r210 align 1
-                i213: %r213 = alloca i32 1 align 1 : ptr i8
-                i214: %r214 = sext_or_trunc i64 72 to i8 : i8
-                i215: store %r214, %r213 align 1
-                i216: %r216 = alloca i32 1 align 1 : ptr i8
-                i217: %r217 = sext_or_trunc i64 101 to i8 : i8
-                i218: store %r217, %r216 align 1
-                i219: %r219 = alloca i32 1 align 1 : ptr i8
-                i220: %r220 = sext_or_trunc i64 108 to i8 : i8
-                i221: store %r220, %r219 align 1
-                i222: %r222 = alloca i32 1 align 1 : ptr i8
-                i223: %r223 = sext_or_trunc i64 108 to i8 : i8
-                i224: store %r223, %r222 align 1
-                i225: %r225 = alloca i32 1 align 1 : ptr i8
-                i226: %r226 = sext_or_trunc i64 111 to i8 : i8
-                i227: store %r226, %r225 align 1
-                i228: %r228 = alloca i32 1 align 1 : ptr i8
-                i229: %r229 = sext_or_trunc i64 32 to i8 : i8
-                i230: store %r229, %r228 align 1
-                i231: %r231 = alloca i32 1 align 1 : ptr i8
-                i232: %r232 = sext_or_trunc i64 119 to i8 : i8
-                i233: store %r232, %r231 align 1
-                i234: %r234 = alloca i32 1 align 1 : ptr i8
-                i235: %r235 = sext_or_trunc i64 111 to i8 : i8
-                i236: store %r235, %r234 align 1
-                i237: %r237 = alloca i32 1 align 1 : ptr i8
-                i238: %r238 = sext_or_trunc i64 114 to i8 : i8
-                i239: store %r238, %r237 align 1
-                i240: %r240 = alloca i32 1 align 1 : ptr i8
-                i241: %r241 = sext_or_trunc i64 108 to i8 : i8
-                i242: store %r241, %r240 align 1
-                i243: %r243 = alloca i32 1 align 1 : ptr i8
-                i244: %r244 = sext_or_trunc i64 100 to i8 : i8
-                i245: store %r244, %r243 align 1
-                i246: %r246 = alloca i32 1 align 1 : ptr i8
-                i247: %r247 = sext_or_trunc i64 10 to i8 : i8
-                i248: store %r247, %r246 align 1
-                i249: %r249 = alloca i32 1 align 1 : ptr [70 x i8]
-                i250: %r250 = load %r39 align 1 : i8
-                i251: %r251 = load %r42 align 1 : i8
-                i252: %r252 = load %r45 align 1 : i8
-                i253: %r253 = load %r48 align 1 : i8
-                i254: %r254 = load %r51 align 1 : i8
-                i255: %r255 = load %r54 align 1 : i8
-                i256: %r256 = load %r57 align 1 : i8
-                i257: %r257 = load %r60 align 1 : i8
-                i258: %r258 = load %r63 align 1 : i8
-                i259: %r259 = load %r66 align 1 : i8
-                i260: %r260 = load %r69 align 1 : i8
-                i261: %r261 = load %r72 align 1 : i8
-                i262: %r262 = load %r75 align 1 : i8
-                i263: %r263 = load %r78 align 1 : i8
-                i264: %r264 = load %r81 align 1 : i8
-                i265: %r265 = load %r84 align 1 : i8
-                i266: %r266 = load %r87 align 1 : i8
-                i267: %r267 = load %r90 align 1 : i8
-                i268: %r268 = load %r93 align 1 : i8
-                i269: %r269 = load %r96 align 1 : i8
-                i270: %r270 = load %r99 align 1 : i8
-                i271: %r271 = load %r102 align 1 : i8
-                i272: %r272 = load %r105 align 1 : i8
-                i273: %r273 = load %r108 align 1 : i8
-                i274: %r274 = load %r111 align 1 : i8
-                i275: %r275 = load %r114 align 1 : i8
-                i276: %r276 = load %r117 align 1 : i8
-                i277: %r277 = load %r120 align 1 : i8
-                i278: %r278 = load %r123 align 1 : i8
-                i279: %r279 = load %r126 align 1 : i8
-                i280: %r280 = load %r129 align 1 : i8
-                i281: %r281 = load %r132 align 1 : i8
-                i282: %r282 = load %r135 align 1 : i8
-                i283: %r283 = load %r138 align 1 : i8
-                i284: %r284 = load %r141 align 1 : i8
-                i285: %r285 = load %r144 align 1 : i8
-                i286: %r286 = load %r147 align 1 : i8
-                i287: %r287 = load %r150 align 1 : i8
-                i288: %r288 = load %r153 align 1 : i8
-                i289: %r289 = load %r156 align 1 : i8
-                i290: %r290 = load %r159 align 1 : i8
-                i291: %r291 = load %r162 align 1 : i8
-                i292: %r292 = load %r165 align 1 : i8
-                i293: %r293 = load %r168 align 1 : i8
-                i294: %r294 = load %r171 align 1 : i8
-                i295: %r295 = load %r174 align 1 : i8
-                i296: %r296 = load %r177 align 1 : i8
-                i297: %r297 = load %r180 align 1 : i8
-                i298: %r298 = load %r183 align 1 : i8
-                i299: %r299 = load %r186 align 1 : i8
-                i300: %r300 = load %r189 align 1 : i8
-                i301: %r301 = load %r192 align 1 : i8
-                i302: %r302 = load %r195 align 1 : i8
-                i303: %r303 = load %r198 align 1 : i8
-                i304: %r304 = load %r201 align 1 : i8
-                i305: %r305 = load %r204 align 1 : i8
-                i306: %r306 = load %r207 align 1 : i8
-                i307: %r307 = load %r210 align 1 : i8
-                i308: %r308 = load %r213 align 1 : i8
-                i309: %r309 = load %r216 align 1 : i8
-                i310: %r310 = load %r219 align 1 : i8
-                i311: %r311 = load %r222 align 1 : i8
-                i312: %r312 = load %r225 align 1 : i8
-                i313: %r313 = load %r228 align 1 : i8
-                i314: %r314 = load %r231 align 1 : i8
-                i315: %r315 = load %r234 align 1 : i8
-                i316: %r316 = load %r237 align 1 : i8
-                i317: %r317 = load %r240 align 1 : i8
-                i318: %r318 = load %r243 align 1 : i8
-                i319: %r319 = load %r246 align 1 : i8
-                i320: %r320 = insertvalue undef [70 x i8], %r250, [0] : [70 x i8]
-                i321: %r321 = insertvalue %r320, %r251, [1] : [70 x i8]
-                i322: %r322 = insertvalue %r321, %r252, [2] : [70 x i8]
-                i323: %r323 = insertvalue %r322, %r253, [3] : [70 x i8]
-                i324: %r324 = insertvalue %r323, %r254, [4] : [70 x i8]
-                i325: %r325 = insertvalue %r324, %r255, [5] : [70 x i8]
-                i326: %r326 = insertvalue %r325, %r256, [6] : [70 x i8]
-                i327: %r327 = insertvalue %r326, %r257, [7] : [70 x i8]
-                i328: %r328 = insertvalue %r327, %r258, [8] : [70 x i8]
-                i329: %r329 = insertvalue %r328, %r259, [9] : [70 x i8]
-                i330: %r330 = insertvalue %r329, %r260, [10] : [70 x i8]
-                i331: %r331 = insertvalue %r330, %r261, [11] : [70 x i8]
-                i332: %r332 = insertvalue %r331, %r262, [12] : [70 x i8]
-                i333: %r333 = insertvalue %r332, %r263, [13] : [70 x i8]
-                i334: %r334 = insertvalue %r333, %r264, [14] : [70 x i8]
-                i335: %r335 = insertvalue %r334, %r265, [15] : [70 x i8]
-                i336: %r336 = insertvalue %r335, %r266, [16] : [70 x i8]
-                i337: %r337 = insertvalue %r336, %r267, [17] : [70 x i8]
-                i338: %r338 = insertvalue %r337, %r268, [18] : [70 x i8]
-                i339: %r339 = insertvalue %r338, %r269, [19] : [70 x i8]
-                i340: %r340 = insertvalue %r339, %r270, [20] : [70 x i8]
-                i341: %r341 = insertvalue %r340, %r271, [21] : [70 x i8]
-                i342: %r342 = insertvalue %r341, %r272, [22] : [70 x i8]
-                i343: %r343 = insertvalue %r342, %r273, [23] : [70 x i8]
-                i344: %r344 = insertvalue %r343, %r274, [24] : [70 x i8]
-                i345: %r345 = insertvalue %r344, %r275, [25] : [70 x i8]
-                i346: %r346 = insertvalue %r345, %r276, [26] : [70 x i8]
-                i347: %r347 = insertvalue %r346, %r277, [27] : [70 x i8]
-                i348: %r348 = insertvalue %r347, %r278, [28] : [70 x i8]
-                i349: %r349 = insertvalue %r348, %r279, [29] : [70 x i8]
-                i350: %r350 = insertvalue %r349, %r280, [30] : [70 x i8]
-                i351: %r351 = insertvalue %r350, %r281, [31] : [70 x i8]
-                i352: %r352 = insertvalue %r351, %r282, [32] : [70 x i8]
-                i353: %r353 = insertvalue %r352, %r283, [33] : [70 x i8]
-                i354: %r354 = insertvalue %r353, %r284, [34] : [70 x i8]
-                i355: %r355 = insertvalue %r354, %r285, [35] : [70 x i8]
-                i356: %r356 = insertvalue %r355, %r286, [36] : [70 x i8]
-                i357: %r357 = insertvalue %r356, %r287, [37] : [70 x i8]
-                i358: %r358 = insertvalue %r357, %r288, [38] : [70 x i8]
-                i359: %r359 = insertvalue %r358, %r289, [39] : [70 x i8]
-                i360: %r360 = insertvalue %r359, %r290, [40] : [70 x i8]
-                i361: %r361 = insertvalue %r360, %r291, [41] : [70 x i8]
-                i362: %r362 = insertvalue %r361, %r292, [42] : [70 x i8]
-                i363: %r363 = insertvalue %r362, %r293, [43] : [70 x i8]
-                i364: %r364 = insertvalue %r363, %r294, [44] : [70 x i8]
-                i365: %r365 = insertvalue %r364, %r295, [45] : [70 x i8]
-                i366: %r366 = insertvalue %r365, %r296, [46] : [70 x i8]
-                i367: %r367 = insertvalue %r366, %r297, [47] : [70 x i8]
-                i368: %r368 = insertvalue %r367, %r298, [48] : [70 x i8]
-                i369: %r369 = insertvalue %r368, %r299, [49] : [70 x i8]
-                i370: %r370 = insertvalue %r369, %r300, [50] : [70 x i8]
-                i371: %r371 = insertvalue %r370, %r301, [51] : [70 x i8]
-                i372: %r372 = insertvalue %r371, %r302, [52] : [70 x i8]
-                i373: %r373 = insertvalue %r372, %r303, [53] : [70 x i8]
-                i374: %r374 = insertvalue %r373, %r304, [54] : [70 x i8]
-                i375: %r375 = insertvalue %r374, %r305, [55] : [70 x i8]
-                i376: %r376 = insertvalue %r375, %r306, [56] : [70 x i8]
-                i377: %r377 = insertvalue %r376, %r307, [57] : [70 x i8]
-                i378: %r378 = insertvalue %r377, %r308, [58] : [70 x i8]
-                i379: %r379 = insertvalue %r378, %r309, [59] : [70 x i8]
-                i380: %r380 = insertvalue %r379, %r310, [60] : [70 x i8]
-                i381: %r381 = insertvalue %r380, %r311, [61] : [70 x i8]
-                i382: %r382 = insertvalue %r381, %r312, [62] : [70 x i8]
-                i383: %r383 = insertvalue %r382, %r313, [63] : [70 x i8]
-                i384: %r384 = insertvalue %r383, %r314, [64] : [70 x i8]
-                i385: %r385 = insertvalue %r384, %r315, [65] : [70 x i8]
-                i386: %r386 = insertvalue %r385, %r316, [66] : [70 x i8]
-                i387: %r387 = insertvalue %r386, %r317, [67] : [70 x i8]
-                i388: %r388 = insertvalue %r387, %r318, [68] : [70 x i8]
-                i389: %r389 = insertvalue %r388, %r319, [69] : [70 x i8]
-                i390: store %r389, %r249 align 1
-                i391: %r391 = alloca i32 1 align 1 : ptr [70 x i8]
-                i392: %r392 = load %r249 align 1 : [70 x i8]
-                i393: store %r392, %r391 align 1
-                terminator: br bb19
-            bb19 // label: bb19 // preds: [bb16, bb24, bb29] // succs: [bb20]:
+            bb16 // label: bb16 // preds: [bb12] // succs: [bb17, bb18]:
+                i102: %r102 = intrinsic Println "listen rc: %d
+" (%r101)
+                i103: %r103 = alloca i32 1 align 1 : ptr i1
+                i104: %r104 = ne %r101, i64 0 : i1
+                i105: store %r104, %r103 align 1
+                i106: %r106 = load %r103 align 1 : i1
+                i107: %r107 = eq %r106, bool true : i1
+                terminator: cond_br %r107, bb17, bb18
+            bb17 // label: bb17 // preds: [bb16] // succs: [bb20]:
+                i108: %r108 = bitcast global __const_data_2[0, 0] as ptr i8 to ptr void : ptr void
+                i109: %r109 = call c @perror(%r108)
                 terminator: br bb20
-            bb20 // label: bb20 // preds: [bb19] // succs: [bb22]:
-                i394: %r394 = call c @make_addr(i16 0) : { i16, i16, { i32 }, i32, i32 }
-                i395: %r395 = alloca i32 1 align 4 : ptr { i16, i16, { i32 }, i32, i32 }
-                i396: store %r394, %r395 align 4
-                terminator: br bb22
-            bb22 // label: bb22 // preds: [bb20] // succs: [bb23]:
-                i397: %r397 = alloca i32 1 align 4 : ptr i32
-                i398: store i32 16, %r397 align 4
-                i399: %r399 = alloca i32 1 align 8 : ptr ptr { i16, i16, { i32 }, i32, i32 }
-                i400: store %r395, %r399 align 8
-                i401: %r401 = alloca i32 1 align 8 : ptr ptr { i16, i16, { i32 }, i32, i32 }
-                i402: %r402 = load %r399 align 8 : ptr { i16, i16, { i32 }, i32, i32 }
-                i403: %r403 = bitcast %r402 to ptr { i16, i16, { i32 }, i32, i32 } : ptr { i16, i16, { i32 }, i32, i32 }
-                i404: store %r403, %r401 align 8
-                i405: %r405 = alloca i32 1 align 8 : ptr ptr i32
-                i406: store %r397, %r405 align 8
-                i407: %r407 = alloca i32 1 align 8 : ptr ptr i32
-                i408: %r408 = load %r405 align 8 : ptr i32
-                i409: %r409 = bitcast %r408 to ptr i32 : ptr i32
-                i410: store %r409, %r407 align 8
-                i411: %r411 = load %r401 align 8 : ptr { i16, i16, { i32 }, i32, i32 }
-                i412: %r412 = load %r407 align 8 : ptr i32
-                i413: %r413 = call c @accept(%r16, %r411, %r412) : i32
-                terminator: br bb23
-            bb23 // label: bb23 // preds: [bb22] // succs: [bb24, bb25]:
-                i414: %r414 = alloca i32 1 align 1 : ptr i1
-                i415: %r415 = lt %r413, i64 0 : i1
-                i416: store %r415, %r414 align 1
-                i417: %r417 = load %r414 align 1 : i1
-                i418: %r418 = eq %r417, bool true : i1
-                terminator: cond_br %r418, bb24, bb25
-            bb24 // label: bb24 // preds: [bb23] // succs: [bb19]:
-                i419: %r419 = intrinsic Println "accept failed
+            bb18 // label: bb18 // preds: [bb16] // succs: [bb19]:
+                terminator: br bb19
+            bb20 // label: bb20 // preds: [bb17] // succs: [bb19]:
+                terminator: br bb19
+            bb19 // label: bb19 // preds: [bb18, bb20] // succs: [bb21]:
+                i110: %r110 = intrinsic Println "listening on 0.0.0.0:8080
 " ()
-                terminator: br bb19
-            bb25 // label: bb25 // preds: [bb23] // succs: [bb26]:
-                terminator: br bb26
-            bb26 // label: bb26 // preds: [bb25, bb27] // succs: [bb28]:
-                i420: %r420 = alloca i32 1 align 8 : ptr ptr [70 x i8]
-                i421: store %r391, %r420 align 8
-                i422: %r422 = alloca i32 1 align 8 : ptr ptr i8
-                i423: %r423 = load %r420 align 8 : ptr [70 x i8]
-                i424: %r424 = bitcast %r423 to ptr i8 : ptr i8
-                i425: store %r424, %r422 align 8
-                i426: %r426 = load %r422 align 8 : ptr i8
-                i427: %r427 = call c @write(%r413, %r426, i64 70) : i64
-                terminator: br bb28
-            bb28 // label: bb28 // preds: [bb26] // succs: [bb29]:
-                i428: %r428 = call c @close(%r413) : i32
+                terminator: br bb21
+            bb21 // label: bb21 // preds: [bb19, bb29, bb33] // succs: [bb22]:
+                terminator: br bb22
+            bb22 // label: bb22 // preds: [bb21] // succs: [bb24]:
+                i111: %r111 = call c @make_addr(i16 0) : [16 x i8]
+                i112: %r112 = alloca i32 1 align 1 : ptr [16 x i8]
+                i113: store %r111, %r112 align 1
+                terminator: br bb24
+            bb24 // label: bb24 // preds: [bb22] // succs: [bb25]:
+                i114: %r114 = alloca i32 1 align 4 : ptr i32
+                i115: store i32 16, %r114 align 4
+                i116: %r116 = alloca i32 1 align 8 : ptr ptr [16 x i8]
+                i117: store %r112, %r116 align 8
+                i118: %r118 = alloca i32 1 align 8 : ptr ptr [16 x i8]
+                i119: %r119 = load %r116 align 8 : ptr [16 x i8]
+                i120: %r120 = bitcast %r119 to ptr [16 x i8] : ptr [16 x i8]
+                i121: store %r120, %r118 align 8
+                i122: %r122 = alloca i32 1 align 8 : ptr ptr [16 x i8]
+                i123: %r123 = load %r118 align 8 : ptr [16 x i8]
+                i124: store %r123, %r122 align 8
+                i125: %r125 = alloca i32 1 align 8 : ptr ptr i32
+                i126: store %r114, %r125 align 8
+                i127: %r127 = alloca i32 1 align 8 : ptr ptr i32
+                i128: %r128 = load %r125 align 8 : ptr i32
+                i129: %r129 = bitcast %r128 to ptr i32 : ptr i32
+                i130: store %r129, %r127 align 8
+                i131: %r131 = alloca i32 1 align 8 : ptr ptr i32
+                i132: %r132 = load %r127 align 8 : ptr i32
+                i133: store %r132, %r131 align 8
+                i134: %r134 = alloca i32 1 align 8 : ptr ptr i8
+                i135: %r135 = load %r118 align 8 : ptr [16 x i8]
+                i136: %r136 = bitcast %r135 to ptr i8 : ptr i8
+                i137: store %r136, %r134 align 8
+                i138: %r138 = load %r40 align 4 : i32
+                i139: %r139 = load %r134 align 8 : ptr i8
+                i140: %r140 = load %r127 align 8 : ptr i32
+                i141: %r141 = call c @accept(%r138, %r139, %r140) : i32
+                terminator: br bb25
+            bb25 // label: bb25 // preds: [bb24] // succs: [bb26, bb27]:
+                i142: %r142 = alloca i32 1 align 4 : ptr i32
+                i143: %r143 = bitcast %r141 to i32 : i32
+                i144: store %r143, %r142 align 4
+                i145: %r145 = alloca i32 1 align 4 : ptr i32
+                i146: %r146 = load %r142 align 4 : i32
+                i147: store %r146, %r145 align 4
+                i148: %r148 = alloca i32 1 align 1 : ptr i1
+                i149: %r149 = load %r142 align 4 : i32
+                i150: %r150 = lt %r149, i64 0 : i1
+                i151: store %r150, %r148 align 1
+                i152: %r152 = load %r148 align 1 : i1
+                i153: %r153 = eq %r152, bool true : i1
+                terminator: cond_br %r153, bb26, bb27
+            bb26 // label: bb26 // preds: [bb25] // succs: [bb29]:
+                i154: %r154 = bitcast global __const_data_3[0, 0] as ptr i8 to ptr void : ptr void
+                i155: %r155 = call c @perror(%r154)
                 terminator: br bb29
-            bb29 // label: bb29 // preds: [bb28] // succs: [bb19]:
-                terminator: br bb19
-            bb5 // label: bb5 // succs: [bb4]:
+            bb27 // label: bb27 // preds: [bb25] // succs: [bb28]:
+                terminator: br bb28
+            bb29 // label: bb29 // preds: [bb26] // succs: [bb21]:
+                terminator: br bb21
+            bb28 // label: bb28 // preds: [bb27, bb30] // succs: [bb31]:
+                i156: %r156 = bitcast global __const_data_4[0, 0] as ptr i8 to ptr void : ptr void
+                i157: %r157 = call c @strlen(%r156) : i64
+                terminator: br bb31
+            bb31 // label: bb31 // preds: [bb28] // succs: [bb32]:
+                i158: %r158 = load %r145 align 4 : i32
+                i159: %r159 = bitcast global __const_data_4[0, 0] as ptr i8 to ptr void : ptr void
+                i160: %r160 = call c @write(%r158, %r159, %r157) : i64
+                terminator: br bb32
+            bb32 // label: bb32 // preds: [bb31] // succs: [bb33]:
+                i161: %r161 = load %r145 align 4 : i32
+                i162: %r162 = call c @close(%r161) : i32
+                terminator: br bb33
+            bb33 // label: bb33 // preds: [bb32] // succs: [bb21]:
+                terminator: br bb21
+            bb6 // label: bb6 // succs: [bb4]:
                 terminator: br bb4
-            bb12 // label: bb12 // succs: [bb10]:
-                terminator: br bb10
-            bb18 // label: bb18 // succs: [bb16]:
-                terminator: br bb16
-            bb21 // label: bb21:
+            bb15 // label: bb15 // succs: [bb12]:
+                terminator: br bb12
+            bb23 // label: bb23:
                 terminator: ret void
-            bb27 // label: bb27 // succs: [bb26]:
-                terminator: br bb26
+            bb30 // label: bb30 // succs: [bb28]:
+                terminator: br bb28
         }
 }

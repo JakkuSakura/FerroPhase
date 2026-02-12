@@ -3,7 +3,7 @@ use fp_core::ast::Pattern;
 use fp_core::error::Result;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::{FileId, Span};
-use fp_core::{ast, ast::ItemKind, hir};
+use fp_core::{ast, ast::ItemKind, cfg::TargetEnv, hir};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -46,6 +46,7 @@ pub struct HirGenerator {
     program_def_map: HashMap<hir::DefId, hir::Item>,
     unimplemented_type_def_ids: HashSet<hir::DefId>,
     module_resolution: Option<fp_core::module::resolution::ModuleResolutionContext>,
+    target_env: TargetEnv,
 }
 
 enum MaterializedTypeAlias {
@@ -123,6 +124,10 @@ impl HirGenerator {
         } else {
             self.add_error(diag);
         }
+    }
+
+    fn item_enabled_by_cfg(&self, item: &ast::Item) -> bool {
+        fp_core::cfg::item_enabled_by_cfg(item, &self.target_env)
     }
 
     fn is_std_module(&self) -> bool {
@@ -295,6 +300,7 @@ impl HirGenerator {
             program_def_map: HashMap::new(),
             unimplemented_type_def_ids: HashSet::new(),
             module_resolution: None,
+            target_env: TargetEnv::host(),
         }
     }
 
@@ -304,6 +310,10 @@ impl HirGenerator {
     ) -> Self {
         self.module_resolution = Some(module_resolution);
         self
+    }
+
+    pub fn set_target_triple(&mut self, target_triple: Option<&str>) {
+        self.target_env = TargetEnv::from_triple(target_triple);
     }
 
     fn reset_file_context<P: AsRef<Path>>(&mut self, file_path: P) {
@@ -457,6 +467,9 @@ impl HirGenerator {
 
     fn predeclare_items(&mut self, items: &[ast::Item]) -> Result<()> {
         for item in items {
+            if !self.item_enabled_by_cfg(item) {
+                continue;
+            }
             if should_drop_quote_item(item) {
                 continue;
             }
@@ -764,6 +777,9 @@ impl HirGenerator {
     }
 
     fn append_item(&mut self, program: &mut hir::Program, item: &ast::Item) -> Result<()> {
+        if !self.item_enabled_by_cfg(item) {
+            return Ok(());
+        }
         if should_drop_quote_item(item) {
             return Ok(());
         }

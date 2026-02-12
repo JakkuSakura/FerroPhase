@@ -1,0 +1,431 @@
+[2m   0.000130083s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000233167s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005298458s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005308208s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.019915667s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 14.61ms
+[2m   0.019928458s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.035750292s[0m [32m INFO[0m pipeline: finished const-eval in 15.82ms
+[2m   0.035764875s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.041540125s[0m [32m INFO[0m pipeline: finished ast→typed in 5.77ms
+[2m   0.041553667s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.043572042s[0m [32m INFO[0m pipeline: finished materialize-runtime in 2.02ms
+[2m   0.043579542s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.051118667s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 7.54ms
+[2m   0.051129083s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.059498458s[0m [32m INFO[0m pipeline: finished ast→hir in 8.37ms
+[2m   0.059507375s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.061960083s[0m [32m INFO[0m pipeline: finished hir→mir in 2.45ms
+[2m   0.061966333s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.062540542s[0m [32m INFO[0m pipeline: finished mir→lir in 574.00µs
+[2m   0.062545667s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.082481667s[0m [32m INFO[0m pipeline: finished link-binary in 19.93ms
+[2m   0.082655542s[0m [32m INFO[0m pipeline: finished compilation target Binary in 77.36ms
+[2m   0.083039583s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.083088083s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.449747583s[0m [31mERROR[0m Compilation error: Process exited with status -1
+listening on 0.0.0.0:8080
+[2m   0.000109875s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000225417s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005109709s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005118750s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.020309000s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 15.19ms
+[2m   0.020320417s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.035664417s[0m [32m INFO[0m pipeline: finished const-eval in 15.34ms
+[2m   0.035687417s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.041371792s[0m [32m INFO[0m pipeline: finished ast→typed in 5.68ms
+[2m   0.041385417s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.043236709s[0m [32m INFO[0m pipeline: finished materialize-runtime in 1.85ms
+[2m   0.043244125s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.050432625s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 7.19ms
+[2m   0.050445625s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.059473667s[0m [32m INFO[0m pipeline: finished ast→hir in 9.03ms
+[2m   0.059484250s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.062321917s[0m [32m INFO[0m pipeline: finished hir→mir in 2.84ms
+[2m   0.062333792s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.062953084s[0m [32m INFO[0m pipeline: finished mir→lir in 619.21µs
+[2m   0.062956792s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.079976209s[0m [32m INFO[0m pipeline: finished link-binary in 17.02ms
+[2m   0.080121334s[0m [32m INFO[0m pipeline: finished compilation target Binary in 75.01ms
+[2m   0.080530750s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.080579584s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.457615709s[0m [31mERROR[0m Compilation error: Process exited with status -1
+[2m   0.000106542s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000206833s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005286417s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005296042s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.020616917s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 15.32ms
+[2m   0.020628375s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.035425000s[0m [32m INFO[0m pipeline: finished const-eval in 14.80ms
+[2m   0.035449250s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.040813083s[0m [32m INFO[0m pipeline: finished ast→typed in 5.36ms
+[2m   0.040820583s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.043219708s[0m [32m INFO[0m pipeline: finished materialize-runtime in 2.40ms
+[2m   0.043233125s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.050669000s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 7.44ms
+[2m   0.050674208s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.058777167s[0m [32m INFO[0m pipeline: finished ast→hir in 8.10ms
+[2m   0.058782042s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.060953708s[0m [32m INFO[0m pipeline: finished hir→mir in 2.17ms
+[2m   0.060957500s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.061524583s[0m [32m INFO[0m pipeline: finished mir→lir in 565.08µs
+[2m   0.061533542s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.077259667s[0m [32m INFO[0m pipeline: finished link-binary in 15.72ms
+[2m   0.077407000s[0m [32m INFO[0m pipeline: finished compilation target Binary in 72.12ms
+[2m   0.077821417s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.077866125s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.214764625s[0m [31mERROR[0m Compilation error: Process exited with status -1
+[2m   0.000107083s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000220917s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005044000s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005049667s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.018773083s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 13.72ms
+[2m   0.018784625s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.035014042s[0m [32m INFO[0m pipeline: finished const-eval in 16.23ms
+[2m   0.035038667s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.040537083s[0m [32m INFO[0m pipeline: finished ast→typed in 5.50ms
+[2m   0.040544500s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.042208958s[0m [32m INFO[0m pipeline: finished materialize-runtime in 1.66ms
+[2m   0.042214000s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.048748083s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 6.53ms
+[2m   0.048753833s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.056844542s[0m [32m INFO[0m pipeline: finished ast→hir in 8.09ms
+[2m   0.056848542s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.059110750s[0m [32m INFO[0m pipeline: finished hir→mir in 2.26ms
+[2m   0.059114500s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.059727042s[0m [32m INFO[0m pipeline: finished mir→lir in 611.38µs
+[2m   0.059735250s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.089896125s[0m [32m INFO[0m pipeline: finished link-binary in 30.16ms
+[2m   0.090087083s[0m [32m INFO[0m pipeline: finished compilation target Binary in 85.04ms
+[2m   0.090591708s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.090644792s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.458071458s[0m [31mERROR[0m Compilation error: Process exited with status -1
+[2m   0.000108125s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000228250s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005104458s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005112000s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.019974292s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 14.86ms
+[2m   0.019987958s[0m [32m INFO[0m pipeline: start const-eval
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'BenchReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'TestReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'TestReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+[2K[2m   0.037488875s[0m [31mERROR[0m Compilation error: const-eval stage failed; see diagnostics for details
+[2m   0.001193208s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.001807833s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.011583250s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.011590500s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.027224708s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 15.63ms
+[2m   0.027235291s[0m [32m INFO[0m pipeline: start const-eval
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'BenchReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'TestReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'TestReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+[2K[2m   0.052091500s[0m [31mERROR[0m Compilation error: const-eval stage failed; see diagnostics for details
+[2m   0.000123000s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000236708s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.006136458s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.006142417s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.019894958s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 13.75ms
+[2m   0.019905917s[0m [32m INFO[0m pipeline: start const-eval
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'BenchReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'JsonValue' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'TestReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'TestReport' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'SocketAddr' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'K' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'V' in const evaluation
+  [31m×[0m [const-eval] unresolved symbol 'any' in const evaluation
+[2K[2m   0.039177167s[0m [31mERROR[0m Compilation error: const-eval stage failed; see diagnostics for details
+[2m   0.000029209s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000077209s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.004107167s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.004111625s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.014282084s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 10.17ms
+[2m   0.014295209s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.030852667s[0m [32m INFO[0m pipeline: finished const-eval in 16.56ms
+[2m   0.030866959s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.036912250s[0m [32m INFO[0m pipeline: finished ast→typed in 6.04ms
+[2m   0.036920834s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.038523292s[0m [32m INFO[0m pipeline: finished materialize-runtime in 1.60ms
+[2m   0.038528792s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.046177084s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 7.65ms
+[2m   0.046187625s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.054217042s[0m [32m INFO[0m pipeline: finished ast→hir in 8.03ms
+[2m   0.054224459s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.056084667s[0m [32m INFO[0m pipeline: finished hir→mir in 1.86ms
+[2m   0.056089167s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.056520417s[0m [32m INFO[0m pipeline: finished mir→lir in 431.25µs
+[2m   0.056523875s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.071593167s[0m [32m INFO[0m pipeline: finished link-binary in 15.07ms
+[2m   0.071756459s[0m [32m INFO[0m pipeline: finished compilation target Binary in 67.65ms
+[2m   0.072184375s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.072219542s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.000104541s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000216416s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.004973666s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.004983541s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.015639958s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 10.66ms
+[2m   0.015651125s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.032898000s[0m [32m INFO[0m pipeline: finished const-eval in 17.25ms
+[2m   0.032923791s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.039014875s[0m [32m INFO[0m pipeline: finished ast→typed in 6.09ms
+[2m   0.039028208s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.040619250s[0m [32m INFO[0m pipeline: finished materialize-runtime in 1.59ms
+[2m   0.040626041s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.047360041s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 6.73ms
+[2m   0.047373166s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.056161958s[0m [32m INFO[0m pipeline: finished ast→hir in 8.79ms
+[2m   0.056174500s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.058685333s[0m [32m INFO[0m pipeline: finished hir→mir in 2.51ms
+[2m   0.058695791s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.059274333s[0m [32m INFO[0m pipeline: finished mir→lir in 578.38µs
+[2m   0.059279583s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.074010166s[0m [32m INFO[0m pipeline: finished link-binary in 14.73ms
+[2m   0.074158625s[0m [32m INFO[0m pipeline: finished compilation target Binary in 69.19ms
+[2m   0.074577791s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.074622416s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m  21.709714875s[0m [31mERROR[0m Compilation error: Process exited with status -1
+[2m   0.000041667s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000097625s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.004908417s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.004913958s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.016846125s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 11.93ms
+[2m   0.016856208s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.036230833s[0m [32m INFO[0m pipeline: finished const-eval in 19.37ms
+[2m   0.036247125s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.043406458s[0m [32m INFO[0m pipeline: finished ast→typed in 7.16ms
+[2m   0.043415750s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.045741583s[0m [32m INFO[0m pipeline: finished materialize-runtime in 2.33ms
+[2m   0.045750792s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.054560750s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 8.81ms
+[2m   0.054570667s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.064246500s[0m [32m INFO[0m pipeline: finished ast→hir in 9.67ms
+[2m   0.064258375s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.066603625s[0m [32m INFO[0m pipeline: finished hir→mir in 2.34ms
+[2m   0.066611792s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.067034625s[0m [32m INFO[0m pipeline: finished mir→lir in 422.83µs
+[2m   0.067040083s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.086663125s[0m [32m INFO[0m pipeline: finished link-binary in 19.62ms
+[2m   0.086885708s[0m [32m INFO[0m pipeline: finished compilation target Binary in 81.98ms
+[2m   0.087310417s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.087349958s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.000237333s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000386500s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005332000s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005342125s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.015521583s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 10.18ms
+[2m   0.015532208s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.032575625s[0m [32m INFO[0m pipeline: finished const-eval in 17.04ms
+[2m   0.032603542s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.038964542s[0m [32m INFO[0m pipeline: finished ast→typed in 6.36ms
+[2m   0.038979167s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.042853667s[0m [32m INFO[0m pipeline: finished materialize-runtime in 3.87ms
+[2m   0.042863042s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.050255625s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 7.39ms
+[2m   0.050265292s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.058573042s[0m [32m INFO[0m pipeline: finished ast→hir in 8.31ms
+[2m   0.058588083s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.060804333s[0m [32m INFO[0m pipeline: finished hir→mir in 2.22ms
+[2m   0.060812208s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.061344000s[0m [32m INFO[0m pipeline: finished mir→lir in 531.79µs
+[2m   0.061349417s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.077540667s[0m [32m INFO[0m pipeline: finished link-binary in 16.19ms
+[2m   0.077707250s[0m [32m INFO[0m pipeline: finished compilation target Binary in 72.38ms
+[2m   0.078176958s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.078222792s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+[2m   0.000084583s[0m [32m INFO[0m Starting compilation with backend: binary
+  [36m⠋[0m Compiling examples/36_glibc_h  [36m[34m----------------------------------------[0m[0m  0/1[2m   0.000188041s[0m [32m INFO[0m Compiling: examples/36_glibc_http_server.fp -> examples/36_glibc_http_server.out
+[2m   0.005209833s[0m [32m INFO[0m pipeline: starting compilation target Binary
+[2m   0.005212833s[0m [32m INFO[0m pipeline: start intrinsic-normalize
+[2m   0.015699541s[0m [32m INFO[0m pipeline: finished intrinsic-normalize in 10.49ms
+[2m   0.015704208s[0m [32m INFO[0m pipeline: start const-eval
+[2m   0.032416500s[0m [32m INFO[0m pipeline: finished const-eval in 16.71ms
+[2m   0.032437625s[0m [32m INFO[0m pipeline: start ast→typed
+[2m   0.038350250s[0m [32m INFO[0m pipeline: finished ast→typed in 5.91ms
+[2m   0.038355625s[0m [32m INFO[0m pipeline: start materialize-runtime
+[2m   0.039967041s[0m [32m INFO[0m pipeline: finished materialize-runtime in 1.61ms
+[2m   0.039971625s[0m [32m INFO[0m pipeline: start ast→typed(post-materialize)
+[2m   0.047109791s[0m [32m INFO[0m pipeline: finished ast→typed(post-materialize) in 7.14ms
+[2m   0.047114833s[0m [32m INFO[0m pipeline: start ast→hir
+[2m   0.055234833s[0m [32m INFO[0m pipeline: finished ast→hir in 8.12ms
+[2m   0.055255333s[0m [32m INFO[0m pipeline: start hir→mir
+[2m   0.057602125s[0m [32m INFO[0m pipeline: finished hir→mir in 2.35ms
+[2m   0.057605875s[0m [32m INFO[0m pipeline: start mir→lir
+[2m   0.058155750s[0m [32m INFO[0m pipeline: finished mir→lir in 549.83µs
+[2m   0.058158583s[0m [32m INFO[0m pipeline: start link-binary
+[2m   0.072926458s[0m [32m INFO[0m pipeline: finished link-binary in 14.77ms
+[2m   0.073067041s[0m [32m INFO[0m pipeline: finished compilation target Binary in 67.86ms
+[2m   0.073677000s[0m [32m INFO[0m Generated binary: examples/36_glibc_http_server.out
+[2K  [36m⠙[0m Compiling examples/36_glibc_h  [36m########################################[34m[0m[0m  1/1[2K  [36m⠏[0m [32m✓[0m Compiled 1 file(s) successf  [36m########################################[34m[0m[0m  1/1[2m   0.073722791s[0m [32m INFO[0m 🚀 Executing compiled binary: examples/36_glibc_http_server.out
+listening on 0.0.0.0:8080
+[2m15019.737950458s[0m [31mERROR[0m Compilation error: Process exited with status -1

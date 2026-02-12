@@ -1694,6 +1694,18 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
     let stripped = strip_number_suffix(raw);
     let normalized = stripped.replace('_', "");
     let suffix = &raw[stripped.len()..];
+    let parse_int = |text: &str| -> Result<i64, LowerError> {
+        if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
+            i64::from_str_radix(hex, 16).map_err(|_| LowerError::InvalidNumber(raw.to_string()))
+        } else if let Some(bin) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
+            i64::from_str_radix(bin, 2).map_err(|_| LowerError::InvalidNumber(raw.to_string()))
+        } else if let Some(oct) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
+            i64::from_str_radix(oct, 8).map_err(|_| LowerError::InvalidNumber(raw.to_string()))
+        } else {
+            text.parse::<i64>()
+                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))
+        }
+    };
 
     match suffix {
         "ib" => {
@@ -1721,9 +1733,7 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
             if normalized.contains('.') {
                 return Err(LowerError::InvalidNumber(raw.to_string()));
             }
-            let value = normalized
-                .parse::<i64>()
-                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+            let value = parse_int(&normalized)?;
             let ty = match suffix {
                 "i8" => TypeInt::I8,
                 "i16" => TypeInt::I16,
@@ -1755,9 +1765,7 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                     .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
                 Ok((Value::decimal(d), None))
             } else {
-                let i = normalized
-                    .parse::<i64>()
-                    .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
+                let i = parse_int(&normalized)?;
                 Ok((Value::int(i), None))
             }
         }

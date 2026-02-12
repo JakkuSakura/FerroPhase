@@ -13,6 +13,7 @@ use fp_core::ast::{
     AstSerializer, File, Ident, Item, ItemChunk, ItemKind, MacroExpansionParser, Module, Node,
     NodeKind, RuntimeValue, Value, Visibility,
 };
+use fp_core::cfg::TargetEnv;
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{
     Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel, DiagnosticManager,
@@ -968,6 +969,7 @@ impl Pipeline {
             macro_parser: self.macro_parser.clone(),
             intrinsic_normalizer: self.intrinsic_normalizer.clone(),
             stdout_mode,
+            target_env: TargetEnv::from_triple(options.target_triple.as_deref()),
         };
         let mut interpreter = AstInterpreter::new(&ctx, interpreter_opts);
         interpreter.enable_incremental_typing(&working_ast);

@@ -3408,6 +3408,111 @@ fn zero_reg_range(asm: &mut Assembler, dst: Reg, size: i32) -> Result<()> {
     Ok(())
 }
 
+fn store_constant_aggregate_to_reg(
+    asm: &mut Assembler,
+    base: Reg,
+    constant: &LirConstant,
+    agg_ty: &LirType,
+    rodata: &mut Vec<u8>,
+    rodata_pool: &mut HashMap<String, u64>,
+) -> Result<()> {
+    let size = size_of(agg_ty) as i32;
+    if size == 0 {
+        return Ok(());
+    }
+    match constant {
+        LirConstant::Undef(_) | LirConstant::Null(_) => return zero_reg_range(asm, base, size),
+        LirConstant::Struct(values, _) => {
+            let LirType::Struct { fields, .. } = agg_ty else {
+                return Err(Error::from("expected struct type for aggregate return"));
+            };
+            let layout = struct_layout(agg_ty)
+                .ok_or_else(|| Error::from("missing struct layout for aggregate return"))?;
+            for (idx, field) in values.iter().enumerate() {
+                let field_offset = *layout
+                    .field_offsets
+                    .get(idx)
+                    .ok_or_else(|| Error::from("aggregate field out of range"))?;
+                let field_ty = fields
+                    .get(idx)
+                    .ok_or_else(|| Error::from("aggregate field out of range"))?;
+                let field_size = size_of(field_ty);
+                match field {
+                    LirConstant::String(text) => {
+                        let offset = intern_cstring(rodata, rodata_pool, text);
+                        emit_load_rodata_addr(asm, Reg::X16, offset as i64)?;
+                    }
+                    LirConstant::Null(_) | LirConstant::Undef(_) => {
+                        emit_mov_imm16(asm, Reg::X16, 0);
+                    }
+                    other => {
+                        let bits = constant_to_u64_bits(other)?;
+                        emit_mov_imm64(asm, Reg::X16, bits);
+                    }
+                }
+                emit_mov_reg(asm, Reg::X9, base);
+                add_immediate_offset(asm, Reg::X9, field_offset as i64)?;
+                match field_size {
+                    1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
+                    2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
+                    4 => emit_store32_to_reg(asm, Reg::X16, Reg::X9),
+                    8 => emit_store_to_reg(asm, Reg::X16, Reg::X9),
+                    _ => {
+                        return Err(Error::from(
+                            "unsupported aggregate field size in return",
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        LirConstant::Array(values, elem_ty) => {
+            let elem_ty = match agg_ty {
+                LirType::Array(elem, _) => elem.as_ref(),
+                _ => elem_ty,
+            };
+            let elem_size = size_of(elem_ty) as i32;
+            if elem_size == 0 {
+                return Ok(());
+            }
+            if elem_size > 8 {
+                return Err(Error::from("unsupported array element size in return"));
+            }
+            for (idx, elem) in values.iter().enumerate() {
+                let offset = (idx as i32) * elem_size;
+                match elem {
+                    LirConstant::String(text) => {
+                        let ro_offset = intern_cstring(rodata, rodata_pool, text);
+                        emit_load_rodata_addr(asm, Reg::X16, ro_offset as i64)?;
+                    }
+                    LirConstant::Null(_) | LirConstant::Undef(_) => {
+                        emit_mov_imm16(asm, Reg::X16, 0);
+                    }
+                    other => {
+                        let bits = constant_to_u64_bits(other)?;
+                        emit_mov_imm64(asm, Reg::X16, bits);
+                    }
+                }
+                emit_mov_reg(asm, Reg::X9, base);
+                add_immediate_offset(asm, Reg::X9, offset as i64)?;
+                match elem_size {
+                    1 => emit_store8_to_reg(asm, Reg::X16, Reg::X9),
+                    2 => emit_store16_to_reg(asm, Reg::X16, Reg::X9),
+                    4 => emit_store32_to_reg(asm, Reg::X16, Reg::X9),
+                    8 => emit_store_to_reg(asm, Reg::X16, Reg::X9),
+                    _ => {
+                        return Err(Error::from(
+                            "unsupported array element size in return",
+                        ));
+                    }
+                }
+            }
+            Ok(())
+        }
+        _ => Err(Error::from("unsupported aggregate constant for return")),
+    }
+}
+
 fn emit_bitcast(
     asm: &mut Assembler,
     layout: &FrameLayout,
@@ -5173,15 +5278,31 @@ fn emit_block(
         LirTerminator::Return(Some(value)) => {
             let mut exit_reg = None;
             if returns_aggregate(return_ty) {
-                let src_offset = match value {
-                    LirValue::Register(id) => agg_offset(layout, *id)?,
-                    _ => return Err(Error::from("unsupported aggregate return value")),
-                };
                 let sret_offset = layout
                     .sret_offset
                     .ok_or_else(|| Error::from("missing sret pointer for aggregate return"))?;
                 emit_load_from_sp(asm, Reg::X17, sret_offset);
-                copy_sp_to_reg(asm, src_offset, Reg::X17, size_of(return_ty) as i32)?;
+                match value {
+                    LirValue::Register(id) => {
+                        let src_offset = agg_offset(layout, *id)?;
+                        copy_sp_to_reg(asm, src_offset, Reg::X17, size_of(return_ty) as i32)?;
+                    }
+                    LirValue::Local(id) => {
+                        let src_offset = local_offset(layout, *id)?;
+                        copy_sp_to_reg(asm, src_offset, Reg::X17, size_of(return_ty) as i32)?;
+                    }
+                    LirValue::Constant(constant) => {
+                        store_constant_aggregate_to_reg(
+                            asm,
+                            Reg::X17,
+                            constant,
+                            return_ty,
+                            rodata,
+                            rodata_pool,
+                        )?;
+                    }
+                    _ => return Err(Error::from("unsupported aggregate return value")),
+                }
                 if asm.needs_frame {
                     emit_epilogue(asm, layout);
                 }

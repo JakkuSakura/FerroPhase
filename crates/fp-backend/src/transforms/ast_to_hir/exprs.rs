@@ -1758,11 +1758,24 @@ impl HirGenerator {
     ) -> Result<hir::Stmt> {
         let kind = match stmt {
             ast::BlockStmt::Expr(expr_stmt) => {
-                let expr = self.transform_expr_to_hir(&expr_stmt.expr)?;
-                if expr_stmt.has_value() {
-                    hir::StmtKind::Expr(expr)
+                if let ast::ExprKind::Let(let_expr) = expr_stmt.expr.kind() {
+                    let pat = self.transform_pattern(&let_expr.pat)?;
+                    self.register_pattern_bindings(&pat);
+                    let init = self.transform_expr_to_hir(&let_expr.expr)?;
+                    let local = hir::Local {
+                        hir_id: self.next_id(),
+                        pat,
+                        ty: None,
+                        init: Some(init),
+                    };
+                    hir::StmtKind::Local(local)
                 } else {
-                    hir::StmtKind::Semi(expr)
+                    let expr = self.transform_expr_to_hir(&expr_stmt.expr)?;
+                    if expr_stmt.has_value() {
+                        hir::StmtKind::Expr(expr)
+                    } else {
+                        hir::StmtKind::Semi(expr)
+                    }
                 }
             }
             ast::BlockStmt::Let(let_stmt) => {

@@ -4190,67 +4190,91 @@ ast::File {
                 kwargs: []
       }
     }
-    pub struct InAddr : InAddr{s_addr: Expr(u32)} {
-      s_addr: Expr(u32)
-    }
-    pub struct SockAddrIn : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)} {
-      sin_family: Expr(u16)
-      sin_port: Expr(u16)
-      sin_addr: Expr(InAddr)
-      sin_zero0: Expr(u32)
-      sin_zero1: Expr(u32)
-    }
+    pub type SockAddrIn = [Expr(u8); 16] : [u8; 16]
     pub module libc : () {
       declare extern "C" fn socket(domain: Expr(i32), sock_type: Expr(i32), protocol: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn bind(fd: Expr(i32), addr: *Expr(crate::SockAddrIn), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), *Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32) : fn(Expr(i32), *Expr(crate::SockAddrIn), Expr(u32)) -> Expr(i32)
+      declare extern "C" fn setsockopt(fd: Expr(i32), level: Expr(i32), optname: Expr(i32), optval: *const Expr(u8), optlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32), *const Expr(u8), Expr(u32)) -> Expr(i32) : fn(Expr(i32), Expr(i32), Expr(i32), *const Expr(u8), Expr(u32)) -> Expr(i32)
+      declare extern "C" fn bind(fd: Expr(i32), addr: *const Expr(u8), addrlen: Expr(u32)) -> Expr(i32) : fn(Expr(i32), *const Expr(u8), Expr(u32)) -> Expr(i32) : fn(Expr(i32), *const Expr(u8), Expr(u32)) -> Expr(i32)
       declare extern "C" fn listen(fd: Expr(i32), backlog: Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32) : fn(Expr(i32), Expr(i32)) -> Expr(i32)
-      declare extern "C" fn accept(fd: Expr(i32), addr: *mut Expr(crate::SockAddrIn), addrlen: *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(crate::SockAddrIn), *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(crate::SockAddrIn), *mut Expr(u32)) -> Expr(i32)
-      declare extern "C" fn write(fd: Expr(i32), buf: *Expr(u8), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), *Expr(u8), Expr(usize)) -> Expr(i64) : fn(Expr(i32), *Expr(u8), Expr(usize)) -> Expr(i64)
+      declare extern "C" fn accept(fd: Expr(i32), addr: *mut Expr(u8), addrlen: *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(u8), *mut Expr(u32)) -> Expr(i32) : fn(Expr(i32), *mut Expr(u8), *mut Expr(u32)) -> Expr(i32)
+      declare extern "C" fn write(fd: Expr(i32), buf: &Expr(std::ffi::CStr), count: Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(std::ffi::CStr), Expr(usize)) -> Expr(i64) : fn(Expr(i32), &Expr(std::ffi::CStr), Expr(usize)) -> Expr(i64)
+      declare extern "C" fn strlen(s: &Expr(std::ffi::CStr)) -> Expr(usize) : fn(&Expr(std::ffi::CStr)) -> Expr(usize) : fn(&Expr(std::ffi::CStr)) -> Expr(usize)
+      declare extern "C" fn perror(s: &Expr(std::ffi::CStr)) : fn(&Expr(std::ffi::CStr)) -> () : fn(&Expr(std::ffi::CStr)) -> ()
       declare extern "C" fn close(fd: Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32) : fn(Expr(i32)) -> Expr(i32)
-      declare extern "C" fn htons(hostshort: Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16) : fn(Expr(u16)) -> Expr(u16)
     }
     pub const AF_INET: i32 : i32
       value 2 : i32
     pub const SOCK_STREAM: i32 : i32
       value 1 : i32
-    pub const INADDR_ANY: u32 : u32
-      value 0 : u32
+    pub const SOL_SOCKET: i32 : i32
+      value 1 : i32
+    pub const SO_REUSEADDR: i32 : i32
+      value 2 : i32
     pub const SOCKADDR_LEN: u32 : u32
       value 16 : u32
-    pub const RESPONSE_LEN: u64 : u64
-      value 111 : u64
-    pub const RESPONSE: [u8; 111] : [u8; 111]
-      value [111 values] : [u8; 111]
-    pub fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn) : fn(u16) -> SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)} : fn(u16) -> SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-      block (1 stmt) : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+    pub const RESPONSE: &string : &string
+      value "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n" : &string
+    pub const SOCKET_ERR: &string : &string
+      value "socket" : &string
+    pub const BIND_ERR: &string : &string
+      value "bind" : &string
+    pub const LISTEN_ERR: &string : &string
+      value "listen" : &string
+    pub const ACCEPT_ERR: &string : &string
+      value "accept" : &string
+    pub [attrs] fn make_addr(port: Expr(u16)) -> Expr(SockAddrIn) : fn(u16) -> any : fn(u16) -> any
+      block (1 stmt) : [u8; 16]
         expr_stmt (value)
-          struct SockAddrIn : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-            sin_family:
-              cast : u16 -> Expr(u16)
-                value 2 : i64
-            sin_port:
-              invoke : u16
-                target: libc::htons
-                args:
+          array (16 values) : [u8; 16]
+            cast : u8 -> Expr(u8)
+              value 16 : i64
+            cast : u8 -> Expr(u8)
+              value 2 : i64
+            cast : u8 -> Expr(u8)
+              binop & : u16
+                lhs:
+                  binop >> : u16
+                    lhs:
+                      locator port : u16
+                    rhs:
+                      value 8 : i64
+                rhs:
+                  value 255 : i64
+            cast : u8 -> Expr(u8)
+              binop & : u16
+                lhs:
                   locator port : u16
-            sin_addr:
-              struct InAddr : InAddr{s_addr: Expr(u32)}
-                s_addr:
-                  value 0 : i64
-            sin_zero0:
-              value 0 : i64
-            sin_zero1:
-              value 0 : i64
-    pub fn main() -> () : fn() -> () : fn() -> ()
-      block (10 stmts) : !
+                rhs:
+                  value 255 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+            value 0 : i64
+    pub [attrs] fn main() -> () : fn() -> () : fn() -> ()
+      block (16 stmts) : !
         let server_fd
           init:
-            invoke : i32
-              target: libc::socket
-              args:
-                value 2 : i64
-                value 1 : i64
-                value 0 : i64
+            cast : i32 -> Expr(i32)
+              invoke : i32
+                target: libc::socket
+                args:
+                  value 2 : i64
+                  value 1 : i64
+                  value 0 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            args:
+              format_string "socket fd: {}" : string
+              locator server_fd : i32
+            kwargs: []
         expr_stmt (value)
           if : ()
             cond:
@@ -4258,50 +4282,79 @@ ast::File {
                 lhs:
                   locator server_fd : i32
                 rhs:
-                  value 0 : i64
+                  cast : i32 -> Expr(i32)
+                    value 0 : i64
             then:
               block (2 stmts) : ()
                 expr_stmt ;
-                  intrinsic println : ()
+                  invoke : ()
+                    target: libc::perror
                     args:
-                      format_string "socket failed" : string
-                    kwargs: []
+                      value "socket" : &Expr(std::ffi::CStr)
                 expr_stmt ;
                   return : !
-        let addr
+        let reuse: Expr(i32)
           init:
-            invoke : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+            value 1 : i32
+        let reuse_ptr
+          init:
+            cast : *const i32 -> *const Expr(i32)
+              reference (mutable: unspecified) : &i32
+                locator reuse : i32
+        let _
+          init:
+            invoke : i32
+              target: libc::setsockopt
+              args:
+                locator server_fd : i32
+                value 1 : i64
+                value 2 : i64
+                cast : *const u8 -> *const Expr(u8)
+                  locator reuse_ptr : *const i32
+                value 4 : i64
+        let mut addr
+          init:
+            invoke : any
               target: make_addr
               args:
-                value 8080 : u16
+                cast : u16 -> Expr(u16)
+                  value 8080 : i64
         let addr_ptr
           init:
-            cast : *SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)} -> *Expr(SockAddrIn)
-              reference (mutable: unspecified) : &SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                locator addr : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+            cast : *mut any -> *mut Expr(SockAddrIn)
+              reference (mutable: mut) : &any
+                locator addr : any
         let bind_rc
           init:
             invoke : i32
               target: libc::bind
               args:
                 locator server_fd : i32
-                locator addr_ptr : *SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                cast : *const u8 -> *const Expr(u8)
+                  locator addr_ptr : *mut any
                 value 16 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            args:
+              format_string "bind rc: {}" : string
+              locator bind_rc : i32
+            kwargs: []
         expr_stmt (value)
           if : ()
             cond:
-              binop < : bool
+              binop != : bool
                 lhs:
                   locator bind_rc : i32
                 rhs:
-                  value 0 : i64
+                  cast : i32 -> Expr(i32)
+                    value 0 : i64
             then:
               block (3 stmts) : ()
                 expr_stmt ;
-                  intrinsic println : ()
+                  invoke : ()
+                    target: libc::perror
                     args:
-                      format_string "bind failed" : string
-                    kwargs: []
+                      value "bind" : &Expr(std::ffi::CStr)
                 expr_stmt ;
                   invoke : i32
                     target: libc::close
@@ -4316,28 +4369,28 @@ ast::File {
               args:
                 locator server_fd : i32
                 value 16 : i64
+        expr_stmt ;
+          intrinsic println : ()
+            args:
+              format_string "listen rc: {}" : string
+              locator listen_rc : i32
+            kwargs: []
         expr_stmt (value)
           if : ()
             cond:
-              binop < : bool
+              binop != : bool
                 lhs:
                   locator listen_rc : i32
                 rhs:
-                  value 0 : i64
+                  cast : i32 -> Expr(i32)
+                    value 0 : i64
             then:
-              block (3 stmts) : ()
+              block (1 stmt) : ()
                 expr_stmt ;
-                  intrinsic println : ()
+                  invoke : ()
+                    target: libc::perror
                     args:
-                      format_string "listen failed" : string
-                    kwargs: []
-                expr_stmt ;
-                  invoke : i32
-                    target: libc::close
-                    args:
-                      locator server_fd : i32
-                expr_stmt ;
-                  return : !
+                      value "listen" : &Expr(std::ffi::CStr)
         expr_stmt ;
           intrinsic println : ()
             args:
@@ -4348,18 +4401,19 @@ ast::File {
             block (9 stmts) : ()
               let mut client_addr
                 init:
-                  invoke : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                  invoke : any
                     target: make_addr
                     args:
-                      value 0 : u16
+                      cast : u16 -> Expr(u16)
+                        value 0 : i64
               let mut client_len: Expr(u32)
                 init:
                   value 16 : u32
               let client_addr_ptr
                 init:
-                  cast : *mut SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)} -> *mut Expr(SockAddrIn)
-                    reference (mutable: mut) : &SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                      locator client_addr : SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
+                  cast : *mut any -> *mut Expr(SockAddrIn)
+                    reference (mutable: mut) : &any
+                      locator client_addr : any
               let client_len_ptr
                 init:
                   cast : *mut u32 -> *mut Expr(u32)
@@ -4367,12 +4421,14 @@ ast::File {
                       locator client_len : u32
               let client_fd
                 init:
-                  invoke : i32
-                    target: libc::accept
-                    args:
-                      locator server_fd : i32
-                      locator client_addr_ptr : *mut SockAddrIn{sin_family: Expr(u16), sin_port: Expr(u16), sin_addr: Expr(InAddr), sin_zero0: Expr(u32), sin_zero1: Expr(u32)}
-                      locator client_len_ptr : *mut u32
+                  cast : i32 -> Expr(i32)
+                    invoke : i32
+                      target: libc::accept
+                      args:
+                        locator server_fd : i32
+                        cast : *mut u8 -> *mut Expr(u8)
+                          locator client_addr_ptr : *mut any
+                        locator client_len_ptr : *mut u32
               expr_stmt (value)
                 if : ()
                   cond:
@@ -4380,33 +4436,31 @@ ast::File {
                       lhs:
                         locator client_fd : i32
                       rhs:
-                        value 0 : i64
+                        cast : i32 -> Expr(i32)
+                          value 0 : i64
                   then:
                     block (2 stmts) : ()
                       expr_stmt ;
-                        intrinsic println : ()
+                        invoke : ()
+                          target: libc::perror
                           args:
-                            format_string "accept failed" : string
-                          kwargs: []
+                            value "accept" : &Expr(std::ffi::CStr)
                       expr_stmt ;
                         continue : !
-              let response_ptr
+              let response_len
                 init:
-                  cast : *u8 -> *Expr(u8)
-                    reference (mutable: unspecified) : &i64
-                      index : i64
-                        value:
-                          value [111 values] : Vec<i64>
-                        index:
-                          value 0 : i64
+                  invoke : u64
+                    target: libc::strlen
+                    args:
+                      value "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n" : &Expr(std::ffi::CStr)
               let _
                 init:
                   invoke : i64
                     target: libc::write
                     args:
                       locator client_fd : i32
-                      locator response_ptr : *u8
-                      value 111 : i64
+                      value "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n" : &Expr(std::ffi::CStr)
+                      locator response_len : u64
               expr_stmt ;
                 invoke : i32
                   target: libc::close

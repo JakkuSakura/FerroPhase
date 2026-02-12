@@ -137,6 +137,7 @@ fn expands_function_like_proc_macro() -> Result<()> {
         macro_parser: Some(std::sync::Arc::new(TokenStreamParser)),
         intrinsic_normalizer: None,
         stdout_mode: StdoutMode::Capture,
+        target_env: fp_core::cfg::TargetEnv::host(),
     };
     let mut interpreter = AstInterpreter::new(&ctx, options);
     let mut node = fp_core::ast::Node::file(file);

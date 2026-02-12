@@ -6,6 +6,7 @@ pub mod macros;
 pub mod ast;
 pub mod sql_ast;
 pub mod collections;
+pub mod cfg;
 pub mod config;
 pub mod context;
 pub mod cst;

@@ -1,86 +1,116 @@
 #!/usr/bin/env fp run
-//! Minimal TCP HTTP server using glibc sockets.
+//! Minimal TCP HTTP server using libc sockets.
 //!
-//! Linux-only (glibc) and intended for `fp interpret`.
+//! Linux (glibc) and macOS only, intended for `fp interpret`.
 
-struct InAddr {
-    s_addr: u32,
-}
-
-struct SockAddrIn {
-    sin_family: u16,
-    sin_port: u16,
-    sin_addr: InAddr,
-    sin_zero0: u32,
-    sin_zero1: u32,
-}
+type SockAddrIn = [u8; 16];
 
 mod libc {
     extern "C" fn socket(domain: i32, sock_type: i32, protocol: i32) -> i32;
-    extern "C" fn bind(fd: i32, addr: *const SockAddrIn, addrlen: u32) -> i32;
+    extern "C" fn setsockopt(
+        fd: i32,
+        level: i32,
+        optname: i32,
+        optval: *const u8,
+        optlen: u32,
+    ) -> i32;
+    extern "C" fn bind(fd: i32, addr: *const u8, addrlen: u32) -> i32;
     extern "C" fn listen(fd: i32, backlog: i32) -> i32;
-    extern "C" fn accept(fd: i32, addr: *mut SockAddrIn, addrlen: *mut u32) -> i32;
-    extern "C" fn write(fd: i32, buf: *const u8, count: usize) -> i64;
+    extern "C" fn accept(fd: i32, addr: *mut u8, addrlen: *mut u32) -> i32;
+    extern "C" fn write(fd: i32, buf: &std::ffi::CStr, count: usize) -> i64;
+    extern "C" fn strlen(s: &std::ffi::CStr) -> usize;
+    extern "C" fn perror(s: &std::ffi::CStr);
     extern "C" fn close(fd: i32) -> i32;
-    extern "C" fn htons(hostshort: u16) -> u16;
 }
 
 const AF_INET: i32 = 2;
 const SOCK_STREAM: i32 = 1;
-const INADDR_ANY: u32 = 0;
+const SOL_SOCKET: i32 = 1;
+const SO_REUSEADDR: i32 = 2;
 const SOCKADDR_LEN: u32 = 16;
-const RESPONSE_LEN: usize = 111;
-const RESPONSE: str =
+const RESPONSE: &std::ffi::CStr =
     "HTTP/1.1 200 OK\r\nContent-Length: 12\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nHello world\n";
-
+const SOCKET_ERR: &std::ffi::CStr = "socket";
+const BIND_ERR: &std::ffi::CStr = "bind";
+const LISTEN_ERR: &std::ffi::CStr = "listen";
+const ACCEPT_ERR: &std::ffi::CStr = "accept";
+#[cfg(target_os = "linux")]
 fn make_addr(port: u16) -> SockAddrIn {
-    SockAddrIn {
-        sin_family: AF_INET as u16,
-        sin_port: libc::htons(port),
-        sin_addr: InAddr { s_addr: INADDR_ANY },
-        sin_zero0: 0,
-        sin_zero1: 0,
-    }
+    [
+        AF_INET as u8, 0,
+        ((port >> 8) & 0xff) as u8, (port & 0xff) as u8,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+    ]
 }
 
+#[cfg(target_os = "macos")]
+fn make_addr(port: u16) -> SockAddrIn {
+    [
+        SOCKADDR_LEN as u8, AF_INET as u8,
+        ((port >> 8) & 0xff) as u8, (port & 0xff) as u8,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+        0, 0, 0, 0,
+    ]
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn main() {
-    let server_fd = libc::socket(AF_INET, SOCK_STREAM, 0);
-    if server_fd < 0 {
-        println!("socket failed");
+    let server_fd = libc::socket(AF_INET, SOCK_STREAM, 0) as i32;
+    println!("socket fd: {}", server_fd);
+    if server_fd < 0 as i32 {
+        libc::perror(SOCKET_ERR);
         return;
     }
 
-    let addr = make_addr(8080);
-    let addr_ptr = (&addr as *const SockAddrIn);
-    let bind_rc = libc::bind(server_fd, addr_ptr, SOCKADDR_LEN);
-    if bind_rc < 0 {
-        println!("bind failed");
+    let reuse: i32 = 1;
+    let reuse_ptr = &reuse as *const i32;
+    let _ = libc::setsockopt(
+        server_fd,
+        SOL_SOCKET,
+        SO_REUSEADDR,
+        reuse_ptr as *const u8,
+        4,
+    );
+
+    let mut addr = make_addr(8080 as u16);
+    let addr_ptr = &mut addr as *mut SockAddrIn;
+    let bind_rc = libc::bind(server_fd, addr_ptr as *const u8, SOCKADDR_LEN);
+    println!("bind rc: {}", bind_rc);
+    if bind_rc != 0 as i32 {
+        libc::perror(BIND_ERR);
         libc::close(server_fd);
         return;
     }
 
     let listen_rc = libc::listen(server_fd, 16);
-    if listen_rc < 0 {
-        println!("listen failed");
-        libc::close(server_fd);
-        return;
+    println!("listen rc: {}", listen_rc);
+    if listen_rc != 0 as i32 {
+        libc::perror(LISTEN_ERR);
     }
 
     println!("listening on 0.0.0.0:8080");
 
     loop {
-        let mut client_addr = make_addr(0);
+        let mut client_addr = make_addr(0 as u16);
         let mut client_len: u32 = SOCKADDR_LEN;
-        let client_addr_ptr = (&mut client_addr as *mut SockAddrIn);
-        let client_len_ptr = (&mut client_len as *mut u32);
-        let client_fd = libc::accept(server_fd, client_addr_ptr, client_len_ptr);
-        if client_fd < 0 {
-            println!("accept failed");
+        let client_addr_ptr = &mut client_addr as *mut SockAddrIn;
+        let client_len_ptr = &mut client_len as *mut u32;
+        let client_fd = libc::accept(server_fd, client_addr_ptr as *mut u8, client_len_ptr) as i32;
+        if client_fd < 0 as i32 {
+            libc::perror(ACCEPT_ERR);
             continue;
         }
 
-        let response_ptr = (RESPONSE as *const u8);
-        let _ = libc::write(client_fd, response_ptr, RESPONSE_LEN);
+        let response_len = libc::strlen(RESPONSE);
+        let _ = libc::write(client_fd, RESPONSE, response_len);
         libc::close(client_fd);
     }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn main() {
+    println!("This example requires Linux (glibc) or macOS.");
 }

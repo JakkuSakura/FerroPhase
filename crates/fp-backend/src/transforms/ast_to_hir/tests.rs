@@ -39,6 +39,23 @@ fn make_fn(
     ast::Item::from(ast::ItemKind::DefFunction(func))
 }
 
+fn cfg_target_os_attr(value: &str) -> ast::Attribute {
+    let cfg_name = ast::Path::from_ident(ident("cfg"));
+    let target_name = ast::Path::from_ident(ident("target_os"));
+    let value_expr = ast::Expr::value(ast::Value::string(value.to_string()));
+    let meta = ast::AttrMeta::List(ast::AttrMetaList {
+        name: cfg_name,
+        items: vec![ast::AttrMeta::NameValue(ast::AttrMetaNameValue {
+            name: target_name,
+            value: value_expr.into(),
+        })],
+    });
+    ast::Attribute {
+        style: ast::AttrStyle::Outer,
+        meta,
+    }
+}
+
 #[test]
 fn test_hir_generator_creation() {
     let generator = HirGenerator::new();
@@ -140,6 +157,51 @@ fn transform_index_expression_to_hir() -> Result<()> {
 
     assert!(matches!(target_expr.kind, hir::ExprKind::Index(_, _)));
 
+    Ok(())
+}
+
+#[test]
+fn cfg_filters_items_by_target_os() -> Result<()> {
+    let mut linux_fn = make_fn(
+        "linux_only",
+        Vec::new(),
+        int_ty(),
+        ast::Expr::value(ast::Value::int(1)),
+    );
+    let mut mac_fn = make_fn(
+        "mac_only",
+        Vec::new(),
+        int_ty(),
+        ast::Expr::value(ast::Value::int(2)),
+    );
+
+    if let ast::ItemKind::DefFunction(def) = linux_fn.kind_mut() {
+        def.attrs.push(cfg_target_os_attr("linux"));
+    }
+    if let ast::ItemKind::DefFunction(def) = mac_fn.kind_mut() {
+        def.attrs.push(cfg_target_os_attr("macos"));
+    }
+
+    let ast_file = ast::File {
+        path: "cfg.fp".into(),
+        items: vec![linux_fn, mac_fn],
+    };
+
+    let mut generator = HirGenerator::new();
+    generator.set_target_triple(Some("x86_64-apple-darwin"));
+    let program = generator.transform_file(&ast_file)?;
+
+    let names = program
+        .items
+        .iter()
+        .filter_map(|item| match &item.kind {
+            hir::ItemKind::Function(func) => Some(func.sig.name.as_str().to_string()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(names.contains(&"mac_only".to_string()));
+    assert!(!names.contains(&"linux_only".to_string()));
     Ok(())
 }
 
@@ -470,6 +532,7 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
                     collect_paths(&arg.value, out);
                 }
             }
+            hir::ExprKind::Reference(reference) => collect_paths(&reference.expr, out),
             hir::ExprKind::Cast(expr, _) => collect_paths(expr, out),
             hir::ExprKind::Array(elements) => {
                 for elem in elements {

@@ -68,6 +68,20 @@ enum PlaceAccess {
 }
 
 impl LirGenerator {
+    fn skip_large_return_storage(&self) -> bool {
+        self.current_return_type
+            .as_ref()
+            .map(|ty| {
+                matches!(
+                    ty,
+                    lir::LirType::Struct { .. }
+                        | lir::LirType::Array(_, _)
+                        | lir::LirType::Vector(_, _)
+                ) && fp_core::lir::layout::size_of(ty) > 8
+            })
+            .unwrap_or(false)
+    }
+
     /// Create a new LIR generator
     pub fn new() -> Self {
         Self::new_with_runtime_symbol_map(|_| None)
@@ -2089,8 +2103,13 @@ impl LirGenerator {
         self.entry_allocas.clear();
         self.local_storage.clear();
 
+        let skip_return_storage = self.skip_large_return_storage();
+
         let locals: Vec<_> = self.mutable_locals.clone().into_iter().collect();
         for local in locals {
+            if skip_return_storage && Some(local) == self.return_local {
+                continue;
+            }
             let local_index = local as usize;
             if local_index >= self.local_types.len() {
                 continue;
@@ -2152,6 +2171,11 @@ impl LirGenerator {
     }
 
     fn get_or_create_register_for_place(&mut self, place: &mir::Place) -> Result<lir::LirValue> {
+        if self.skip_large_return_storage() && Some(place.local) == self.return_local {
+            return Err(crate::error::optimization_error(
+                "MIR→LIR: return place uses register storage for large aggregates",
+            ));
+        }
         if let Some(storage) = self.local_storage.get(&place.local) {
             return Ok(storage.ptr_value.clone());
         }
@@ -4474,6 +4498,15 @@ impl LirGenerator {
                         return Some(value.clone());
                     } else if let Some(zero) = self.zero_value_for_lir_type(&return_ty) {
                         return Some(zero);
+                    }
+                }
+                if let Some(local_ty) = self
+                    .local_types
+                    .get(local as usize)
+                    .map(|ty| self.lir_type_from_ty(ty))
+                {
+                    if local_ty == return_ty {
+                        return Some(value.clone());
                     }
                 }
                 return Some(lir::LirValue::Constant(lir::LirConstant::Undef(return_ty)));
