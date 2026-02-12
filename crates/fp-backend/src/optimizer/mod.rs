@@ -830,18 +830,31 @@ impl MirPass for DeadStorePass {
             let local_count = body.locals.len();
             let local_kinds = (0..local_count)
                 .map(|idx| {
-                    let local = idx as mir::LocalId;
-                    if local == 0 {
-                        mir::LocalKind::ReturnPointer
-                    } else if (local as usize) <= arg_count {
-                        mir::LocalKind::Arg
-                    } else {
-                        mir::LocalKind::Temp
+                    let local_id = idx as mir::LocalId;
+                    if local_id == 0 {
+                        return mir::LocalKind::ReturnPointer;
+                    }
+                    if (local_id as usize) <= arg_count {
+                        return mir::LocalKind::Arg;
+                    }
+                    match body.locals[idx].local_info {
+                        mir::LocalInfo::User(_) => mir::LocalKind::Var,
+                        _ => mir::LocalKind::Temp,
                     }
                 })
                 .collect::<Vec<_>>();
             for (block_idx, block) in body.basic_blocks.iter_mut().enumerate() {
                 let mut live = analysis.out_states[block_idx].clone();
+                if let Some(term) = &block.terminator {
+                    let mut term_uses = vec![false; body.locals.len()];
+                    let empty_defs = vec![false; body.locals.len()];
+                    collect_terminator_uses(term, &mut term_uses, &empty_defs);
+                    for (idx, used) in term_uses.iter().enumerate() {
+                        if *used {
+                            live[idx] = true;
+                        }
+                    }
+                }
                 for stmt in block.statements.iter_mut().rev() {
                     let mut uses = vec![false; body.locals.len()];
                     let mut defs = vec![false; body.locals.len()];

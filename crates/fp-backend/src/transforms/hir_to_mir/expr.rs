@@ -5085,7 +5085,105 @@ impl<'a> BodyBuilder<'a> {
         }
 
         if let Some(expr) = &block.expr {
-            self.lower_tail_expr(expr)?;
+            if let hir::ExprKind::Block(inner) = &expr.kind {
+                self.lower_block(inner)?;
+            } else {
+                self.lower_tail_expr(expr)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    fn lower_let_expr(
+        &mut self,
+        pat: &hir::Pat,
+        ty: &hir::TypeExpr,
+        init: &Option<Box<hir::Expr>>,
+        span: Span,
+    ) -> Result<()> {
+        let init_span = init.as_ref().map(|expr| expr.span).unwrap_or(span);
+        let ty_is_infer = matches!(
+            ty.kind,
+            hir::TypeExprKind::Infer | hir::TypeExprKind::Error
+        );
+        let mut declared_ty = if ty_is_infer {
+            None
+        } else {
+            Some(self.lower_type_expr(ty))
+        };
+        let annotated_enum_def = if ty_is_infer {
+            None
+        } else if let hir::TypeExprKind::Path(path) = &ty.kind {
+            if let Some(hir::Res::Def(def_id)) = &path.res {
+                if self.lowering.enum_defs.contains_key(def_id) {
+                    Some(*def_id)
+                } else {
+                    None
+                }
+            } else {
+                if let Some(seg) = path.segments.last() {
+                    let name = seg.name.as_str();
+                    self.lowering
+                        .enum_defs
+                        .values()
+                        .find(|enm| enm.name == name)
+                        .map(|enm| enm.def_id)
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        };
+        if !ty_is_infer {
+            if let hir::TypeExprKind::Path(path) = &ty.kind {
+                if let Some(hir::Res::Def(def_id)) = &path.res {
+                    if self.lowering.enum_defs.contains_key(def_id) {
+                        let args = path
+                            .segments
+                            .last()
+                            .and_then(|segment| segment.args.as_ref())
+                            .map(|args| self.lowering.lower_generic_args(Some(args), init_span))
+                            .unwrap_or_default();
+                        let layout = if args.is_empty() {
+                            self.lowering.enum_layout_for_def(*def_id, init_span)
+                        } else {
+                            self.lowering
+                                .enum_layout_for_instance(*def_id, &args, init_span)
+                        };
+                        if let Some(layout) = layout {
+                            declared_ty = Some(layout.enum_ty);
+                        }
+                    }
+                }
+            }
+        }
+
+        let mut decl = self.lowering.make_local_decl(
+            declared_ty.as_ref().unwrap_or(&Ty {
+                kind: TyKind::Tuple(Vec::new()),
+            }),
+            init_span,
+        );
+        decl.local_info = mir::LocalInfo::User(());
+
+        if let hir::PatKind::Binding { mutable, .. } = &pat.kind {
+            if *mutable {
+                decl.mutability = mir::Mutability::Mut;
+            }
+        }
+
+        let local_id = self.push_local(decl);
+        self.bind_pattern(pat, local_id, declared_ty.as_ref());
+
+        if let Some(init_expr) = init {
+            self.update_null_tracking(
+                mir::Place::from_local(local_id),
+                declared_ty.as_ref(),
+                init_expr,
+            );
+            self.lower_assignment(local_id, declared_ty.as_ref(), annotated_enum_def, init_expr)?;
         }
 
         Ok(())
@@ -5349,7 +5447,19 @@ impl<'a> BodyBuilder<'a> {
     fn lower_tail_expr(&mut self, expr: &hir::Expr) -> Result<()> {
         let return_ty = self.locals[0].ty.clone();
         let place = mir::Place::from_local(0);
-        self.lower_expr_into_place(expr, place, &return_ty)
+        if MirLowering::is_unit_ty(&return_ty) {
+            self.lower_expr_as_statement(expr)?;
+            self.push_statement(mir::Statement {
+                source_info: expr.span,
+                kind: mir::StatementKind::Assign(
+                    place,
+                    mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                ),
+            });
+            Ok(())
+        } else {
+            self.lower_expr_into_place(expr, place, &return_ty)
+        }
     }
 
     fn lower_match_expr(
@@ -6229,6 +6339,7 @@ impl<'a> BodyBuilder<'a> {
             }),
             init_span,
         );
+        decl.local_info = mir::LocalInfo::User(());
 
         if let hir::PatKind::Binding { mutable, .. } = &local.pat.kind {
             if *mutable {
@@ -6285,6 +6396,12 @@ impl<'a> BodyBuilder<'a> {
 
     fn lower_expr_statement(&mut self, expr: &hir::Expr) -> Result<()> {
         match &expr.kind {
+            hir::ExprKind::Let(pat, ty, init) => {
+                self.lower_let_expr(pat, ty, init, expr.span)?;
+            }
+            hir::ExprKind::Block(block) => {
+                self.lower_block(block)?;
+            }
             hir::ExprKind::Assign(place_expr, value_expr) => {
                 let place_info = match self.lower_place(place_expr)? {
                     Some(info) => info,
@@ -8874,6 +8991,17 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Reference(reference) => {
                 self.lower_reference_operand(reference, expr.span)
             }
+            hir::ExprKind::Let(pat, ty, init) => {
+                self.lower_let_expr(pat, ty, init, expr.span)?;
+                let unit_ty = Ty {
+                    kind: TyKind::Tuple(Vec::new()),
+                };
+                Ok(OperandInfo::constant(
+                    expr.span,
+                    unit_ty.clone(),
+                    mir::ConstantKind::Val(mir::ConstValue::Unit, unit_ty),
+                ))
+            }
             hir::ExprKind::Literal(lit) => {
                 let (literal, ty) = self.lower_literal(lit, expected);
                 Ok(OperandInfo {
@@ -9248,6 +9376,22 @@ impl<'a> BodyBuilder<'a> {
             hir::ExprKind::Cast(inner, ty_expr) => {
                 let operand = self.lower_operand(inner, None)?;
                 let target_ty = self.lower_type_expr(ty_expr);
+                if let hir::ExprKind::Literal(hir::Lit::Integer(value)) = &inner.kind {
+                    if matches!(target_ty.kind, TyKind::Int(_) | TyKind::Uint(_)) {
+                        let (literal, ty) = self.lower_literal(
+                            &hir::Lit::Integer(*value),
+                            Some(&target_ty),
+                        );
+                        return Ok(OperandInfo {
+                            operand: mir::Operand::Constant(mir::Constant {
+                                span: expr.span,
+                                user_ty: None,
+                                literal,
+                            }),
+                            ty,
+                        });
+                    }
+                }
                 let local_id = self.allocate_temp(target_ty.clone(), expr.span);
                 let place_local = mir::Place::from_local(local_id);
                 let statement = mir::Statement {
@@ -11563,6 +11707,17 @@ impl<'a> BodyBuilder<'a> {
         expected_ty: &Ty,
     ) -> Result<()> {
         match &expr.kind {
+            hir::ExprKind::Let(pat, ty, init) => {
+                self.lower_let_expr(pat, ty, init, expr.span)?;
+                let statement = mir::Statement {
+                    source_info: expr.span,
+                    kind: mir::StatementKind::Assign(
+                        place,
+                        mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                    ),
+                };
+                self.push_statement(statement);
+            }
             hir::ExprKind::Literal(_) | hir::ExprKind::Path(_) | hir::ExprKind::Index(_, _) => {
                 let assignment_place = place.clone();
                 let value = self.lower_operand(expr, Some(expected_ty))?;
