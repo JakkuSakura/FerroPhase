@@ -9,6 +9,7 @@ fp-core = { path = "../fp-core" }
 anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.8"

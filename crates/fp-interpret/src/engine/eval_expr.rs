@@ -951,7 +951,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                             if let Some(index) =
                                 self.numeric_to_non_negative_usize(&index_value, "index")
                             {
-                                let slice_ref = crate::engine::ffi::FfiSliceRef {
+                                let slice_ref = fp_native::ffi::FfiSliceRef {
                                     values: list.values.clone(),
                                     index,
                                 };

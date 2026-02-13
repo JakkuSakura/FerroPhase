@@ -1,5 +1,7 @@
 pub mod config;
 pub mod emit;
+pub mod ffi;
+pub mod jit;
 pub mod link;
 
 use crate::config::{EmitKind, NativeConfig};

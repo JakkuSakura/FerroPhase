@@ -1474,12 +1474,11 @@ dependencies = [
  "eyre",
  "fp-core",
  "fp-lang",
+ "fp-native",
  "fp-pipeline",
  "fp-typing",
  "futures-util",
  "itertools 0.12.1",
- "libffi",
- "libloading",
  "num-traits",
  "pretty_assertions",
  "proc-macro2",
@@ -1542,6 +1541,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "fp-core",
+ "libc",
  "tempfile",
  "thiserror 1.0.69",
  "tracing",
@@ -2385,25 +2385,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bcc35a38544a891a5f7c865aca548a982ccb3b8650a5b06d0fd33a10283c56fc"
 
 [[package]]
-name = "libffi"
-version = "5.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0498fe5655f857803e156523e644dcdcdc3b3c7edda42ea2afdae2e09b2db87b"
-dependencies = [
- "libc",
- "libffi-sys",
-]
-
-[[package]]
-name = "libffi-sys"
-version = "4.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71d4f1d4ce15091955144350b75db16a96d4a63728500122706fb4d29a26afbb"
-dependencies = [
- "cc",
-]
-
-[[package]]
 name = "libgit2-sys"
 version = "0.15.2+1.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2414,16 +2395,6 @@ dependencies = [
  "libz-sys",
  "openssl-sys",
  "pkg-config",
-]
-
-[[package]]
-name = "libloading"
-version = "0.8.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
-dependencies = [
- "cfg-if",
- "windows-link",
 ]
 
 [[package]]

@@ -6838,28 +6838,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn calculate_field_size(&self, ty: &Ty) -> usize {
-        match ty {
-            Ty::Expr(expr) => {
-                if let ExprKind::Name(locator) = expr.as_ref().kind() {
-                    if let Some(ident) = locator.as_ident() {
-                        match ident.name.as_str() {
-                            "i8" | "u8" => 1,
-                            "i16" | "u16" => 2,
-                            "i32" | "u32" => 4,
-                            "i64" | "u64" => 8,
-                            "f32" => 4,
-                            "f64" => 8,
-                            "bool" => 1,
-                            _ => 8,
-                        }
-                    } else {
-                        8
-                    }
-                } else {
-                    8
-                }
-            }
+    fn calculate_field_size(&mut self, ty: &Ty) -> usize {
+        let concrete_ty = self.materialize_type(ty.clone());
+        match &concrete_ty {
             Ty::Primitive(primitive) => match primitive {
                 TypePrimitive::Int(int_ty) => match int_ty {
                     TypeInt::I8 | TypeInt::U8 => 1,
@@ -6879,6 +6860,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 _ => 8,
             },
             Ty::Struct(struct_ty) => struct_ty
+                .fields
+                .iter()
+                .map(|field| self.calculate_field_size(&field.value))
+                .sum(),
+            Ty::Structural(struct_ty) => struct_ty
                 .fields
                 .iter()
                 .map(|field| self.calculate_field_size(&field.value))

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 fp-core = { path = "../fp-core" }
+fp-native = { path = "../fp-native" }
 fp-pipeline = { path = "../fp-pipeline" }
 fp-typing = { path = "../fp-typing" }
 serde = { version = "1", features = ["derive"] }
@@ -15,8 +16,6 @@ eyre = "0.6"
 syn = { version = "2", features = ["full"] }
 num-traits = "0.2"
 proc-macro2 = "1"
-libffi = "5.1.0"
-libloading = "0.8"
 compio = { version = "0.18.0", features = ["time", "net", "io"] }
 futures-util = "0.3"
 
