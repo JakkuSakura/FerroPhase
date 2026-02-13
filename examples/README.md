@@ -45,6 +45,8 @@ fp run examples/01_const_eval_basics.fp
 | `21_build_blocks.fp`             | Build blocks            | Item generation with `item` and `[item]` |
 | `23_runtime_collections.fp`      | Runtime collections     | List/map indexing and linear search      |
 | `35_async_await.fp`              | Async/await basics      | `async fn`, sequential `await` usage     |
+| `37_async_tcp_echo.fp`           | Async TCP               | `std::net::TcpListener`, `spawn`, echo   |
+| `38_async_udp_echo.fp`           | Async UDP               | `std::net::UdpSocket`, recv/send loops   |
 
 ### Type System
 
