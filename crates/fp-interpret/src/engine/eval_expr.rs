@@ -2308,6 +2308,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprInvokeTarget::Function(locator) => {
                 let mut locator = locator.clone();
+                if let Some(flow) = self.try_eval_net_function_runtime(&locator, &mut invoke.args) {
+                    return flow;
+                }
                 if let Some(ident) = locator.as_ident() {
                     if ident.as_str() == "type" {
                         if invoke.args.len() != 1 {
@@ -2517,7 +2520,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn evaluate_args_runtime(
+    pub(super) fn evaluate_args_runtime(
         &mut self,
         args: &mut Vec<Expr>,
     ) -> std::result::Result<Vec<Value>, RuntimeFlow> {
@@ -2538,6 +2541,10 @@ impl<'ctx> AstInterpreter<'ctx> {
     ) -> RuntimeFlow {
         let receiver = self.resolve_receiver_binding(select.obj.as_mut());
         let method_name = select.field.name.as_str().to_string();
+
+        if let Some(flow) = self.try_eval_net_method_runtime(&receiver.value, &method_name, args) {
+            return flow;
+        }
 
         if matches!(
             method_name.as_str(),
