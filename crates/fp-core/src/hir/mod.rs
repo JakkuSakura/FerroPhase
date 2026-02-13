@@ -423,6 +423,7 @@ pub enum UnOp {
     Not,
     Neg,
     Deref,
+    Box,
 }
 
 #[derive(Debug, Clone, PartialEq)]

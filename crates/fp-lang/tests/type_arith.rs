@@ -100,3 +100,21 @@ fn type_union_starts_with_operator_errors() {
 fn bare_structural_literal_missing_colon_errors() {
     expect_type_parse_err("type A = { x i64 };");
 }
+
+#[test]
+fn parses_optional_structural_field_marker() {
+    let def = parse_single_type_alias("type A = { email?: string };");
+    match def.value {
+        Ty::Structural(ts) => {
+            assert_eq!(ts.fields.len(), 1);
+            assert_eq!(ts.fields[0].name.as_str(), "email");
+            match &ts.fields[0].value {
+                Ty::TypeBinaryOp(bin) => {
+                    assert!(matches!(bin.kind, TypeBinaryOpKind::Union));
+                }
+                other => panic!("expected optional union field type, got {:?}", other),
+            }
+        }
+        other => panic!("expected TypeStructural, found {:?}", other),
+    }
+}

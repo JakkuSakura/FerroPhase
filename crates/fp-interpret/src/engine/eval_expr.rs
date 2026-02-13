@@ -963,13 +963,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Dereference(deref) => {
-                if let ExprKind::Name(locator) = deref.referee.kind() {
-                    if let Some(ident) = locator.as_ident() {
-                        if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
-                            return RuntimeFlow::Value(stored.value());
-                        }
-                    }
-                }
                 let target = match self.eval_expr_runtime(deref.referee.as_mut()) {
                     RuntimeFlow::Value(value) => value,
                     other => return other,
@@ -982,6 +975,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                             .map(|value| value.clone())
                             .unwrap_or_else(|err| err.into_inner().clone());
                         return RuntimeFlow::Value(value);
+                    }
+                    if let Some(runtime_box) = any.downcast_ref::<RuntimeBox>() {
+                        return RuntimeFlow::Value(runtime_box.value.clone());
                     }
                 }
                 self.emit_error("cannot dereference non-reference value");
@@ -1725,13 +1721,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             ExprKind::Dereference(deref) => {
-                if let ExprKind::Name(locator) = deref.referee.kind() {
-                    if let Some(ident) = locator.as_ident() {
-                        if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
-                            return stored.value();
-                        }
-                    }
-                }
                 let target = self.eval_expr(deref.referee.as_mut());
                 if let Value::Any(any) = target {
                     if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
@@ -1740,6 +1729,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                             .lock()
                             .map(|value| value.clone())
                             .unwrap_or_else(|err| err.into_inner().clone());
+                    }
+                    if let Some(runtime_box) = any.downcast_ref::<RuntimeBox>() {
+                        return runtime_box.value.clone();
                     }
                 }
                 self.emit_error("cannot dereference non-reference value");

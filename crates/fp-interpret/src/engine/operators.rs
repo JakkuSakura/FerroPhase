@@ -275,9 +275,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                     other
                 ))),
             },
-            UnOpKind::Deref | UnOpKind::Any(_) => Err(interpretation_error(
+            UnOpKind::Deref => Err(interpretation_error(
                 "unsupported unary operator in AST interpretation".to_string(),
             )),
+            UnOpKind::Any(kind) => {
+                if kind.as_str() == "box" {
+                    return Ok(Value::Any(AnyBox::new(RuntimeBox { value })));
+                }
+                Err(interpretation_error(
+                    "unsupported unary operator in AST interpretation".to_string(),
+                ))
+            }
         }
     }
 }

@@ -285,7 +285,7 @@ impl Parser {
         }
 
         match self.peek_non_trivia_raw() {
-            Some("+") | Some("-") | Some("!") | Some("&") | Some("*") => {
+            Some("+") | Some("-") | Some("!") | Some("&") | Some("*") | Some("box") => {
                 let mut children = Vec::new();
                 let start_span = self
                     .peek_any_span()
@@ -1197,6 +1197,10 @@ impl Parser {
             let Some(op) = self.peek_non_trivia_raw() else {
                 break;
             };
+            if op == ">>" && stops.iter().any(|s| *s == ">") {
+                self.split_right_shift();
+                continue;
+            }
             if stops.iter().any(|s| *s == op) {
                 break;
             }
@@ -1615,6 +1619,10 @@ impl Parser {
         self.expect_ident_token()?;
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
+        if self.peek_non_trivia_raw() == Some("?") {
+            self.bump_token_into(&mut children);
+            self.bump_trivia_into(&mut children);
+        }
         self.expect_token_raw(":")?;
         self.bump_token_into(&mut children);
         self.bump_trivia_into(&mut children);
@@ -1682,6 +1690,9 @@ impl Parser {
                 children.push(SyntaxElement::Node(Box::new(arg_ty)));
                 self.bump_trivia_into(&mut children);
                 if self.peek_non_trivia_raw() == Some(",") {
+                    if self.comma_looks_like_outer_field_separator() {
+                        break;
+                    }
                     self.bump_token_into(&mut children);
                     self.bump_trivia_into(&mut children);
                     continue;
@@ -2022,6 +2033,9 @@ impl Parser {
                     children.push(SyntaxElement::Node(Box::new(arg_ty)));
                     self.bump_trivia_into(&mut children);
                     if self.peek_non_trivia_raw() == Some(",") {
+                        if self.comma_looks_like_outer_field_separator() {
+                            break;
+                        }
                         self.bump_token_into(&mut children);
                         self.bump_trivia_into(&mut children);
                         continue;
@@ -2177,6 +2191,20 @@ impl Parser {
 
     fn peek_nth_non_trivia_token_kind(&self, n: usize) -> Option<TokenKind> {
         self.peek_nth_non_trivia(n).map(|t| t.kind.clone())
+    }
+
+    fn comma_looks_like_outer_field_separator(&self) -> bool {
+        if self.peek_non_trivia_raw() != Some(",") {
+            return false;
+        }
+        let Some(second) = self.peek_nth_non_trivia(2) else {
+            return false;
+        };
+        if !matches!(second.kind, TokenKind::Ident) {
+            return false;
+        }
+        self.peek_nth_non_trivia(3)
+            .is_some_and(|third| third.raw.as_str() == ":")
     }
 
     fn peek_second_non_trivia_raw(&self) -> Option<&str> {

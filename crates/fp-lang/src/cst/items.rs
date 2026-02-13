@@ -368,14 +368,17 @@ fn parse_item_cst(
                         break;
                     }
                     let field_name = expect_ident_token(input)?;
+                    let is_optional = match_symbol(input, "?");
                     expect_symbol(input, ":")?;
                     let ty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
+                    let mut field_children = vec![SyntaxElement::Token(field_name)];
+                    if is_optional {
+                        field_children.push(SyntaxElement::Token(token_text("?")));
+                    }
+                    field_children.push(SyntaxElement::Node(Box::new(ty)));
                     let field = node(
                         SyntaxKind::StructFieldDecl,
-                        vec![
-                            SyntaxElement::Token(field_name),
-                            SyntaxElement::Node(Box::new(ty)),
-                        ],
+                        field_children,
                     );
                     children.push(SyntaxElement::Node(Box::new(field)));
                     if match_symbol(input, ",") {
@@ -435,14 +438,17 @@ fn parse_item_cst(
                             break;
                         }
                         let fname = expect_ident_token(input)?;
+                        let is_optional = match_symbol(input, "?");
                         expect_symbol(input, ":")?;
                         let fty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
+                        let mut field_children = vec![SyntaxElement::Token(fname)];
+                        if is_optional {
+                            field_children.push(SyntaxElement::Token(token_text("?")));
+                        }
+                        field_children.push(SyntaxElement::Node(Box::new(fty)));
                         let field = node(
                             SyntaxKind::TyField,
-                            vec![
-                                SyntaxElement::Token(fname),
-                                SyntaxElement::Node(Box::new(fty)),
-                            ],
+                            field_children,
                         );
                         fields.push(SyntaxElement::Node(Box::new(field)));
                         if match_symbol(input, ",") {
@@ -527,14 +533,17 @@ fn parse_item_cst(
                             break;
                         }
                         let field_name = expect_ident_token(input)?;
+                        let is_optional = match_symbol(input, "?");
                         expect_symbol(input, ":")?;
                         let ty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
+                        let mut field_children = vec![SyntaxElement::Token(field_name)];
+                        if is_optional {
+                            field_children.push(SyntaxElement::Token(token_text("?")));
+                        }
+                        field_children.push(SyntaxElement::Node(Box::new(ty)));
                         let field = node(
                             SyntaxKind::StructFieldDecl,
-                            vec![
-                                SyntaxElement::Token(field_name),
-                                SyntaxElement::Node(Box::new(ty)),
-                            ],
+                            field_children,
                         );
                         children.push(SyntaxElement::Node(Box::new(field)));
                         if match_symbol(input, ",") {
@@ -1331,8 +1340,9 @@ fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode
 
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
-    let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) = cst::parse_type_lexemes_prefix_to_cst(
+    let prefix_len = type_prefix_len(input, stops);
+    let lexemes = lexemes_from_tokens(&input[..prefix_len]);
+    let (node, _consumed) = cst::parse_type_lexemes_prefix_to_cst(
         &lexemes,
         current_items_file(),
         stops,
@@ -1346,8 +1356,44 @@ fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalR
                 ),
             )
         })?;
-    *input = &input[consumed..];
+    *input = &input[prefix_len..];
     Ok(node)
+}
+
+fn type_prefix_len(input: &[Token], stops: &[&str]) -> usize {
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+    let mut brace_depth = 0usize;
+
+    for (idx, token) in input.iter().enumerate() {
+        let lex = token.lexeme.as_str();
+        let at_top_level =
+            angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 && brace_depth == 0;
+        if at_top_level && stops.iter().any(|stop| *stop == lex) {
+            return idx;
+        }
+
+        match lex {
+            "<" => angle_depth += 1,
+            ">" => {
+                angle_depth = angle_depth.saturating_sub(1);
+            }
+            ">>" => {
+                angle_depth = angle_depth.saturating_sub(1);
+                angle_depth = angle_depth.saturating_sub(1);
+            }
+            "(" => paren_depth += 1,
+            ")" => paren_depth = paren_depth.saturating_sub(1),
+            "[" => bracket_depth += 1,
+            "]" => bracket_depth = bracket_depth.saturating_sub(1),
+            "{" => brace_depth += 1,
+            "}" => brace_depth = brace_depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+
+    input.len()
 }
 
 fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {

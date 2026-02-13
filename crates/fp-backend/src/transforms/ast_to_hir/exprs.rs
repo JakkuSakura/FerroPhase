@@ -1854,6 +1854,9 @@ impl HirGenerator {
             UnOpKind::Not => Ok(hir::UnOp::Not),
             UnOpKind::Deref => Ok(hir::UnOp::Deref),
             UnOpKind::Any(kind) => {
+                if kind.as_str() == "box" {
+                    return Ok(hir::UnOp::Box);
+                }
                 self.add_error(
                     Diagnostic::error(format!(
                         "Unsupported unary operator variant encountered during AST→HIR lowering: {:?}",

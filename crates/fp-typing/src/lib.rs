@@ -3044,6 +3044,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(inner)
             }
             TypeVarKind::Bound(TypeTerm::Reference(inner)) => Ok(inner),
+            TypeVarKind::Bound(TypeTerm::Boxed(inner)) => Ok(inner),
             TypeVarKind::Link(next) => self.expect_reference(next, context),
             _other => {
                 self.emit_error(format!("expected reference value for {}", context));

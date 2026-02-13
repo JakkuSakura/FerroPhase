@@ -645,7 +645,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
     pub(crate) fn infer_unop(&mut self, unop: &mut ExprUnOp) -> Result<TypeVarId> {
         let value_var = self.infer_expr(unop.val.as_mut())?;
-        match unop.op {
+        match &unop.op {
             UnOpKind::Not => {
                 self.ensure_bool(value_var, "unary not")?;
                 Ok(value_var)
@@ -655,7 +655,14 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 Ok(value_var)
             }
             UnOpKind::Deref => self.expect_reference(value_var, "dereference expression"),
-            UnOpKind::Any(_) => Ok(value_var),
+            UnOpKind::Any(kind) => {
+                if kind.as_str() == "box" {
+                    let boxed_var = self.fresh_type_var();
+                    self.bind(boxed_var, TypeTerm::Boxed(value_var));
+                    return Ok(boxed_var);
+                }
+                Ok(value_var)
+            }
         }
     }
 

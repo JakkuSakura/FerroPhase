@@ -5008,6 +5008,28 @@ impl<'a> BodyBuilder<'a> {
         }
     }
 
+    fn boxed_inner_ty(&self, ty: &Ty) -> Option<Ty> {
+        let TyKind::Adt(adt, substs) = &ty.kind else {
+            return None;
+        };
+
+        let is_box = adt
+            .variants
+            .first()
+            .map(|variant| variant.ident.as_str())
+            .map(|name| name == "Box" || name.ends_with("::Box"))
+            .unwrap_or(false);
+        if !is_box {
+            return None;
+        }
+
+        let first = substs.first()?;
+        let mir::ty::GenericArg::Type(inner) = first else {
+            return None;
+        };
+        Some(inner.clone())
+    }
+
     fn enum_def_from_ty(&self, ty: &Ty) -> Option<hir::DefId> {
         match &ty.kind {
             TyKind::Ref(_, inner, _) => self.enum_def_from_ty(inner.as_ref()),
@@ -11493,12 +11515,14 @@ impl<'a> BodyBuilder<'a> {
                             base_ty = type_and_mut.ty.as_ref().clone();
                             break;
                         }
+                        _ if self.boxed_inner_ty(&base_ty).is_some() => {
+                            base_ty = self
+                                .boxed_inner_ty(&base_ty)
+                                .expect("checked boxed inner type above");
+                            break;
+                        }
                         _ => {
-                            self.lowering.emit_error(
-                                expr.span,
-                                "dereference requires a reference or pointer type",
-                            );
-                            return Ok(None);
+                            break;
                         }
                     }
                 }
@@ -11875,7 +11899,21 @@ impl<'a> BodyBuilder<'a> {
                     };
                     self.push_statement(statement);
                     if place.projection.is_empty() {
-                        self.locals[place.local as usize].ty = place_info.ty.clone();
+                        self.locals[place.local as usize].ty = expected_ty.clone();
+                    }
+                }
+                hir::UnOp::Box => {
+                    let operand = self.lower_operand(operand_expr, None)?;
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Use(operand.operand),
+                        ),
+                    };
+                    self.push_statement(statement);
+                    if place.projection.is_empty() {
+                        self.locals[place.local as usize].ty = expected_ty.clone();
                     }
                 }
             },
@@ -13339,7 +13377,7 @@ impl<'a> BodyBuilder<'a> {
         match op {
             hir::UnOp::Not => Some(mir::UnOp::Not),
             hir::UnOp::Neg => Some(mir::UnOp::Neg),
-            hir::UnOp::Deref => None,
+            hir::UnOp::Deref | hir::UnOp::Box => None,
         }
     }
 

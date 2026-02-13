@@ -491,6 +491,11 @@ struct RuntimeRef {
     shared: Arc<Mutex<Value>>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub(super) struct RuntimeBox {
+    value: Value,
+}
+
 impl PartialEq for RuntimeRef {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)

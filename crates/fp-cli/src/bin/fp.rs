@@ -86,7 +86,7 @@ enum Commands {
     /// Parse and display AST for FerroPhase code
     Parse(ParseArgs),
 
-    /// Run a FerroPhase file (delegates to magnet)
+    /// Run a FerroPhase file
     Run(RunArgs),
 
     /// Interpret bytecode produced by `compile --emitter bytecode`

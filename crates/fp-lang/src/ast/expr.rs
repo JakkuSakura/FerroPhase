@@ -932,6 +932,12 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     referee: Box::new(inner),
                 })
                 .into()),
+                "box" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
+                    span: node.span,
+                    op: UnOpKind::Any(Ident::new("box")),
+                    val: Box::new(inner),
+                })
+                .into()),
                 "&" => {
                     let is_mut = node.children.iter().any(|c| {
                         matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut")
@@ -2581,7 +2587,17 @@ fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
         let ty_node = node_children_types(field)
             .next()
             .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyField))?;
-        let value = lower_type_from_cst(ty_node)?;
+        let mut value = lower_type_from_cst(ty_node)?;
+        if ty_field_has_optional_marker(field) {
+            value = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(value),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
         fields.push(StructuralField::new(Ident::new(name), value));
     }
     let mut update: Option<Ty> = None;
@@ -2621,6 +2637,21 @@ fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     Ok(Ty::Structural(TypeStructural { fields }.into()))
+}
+
+fn ty_field_has_optional_marker(node: &SyntaxNode) -> bool {
+    for child in &node.children {
+        let crate::syntax::SyntaxElement::Token(token) = child else {
+            continue;
+        };
+        if token.is_trivia() {
+            continue;
+        }
+        if token.text == "?" {
+            return true;
+        }
+    }
+    false
 }
 
 fn lower_ty_binary(node: &SyntaxNode) -> Result<Ty, LowerError> {
@@ -2828,11 +2859,12 @@ fn direct_operator_token_text(node: &SyntaxNode) -> Option<String> {
     node.children.iter().find_map(|child| match child {
         crate::syntax::SyntaxElement::Token(t)
             if !t.is_trivia()
-                && !t
-                    .text
-                    .chars()
-                    .next()
-                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') =>
+                && (t.text == "box"
+                    || !t
+                        .text
+                        .chars()
+                        .next()
+                        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')) =>
         {
             Some(t.text.clone())
         }

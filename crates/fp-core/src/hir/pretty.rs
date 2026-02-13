@@ -833,6 +833,7 @@ fn fmt_un_op(op: &UnOp) -> &'static str {
         UnOp::Not => "!",
         UnOp::Neg => "-",
         UnOp::Deref => "*",
+        UnOp::Box => "box ",
     }
 }
 

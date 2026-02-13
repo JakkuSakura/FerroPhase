@@ -7,8 +7,8 @@ use fp_core::ast::{
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
     ItemImportTree, ItemKind, ItemMacro, Name, MacroDelimiter, MacroInvocation, Module, Path,
-    QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
-    Visibility,
+    QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
+    TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -299,8 +299,11 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         );
         let ty_node = first_child_by_category(field, CstCategory::Type)
             .ok_or(LowerItemsError::MissingToken("field type"))?;
-        let fty = lower_type_from_cst(ty_node)
+        let mut fty = lower_type_from_cst(ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(field.kind))?;
+        if has_optional_field_marker(field) {
+            fty = wrap_optional_type(fty);
+        }
         fields.push(StructuralField::new(fname, fty));
     }
     Ok(ItemDefStruct {
@@ -313,6 +316,32 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
             fields,
         },
     })
+}
+
+fn has_optional_field_marker(node: &SyntaxNode) -> bool {
+    for child in &node.children {
+        let SyntaxElement::Token(token) = child else {
+            continue;
+        };
+        if token.is_trivia() {
+            continue;
+        }
+        if token.text == "?" {
+            return true;
+        }
+    }
+    false
+}
+
+fn wrap_optional_type(inner: Ty) -> Ty {
+    Ty::TypeBinaryOp(
+        TypeBinaryOp {
+            kind: TypeBinaryOpKind::Union,
+            lhs: Box::new(inner),
+            rhs: Box::new(Ty::value(Value::None(ValueNone))),
+        }
+        .into(),
+    )
 }
 
 fn is_const_struct(node: &SyntaxNode) -> bool {

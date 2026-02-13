@@ -69,3 +69,33 @@ fn incomplete_pub_in_is_error() {
     let res = parser.parse_items_ast("pub(in ) fn f() {}");
     assert!(res.is_err(), "incomplete pub(in …) should error");
 }
+
+#[test]
+fn parses_struct_optional_field_marker() {
+    let item = parse_single_item("struct User { email?: string }");
+    match item.kind() {
+        ItemKind::DefStruct(def) => {
+            assert_eq!(def.value.fields.len(), 1);
+            assert_eq!(def.value.fields[0].name.as_str(), "email");
+            match &def.value.fields[0].value {
+                fp_core::ast::Ty::TypeBinaryOp(bin) => {
+                    assert!(matches!(bin.kind, fp_core::ast::TypeBinaryOpKind::Union));
+                }
+                other => panic!("expected optional union type, got {:?}", other),
+            }
+        }
+        other => panic!("expected struct, got {:?}", other),
+    }
+}
+
+#[test]
+fn parses_struct_field_nested_generics_with_right_shift_token() {
+    let item = parse_single_item("struct Node<T> { next: Option<Box<Node<T>>> }");
+    match item.kind() {
+        ItemKind::DefStruct(def) => {
+            assert_eq!(def.value.fields.len(), 1);
+            assert_eq!(def.value.fields[0].name.as_str(), "next");
+        }
+        other => panic!("expected struct, got {:?}", other),
+    }
+}
