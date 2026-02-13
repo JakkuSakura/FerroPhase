@@ -1,6 +1,5 @@
 use super::*;
 use fp_core::ast::ExprKwArg;
-use fp_core::span::Span;
 use proc_macro2::TokenStream as ProcMacroTokenStream;
 use std::str::FromStr;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -637,18 +636,26 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     pub(super) fn materialize_type(&mut self, mut ty: Ty) -> Ty {
         self.evaluate_ty(&mut ty);
-        match ty {
-            Ty::Expr(expr) => {
-                if let ExprKind::Name(locator) = expr.kind() {
-                    let key = Self::locator_base_name(locator);
-                    if let Some(resolved) = self.resolve_type_binding(&key) {
-                        return resolved;
-                    }
-                }
-                self.materialize_const_type(Ty::Expr(expr))
-            }
-            other => other,
+        struct InterpreterTypeHooks<'a, 'ctx> {
+            interpreter: &'a mut AstInterpreter<'ctx>,
         }
+
+        impl fp_typing::TypeMaterializeHooks for InterpreterTypeHooks<'_, '_> {
+            fn resolve_name(&mut self, locator: &Name) -> Option<Ty> {
+                let key = AstInterpreter::locator_base_name(locator);
+                self.interpreter.resolve_type_binding(&key)
+            }
+
+            fn eval_const_expr(&mut self, expr: &mut Expr) -> Option<Ty> {
+                match self.interpreter.eval_expr(expr) {
+                    Value::Type(resolved) => Some(resolved),
+                    _ => None,
+                }
+            }
+        }
+
+        let mut hooks = InterpreterTypeHooks { interpreter: self };
+        fp_typing::materialize_type_with_hooks(ty, &mut hooks)
     }
 
     fn split_static_lifetime_name(name: &str) -> Option<(&'static str, &str)> {
@@ -716,25 +723,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub(super) fn type_from_value(&self, value: &Value) -> Ty {
-        match value {
-            Value::Int(_) => Ty::Primitive(TypePrimitive::i64()),
-            Value::Decimal(_) => Ty::Primitive(TypePrimitive::f64()),
-            Value::Bool(_) => Ty::Primitive(TypePrimitive::Bool),
-            Value::Char(_) => Ty::Primitive(TypePrimitive::Char),
-            Value::String(_) => Ty::Primitive(TypePrimitive::String),
-            Value::Unit(_) => Ty::Unit(TypeUnit),
-            Value::Type(_) => Ty::Type(TypeType::new(Span::null())),
-            Value::Struct(value_struct) => Ty::Struct(value_struct.ty.clone()),
-            Value::Tuple(tuple) => Ty::Tuple(TypeTuple {
-                types: tuple
-                    .values
-                    .iter()
-                    .map(|item| self.type_from_value(item))
-                    .collect(),
-            }),
-            Value::List(_) => Ty::Primitive(TypePrimitive::List),
-            _ => Ty::Any(TypeAny),
-        }
+        fp_typing::type_from_value(value)
     }
 
     fn intrinsic_panic_message(&mut self, call: &mut ExprIntrinsicCall) -> String {

@@ -22,9 +22,9 @@ use fp_core::ast::{
     FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
     ItemKind, MacroDelimiter, MacroGroup,
     MacroInvocation, MacroToken, MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind,
-    QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny, TypeTokenStream, TypeArray,
+    QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny, TypeArray,
     TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeRawPtr, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value,
+    TypeSlice, TypeStruct, TypeStructural, TypeTuple, TypeUnit, TypeVec, Value,
     ValueField,
     ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream, ValueTuple,
 };
@@ -41,7 +41,9 @@ use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnO
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
 use fp_core::cfg::{TargetEnv, item_enabled_by_cfg};
-use fp_typing::{AstTypeInferencer, TypeEvaluationHook, TypeResolutionHook};
+use fp_typing::{
+    AstTypeInferencer, TypeBindingMatch, TypeEvaluationHook, TypeResolutionHook,
+};
 use futures_util::future::{join_all, select_all};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
@@ -1170,7 +1172,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             module_stack: Vec::new(),
             value_env: vec![HashMap::new()],
             type_env: vec![HashMap::new()],
-            global_types: Self::builtin_type_bindings(),
+            global_types: fp_typing::builtin_type_bindings(),
             diagnostics: Vec::new(),
             has_errors: false,
             evaluated_constants: HashMap::new(),
@@ -6886,29 +6888,10 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn infer_value_ty(&self, value: &Value) -> Option<Ty> {
+        if let Some(ty) = fp_typing::infer_value_ty(value) {
+            return Some(ty);
+        }
         match value {
-            Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
-            Value::BigInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
-            Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
-            Value::BigDecimal(_) => {
-                Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::BigDecimal)))
-            }
-            Value::Bool(_) => Some(Ty::Primitive(TypePrimitive::Bool)),
-            Value::Char(_) => Some(Ty::Primitive(TypePrimitive::Char)),
-            Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
-            Value::List(_) => Some(Ty::Primitive(TypePrimitive::List)),
-            Value::Struct(struct_value) => Some(Ty::Struct(struct_value.ty.clone())),
-            Value::TokenStream(_) => Some(Ty::TokenStream(TypeTokenStream)),
-            Value::Function(function) => Some(Ty::Function(TypeFunction {
-                params: function
-                    .sig
-                    .params
-                    .iter()
-                    .map(|param| param.ty.clone())
-                    .collect(),
-                generics_params: function.sig.generics_params.clone(),
-                ret_ty: function.sig.ret_ty.as_ref().map(|ty| Box::new(ty.clone())),
-            })),
             Value::Any(any) => any
                 .downcast_ref::<ConstClosure>()
                 .and_then(|closure| closure.function_ty.clone()),
@@ -7516,40 +7499,31 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn resolve_type_binding(&mut self, name: &str) -> Option<Ty> {
-        let base = name.rsplit("::").next().unwrap_or(name);
-        for idx in (0..self.type_env.len()).rev() {
-            if let Some(ty) = self.type_env[idx].get(name).cloned() {
+        match fp_typing::resolve_type_binding_match(
+            &self.type_env,
+            &self.global_types,
+            &self.imported_types,
+            name,
+        ) {
+            TypeBindingMatch::Scoped { index, key, ty } => {
                 let resolved = self.materialize_const_type(ty);
-                self.type_env[idx].insert(name.to_string(), resolved.clone());
-                return Some(resolved);
+                self.type_env[index].insert(key, resolved.clone());
+                Some(resolved)
             }
-            if base != name {
-                if let Some(ty) = self.type_env[idx].get(base).cloned() {
-                    let resolved = self.materialize_const_type(ty);
-                    self.type_env[idx].insert(base.to_string(), resolved.clone());
-                    return Some(resolved);
-                }
-            }
-        }
-        if let Some(ty) = self.global_types.get(name).cloned() {
-            let resolved = self.materialize_const_type(ty);
-            self.global_types.insert(name.to_string(), resolved.clone());
-            return Some(resolved);
-        }
-        if base != name {
-            if let Some(ty) = self.global_types.get(base).cloned() {
+            TypeBindingMatch::Global { key, ty } => {
                 let resolved = self.materialize_const_type(ty);
-                self.global_types.insert(base.to_string(), resolved.clone());
-                return Some(resolved);
+                self.global_types.insert(key, resolved.clone());
+                Some(resolved)
             }
+            TypeBindingMatch::MissingImported { name } => {
+                self.emit_error(format!(
+                    "imported type '{}' cannot be resolved without module execution",
+                    name
+                ));
+                None
+            }
+            TypeBindingMatch::Missing => None,
         }
-        if self.imported_types.contains(name) {
-            self.emit_error(format!(
-                "imported type '{}' cannot be resolved without module execution",
-                name
-            ));
-        }
-        None
     }
 
     fn materialize_const_type(&mut self, ty: Ty) -> Ty {
@@ -8027,31 +8001,6 @@ impl<'ctx> AstInterpreter<'ctx> {
             symbol
         ));
         Value::undefined()
-    }
-
-    fn builtin_type_bindings() -> HashMap<String, Ty> {
-        let mut bindings = HashMap::new();
-        bindings.insert("i64".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
-        bindings.insert("u64".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
-        bindings.insert("i32".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I32)));
-        bindings.insert("u32".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U32)));
-        bindings.insert("i16".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I16)));
-        bindings.insert("u16".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U16)));
-        bindings.insert("i8".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I8)));
-        bindings.insert("u8".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U8)));
-        bindings.insert(
-            "isize".to_string(),
-            Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
-        );
-        bindings.insert(
-            "usize".to_string(),
-            Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
-        );
-        bindings.insert("bool".to_string(), Ty::Primitive(TypePrimitive::Bool));
-        bindings.insert("char".to_string(), Ty::Primitive(TypePrimitive::Char));
-        bindings.insert("str".to_string(), Ty::Primitive(TypePrimitive::String));
-        bindings.insert("String".to_string(), Ty::Primitive(TypePrimitive::String));
-        bindings
     }
 
     fn qualified_name(&self, name: &str) -> String {
