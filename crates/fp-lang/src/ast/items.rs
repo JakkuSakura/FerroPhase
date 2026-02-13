@@ -687,9 +687,38 @@ fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, us
 }
 
 fn find_attr_value_end(tokens: &[String], mut idx: usize) -> usize {
+    let mut paren_depth = 0i32;
+    let mut bracket_depth = 0i32;
+    let mut brace_depth = 0i32;
     while let Some(tok) = tokens.get(idx) {
-        if tok == "," || tok == ")" {
-            break;
+        match tok.as_str() {
+            "(" => paren_depth += 1,
+            ")" => {
+                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    break;
+                }
+                paren_depth = (paren_depth - 1).max(0);
+            }
+            "[" => bracket_depth += 1,
+            "]" => {
+                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    break;
+                }
+                bracket_depth = (bracket_depth - 1).max(0);
+            }
+            "{" => brace_depth += 1,
+            "}" => {
+                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    break;
+                }
+                brace_depth = (brace_depth - 1).max(0);
+            }
+            "," => {
+                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
+                    break;
+                }
+            }
+            _ => {}
         }
         idx += 1;
     }
@@ -803,6 +832,10 @@ fn decode_string_literal(raw: &str) -> Option<String> {
 
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
         let inner = &raw[1..raw.len() - 1];
+        return unescape_cooked(inner);
+    }
+    if raw.starts_with("b\"") && raw.ends_with('"') && raw.len() >= 3 {
+        let inner = &raw[2..raw.len() - 1];
         return unescape_cooked(inner);
     }
 

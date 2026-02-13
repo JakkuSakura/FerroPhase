@@ -2,6 +2,7 @@ use super::*;
 use crate::syntax::SyntaxPrinter;
 use fp_core::ast::{
     AttrMeta, AttrStyle, BlockStmt, ExprKind, ItemKind, MacroDelimiter, PatternKind, QuoteItemKind,
+    Value,
 };
 use fp_core::ast::{QuoteFragmentKind, Ty};
 use fp_core::ops::BinOpKind;
@@ -75,6 +76,20 @@ fn parser_handles_raw_identifiers_and_strings() {
     let cst = parser.parse_expr_cst(expr_src).unwrap();
     let printed = SyntaxPrinter::print(&cst);
     assert_eq!(printed, expr_src);
+}
+
+#[test]
+fn parse_byte_string_literal_as_string_value() {
+    let parser = FerroPhaseParser::new();
+    parser.clear_diagnostics();
+    let expr = parser.parse_expr_ast("b\"hello\"").unwrap();
+    match expr.kind() {
+        ExprKind::Value(value) => match value.as_ref() {
+            Value::String(str_val) => assert_eq!(str_val.value, "hello"),
+            other => panic!("expected string value, got {:?}", other),
+        },
+        other => panic!("expected value expr, got {:?}", other),
+    }
 }
 
 #[test]

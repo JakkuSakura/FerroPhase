@@ -796,7 +796,7 @@ fn parse_fn_sig_cst(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     expect_symbol(input, ")")?;
 
     if match_symbol(input, "->") {
-        let ty = parse_type_prefix_from_tokens(input, &["where", "{"])?;
+        let ty = parse_type_prefix_from_tokens(input, &["where", "{", ";"])?;
         let ret = node(SyntaxKind::FnRet, vec![SyntaxElement::Node(Box::new(ty))]);
         children.push(SyntaxElement::Node(Box::new(ret)));
     }

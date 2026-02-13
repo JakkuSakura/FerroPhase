@@ -1661,9 +1661,13 @@ fn decode_string_literal(raw: &str) -> Option<String> {
         Some(out)
     }
 
-    // Cooked string literal: "..."
+    // Cooked string literal: "..." or b"..."
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
         let inner = &raw[1..raw.len() - 1];
+        return unescape_cooked(inner);
+    }
+    if raw.starts_with("b\"") && raw.ends_with('"') && raw.len() >= 3 {
+        let inner = &raw[2..raw.len() - 1];
         return unescape_cooked(inner);
     }
 
@@ -1690,7 +1694,7 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     }
     let inner = &after_quote[..end_idx];
 
-    // `br"..."` is a byte string in Rust; FerroPhase currently models strings as UTF-8 `&str`.
+    // `br"..."`/`b"..."` are byte strings in Rust; FerroPhase currently models strings as UTF-8 `&str`.
     // Keep the contents as-is.
     let _ = prefix;
     Some(inner.to_string())
