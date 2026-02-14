@@ -210,8 +210,8 @@ pub fn maybe_join(root: &Path, path: &Path) -> PathBuf {
     }
 }
 pub fn diff_path(root: &Path, path: &Path) -> Result<PathBuf> {
-    pathdiff::diff_paths(path, root).ok_or_else(|| {
-        eyre::eyre!(
+    pathdiff::diff_paths(path, root).with_context(|| {
+        format!(
             "Failed to compute relative path for '{}' from root '{}'",
             path.display(),
             root.display()
