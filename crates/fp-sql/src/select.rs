@@ -38,34 +38,34 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
     let mut in_backtick = false;
     let mut word_start: Option<usize> = None;
 
-    for (idx, ch) in input.char_indices().skip(start) {
-        let mut check_word = |word_start: &mut Option<usize>| {
-            if let Some(start_idx) = word_start.take() {
-                let word = &input[start_idx..idx];
-                if word.eq_ignore_ascii_case(keyword) {
-                    return Some(start_idx);
-                }
+    let mut check_word = |word_start: &mut Option<usize>, end_idx: usize| {
+        if let Some(start_idx) = word_start.take() {
+            let word = &input[start_idx..end_idx];
+            if word.eq_ignore_ascii_case(keyword) {
+                return Some(start_idx);
             }
-            None
-        };
+        }
+        None
+    };
 
+    for (idx, ch) in input.char_indices().skip(start) {
         match ch {
             '\'' if !in_double && !in_backtick => {
-                if let Some(found) = check_word(&mut word_start) {
+                if let Some(found) = check_word(&mut word_start, idx) {
                     return Some(found);
                 }
                 in_single = !in_single;
                 continue;
             }
             '"' if !in_single && !in_backtick => {
-                if let Some(found) = check_word(&mut word_start) {
+                if let Some(found) = check_word(&mut word_start, idx) {
                     return Some(found);
                 }
                 in_double = !in_double;
                 continue;
             }
             '`' if !in_single && !in_double => {
-                if let Some(found) = check_word(&mut word_start) {
+                if let Some(found) = check_word(&mut word_start, idx) {
                     return Some(found);
                 }
                 in_backtick = !in_backtick;
@@ -82,11 +82,8 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
             if word_start.is_none() {
                 word_start = Some(idx);
             }
-        } else if let Some(start_idx) = word_start.take() {
-            let word = &input[start_idx..idx];
-            if word.eq_ignore_ascii_case(keyword) {
-                return Some(start_idx);
-            }
+        } else if let Some(found) = check_word(&mut word_start, idx) {
+            return Some(found);
         }
     }
 
@@ -119,6 +116,20 @@ mod tests {
     #[test]
     fn detects_from_followed_by_quote() {
         let projection = extract_select_projection("SELECT a FROM'table'")
+            .expect("projection");
+        assert_eq!(projection.trim(), "a");
+    }
+
+    #[test]
+    fn detects_from_followed_by_double_quote() {
+        let projection = extract_select_projection("SELECT a FROM\"table\"")
+            .expect("projection");
+        assert_eq!(projection.trim(), "a");
+    }
+
+    #[test]
+    fn detects_from_followed_by_backtick() {
+        let projection = extract_select_projection("SELECT a FROM`table`")
             .expect("projection");
         assert_eq!(projection.trim(), "a");
     }
