@@ -1,13 +1,13 @@
 use fp_core::config;
 use std::collections::{HashMap, HashSet};
 
-pub mod typing;
 pub mod runtime_types;
-pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
+pub mod typing;
 pub use runtime_types::{
-    TypeBindingMatch, TypeMaterializeHooks, builtin_type_bindings, infer_value_ty,
-    materialize_type_with_hooks, resolve_type_binding_match, type_from_value,
+    builtin_type_bindings, infer_value_ty, materialize_type_with_hooks, resolve_type_binding_match,
+    type_from_value, TypeBindingMatch, TypeMaterializeHooks,
 };
+pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
 
 use crate::typing::scheme::TypeScheme;
 use fp_core::ast::*;
@@ -16,9 +16,7 @@ use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::{Error, Result};
 use fp_core::module::path::{parse_path, resolve_item_path, ParsedPath, PathPrefix, QualifiedPath};
-use fp_core::module::resolution::{
-    resolve_symbol_path, ModuleResolutionContext, QualifiedSymbol,
-};
+use fp_core::module::resolution::{resolve_symbol_path, ModuleResolutionContext, QualifiedSymbol};
 use fp_core::package::PackageId;
 use fp_core::span::Span;
 // intrinsic and op kinds handled in submodules
@@ -46,7 +44,6 @@ fn default_extern_prelude() -> HashSet<String> {
         .map(|name| name.to_string())
         .collect()
 }
-
 
 pub trait TypeResolutionHook {
     fn resolve_symbol(&mut self, name: &str) -> bool;
@@ -410,8 +407,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             NodeKind::Item(item) => {
                 self.register_import_aliases_for_item(item);
             }
-            NodeKind::Expr(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {
-            }
+            NodeKind::Expr(_)
+            | NodeKind::Query(_)
+            | NodeKind::Schema(_)
+            | NodeKind::Workspace(_) => {}
         }
     }
 
@@ -542,34 +541,18 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 path.pop();
                 found
             }),
-            Ty::Vec(vec) => self.contains_illegal_struct_recursion(
-                &vec.ty,
-                target,
-                false,
-                visiting,
-                path,
-            ),
-            Ty::Array(array) => self.contains_illegal_struct_recursion(
-                &array.elem,
-                target,
-                false,
-                visiting,
-                path,
-            ),
-            Ty::Slice(slice) => self.contains_illegal_struct_recursion(
-                &slice.elem,
-                target,
-                false,
-                visiting,
-                path,
-            ),
-            Ty::Reference(reference) => self.contains_illegal_struct_recursion(
-                &reference.ty,
-                target,
-                false,
-                visiting,
-                path,
-            ),
+            Ty::Vec(vec) => {
+                self.contains_illegal_struct_recursion(&vec.ty, target, false, visiting, path)
+            }
+            Ty::Array(array) => {
+                self.contains_illegal_struct_recursion(&array.elem, target, false, visiting, path)
+            }
+            Ty::Slice(slice) => {
+                self.contains_illegal_struct_recursion(&slice.elem, target, false, visiting, path)
+            }
+            Ty::Reference(reference) => {
+                self.contains_illegal_struct_recursion(&reference.ty, target, false, visiting, path)
+            }
             Ty::Function(function) => {
                 for param in &function.params {
                     if let Some(found) =
@@ -578,12 +561,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         return Some(found);
                     }
                 }
-                function
-                    .ret_ty
-                    .as_ref()
-                    .and_then(|ret| {
-                        self.contains_illegal_struct_recursion(ret, target, false, visiting, path)
-                    })
+                function.ret_ty.as_ref().and_then(|ret| {
+                    self.contains_illegal_struct_recursion(ret, target, false, visiting, path)
+                })
             }
             Ty::TypeBinaryOp(op) => self
                 .contains_illegal_struct_recursion(&op.lhs, target, false, visiting, path)
@@ -595,13 +575,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     return None;
                 };
                 if let Some(inner) = self.heap_inner_ty(ty) {
-                    return self.contains_illegal_struct_recursion(
-                        inner,
-                        target,
-                        true,
-                        visiting,
-                        path,
-                    );
+                    return self
+                        .contains_illegal_struct_recursion(inner, target, true, visiting, path);
                 }
                 let Some(name) = self.locator_tail_name(locator) else {
                     return None;
@@ -769,11 +744,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             }
         }
         if let Some(key) = match_key {
-            return self
-                .struct_defs
-                .get(&key)
-                .cloned()
-                .map(|def| (key, def));
+            return self.struct_defs.get(&key).cloned().map(|def| (key, def));
         }
         let mut match_key = None;
         for (key, def) in &self.struct_defs {
@@ -848,9 +819,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let candidates = if self.module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
-            vec![self
-                .module_path
-                .with_segment(name.as_str().to_string())]
+            vec![self.module_path.with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
             let qualified = self.qualify_path(candidate);
@@ -862,9 +831,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let candidates = if self.module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
-            vec![self
-                .module_path
-                .with_segment(name.as_str().to_string())]
+            vec![self.module_path.with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
             let qualified = self.qualify_path(candidate);
@@ -880,9 +847,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let candidates = if self.module_path.is_empty() {
             vec![QualifiedPath::new(vec![name.as_str().to_string()])]
         } else {
-            vec![self
-                .module_path
-                .with_segment(name.as_str().to_string())]
+            vec![self.module_path.with_segment(name.as_str().to_string())]
         };
         for candidate in candidates {
             let qualified = self.qualify_path(candidate);
@@ -981,9 +946,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
     fn check_unimplemented_locator(&mut self, locator: &Name) -> bool {
         if let Some(ident) = locator.as_ident() {
             if !self.module_path.is_empty() {
-                let candidate = self
-                    .module_path
-                    .with_segment(ident.as_str().to_string());
+                let candidate = self.module_path.with_segment(ident.as_str().to_string());
                 let candidate = self.qualify_path(candidate);
                 if self.is_unimplemented_name(&candidate) {
                     if !self.is_same_crate_path(&candidate) {
@@ -1001,10 +964,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         };
         if self.is_unimplemented_name(&candidate) {
             if !self.is_same_crate_path(&candidate) {
-                self.emit_warning(format!(
-                    "use of unimplemented item: {}",
-                    candidate.to_key()
-                ));
+                self.emit_warning(format!("use of unimplemented item: {}", candidate.to_key()));
             }
             return false;
         }
@@ -1071,8 +1031,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             return Some(ty);
         }
 
-        for candidate in self
-            .struct_name_variants_for_path(&name.path, name.path.segments.len() == 1)
+        for candidate in
+            self.struct_name_variants_for_path(&name.path, name.path.segments.len() == 1)
         {
             let qualified = QualifiedSymbol::new(name.package.clone(), candidate.clone());
             if let Some(def) = self.struct_defs.get(&qualified).cloned() {
@@ -1082,8 +1042,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 });
             }
         }
-        for candidate in self
-            .struct_name_variants_for_path(&name.path, name.path.segments.len() == 1)
+        for candidate in
+            self.struct_name_variants_for_path(&name.path, name.path.segments.len() == 1)
         {
             let qualified = QualifiedSymbol::new(name.package.clone(), candidate.clone());
             if let Some(def) = self.enum_defs.get(&qualified).cloned() {
@@ -1095,11 +1055,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         {
-            let placeholder_name = name
-                .path
-                .tail()
-                .unwrap_or("Unknown")
-                .to_string();
+            let placeholder_name = name.path.tail().unwrap_or("Unknown").to_string();
             let placeholder = TypeStruct {
                 name: Ident::new(placeholder_name),
                 generics_params: Vec::new(),
@@ -1275,8 +1231,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                 let mut variant_keys = Vec::new();
                 for variant in &def.value.variants {
-                    let qualified =
-                        enum_name.with_segment(variant.name.as_str().to_string());
+                    let qualified = enum_name.with_segment(variant.name.as_str().to_string());
                     let qualified = self.qualify_path(qualified);
                     variant_keys.push(qualified.clone());
                     let key = qualified.path.to_key();
@@ -1346,17 +1301,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 if def.sig.generics_params.is_empty() {
                     self.prebind_function_signature(def, fn_var);
                 } else {
-                    let fn_key = self
-                        .impl_stack
-                        .last()
-                        .cloned()
-                        .flatten()
-                        .map(|ctx| {
-                            ctx.struct_name
-                                .path
-                                .with_segment(def.name.as_str().to_string())
-                                .to_key()
-                        });
+                    let fn_key = self.impl_stack.last().cloned().flatten().map(|ctx| {
+                        ctx.struct_name
+                            .path
+                            .with_segment(def.name.as_str().to_string())
+                            .to_key()
+                    });
                     self.enter_scope();
                     for param in &def.sig.generics_params {
                         let var = self.register_generic_param(param.name.as_str());
@@ -1467,8 +1417,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 &ctx.struct_name.path,
                                 ctx.struct_name.path.segments.len() == 1,
                             ) {
-                                let key =
-                                    candidate.with_segment(func.name.as_str().to_string());
+                                let key = candidate.with_segment(func.name.as_str().to_string());
                                 let key_str = key.to_key();
                                 if self.lookup_env_var(&key_str).is_none() {
                                     let var = self.fresh_type_var();
@@ -1604,8 +1553,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 self.insert_symbol_alias(&alias, qualified);
                 continue;
             }
-            if self.module_defs.contains(&qualified.path)
-                || self.module_exists_in_graph(&qualified)
+            if self.module_defs.contains(&qualified.path) || self.module_exists_in_graph(&qualified)
             {
                 self.insert_module_alias(&alias, qualified);
                 continue;
@@ -1962,8 +1910,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         for (variant, qualified) in
                             def.value.variants.iter().zip(variant_keys.into_iter())
                         {
-                            if let Some(variant_var) =
-                                self.lookup_env_var(&qualified.path.to_key())
+                            if let Some(variant_var) = self.lookup_env_var(&qualified.path.to_key())
                             {
                                 let variant_type_var = if matches!(variant.value, Ty::Unit(_)) {
                                     enum_var
@@ -2214,13 +2161,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         self.validate_extern_c_signature(&func.sig);
         let is_lang_item = func.attrs.find_by_name("lang").is_some();
         let impl_ctx = self.impl_stack.last().cloned().flatten();
-        let fn_key = impl_ctx
-            .as_ref()
-            .map(|ctx| {
-                ctx.struct_name
-                    .path
-                    .with_segment(func.name.as_str().to_string())
-            });
+        let fn_key = impl_ctx.as_ref().map(|ctx| {
+            ctx.struct_name
+                .path
+                .with_segment(func.name.as_str().to_string())
+        });
         let fn_var = if let Some(key) = fn_key.as_ref() {
             let key_str = key.to_key();
             if let Some(var) = self.lookup_env_var(&key_str) {
@@ -2357,8 +2302,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 &ctx.struct_name.path,
                 ctx.struct_name.path.segments.len() == 1,
             ) {
-                let candidate =
-                    QualifiedSymbol::new(ctx.struct_name.package.clone(), candidate);
+                let candidate = QualifiedSymbol::new(ctx.struct_name.package.clone(), candidate);
                 let entry = self.struct_methods.entry(candidate).or_default();
                 let record = entry
                     .entry(func.name.as_str().to_string())
@@ -2643,8 +2587,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let key = if self.module_path.is_empty() {
             QualifiedPath::new(vec![name.as_str().to_string()])
         } else {
-            self.module_path
-                .with_segment(name.as_str().to_string())
+            self.module_path.with_segment(name.as_str().to_string())
         };
         let key = self.qualify_path(key);
         self.struct_defs.insert(key, def);
@@ -2654,8 +2597,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let key = if self.module_path.is_empty() {
             QualifiedPath::new(vec![name.as_str().to_string()])
         } else {
-            self.module_path
-                .with_segment(name.as_str().to_string())
+            self.module_path.with_segment(name.as_str().to_string())
         };
         let key = self.qualify_path(key);
         self.enum_defs.insert(key, def);
@@ -2709,8 +2651,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             &struct_name.path,
                             struct_name.path.segments.len() == 1,
                         ) {
-                            let qualified =
-                                candidate.with_segment(method_name.to_string());
+                            let qualified = candidate.with_segment(method_name.to_string());
                             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                                 return Ok(Some(var));
                             }
@@ -2782,9 +2723,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .take(path.segments.len() - 1)
                     .map(|seg| seg.as_str().to_string())
                     .collect::<Vec<_>>();
-                if let (Some(variant_name), Some(enum_key)) =
-                    (variant_name, self.resolve_segments_key(path.prefix, &enum_segments))
-                {
+                if let (Some(variant_name), Some(enum_key)) = (
+                    variant_name,
+                    self.resolve_segments_key(path.prefix, &enum_segments),
+                ) {
                     if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
                         if enum_def
                             .variants
@@ -3097,9 +3039,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
         if let Some(ret_ty) = &sig.ret_ty {
             if self.is_disallowed_c_string_type(ret_ty) {
-                self.emit_error(
-                    "extern \"C\" functions must use &CStr for string return types",
-                );
+                self.emit_error("extern \"C\" functions must use &CStr for string return types");
             }
         }
     }
@@ -3159,9 +3099,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         .segments
                         .last()
                         .map(|seg| seg.ident.as_str().to_string())?,
-                    Name::Path(path) => {
-                        path.segments.last().map(|seg| seg.as_str().to_string())?
-                    }
+                    Name::Path(path) => path.segments.last().map(|seg| seg.as_str().to_string())?,
                     Name::Ident(ident) => ident.as_str().to_string(),
                 };
                 if name == "Self" {
@@ -3179,11 +3117,9 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         struct_ty.name.as_str().to_string(),
                     ])))
                 }
-                Value::Type(Ty::Enum(enum_ty)) => {
-                    Some(self.qualify_path(QualifiedPath::new(vec![
-                        enum_ty.name.as_str().to_string(),
-                    ])))
-                }
+                Value::Type(Ty::Enum(enum_ty)) => Some(
+                    self.qualify_path(QualifiedPath::new(vec![enum_ty.name.as_str().to_string()])),
+                ),
                 _ => None,
             },
             _ => None,
@@ -3224,11 +3160,7 @@ fn find_ident_after_keyword(tokens: &[&str], keyword: &str) -> Option<String> {
 fn find_first_type_ident(tokens: &[&str]) -> Option<String> {
     for token in tokens {
         if is_ident_token(token) {
-            if token
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_uppercase())
-            {
+            if token.chars().next().is_some_and(|c| c.is_ascii_uppercase()) {
                 return Some((*token).to_string());
             }
         }

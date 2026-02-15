@@ -302,7 +302,10 @@ pub fn split_sql_statements(source: &str) -> Vec<String> {
             if !text.is_empty() {
                 statements.push(text.to_string());
             }
-            let end = offsets.get(idx + 1).copied().unwrap_or_else(|| source.len());
+            let end = offsets
+                .get(idx + 1)
+                .copied()
+                .unwrap_or_else(|| source.len());
             current_start = end;
         }
     }
@@ -327,10 +330,7 @@ fn split_sql_statements_fallback(source: &str) -> Vec<String> {
     while let Some(ch) = chars.next() {
         match ch {
             '\'' if !double_quote && !backtick => {
-                if single_quote
-                    && prev_char != Some('\\')
-                    && chars.peek().copied() == Some('\'')
-                {
+                if single_quote && prev_char != Some('\\') && chars.peek().copied() == Some('\'') {
                     current.push(ch);
                     current.push(chars.next().unwrap());
                 } else if prev_char != Some('\\') {
@@ -341,10 +341,7 @@ fn split_sql_statements_fallback(source: &str) -> Vec<String> {
                 }
             }
             '"' if !single_quote && !backtick => {
-                if double_quote
-                    && prev_char != Some('\\')
-                    && chars.peek().copied() == Some('"')
-                {
+                if double_quote && prev_char != Some('\\') && chars.peek().copied() == Some('"') {
                     current.push(ch);
                     current.push(chars.next().unwrap());
                 } else if prev_char != Some('\\') {
@@ -457,7 +454,11 @@ mod tests {
     fn split_sql_statements_handles_escaped_quotes() {
         let source = "SELECT 'a''b;still'; SELECT \"c\"\"d;still\";";
         let statements = split_sql_statements(source);
-        assert_eq!(statements.len(), 2, "expected two statements: {statements:?}");
+        assert_eq!(
+            statements.len(),
+            2,
+            "expected two statements: {statements:?}"
+        );
         assert_eq!(statements[0], "SELECT 'a''b;still'");
         assert_eq!(statements[1], "SELECT \"c\"\"d;still\"");
     }

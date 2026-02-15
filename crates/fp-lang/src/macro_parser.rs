@@ -7,8 +7,7 @@ use crate::lexer::lexeme::{Lexeme, LexemeKind};
 use crate::lexer::tokenizer::{classify_and_normalize_lexeme, Span as TokSpan, Token, TokenKind};
 
 #[derive(Clone)]
-pub struct FerroMacroExpansionParser {
-}
+pub struct FerroMacroExpansionParser {}
 
 impl FerroMacroExpansionParser {
     pub fn new() -> Self {
@@ -66,11 +65,8 @@ fn append_macro_tokens(tokens: &[MacroTokenTree], out: &mut Vec<Token>) {
     for token in tokens {
         match token {
             MacroTokenTree::Token(tok) => {
-                let (kind, lexeme) =
-                    classify_and_normalize_lexeme(&tok.text).unwrap_or((
-                        TokenKind::Symbol,
-                        tok.text.clone(),
-                    ));
+                let (kind, lexeme) = classify_and_normalize_lexeme(&tok.text)
+                    .unwrap_or((TokenKind::Symbol, tok.text.clone()));
                 out.push(Token {
                     kind,
                     lexeme,
@@ -110,7 +106,10 @@ fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
     for token in tokens {
         match token {
             MacroTokenTree::Token(tok) => {
-                out.push(Lexeme::token(tok.text.clone(), token_span_from_span(tok.span)));
+                out.push(Lexeme::token(
+                    tok.text.clone(),
+                    token_span_from_span(tok.span),
+                ));
             }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {

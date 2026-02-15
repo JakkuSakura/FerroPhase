@@ -96,7 +96,11 @@ impl HirGenerator {
                     root_modules.insert(first.to_string());
                 }
             }
-            for key in self.global_type_defs.keys().chain(self.global_value_defs.keys()) {
+            for key in self
+                .global_type_defs
+                .keys()
+                .chain(self.global_value_defs.keys())
+            {
                 if let Ok(parsed) = parse_path(key) {
                     if let Some(head) = parsed.segments.first() {
                         root_modules.insert(head.clone());
@@ -140,11 +144,8 @@ impl HirGenerator {
                 PathResolutionScope::Type => self.resolve_type_symbol(name).is_some(),
             };
             if let Some(ctx) = &self.module_resolution {
-                if let Some(qualified) = resolve_symbol_path(
-                    &parsed,
-                    ctx,
-                    scope_contains,
-                    |candidate| {
+                if let Some(qualified) =
+                    resolve_symbol_path(&parsed, ctx, scope_contains, |candidate| {
                         let key = candidate.path.to_key();
                         match scope {
                             PathResolutionScope::Value => {
@@ -166,13 +167,11 @@ impl HirGenerator {
                             }
                         }
                         false
-                    },
-                ) {
+                    })
+                {
                     let canonical = qualified.path;
-                    let mut canonical_segments =
-                        Vec::with_capacity(canonical.segments.len());
-                    let offset =
-                        canonical.segments.len().saturating_sub(segments.len());
+                    let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
+                    let offset = canonical.segments.len().saturating_sub(segments.len());
                     for (idx, seg) in canonical.segments.iter().enumerate() {
                         let args = if idx >= offset {
                             segments[idx - offset].args.clone()
@@ -181,8 +180,7 @@ impl HirGenerator {
                         };
                         canonical_segments.push(self.make_path_segment(seg, args));
                     }
-                    let mut canonical_res =
-                        self.lookup_global_res(&canonical, scope);
+                    let mut canonical_res = self.lookup_global_res(&canonical, scope);
                     if canonical_res.is_none() && self.module_defs.contains(&canonical) {
                         canonical_res = Some(hir::Res::Module(canonical.segments.clone()));
                     }
@@ -201,10 +199,8 @@ impl HirGenerator {
                 item_exists,
                 scope_contains,
             ) {
-                let mut canonical_segments =
-                    Vec::with_capacity(canonical.segments.len());
-                let offset =
-                    canonical.segments.len().saturating_sub(segments.len());
+                let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
+                let offset = canonical.segments.len().saturating_sub(segments.len());
                 for (idx, seg) in canonical.segments.iter().enumerate() {
                     let args = if idx >= offset {
                         segments[idx - offset].args.clone()

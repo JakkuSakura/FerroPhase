@@ -1,6 +1,6 @@
 use fp_core::ast::FunctionSignature;
-use fp_core::error::Result;
 use fp_core::ast::Value;
+use fp_core::error::Result;
 use fp_native::ffi::FfiRuntime as NativeFfiRuntime;
 
 #[derive(Debug)]

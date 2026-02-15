@@ -49,7 +49,9 @@ struct Demo {
     let count = file
         .items
         .iter()
-        .filter(|item| matches!(item.kind(), ItemKind::DefStruct(def) if def.name.as_str() == "Demo"))
+        .filter(
+            |item| matches!(item.kind(), ItemKind::DefStruct(def) if def.name.as_str() == "Demo"),
+        )
         .count();
     assert_eq!(count, 1, "expected a single Demo struct after expansion");
 
@@ -82,8 +84,14 @@ struct Demo {}
         matches!(item.kind(), ItemKind::DefFunction(def) if def.name.as_str() == "generated")
     });
 
-    assert!(has_demo, "expected Demo struct to remain after derive expansion");
-    assert!(has_generated, "expected generated function from derive macro");
+    assert!(
+        has_demo,
+        "expected Demo struct to remain after derive expansion"
+    );
+    assert!(
+        has_generated,
+        "expected generated function from derive macro"
+    );
 
     Ok(())
 }

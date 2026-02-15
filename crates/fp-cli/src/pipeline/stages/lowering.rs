@@ -1,8 +1,8 @@
 use super::super::artifacts::{LirArtifacts, MirArtifacts};
 use super::super::*;
 use fp_backend::optimizer::{MirOptimizer, OptimizationPlan};
-use fp_core::mir;
 use fp_core::config;
+use fp_core::mir;
 use fp_llvm::target::{OptimizationLevel, TargetConfig};
 use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::sync::Arc;

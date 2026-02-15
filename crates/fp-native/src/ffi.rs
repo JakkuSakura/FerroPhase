@@ -5,7 +5,7 @@ use fp_core::ast::{
 };
 use fp_core::error::{Error, Result};
 use std::collections::HashMap;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{CStr, CString, c_char, c_void};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FfiType {
@@ -65,7 +65,12 @@ impl FfiRuntime {
         })
     }
 
-    pub fn call(&mut self, name: &str, sig: &FfiSignature, args: &[FfiValue]) -> Result<Option<FfiValue>> {
+    pub fn call(
+        &mut self,
+        name: &str,
+        sig: &FfiSignature,
+        args: &[FfiValue],
+    ) -> Result<Option<FfiValue>> {
         if sig.args.len() != args.len() {
             return Err(Error::from(format!(
                 "ffi call '{name}' expects {} args, got {}",
@@ -96,7 +101,12 @@ impl FfiRuntime {
         Ok(ret)
     }
 
-    pub fn call_fp(&mut self, name: &str, sig: &FunctionSignature, args: &[Value]) -> Result<Value> {
+    pub fn call_fp(
+        &mut self,
+        name: &str,
+        sig: &FunctionSignature,
+        args: &[Value],
+    ) -> Result<Value> {
         if !matches!(sig.abi, Abi::C) {
             return Err(Error::from(format!(
                 "unsupported ABI for extern call: {:?}",
@@ -114,7 +124,10 @@ impl FfiRuntime {
 
         let (arg_types, arg_values, _cstrings, _escapes) = build_args(sig, args)?;
         let ret_ty = ffi_type_for_return(sig.ret_ty.as_ref())?;
-        let signature = FfiSignature { args: arg_types, ret: ret_ty };
+        let signature = FfiSignature {
+            args: arg_types,
+            ret: ret_ty,
+        };
         let result = self.call(name, &signature, &arg_values)?;
         convert_return(sig.ret_ty.as_ref(), result)
     }
@@ -166,9 +179,7 @@ fn convert_return(ret_ty: Option<&Ty>, value: Option<FfiValue>) -> Result<Value>
             Ok(Value::Char(ValueChar::new(v as u8 as char)))
         }
         (Ty::Primitive(TypePrimitive::Int(_)), Some(FfiValue::I64(v))) => Ok(Value::int(v)),
-        (Ty::Primitive(TypePrimitive::Int(_)), Some(FfiValue::U64(v))) => {
-            Ok(Value::int(v as i64))
-        }
+        (Ty::Primitive(TypePrimitive::Int(_)), Some(FfiValue::U64(v))) => Ok(Value::int(v as i64)),
         (Ty::Primitive(TypePrimitive::Decimal(_)), _) => Err(Error::from(
             "unsupported extern decimal return type without libffi",
         )),
@@ -191,19 +202,17 @@ fn ffi_type_for_arg(ty: &Ty) -> Result<FfiType> {
         Ty::Primitive(TypePrimitive::Bool) => Ok(FfiType::U64),
         Ty::Primitive(TypePrimitive::Char) => Ok(FfiType::U64),
         Ty::Primitive(TypePrimitive::Int(int_ty)) => Ok(match int_ty {
-            TypeInt::I8
-            | TypeInt::I16
-            | TypeInt::I32
-            | TypeInt::I64
-            | TypeInt::BigInt => FfiType::I64,
+            TypeInt::I8 | TypeInt::I16 | TypeInt::I32 | TypeInt::I64 | TypeInt::BigInt => {
+                FfiType::I64
+            }
             TypeInt::U8 | TypeInt::U16 | TypeInt::U32 | TypeInt::U64 => FfiType::U64,
         }),
-        Ty::Primitive(TypePrimitive::Decimal(_)) => Err(Error::from(
-            "unsupported extern decimal arg without libffi",
-        )),
-        Ty::Primitive(TypePrimitive::String) => Err(Error::from(
-            "unsupported extern string arg type; use &CStr",
-        )),
+        Ty::Primitive(TypePrimitive::Decimal(_)) => {
+            Err(Error::from("unsupported extern decimal arg without libffi"))
+        }
+        Ty::Primitive(TypePrimitive::String) => {
+            Err(Error::from("unsupported extern string arg type; use &CStr"))
+        }
         Ty::Reference(TypeReference { ty, .. }) => {
             if resolves_to_string(ty.as_ref()) {
                 Err(Error::from("unsupported extern &str arg type; use &CStr"))
@@ -272,9 +281,7 @@ fn push_arg_value(
             return Err(Error::from("unsupported extern decimal arg without libffi"));
         }
         Ty::Primitive(TypePrimitive::String) => {
-            return Err(Error::from(
-                "unsupported extern string arg type; use &CStr",
-            ));
+            return Err(Error::from("unsupported extern string arg type; use &CStr"));
         }
         Ty::Reference(TypeReference { ty, .. }) => {
             if resolves_to_string(ty.as_ref()) {
@@ -300,8 +307,7 @@ fn push_arg_value(
                         .size
                         .checked_mul(slice_ref.values.len())
                         .ok_or_else(|| Error::from("ffi slice buffer size overflow"))?;
-                    let mut escaped =
-                        ValueEscaped::new(buf_size as i64, elem_layout.align as i64);
+                    let mut escaped = ValueEscaped::new(buf_size as i64, elem_layout.align as i64);
                     {
                         let buf = unsafe { escaped.as_slice_mut() };
                         for (idx, value) in slice_ref.values.iter().enumerate() {
@@ -340,11 +346,7 @@ fn push_arg_value(
 
 fn push_int_arg(int_ty: TypeInt, value: i64, args: &mut Vec<FfiValue>) -> Result<()> {
     match int_ty {
-        TypeInt::I8
-        | TypeInt::I16
-        | TypeInt::I32
-        | TypeInt::I64
-        | TypeInt::BigInt => {
+        TypeInt::I8 | TypeInt::I16 | TypeInt::I32 | TypeInt::I64 | TypeInt::BigInt => {
             args.push(FfiValue::I64(value));
         }
         TypeInt::U8 | TypeInt::U16 | TypeInt::U32 | TypeInt::U64 => {
@@ -464,7 +466,9 @@ fn array_len_from_expr(expr: &fp_core::ast::Expr) -> Result<usize> {
             _ => {}
         }
     }
-    Err(Error::from("array length must be a non-negative integer literal"))
+    Err(Error::from(
+        "array length must be a non-negative integer literal",
+    ))
 }
 
 fn write_c_abi_value(ty: &Ty, value: &Value, buf: &mut [u8], base: usize) -> Result<()> {
@@ -611,9 +615,7 @@ fn write_decimal_value(
             buf[base..base + 8].copy_from_slice(&value.to_ne_bytes());
         }
         _ => {
-            return Err(Error::from(
-                "unsupported decimal type in C ABI layout",
-            ));
+            return Err(Error::from("unsupported decimal type in C ABI layout"));
         }
     }
     Ok(())
@@ -706,7 +708,8 @@ unsafe fn call_void(fn_ptr: *const c_void, args: &[u64]) -> Result<()> {
             func(args[0], args[1], args[2], args[3]);
         }
         5 => {
-            let func: extern "C" fn(u64, u64, u64, u64, u64) = unsafe { std::mem::transmute(fn_ptr) };
+            let func: extern "C" fn(u64, u64, u64, u64, u64) =
+                unsafe { std::mem::transmute(fn_ptr) };
             func(args[0], args[1], args[2], args[3], args[4]);
         }
         6 => {
@@ -738,7 +741,8 @@ unsafe fn call_i64(fn_ptr: *const c_void, args: &[u64]) -> Result<i64> {
             func(args[0], args[1], args[2])
         }
         4 => {
-            let func: extern "C" fn(u64, u64, u64, u64) -> i64 = unsafe { std::mem::transmute(fn_ptr) };
+            let func: extern "C" fn(u64, u64, u64, u64) -> i64 =
+                unsafe { std::mem::transmute(fn_ptr) };
             func(args[0], args[1], args[2], args[3])
         }
         5 => {
@@ -775,7 +779,8 @@ unsafe fn call_u64(fn_ptr: *const c_void, args: &[u64]) -> Result<u64> {
             func(args[0], args[1], args[2])
         }
         4 => {
-            let func: extern "C" fn(u64, u64, u64, u64) -> u64 = unsafe { std::mem::transmute(fn_ptr) };
+            let func: extern "C" fn(u64, u64, u64, u64) -> u64 =
+                unsafe { std::mem::transmute(fn_ptr) };
             func(args[0], args[1], args[2], args[3])
         }
         5 => {
@@ -804,11 +809,13 @@ unsafe fn call_ptr(fn_ptr: *const c_void, args: &[u64]) -> Result<*mut c_void> {
             func(args[0])
         }
         2 => {
-            let func: extern "C" fn(u64, u64) -> *mut c_void = unsafe { std::mem::transmute(fn_ptr) };
+            let func: extern "C" fn(u64, u64) -> *mut c_void =
+                unsafe { std::mem::transmute(fn_ptr) };
             func(args[0], args[1])
         }
         3 => {
-            let func: extern "C" fn(u64, u64, u64) -> *mut c_void = unsafe { std::mem::transmute(fn_ptr) };
+            let func: extern "C" fn(u64, u64, u64) -> *mut c_void =
+                unsafe { std::mem::transmute(fn_ptr) };
             func(args[0], args[1], args[2])
         }
         4 => {

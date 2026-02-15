@@ -1,6 +1,6 @@
 use crate::ast::BExpr;
-use crate::span::Span;
 use crate::context::SharedScopedContext;
+use crate::span::Span;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter};
 use std::hash::Hash;

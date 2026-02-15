@@ -11,9 +11,7 @@ fn ident(name: &str) -> fp_core::ast::Ident {
 }
 
 fn int_ty() -> fp_core::ast::Ty {
-    fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
-        fp_core::ast::TypeInt::I32,
-    ))
+    fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(fp_core::ast::TypeInt::I32))
 }
 
 fn ty_ident(name: &str) -> fp_core::ast::Ty {
@@ -91,29 +89,27 @@ fn propagates_unimplemented_expression_error() {
 
 #[test]
 fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
-    let add_body = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
-        fp_core::ast::ExprBinOp {
+    let add_body =
+        fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(fp_core::ast::ExprBinOp {
             span: fp_core::span::Span::null(),
             kind: BinOpKind::Add,
             lhs: Box::new(fp_core::ast::Expr::ident(ident("x"))),
             rhs: Box::new(fp_core::ast::Expr::ident(ident("y"))),
-        },
-    ));
+        }));
     let add_fn = make_fn(
         "add",
         vec![(ident("x"), int_ty()), (ident("y"), int_ty())],
         int_ty(),
         fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(add_body)),
     );
-    let math_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
-        fp_core::ast::Module {
+    let math_module =
+        fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
             attrs: Vec::new(),
             name: ident("math"),
             items: vec![add_fn],
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
-        },
-    ));
+        }));
 
     let import_tree = fp_core::ast::ItemImportTree::Path(fp_core::ast::ItemImportPath {
         segments: vec![
@@ -124,13 +120,12 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
             }),
         ],
     });
-    let import = fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(
-        fp_core::ast::ItemImport {
+    let import =
+        fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(fp_core::ast::ItemImport {
             attrs: Vec::new(),
             visibility: fp_core::ast::Visibility::Private,
             tree: import_tree,
-        },
-    ));
+        }));
 
     let call_sum_body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(call_expr(
         &["sum"],
@@ -210,29 +205,27 @@ fn lowers_module_exports_and_use_aliases() -> OptimizeResult<()> {
 
 #[test]
 fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
-    let add_body = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
-        fp_core::ast::ExprBinOp {
+    let add_body =
+        fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(fp_core::ast::ExprBinOp {
             span: fp_core::span::Span::null(),
             kind: BinOpKind::Add,
             lhs: Box::new(fp_core::ast::Expr::ident(ident("x"))),
             rhs: Box::new(fp_core::ast::Expr::ident(ident("y"))),
-        },
-    ));
+        }));
     let add_fn = make_fn(
         "add",
         vec![(ident("x"), int_ty()), (ident("y"), int_ty())],
         int_ty(),
         fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(add_body)),
     );
-    let math_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
-        fp_core::ast::Module {
+    let math_module =
+        fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
             attrs: Vec::new(),
             name: ident("math"),
             items: vec![add_fn],
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
-        },
-    ));
+        }));
 
     let reexport_tree = fp_core::ast::ItemImportTree::Path(fp_core::ast::ItemImportPath {
         segments: vec![
@@ -240,13 +233,12 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
             fp_core::ast::ItemImportTree::Ident(ident("add")),
         ],
     });
-    let reexport = fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(
-        fp_core::ast::ItemImport {
+    let reexport =
+        fp_core::ast::Item::from(fp_core::ast::ItemKind::Import(fp_core::ast::ItemImport {
             attrs: Vec::new(),
             visibility: fp_core::ast::Visibility::Public,
             tree: reexport_tree,
-        },
-    ));
+        }));
 
     let call_body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_expr(call_expr(
         &["super", "add"],
@@ -261,15 +253,14 @@ fn reexports_visible_to_child_modules() -> OptimizeResult<()> {
         int_ty(),
         call_body,
     );
-    let callers_module = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
-        fp_core::ast::Module {
+    let callers_module =
+        fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
             attrs: Vec::new(),
             name: ident("callers"),
             items: vec![call_fn],
             visibility: fp_core::ast::Visibility::Public,
             is_external: false,
-        },
-    ));
+        }));
 
     let program = transform_file(fp_core::ast::File {
         path: "<memory>".into(),
@@ -371,9 +362,7 @@ fn lowers_println_macro_into_intrinsic_call() -> OptimizeResult<()> {
         ),
     ));
     let body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_stmts(vec![
-        fp_core::ast::BlockStmt::Expr(
-            fp_core::ast::BlockStmtExpr::new(call).with_semicolon(true),
-        ),
+        fp_core::ast::BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(call).with_semicolon(true)),
     ]));
     let main_fn = make_fn("main", vec![], fp_core::ast::Ty::unit(), body);
     let program = transform_file(fp_core::ast::File {
@@ -446,9 +435,7 @@ fn lowers_print_macro_into_intrinsic_call() -> OptimizeResult<()> {
         ),
     ));
     let body = fp_core::ast::Expr::block(fp_core::ast::ExprBlock::new_stmts(vec![
-        fp_core::ast::BlockStmt::Expr(
-            fp_core::ast::BlockStmtExpr::new(call).with_semicolon(true),
-        ),
+        fp_core::ast::BlockStmt::Expr(fp_core::ast::BlockStmtExpr::new(call).with_semicolon(true)),
     ]));
     let main_fn = make_fn("main", vec![], fp_core::ast::Ty::unit(), body);
     let program = transform_file(fp_core::ast::File {
