@@ -38,20 +38,18 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
     let mut in_backtick = false;
     let mut word_start: Option<usize> = None;
 
-    let mut check_word = |word_start: &mut Option<usize>, end_idx: usize| {
-        if let Some(start_idx) = word_start.take() {
-            let word = &input[start_idx..end_idx];
-            if word.eq_ignore_ascii_case(keyword) {
-                return Some(start_idx);
-            }
-        }
-        None
+    let check_word = |start_idx: usize, end_idx: usize| {
+        let word = &input[start_idx..end_idx];
+        word.eq_ignore_ascii_case(keyword)
     };
 
     for (idx, ch) in input.char_indices().skip(start) {
         if matches!(ch, '\'' | '"' | '`') && !(in_single || in_double || in_backtick) {
-            if let Some(found) = check_word(&mut word_start, idx) {
-                return Some(found);
+            if let Some(start_idx) = word_start {
+                if check_word(start_idx, idx) {
+                    return Some(start_idx);
+                }
+                word_start = None;
             }
         }
 
@@ -79,14 +77,16 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
             if word_start.is_none() {
                 word_start = Some(idx);
             }
-        } else if let Some(found) = check_word(&mut word_start, idx) {
-            return Some(found);
+        } else if let Some(start_idx) = word_start {
+            if check_word(start_idx, idx) {
+                return Some(start_idx);
+            }
+            word_start = None;
         }
     }
 
-    if let Some(start_idx) = word_start.take() {
-        let word = &input[start_idx..];
-        if word.eq_ignore_ascii_case(keyword) {
+    if let Some(start_idx) = word_start {
+        if check_word(start_idx, input.len()) {
             return Some(start_idx);
         }
     }
