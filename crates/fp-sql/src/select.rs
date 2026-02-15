@@ -38,34 +38,34 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
     let mut in_backtick = false;
     let mut word_start: Option<usize> = None;
 
-    for (idx, ch) in input.char_indices().skip(start) {
-        let mut check_word = |word_start: &mut Option<usize>| {
-            if let Some(start_idx) = word_start.take() {
-                let word = &input[start_idx..idx];
-                if word.eq_ignore_ascii_case(keyword) {
-                    return Some(start_idx);
-                }
+    let mut flush_word = |end_idx: usize, word_start: &mut Option<usize>| {
+        if let Some(start_idx) = word_start.take() {
+            let word = &input[start_idx..end_idx];
+            if word.eq_ignore_ascii_case(keyword) {
+                return Some(start_idx);
             }
-            None
-        };
+        }
+        None
+    };
 
+    for (idx, ch) in input.char_indices().skip(start) {
         match ch {
             '\'' if !in_double && !in_backtick => {
-                if let Some(found) = check_word(&mut word_start) {
+                if let Some(found) = flush_word(idx, &mut word_start) {
                     return Some(found);
                 }
                 in_single = !in_single;
                 continue;
             }
             '"' if !in_single && !in_backtick => {
-                if let Some(found) = check_word(&mut word_start) {
+                if let Some(found) = flush_word(idx, &mut word_start) {
                     return Some(found);
                 }
                 in_double = !in_double;
                 continue;
             }
             '`' if !in_single && !in_double => {
-                if let Some(found) = check_word(&mut word_start) {
+                if let Some(found) = flush_word(idx, &mut word_start) {
                     return Some(found);
                 }
                 in_backtick = !in_backtick;
@@ -82,19 +82,13 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
             if word_start.is_none() {
                 word_start = Some(idx);
             }
-        } else if let Some(start_idx) = word_start.take() {
-            let word = &input[start_idx..idx];
-            if word.eq_ignore_ascii_case(keyword) {
-                return Some(start_idx);
-            }
+        } else if let Some(found) = flush_word(idx, &mut word_start) {
+            return Some(found);
         }
     }
 
-    if let Some(start_idx) = word_start.take() {
-        let word = &input[start_idx..];
-        if word.eq_ignore_ascii_case(keyword) {
-            return Some(start_idx);
-        }
+    if let Some(found) = flush_word(input.len(), &mut word_start) {
+        return Some(found);
     }
 
     None
