@@ -114,7 +114,7 @@ impl ManifestManager {
             };
             let mut dep_path = dep1.path.clone().unwrap();
             if dep_path.is_absolute() {
-                dep.path = Some(dep_path);
+                dep.path = Some(diff_path(manifest_root_path, &dep_path)?);
             } else {
                 dep_path = workspace.root_path.join(dep_path);
                 dep.path = Some(diff_path(manifest_root_path, &dep_path)?);
