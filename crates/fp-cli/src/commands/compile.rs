@@ -10,8 +10,8 @@ use crate::{
     pipeline::{Pipeline, PipelineInput, PipelineOutput},
 };
 use console::style;
-use fp_core::config;
 use fp_core::ast::{AstTarget, AstTargetOutput, Node};
+use fp_core::config;
 use fp_csharp::CSharpSerializer;
 use fp_golang::GoSerializer;
 use fp_lang::PrettyAstSerializer;
@@ -170,10 +170,7 @@ pub async fn compile_command(args: CompileArgs, config: &CliConfig) -> Result<()
         CompileTarget::Backend(backend) => backend.as_str().to_string(),
         CompileTarget::Ast(ast_target) => format!("{:?}", ast_target),
     };
-    info!(
-        "Starting compilation with target: {}",
-        target_label
-    );
+    info!("Starting compilation with target: {}", target_label);
 
     // Validate inputs
     validate_inputs(&args)?;
@@ -218,8 +215,8 @@ async fn compile_once(args: CompileArgs, config: &CliConfig) -> Result<()> {
         )?;
 
         // Compile single file
-        if let Some(artifact_path) = compile_file(input_file, &output_file, &args, target, config)
-            .await?
+        if let Some(artifact_path) =
+            compile_file(input_file, &output_file, &args, target, config).await?
         {
             compiled_files.push(artifact_path);
         }
@@ -597,7 +594,10 @@ fn is_package_manifest(path: &Path) -> bool {
         .and_then(|name| name.to_str())
         .map(|name| {
             let lower = name.to_ascii_lowercase();
-            matches!(lower.as_str(), "cargo.toml" | "package.json" | "magnet.toml")
+            matches!(
+                lower.as_str(),
+                "cargo.toml" | "package.json" | "magnet.toml"
+            )
         })
         .unwrap_or(false)
 }
@@ -701,10 +701,9 @@ fn determine_output_path(
             let extension = crate::languages::backend::ast_output_extension_for(ast_target);
             if let Some(output) = output {
                 if output_is_dir {
-                    let stem = input
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .ok_or_else(|| CliError::InvalidInput("Invalid input filename".to_string()))?;
+                    let stem = input.file_stem().and_then(|s| s.to_str()).ok_or_else(|| {
+                        CliError::InvalidInput("Invalid input filename".to_string())
+                    })?;
                     let mut path = output.join(stem);
                     path.set_extension(extension);
                     return Ok(path);

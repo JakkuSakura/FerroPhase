@@ -129,14 +129,18 @@ pub fn parse_items_tokens_to_cst_with_file(
             }
             let attrs = match parse_outer_attrs_cst(&mut input) {
                 Ok(attrs) => attrs,
-                Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
+                Err(err) => {
+                    return Err(ItemParseError::from_err_with_span(err, input, tokens, None))
+                }
             };
             for attr in attrs {
                 item_children.push(SyntaxElement::Node(Box::new(attr)));
             }
             let visibility = match parse_visibility_cst(&mut input) {
                 Ok(vis) => vis,
-                Err(err) => return Err(ItemParseError::from_err_with_span(err, input, tokens, None)),
+                Err(err) => {
+                    return Err(ItemParseError::from_err_with_span(err, input, tokens, None))
+                }
             };
             if let Some(vis) = visibility {
                 item_children.push(SyntaxElement::Node(Box::new(vis)));
@@ -262,9 +266,8 @@ fn parse_item_cst(
                     ) {
                         let async_token =
                             advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
-                        member_children.push(SyntaxElement::Token(syntax_token_from_token(
-                            &async_token,
-                        )));
+                        member_children
+                            .push(SyntaxElement::Token(syntax_token_from_token(&async_token)));
                     }
                     expect_keyword(input, Keyword::Fn)?;
                     let sig = parse_fn_sig_cst(input)?;
@@ -376,10 +379,7 @@ fn parse_item_cst(
                         field_children.push(SyntaxElement::Token(token_text("?")));
                     }
                     field_children.push(SyntaxElement::Node(Box::new(ty)));
-                    let field = node(
-                        SyntaxKind::StructFieldDecl,
-                        field_children,
-                    );
+                    let field = node(SyntaxKind::StructFieldDecl, field_children);
                     children.push(SyntaxElement::Node(Box::new(field)));
                     if match_symbol(input, ",") {
                         continue;
@@ -446,10 +446,7 @@ fn parse_item_cst(
                             field_children.push(SyntaxElement::Token(token_text("?")));
                         }
                         field_children.push(SyntaxElement::Node(Box::new(fty)));
-                        let field = node(
-                            SyntaxKind::TyField,
-                            field_children,
-                        );
+                        let field = node(SyntaxKind::TyField, field_children);
                         fields.push(SyntaxElement::Node(Box::new(field)));
                         if match_symbol(input, ",") {
                             continue;
@@ -541,10 +538,7 @@ fn parse_item_cst(
                             field_children.push(SyntaxElement::Token(token_text("?")));
                         }
                         field_children.push(SyntaxElement::Node(Box::new(ty)));
-                        let field = node(
-                            SyntaxKind::StructFieldDecl,
-                            field_children,
-                        );
+                        let field = node(SyntaxKind::StructFieldDecl, field_children);
                         children.push(SyntaxElement::Node(Box::new(field)));
                         if match_symbol(input, ",") {
                             continue;
@@ -675,10 +669,15 @@ fn parse_item_cst(
             }
             children.push(SyntaxElement::Token(bang));
             if name_text == "macro_rules" {
-                if matches!(input.first(), Some(Token { kind: TokenKind::Ident, .. }))
-                    && (matches_symbol(input.get(1), "(")
-                        || matches_symbol(input.get(1), "{")
-                        || matches_symbol(input.get(1), "["))
+                if matches!(
+                    input.first(),
+                    Some(Token {
+                        kind: TokenKind::Ident,
+                        ..
+                    })
+                ) && (matches_symbol(input.get(1), "(")
+                    || matches_symbol(input.get(1), "{")
+                    || matches_symbol(input.get(1), "["))
                 {
                     let declared = expect_ident_token(input)?;
                     children.push(SyntaxElement::Token(declared));
@@ -1324,16 +1323,16 @@ fn consume_balanced_group_tokens(input: &mut &[Token], opener: &str) -> ModalRes
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode> {
     let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) =
-        cst::parse_expr_lexemes_prefix_to_cst(&lexemes, current_items_file()).map_err(|err| {
-        ErrMode::Cut(
-            <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
-                &lexemes,
-                ErrorKind::Fail,
-                err,
-            ),
-        )
-    })?;
+    let (node, consumed) = cst::parse_expr_lexemes_prefix_to_cst(&lexemes, current_items_file())
+        .map_err(|err| {
+            ErrMode::Cut(
+                <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+                    &lexemes,
+                    ErrorKind::Fail,
+                    err,
+                ),
+            )
+        })?;
     *input = &input[consumed..];
     Ok(node)
 }
@@ -1342,20 +1341,18 @@ fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
     let prefix_len = type_prefix_len(input, stops);
     let lexemes = lexemes_from_tokens(&input[..prefix_len]);
-    let (node, _consumed) = cst::parse_type_lexemes_prefix_to_cst(
-        &lexemes,
-        current_items_file(),
-        stops,
-    )
-    .map_err(|err| {
-        ErrMode::Cut(
-            <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
-                &lexemes,
-                    ErrorKind::Fail,
-                    err,
-                ),
-            )
-        })?;
+    let (node, _consumed) =
+        cst::parse_type_lexemes_prefix_to_cst(&lexemes, current_items_file(), stops).map_err(
+            |err| {
+                ErrMode::Cut(
+                    <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+                        &lexemes,
+                        ErrorKind::Fail,
+                        err,
+                    ),
+                )
+            },
+        )?;
     *input = &input[prefix_len..];
     Ok(node)
 }

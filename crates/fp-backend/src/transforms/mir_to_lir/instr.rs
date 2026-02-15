@@ -205,7 +205,10 @@ impl LirGenerator {
         let calling_convention = self.calling_convention_for_abi(&mir_func.abi);
         let linkage = if mir_func.is_extern {
             lir::Linkage::External
-        } else if matches!(mir_func.abi, mir::ty::Abi::C { .. } | mir::ty::Abi::System { .. }) {
+        } else if matches!(
+            mir_func.abi,
+            mir::ty::Abi::C { .. } | mir::ty::Abi::System { .. }
+        ) {
             lir::Linkage::External
         } else {
             lir::Linkage::Internal
@@ -1006,10 +1009,8 @@ impl LirGenerator {
                         let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
                         let base_ptr = match base_lir_ty.as_ref() {
                             Some(lir::LirType::Struct { .. })
-                                if Self::slice_element_type(
-                                    base_lir_ty.as_ref().unwrap(),
-                                )
-                                .is_some() =>
+                                if Self::slice_element_type(base_lir_ty.as_ref().unwrap())
+                                    .is_some() =>
                             {
                                 self.extract_slice_field(
                                     base_value,
@@ -1039,7 +1040,10 @@ impl LirGenerator {
                         let len_id = self.next_id();
                         instructions.push(lir::LirInstruction {
                             id: len_id,
-                            kind: lir::LirInstructionKind::Sub(end_value.clone(), start_value.clone()),
+                            kind: lir::LirInstructionKind::Sub(
+                                end_value.clone(),
+                                start_value.clone(),
+                            ),
                             type_hint: Some(lir::LirType::I64),
                             debug_info: None,
                         });
@@ -2035,9 +2039,7 @@ impl LirGenerator {
                         self.lir_type_from_ty(ty),
                     ))
                 }
-            mir::ConstantKind::Str(s) => {
-                    Ok(lir::LirValue::Constant(self.const_string_ptr(s)))
-            }
+                mir::ConstantKind::Str(s) => Ok(lir::LirValue::Constant(self.const_string_ptr(s))),
                 mir::ConstantKind::Int(value) => Ok(lir::LirValue::Constant(
                     lir::LirConstant::Int(*value, lir::LirType::I64),
                 )),
@@ -4328,13 +4330,19 @@ impl LirGenerator {
 
         if let Some((dest_place, dest_bb)) = destination.as_ref() {
             if let Some(ref ty) = result_type {
-                if matches!(ty, lir::LirType::Struct { .. } | lir::LirType::Array(_, _) | lir::LirType::Vector(_, _)) {
+                if matches!(
+                    ty,
+                    lir::LirType::Struct { .. }
+                        | lir::LirType::Array(_, _)
+                        | lir::LirType::Vector(_, _)
+                ) {
                     let alignment = Self::alignment_for_lir_type(ty);
                     let ptr = if let Some(storage) = self.local_storage.get(&dest_place.local) {
                         storage.ptr_value.clone()
                     } else {
                         let pointer_type = lir::LirType::Ptr(Box::new(ty.clone()));
-                        let size_value = lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                        let size_value =
+                            lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
                         let alloca_id = self.next_id();
                         block.instructions.push(lir::LirInstruction {
                             id: alloca_id,

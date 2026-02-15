@@ -6,10 +6,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     pub(super) fn eval_stmt(&mut self, stmt: &mut BlockStmt) -> Option<Value> {
         let span = match stmt {
             BlockStmt::Expr(expr_stmt) => expr_stmt.expr.span,
-            BlockStmt::Let(stmt_let) => stmt_let
-                .init
-                .as_ref()
-                .and_then(|expr| expr.span),
+            BlockStmt::Let(stmt_let) => stmt_let.init.as_ref().and_then(|expr| expr.span),
             BlockStmt::Item(item) => item.span,
             BlockStmt::Noop | BlockStmt::Any(_) => None,
         };

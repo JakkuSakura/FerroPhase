@@ -19,30 +19,12 @@ pub fn main() -> () {
     println!("=== Struct Introspection ===");
     println!("Point size: {} bytes", ::core::mem::size_of::<Point>());
     println!("Color size: {} bytes", ::core::mem::size_of::<Color>());
-    println!(
-        "Point fields: {}",
-        field_count!(Point)
-    );
-    println!(
-        "Color fields: {}",
-        field_count!(Color)
-    );
-    println!(
-        "Point has x: {}",
-        hasfield!(Point, "x")
-    );
-    println!(
-        "Point has z: {}",
-        hasfield!(Point, "z")
-    );
-    println!(
-        "Point methods: {}",
-        method_count!(Point)
-    );
-    println!(
-        "Color methods: {}",
-        method_count!(Color)
-    );
+    println!("Point fields: {}", field_count!(Point));
+    println!("Color fields: {}", field_count!(Color));
+    println!("Point has x: {}", hasfield!(Point, "x"));
+    println!("Point has z: {}", hasfield!(Point, "z"));
+    println!("Point methods: {}", method_count!(Point));
+    println!("Color methods: {}", method_count!(Color));
     println!("\n✓ Introspection completed!");
     println!("\n=== Transpilation Demo ===");
     const POINT_SIZE_CONST: usize = 16;

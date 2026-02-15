@@ -144,7 +144,10 @@ fn main() {
     assert!(result.is_ok(), "TypeScript target should succeed");
 
     assert!(output_file.exists(), "Output file should be created");
-    assert!(defs_file.exists(), "Type definitions file should be created");
+    assert!(
+        defs_file.exists(),
+        "Type definitions file should be created"
+    );
 
     let defs_content = fs::read_to_string(&defs_file).unwrap();
     assert!(defs_content.contains("interface User"));

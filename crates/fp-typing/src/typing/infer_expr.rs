@@ -849,10 +849,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let string_var = self.fresh_type_var();
-        self.bind(
-            string_var,
-            TypeTerm::Primitive(TypePrimitive::String),
-        );
+        self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
         let vec_string_var = self.fresh_type_var();
         self.bind(vec_string_var, TypeTerm::Vec(string_var));
         if self.unify(object_var, vec_string_var).is_ok() {
@@ -906,10 +903,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         let string_var = self.fresh_type_var();
-        self.bind(
-            string_var,
-            TypeTerm::Primitive(TypePrimitive::String),
-        );
+        self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
         if self.unify(object_var, string_var).is_ok() {
             return Ok(string_var);
         }
@@ -1294,7 +1288,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         })
                         .unwrap_or(false);
                     if expects_cstr {
-                        if matches!(arg_expr.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))) {
+                        if matches!(arg_expr.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_)))
+                        {
                             arg_expr.set_ty(param.ty.clone());
                             continue;
                         }
@@ -1344,7 +1339,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             })
                             .unwrap_or(false);
                         if expects_cstr {
-                            if matches!(arg_expr.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_))) {
+                            if matches!(arg_expr.kind(), ExprKind::Value(value) if matches!(value.as_ref(), Value::String(_)))
+                            {
                                 arg_expr.set_ty(param.ty.clone());
                                 continue;
                             }
@@ -1520,10 +1516,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                                 let arg_var = self.infer_expr(&mut invoke.args[0])?;
                                 let string_var = self.fresh_type_var();
-                                self.bind(
-                                    string_var,
-                                    TypeTerm::Primitive(TypePrimitive::String),
-                                );
+                                self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
                                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
@@ -1536,10 +1529,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                                 let arg_var = self.infer_expr(&mut invoke.args[0])?;
                                 let string_var = self.fresh_type_var();
-                                self.bind(
-                                    string_var,
-                                    TypeTerm::Primitive(TypePrimitive::String),
-                                );
+                                self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
                                 self.bind(result_var, TypeTerm::Primitive(TypePrimitive::Bool));
@@ -1547,10 +1537,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             }
                             "struct_size" => {
                                 if !invoke.args.is_empty() {
-                                    self.emit_error(format!(
-                                        "{} expects no arguments",
-                                        method
-                                    ));
+                                    self.emit_error(format!("{} expects no arguments", method));
                                     return Ok(self.error_type_var());
                                 }
                                 let result_var = self.fresh_type_var();
@@ -1585,10 +1572,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 );
                                 self.unify(arg_var, int_var)?;
                                 let result_var = self.fresh_type_var();
-                                self.bind(
-                                    result_var,
-                                    TypeTerm::Primitive(TypePrimitive::String),
-                                );
+                                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
                                 return Ok(result_var);
                             }
                             "field_type" => {
@@ -1598,10 +1582,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                 }
                                 let arg_var = self.infer_expr(&mut invoke.args[0])?;
                                 let string_var = self.fresh_type_var();
-                                self.bind(
-                                    string_var,
-                                    TypeTerm::Primitive(TypePrimitive::String),
-                                );
+                                self.bind(string_var, TypeTerm::Primitive(TypePrimitive::String));
                                 self.unify(arg_var, string_var)?;
                                 let result_var = self.fresh_type_var();
                                 self.bind(
@@ -1623,10 +1604,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     return Ok(self.error_type_var());
                                 }
                                 let result_var = self.fresh_type_var();
-                                self.bind(
-                                    result_var,
-                                    TypeTerm::Primitive(TypePrimitive::String),
-                                );
+                                self.bind(result_var, TypeTerm::Primitive(TypePrimitive::String));
                                 return Ok(result_var);
                             }
                             _ => {}
@@ -2398,8 +2376,8 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                             .iter()
                                                             .find(|f| f.name == field.name)
                                                         {
-                                                            let expected_var =
-                                                                self.type_from_ast_ty(
+                                                            let expected_var = self
+                                                                .type_from_ast_ty(
                                                                     &expected_field.value,
                                                                 )?;
                                                             if let Some(rename) =
@@ -2408,7 +2386,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                                 let child =
                                                                     self.infer_pattern(rename)?;
                                                                 bindings.extend(child.bindings);
-                                                                self.unify(child.var, expected_var)?;
+                                                                self.unify(
+                                                                    child.var,
+                                                                    expected_var,
+                                                                )?;
                                                             } else {
                                                                 let var = self.fresh_type_var();
                                                                 self.insert_env(
@@ -2451,9 +2432,11 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                     path.segments[0].as_str().to_string(),
                                 ])))
                             }
-                            Name::Ident(ident) => Some(self.qualify_path(QualifiedPath::new(vec![
-                                ident.as_str().to_string(),
-                            ]))),
+                            Name::Ident(ident) => {
+                                Some(self.qualify_path(QualifiedPath::new(vec![
+                                    ident.as_str().to_string(),
+                                ])))
+                            }
                             _ => None,
                         });
                         if let Some(struct_name) = struct_name {
@@ -2526,12 +2509,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let ty = self.resolve_to_ty(obj_var)?;
         let resolved_ty = Self::peel_reference(ty.clone());
         let struct_path = match resolved_ty {
-            Ty::Struct(struct_ty) => self.qualify_path(QualifiedPath::new(vec![
-                struct_ty.name.as_str().to_string(),
-            ])),
-            Ty::Enum(enum_ty) => self.qualify_path(QualifiedPath::new(vec![
-                enum_ty.name.as_str().to_string(),
-            ])),
+            Ty::Struct(struct_ty) => self.qualify_path(QualifiedPath::new(vec![struct_ty
+                .name
+                .as_str()
+                .to_string()])),
+            Ty::Enum(enum_ty) => {
+                self.qualify_path(QualifiedPath::new(vec![enum_ty.name.as_str().to_string()]))
+            }
             other => {
                 if let Some(var) = self.lookup_trait_method_for_receiver(obj_var, field)? {
                     return Ok(var);
@@ -2557,8 +2541,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         let mut struct_key = None;
         let mut record = None;
         for candidate in &candidates {
-            let candidate =
-                QualifiedSymbol::new(struct_path.package.clone(), candidate.clone());
+            let candidate = QualifiedSymbol::new(struct_path.package.clone(), candidate.clone());
             if let Some(methods) = self.struct_methods.get(&candidate) {
                 if let Some(found) = methods.get(field.as_str()) {
                     struct_key = Some(candidate.clone());
@@ -2582,9 +2565,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         }
 
         if let Some(struct_key) = struct_key.as_ref() {
-            let qualified = struct_key
-                .path
-                .with_segment(field.as_str().to_string());
+            let qualified = struct_key.path.with_segment(field.as_str().to_string());
             if let Some(var) = self.lookup_env_var(&qualified.to_key()) {
                 return Ok(var);
             }
@@ -2891,12 +2872,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
         if let Some(resolved) = resolved_name {
             candidates.push(resolved);
         }
-        for candidate in self.struct_name_variants_for_path(
-            &struct_name.path,
-            struct_name.path.segments.len() == 1,
-        ) {
-            let candidate =
-                QualifiedSymbol::new(struct_name.package.clone(), candidate);
+        for candidate in self
+            .struct_name_variants_for_path(&struct_name.path, struct_name.path.segments.len() == 1)
+        {
+            let candidate = QualifiedSymbol::new(struct_name.package.clone(), candidate);
             if !candidates.contains(&candidate) {
                 candidates.push(candidate);
             }
@@ -2938,9 +2917,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         .take(path.segments.len() - 1)
                         .map(|seg| seg.as_str().to_string())
                         .collect::<Vec<_>>();
-                    if let Some(enum_key) =
-                        self.resolve_segments_key(path.prefix, &enum_segments)
-                    {
+                    if let Some(enum_key) = self.resolve_segments_key(path.prefix, &enum_segments) {
                         if let Some(enum_def) = self.enum_defs.get(&enum_key).cloned() {
                             if let Some(variant) = enum_def
                                 .variants
@@ -2960,12 +2937,12 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                                                     self.type_from_ast_ty(&def_field.value)?;
                                                 self.unify(value_var, expected)?;
                                             } else {
-                                        self.emit_error(format!(
-                                            "unknown field {} on enum variant {}::{}",
-                                            field.name,
-                                            enum_key.to_key(),
-                                            variant_name
-                                        ));
+                                                self.emit_error(format!(
+                                                    "unknown field {} on enum variant {}::{}",
+                                                    field.name,
+                                                    enum_key.to_key(),
+                                                    variant_name
+                                                ));
                                                 return Ok(self.error_type_var());
                                             }
                                         }
@@ -3019,9 +2996,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
             None => return Ok(None),
         };
 
-        let variant = enum_ty.variants.iter().find(|variant| {
-            struct_name.path.tail() == Some(variant.name.as_str())
-        });
+        let variant = enum_ty
+            .variants
+            .iter()
+            .find(|variant| struct_name.path.tail() == Some(variant.name.as_str()));
         let Some(variant) = variant else {
             return Ok(None);
         };
@@ -3035,15 +3013,13 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                     .as_ref()
                     .and_then(|key| self.struct_defs.get(key).cloned())
                     .or_else(|| {
-                        locator
-                            .as_ident()
-                            .and_then(|ident| {
-                                self.struct_defs
-                                    .get(&self.qualify_path(QualifiedPath::new(vec![
-                                        ident.as_str().to_string(),
-                                    ])))
-                                    .cloned()
-                            })
+                        locator.as_ident().and_then(|ident| {
+                            self.struct_defs
+                                .get(&self.qualify_path(QualifiedPath::new(vec![
+                                    ident.as_str().to_string(),
+                                ])))
+                                .cloned()
+                        })
                     })
                     .map(|struct_ty| struct_ty.fields),
                 _ => None,

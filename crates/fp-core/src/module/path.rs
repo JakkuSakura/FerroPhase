@@ -148,14 +148,10 @@ pub fn resolve_path(
 
     match parsed.prefix {
         PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(parsed.segments.clone())),
-        PathPrefix::SelfMod => {
-            Some(module_path.join(&parsed.segments))
-        }
-        PathPrefix::Super(depth) => {
-            module_path
-                .parent_n(depth)
-                .map(|parent| parent.join(&parsed.segments))
-        }
+        PathPrefix::SelfMod => Some(module_path.join(&parsed.segments)),
+        PathPrefix::Super(depth) => module_path
+            .parent_n(depth)
+            .map(|parent| parent.join(&parsed.segments)),
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
             if !module_path.is_empty() {
@@ -190,14 +186,10 @@ where
 
     match parsed.prefix {
         PathPrefix::Root | PathPrefix::Crate => Some(QualifiedPath::new(parsed.segments.clone())),
-        PathPrefix::SelfMod => {
-            Some(module_path.join(&parsed.segments))
-        }
-        PathPrefix::Super(depth) => {
-            module_path
-                .parent_n(depth)
-                .map(|parent| parent.join(&parsed.segments))
-        }
+        PathPrefix::SelfMod => Some(module_path.join(&parsed.segments)),
+        PathPrefix::Super(depth) => module_path
+            .parent_n(depth)
+            .map(|parent| parent.join(&parsed.segments)),
         PathPrefix::Plain => {
             let first = parsed.segments.first()?;
             if parsed.segments.len() == 1 {
@@ -324,7 +316,10 @@ mod tests {
             |name| name == "TypeBuilder",
         )
         .unwrap();
-        assert_eq!(resolved, QualifiedPath::new(vec!["TypeBuilder".to_string()]));
+        assert_eq!(
+            resolved,
+            QualifiedPath::new(vec!["TypeBuilder".to_string()])
+        );
     }
 
     #[test]

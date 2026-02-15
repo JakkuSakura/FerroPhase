@@ -1,6 +1,6 @@
 use super::super::*;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_core::config;
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 
 pub(crate) struct TypingContext {
     pub ast: Node,

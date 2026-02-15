@@ -557,9 +557,7 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 }
                 self.unify(a_func.ret, b_func.ret)
             }
-            (TypeTerm::RawPtr(_, m1), TypeTerm::RawPtr(_, m2))
-                if matches!((m1, m2), (Some(a), Some(b)) if a != b) =>
-            {
+            (TypeTerm::RawPtr(_, m1), TypeTerm::RawPtr(_, m2)) if matches!((m1, m2), (Some(a), Some(b)) if a != b) => {
                 Err(self.error_with_current_span("raw pointer mutability mismatch"))
             }
             (TypeTerm::Slice(a), TypeTerm::Slice(b))
@@ -1074,7 +1072,10 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         }
                         Ok(None) => {}
                         Err(err) => {
-                            self.emit_error_with_span(self.span_option(expr.span()), err.to_string());
+                            self.emit_error_with_span(
+                                self.span_option(expr.span()),
+                                err.to_string(),
+                            );
                             return Ok(self.error_type_var());
                         }
                     }

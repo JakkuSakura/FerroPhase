@@ -108,11 +108,13 @@ pub fn build(options: &BuildOptions) -> Result<()> {
 
     let workspace_packages = manifest.list_packages()?;
     let target_packages = if let Some(name) = options.package.as_deref() {
-        vec![workspace_packages
-            .iter()
-            .find(|pkg| pkg.name == name)
-            .cloned()
-            .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?]
+        vec![
+            workspace_packages
+                .iter()
+                .find(|pkg| pkg.name == name)
+                .cloned()
+                .ok_or_else(|| eyre::eyre!("Package '{}' not found", name))?,
+        ]
     } else {
         workspace_packages.clone()
     };
@@ -249,8 +251,8 @@ fn build_fingerprint(
     sources_sorted.sort();
     for source in sources_sorted {
         hasher.update(source.display().to_string());
-        let contents = fs::read(&source)
-            .with_context(|| format!("Failed to read {}", source.display()))?;
+        let contents =
+            fs::read(&source).with_context(|| format!("Failed to read {}", source.display()))?;
         hasher.update(contents);
     }
 
@@ -277,10 +279,7 @@ fn check_build_cache(
     let cache: BuildCache =
         serde_json::from_str(&payload).context("Failed to parse build cache")?;
     if cache.fingerprint == fingerprint && cache.entry == entry {
-        info!(
-            "build: skipping {} (cache hit)",
-            entry_output.display()
-        );
+        info!("build: skipping {} (cache hit)", entry_output.display());
         return Ok(Some(BuildOutcome::Skipped));
     }
     Ok(None)
@@ -476,13 +475,10 @@ fn graph_edges(
                     .cloned()
                     .unwrap_or_default();
                 let key = (name.to_string(), version, edge.source.clone());
-                node_by_identity
-                    .get(&key)
-                    .copied()
-                    .or_else(|| {
-                        let key = (name.to_string(), key.1.clone(), None);
-                        node_by_identity.get(&key).copied()
-                    })
+                node_by_identity.get(&key).copied().or_else(|| {
+                    let key = (name.to_string(), key.1.clone(), None);
+                    node_by_identity.get(&key).copied()
+                })
             };
             if let Some(dep_idx) = dep_idx {
                 if dep_idx != idx && !deps.contains(&dep_idx) {
@@ -672,11 +668,7 @@ fn build_parallel(
                     let Some(idx) = idx else { continue };
 
                     let result = if let Some(task) = tasks.get(idx).and_then(|task| task.as_ref()) {
-                        info!(
-                            "build: compiling {} ({})",
-                            task.name,
-                            task.entry.display()
-                        );
+                        info!("build: compiling {} ({})", task.name, task.entry.display());
                         compile_only(
                             &fp_bin,
                             &task.root_path,
@@ -688,10 +680,7 @@ fn build_parallel(
                         )
                         .map(|_| ())
                     } else {
-                        info!(
-                            "build: skipping {} (no FP/RS sources)",
-                            nodes[idx].name
-                        );
+                        info!("build: skipping {} (no FP/RS sources)", nodes[idx].name);
                         Ok(())
                     };
 
@@ -869,10 +858,7 @@ fn collect_sources_root(root: &Path, entry: &Path) -> Result<Vec<PathBuf>> {
     sources.insert(entry.to_path_buf());
 
     if sources.is_empty() {
-        bail!(
-            "No .fp/.rs sources found under {}",
-            root.display()
-        );
+        bail!("No .fp/.rs sources found under {}", root.display());
     }
 
     Ok(sources.into_iter().collect())

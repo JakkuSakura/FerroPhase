@@ -184,7 +184,9 @@ fn core_diagnostic_to_report(diag: &CoreDiagnostic) -> Report {
     Report::new(error)
 }
 
-fn core_diagnostic_source(diag: &CoreDiagnostic) -> (Option<NamedSource<String>>, Option<SourceSpan>) {
+fn core_diagnostic_source(
+    diag: &CoreDiagnostic,
+) -> (Option<NamedSource<String>>, Option<SourceSpan>) {
     let Some(span) = diag.span else {
         return (None, None);
     };
@@ -239,7 +241,9 @@ impl std::error::Error for CoreMietteDiagnostic {}
 
 impl Diagnostic for CoreMietteDiagnostic {
     fn code<'a>(&'a self) -> Option<Box<dyn Display + 'a>> {
-        self.code.as_ref().map(|code| Box::new(code.clone()) as Box<dyn Display>)
+        self.code
+            .as_ref()
+            .map(|code| Box::new(code.clone()) as Box<dyn Display>)
     }
 
     fn severity(&self) -> Option<Severity> {
@@ -253,9 +257,7 @@ impl Diagnostic for CoreMietteDiagnostic {
     }
 
     fn source_code(&self) -> Option<&dyn SourceCode> {
-        self.source
-            .as_ref()
-            .map(|source| source as &dyn SourceCode)
+        self.source.as_ref().map(|source| source as &dyn SourceCode)
     }
 
     fn labels(&self) -> Option<Box<dyn Iterator<Item = LabeledSpan> + '_>> {

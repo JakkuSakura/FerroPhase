@@ -1,5 +1,5 @@
-use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel};
 use crate::diagnostics::render_core_diagnostic;
+use fp_core::diagnostics::{Diagnostic, DiagnosticDisplayOptions, DiagnosticLevel};
 
 use super::PipelineOptions;
 

@@ -235,9 +235,7 @@ fn qualify_enum_variant_pattern(pat: &mut Pattern, enum_ty: &TypeEnum) {
     };
     let variant_name = match locator {
         Name::Ident(ident) => ident.clone(),
-        Name::Path(path)
-            if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
-        {
+        Name::Path(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
             path.segments[0].clone()
         }
         _ => return,

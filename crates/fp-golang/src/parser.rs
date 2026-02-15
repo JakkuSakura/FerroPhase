@@ -3,7 +3,7 @@
 //! This parser maps a small subset of Go syntax into FerroPhase AST so the
 //! Go backend can provide basic parsing support.
 
-use eyre::{Result, eyre};
+use eyre::{eyre, Result};
 use fp_core::ast::{
     BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprKind, ExprReturn, File, Ident, Item,
     ItemDefConst, ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportPath,
@@ -11,8 +11,8 @@ use fp_core::ast::{
     TypePrimitive, TypeTuple, TypeVec, Value, Visibility,
 };
 use fp_core::span::Span;
-use tree_sitter::{Node as TsNode, Parser as TsParser};
 use tracing::warn;
+use tree_sitter::{Node as TsNode, Parser as TsParser};
 
 /// High-level parser that owns a tree-sitter instance for Go.
 pub struct GoParser {
@@ -536,18 +536,27 @@ fn parse_numeric_literal(node: TsNode, source: &str) -> Result<Expr> {
     let normalized = raw.replace('_', "");
 
     if normalized.starts_with("0x") || normalized.starts_with("0X") {
-        let value = i64::from_str_radix(normalized.trim_start_matches("0x").trim_start_matches("0X"), 16)
-            .map_err(|err| eyre!("invalid hex literal {raw}: {err}"))?;
+        let value = i64::from_str_radix(
+            normalized.trim_start_matches("0x").trim_start_matches("0X"),
+            16,
+        )
+        .map_err(|err| eyre!("invalid hex literal {raw}: {err}"))?;
         return Ok(Expr::value(Value::int(value)));
     }
     if normalized.starts_with("0b") || normalized.starts_with("0B") {
-        let value = i64::from_str_radix(normalized.trim_start_matches("0b").trim_start_matches("0B"), 2)
-            .map_err(|err| eyre!("invalid binary literal {raw}: {err}"))?;
+        let value = i64::from_str_radix(
+            normalized.trim_start_matches("0b").trim_start_matches("0B"),
+            2,
+        )
+        .map_err(|err| eyre!("invalid binary literal {raw}: {err}"))?;
         return Ok(Expr::value(Value::int(value)));
     }
     if normalized.starts_with("0o") || normalized.starts_with("0O") {
-        let value = i64::from_str_radix(normalized.trim_start_matches("0o").trim_start_matches("0O"), 8)
-            .map_err(|err| eyre!("invalid octal literal {raw}: {err}"))?;
+        let value = i64::from_str_radix(
+            normalized.trim_start_matches("0o").trim_start_matches("0O"),
+            8,
+        )
+        .map_err(|err| eyre!("invalid octal literal {raw}: {err}"))?;
         return Ok(Expr::value(Value::int(value)));
     }
 

@@ -13,9 +13,9 @@ use crate::ast::{
     get_threadlocal_serializer, BExpr, BlockStmt, Expr, Ident, Item, MacroTokenTree,
     QuoteFragmentKind, Ty, TySlot, TypeBounds, TypeStruct, Value,
 };
+use crate::span::Span;
 use crate::utils::to_json::ToJson;
 use crate::{common_enum, common_struct};
-use crate::span::Span;
 
 /// wrap struct declare with derive Debug, Clone, Serialize, Deserialize,
 /// PartialEq, Eq,
