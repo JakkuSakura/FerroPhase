@@ -1,7 +1,7 @@
 //! Utility functions for the magnet CLI tool
 
 use crate::models::ManifestModel;
-use eyre::{bail, ContextCompat, Result};
+use eyre::{bail, Result};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt};
@@ -210,11 +210,13 @@ pub fn maybe_join(root: &Path, path: &Path) -> PathBuf {
     }
 }
 pub fn diff_path(root: &Path, path: &Path) -> Result<PathBuf> {
-    pathdiff::diff_paths(path, root).with_context(|| {
-        format!(
+    let diff = pathdiff::diff_paths(path, root).ok_or_else(|| {
+        eyre::eyre!(
             "Failed to compute relative path for '{}' from root '{}'",
             path.display(),
             root.display()
         )
-    })
+    })?;
+
+    Ok(diff)
 }
