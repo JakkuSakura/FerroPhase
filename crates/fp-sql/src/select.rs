@@ -51,28 +51,22 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
     for (idx, ch) in input.char_indices().skip(start) {
         match ch {
             '\'' if !in_double && !in_backtick => {
-                if !in_single {
-                    if let Some(found) = flush_word(idx, &mut word_start) {
-                        return Some(found);
-                    }
+                if let Some(found) = flush_word(idx, &mut word_start) {
+                    return Some(found);
                 }
                 in_single = !in_single;
                 continue;
             }
             '"' if !in_single && !in_backtick => {
-                if !in_double {
-                    if let Some(found) = flush_word(idx, &mut word_start) {
-                        return Some(found);
-                    }
+                if let Some(found) = flush_word(idx, &mut word_start) {
+                    return Some(found);
                 }
                 in_double = !in_double;
                 continue;
             }
             '`' if !in_single && !in_double => {
-                if !in_backtick {
-                    if let Some(found) = flush_word(idx, &mut word_start) {
-                        return Some(found);
-                    }
+                if let Some(found) = flush_word(idx, &mut word_start) {
+                    return Some(found);
                 }
                 in_backtick = !in_backtick;
                 continue;
