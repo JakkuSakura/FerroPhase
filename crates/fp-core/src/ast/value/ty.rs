@@ -1,7 +1,7 @@
 use crate::ast::*;
+use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
 use crate::{common_enum, common_struct};
-use crate::span::Span;
 use std::fmt::{Display, Formatter};
 use std::hash::Hash;
 
@@ -539,7 +539,8 @@ impl TypeFunction {
 
 impl TypeQuote {
     pub fn span(&self) -> Span {
-        self.span.or(Span::union(self.inner.as_ref().map(|ty| ty.span())))
+        self.span
+            .or(Span::union(self.inner.as_ref().map(|ty| ty.span())))
     }
 }
 

@@ -76,8 +76,11 @@ impl ExprIntrinsicContainer {
     pub fn into_const_expr(self) -> Expr {
         match self {
             ExprIntrinsicContainer::VecElements { elements } => {
-                let array_expr =
-                    ExprKind::Array(ExprArray { span: Span::null(), values: elements }).into();
+                let array_expr = ExprKind::Array(ExprArray {
+                    span: Span::null(),
+                    values: elements,
+                })
+                .into();
                 make_const_collection_call(vec_from_call(array_expr))
             }
             ExprIntrinsicContainer::VecRepeat { elem, len } => {
@@ -100,8 +103,11 @@ impl ExprIntrinsicContainer {
                         ExprKind::Tuple(tuple).into()
                     })
                     .collect();
-                let array_expr =
-                    ExprKind::Array(ExprArray { span: Span::null(), values: tuples }).into();
+                let array_expr = ExprKind::Array(ExprArray {
+                    span: Span::null(),
+                    values: tuples,
+                })
+                .into();
                 make_const_collection_call(hash_map_from_call(array_expr))
             }
         }
@@ -168,7 +174,7 @@ impl ExprIntrinsicContainer {
                     let mut entries = Vec::with_capacity(array.values.len());
                     for value in &array.values {
                         match value.kind() {
-                                ExprKind::Tuple(tuple) if tuple.values.len() == 2 => {
+                            ExprKind::Tuple(tuple) if tuple.values.len() == 2 => {
                                 entries.push(ExprIntrinsicContainerEntry {
                                     key: tuple.values[0].clone(),
                                     value: tuple.values[1].clone(),
@@ -227,9 +233,7 @@ fn locator_segments(locator: &Name) -> Vec<&str> {
     match locator {
         Name::Ident(ident) => vec![ident.as_str()],
         Name::Path(path) => path.segments.iter().map(|seg| seg.as_str()).collect(),
-        Name::ParameterPath(path) => {
-            path.segments.iter().map(|seg| seg.ident.as_str()).collect()
-        }
+        Name::ParameterPath(path) => path.segments.iter().map(|seg| seg.ident.as_str()).collect(),
     }
 }
 

@@ -21,7 +21,11 @@ impl Span {
     }
 
     pub fn null() -> Span {
-        Span { file: 0, lo: 0, hi: 0 }
+        Span {
+            file: 0,
+            lo: 0,
+            hi: 0,
+        }
     }
 
     pub fn is_null(self) -> bool {

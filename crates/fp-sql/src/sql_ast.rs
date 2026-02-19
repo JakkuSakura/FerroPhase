@@ -1,13 +1,16 @@
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
 use fp_core::sql_ast as ast;
 use sqlparser::ast as sql;
 use sqlparser::dialect::ClickHouseDialect;
 use sqlparser::keywords::Keyword;
 use sqlparser::parser::Parser;
 use sqlparser::tokenizer::{Token, Tokenizer, Whitespace, Word};
+use std::collections::HashMap;
 
-pub fn parse_sql_ast(source: &str, dialect: fp_core::query::SqlDialect) -> Result<Vec<ast::Statement>> {
+pub fn parse_sql_ast(
+    source: &str,
+    dialect: fp_core::query::SqlDialect,
+) -> Result<Vec<ast::Statement>> {
     let statements = crate::split_statements(source);
     let mut out = Vec::new();
     for stmt in statements {
@@ -33,10 +36,17 @@ pub fn parse_sql_ast(source: &str, dialect: fp_core::query::SqlDialect) -> Resul
             continue;
         }
         if parsed.len() != 1 {
-            return Err(anyhow!("multiple statements detected; split before parsing"));
+            return Err(anyhow!(
+                "multiple statements detected; split before parsing"
+            ));
         }
         let stmt = parsed.remove(0);
-        out.push(convert_statement(stmt, format.clone(), sample_ratio, create_clauses)?);
+        out.push(convert_statement(
+            stmt,
+            format.clone(),
+            sample_ratio,
+            create_clauses,
+        )?);
     }
     Ok(out)
 }
@@ -221,7 +231,9 @@ fn convert_statement(
             name: convert_object_name(name),
             query: Box::new(convert_query(*query, format, sample_ratio)),
         }),
-        sql::Statement::Drop { object_type, names, .. } => Ok(ast::Statement::Drop {
+        sql::Statement::Drop {
+            object_type, names, ..
+        } => Ok(ast::Statement::Drop {
             object_type: match object_type {
                 sql::ObjectType::Table => ast::ObjectType::Table,
                 sql::ObjectType::View => ast::ObjectType::View,
@@ -229,14 +241,21 @@ fn convert_statement(
             },
             names: names.into_iter().map(convert_object_name).collect(),
         }),
-        sql::Statement::AlterTable { name, operations, .. } => Ok(ast::Statement::AlterTable {
+        sql::Statement::AlterTable {
+            name, operations, ..
+        } => Ok(ast::Statement::AlterTable {
             name: convert_object_name(name),
             operations: operations
                 .into_iter()
                 .filter_map(convert_alter_op)
                 .collect(),
         }),
-        sql::Statement::Insert { table_name, columns, source, .. } => Ok(ast::Statement::Insert {
+        sql::Statement::Insert {
+            table_name,
+            columns,
+            source,
+            ..
+        } => Ok(ast::Statement::Insert {
             table_name: convert_object_name(table_name),
             columns: columns.into_iter().map(convert_ident).collect(),
             source: source.map(|q| Box::new(convert_query(*q, format, sample_ratio))),
@@ -246,7 +265,12 @@ fn convert_statement(
             format,
             sample_ratio,
         )))),
-        sql::Statement::Update { table, assignments, selection, .. } => {
+        sql::Statement::Update {
+            table,
+            assignments,
+            selection,
+            ..
+        } => {
             let table_name = match table.relation {
                 sql::TableFactor::Table { name, .. } => convert_object_name(name),
                 _ => return Err(anyhow!("unsupported UPDATE table reference")),
@@ -257,7 +281,9 @@ fn convert_statement(
                 selection: selection.map(convert_expr),
             })
         }
-        sql::Statement::Delete { from, selection, .. } => Ok(ast::Statement::Delete {
+        sql::Statement::Delete {
+            from, selection, ..
+        } => Ok(ast::Statement::Delete {
             from: from.into_iter().map(convert_table_with_joins).collect(),
             selection: selection.map(convert_expr),
         }),
@@ -290,7 +316,12 @@ fn convert_set_expr(expr: sql::SetExpr) -> ast::SetExpr {
                 .map(|row| row.into_iter().map(convert_expr).collect())
                 .collect(),
         }),
-        sql::SetExpr::SetOperation { left, right, op, set_quantifier } => {
+        sql::SetExpr::SetOperation {
+            left,
+            right,
+            op,
+            set_quantifier,
+        } => {
             let op = match op {
                 sql::SetOperator::Union => ast::SetOperator::Union,
                 _ => ast::SetOperator::Union,
@@ -312,8 +343,16 @@ fn convert_set_expr(expr: sql::SetExpr) -> ast::SetExpr {
 
 fn convert_select(select: sql::Select) -> ast::Select {
     ast::Select {
-        projection: select.projection.into_iter().map(convert_select_item).collect(),
-        from: select.from.into_iter().map(convert_table_with_joins).collect(),
+        projection: select
+            .projection
+            .into_iter()
+            .map(convert_select_item)
+            .collect(),
+        from: select
+            .from
+            .into_iter()
+            .map(convert_table_with_joins)
+            .collect(),
         selection: select.selection.map(convert_expr),
         group_by: convert_group_by(select.group_by),
         having: select.having.map(convert_expr),
@@ -354,7 +393,9 @@ fn convert_table_factor(tf: sql::TableFactor) -> ast::TableFactor {
             name: convert_object_name(name),
             alias: alias.map(convert_alias),
         },
-        sql::TableFactor::Derived { subquery, alias, .. } => ast::TableFactor::Derived {
+        sql::TableFactor::Derived {
+            subquery, alias, ..
+        } => ast::TableFactor::Derived {
             subquery: Box::new(convert_query(*subquery, None, None)),
             alias: alias.map(convert_alias),
         },
@@ -479,16 +520,26 @@ fn convert_expr(expr: sql::Expr) -> ast::Expr {
             ast::Expr::Array(array.elem.into_iter().map(convert_expr).collect())
         }
         sql::Expr::Function(func) => ast::Expr::Function(convert_function(func)),
-        sql::Expr::Cast { expr, data_type, .. } => ast::Expr::Cast {
+        sql::Expr::Cast {
+            expr, data_type, ..
+        } => ast::Expr::Cast {
             expr: Box::new(convert_expr(*expr)),
             data_type: convert_data_type(data_type).unwrap_or(ast::DataType::String),
         },
-        sql::Expr::InList { expr, list, negated } => ast::Expr::InList {
+        sql::Expr::InList {
+            expr,
+            list,
+            negated,
+        } => ast::Expr::InList {
             expr: Box::new(convert_expr(*expr)),
             list: list.into_iter().map(convert_expr).collect(),
             negated,
         },
-        sql::Expr::InSubquery { expr, subquery, negated } => ast::Expr::InSubquery {
+        sql::Expr::InSubquery {
+            expr,
+            subquery,
+            negated,
+        } => ast::Expr::InSubquery {
             expr: Box::new(convert_expr(*expr)),
             subquery: Box::new(convert_query(*subquery, None, None)),
             negated,
@@ -512,11 +563,9 @@ fn convert_function(func: sql::Function) -> ast::Function {
 
 fn convert_function_arg(arg: sql::FunctionArg) -> Option<ast::FunctionArg> {
     match arg {
-        sql::FunctionArg::Unnamed(sql::FunctionArgExpr::Expr(expr)) => {
-            Some(ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(
-                convert_expr(expr),
-            )))
-        }
+        sql::FunctionArg::Unnamed(sql::FunctionArgExpr::Expr(expr)) => Some(
+            ast::FunctionArg::Unnamed(ast::FunctionArgExpr::Expr(convert_expr(expr))),
+        ),
         _ => None,
     }
 }
@@ -638,15 +687,22 @@ fn convert_data_type(ty: sql::DataType) -> Result<ast::DataType> {
         | sql::DataType::Float(_)
         | sql::DataType::Float4
         | sql::DataType::Float8 => ast::DataType::Float64,
-        sql::DataType::Decimal(info)
-        | sql::DataType::Numeric(info)
-        | sql::DataType::Dec(info) => match info {
-            sql::ExactNumberInfo::PrecisionAndScale(p, s) => {
-                ast::DataType::Decimal { precision: p as u8, scale: s as u8 }
+        sql::DataType::Decimal(info) | sql::DataType::Numeric(info) | sql::DataType::Dec(info) => {
+            match info {
+                sql::ExactNumberInfo::PrecisionAndScale(p, s) => ast::DataType::Decimal {
+                    precision: p as u8,
+                    scale: s as u8,
+                },
+                sql::ExactNumberInfo::Precision(p) => ast::DataType::Decimal {
+                    precision: p as u8,
+                    scale: 0,
+                },
+                sql::ExactNumberInfo::None => ast::DataType::Decimal {
+                    precision: 18,
+                    scale: 4,
+                },
             }
-            sql::ExactNumberInfo::Precision(p) => ast::DataType::Decimal { precision: p as u8, scale: 0 },
-            sql::ExactNumberInfo::None => ast::DataType::Decimal { precision: 18, scale: 4 },
-        },
+        }
         sql::DataType::Date => ast::DataType::Date,
         sql::DataType::Datetime(_) | sql::DataType::Timestamp(_, _) => ast::DataType::DateTime,
         sql::DataType::Uuid => ast::DataType::Uuid,
@@ -739,7 +795,8 @@ fn extract_create_table_clauses_from_sql(sql: &str) -> Result<CreateTableClauses
                     if let Some(next_idx) = next_non_ws(&tokens, idx + 1) {
                         if let Token::Word(next_word) = &tokens[next_idx] {
                             if !next_word.value.eq_ignore_ascii_case("select") {
-                                let name = sql::ObjectName(vec![sql::Ident::new(next_word.value.clone())]);
+                                let name =
+                                    sql::ObjectName(vec![sql::Ident::new(next_word.value.clone())]);
                                 as_table = Some(name);
                             }
                         }
@@ -748,8 +805,7 @@ fn extract_create_table_clauses_from_sql(sql: &str) -> Result<CreateTableClauses
             }
             Token::Word(word) if depth == 1 && word.value.eq_ignore_ascii_case("materialized") => {
                 if let Some((name, expr)) = extract_materialized_column(&tokens, idx, depth) {
-                    materialized_columns
-                        .insert(name.to_ascii_lowercase(), convert_expr(expr));
+                    materialized_columns.insert(name.to_ascii_lowercase(), convert_expr(expr));
                 }
             }
             _ => {}
@@ -975,8 +1031,7 @@ fn rewrite_enum_equals(tokens: &mut [Token]) -> Result<()> {
     let mut idx = 0usize;
     while idx < tokens.len() {
         if let Token::Word(word) = &tokens[idx] {
-            if word.value.eq_ignore_ascii_case("enum8")
-                || word.value.eq_ignore_ascii_case("enum16")
+            if word.value.eq_ignore_ascii_case("enum8") || word.value.eq_ignore_ascii_case("enum16")
             {
                 if let Some(open_idx) = next_non_ws(tokens, idx + 1) {
                     if matches!(tokens[open_idx], Token::LParen) {
@@ -1243,7 +1298,9 @@ fn rewrite_insert_columns_with_dots_fallback(sql: &str) -> String {
 fn is_insert_start(tokens: &[Token], idx: usize) -> bool {
     match tokens.get(idx) {
         Some(Token::Word(word)) if word.value.eq_ignore_ascii_case("insert") => {
-            if let Some(Token::Word(next)) = next_non_ws(tokens, idx + 1).and_then(|i| tokens.get(i)) {
+            if let Some(Token::Word(next)) =
+                next_non_ws(tokens, idx + 1).and_then(|i| tokens.get(i))
+            {
                 next.value.eq_ignore_ascii_case("into")
             } else {
                 false

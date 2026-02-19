@@ -2,7 +2,7 @@ use fp_core::ast::{
     AstSerializer, BlockStmt, Expr, ExprBlock, File, Item, ItemDefFunction, Node, Ty, Value,
     ValueFunction,
 };
-use fp_core::pretty::{PrettyOptions, pretty};
+use fp_core::pretty::{pretty, PrettyOptions};
 
 #[derive(Debug, Clone)]
 pub struct PrettyAstSerializer {
@@ -71,10 +71,7 @@ impl AstSerializer for PrettyAstSerializer {
         Ok(format!("{node:?}"))
     }
 
-    fn serialize_def_function(
-        &self,
-        node: &ItemDefFunction,
-    ) -> Result<String, fp_core::Error> {
+    fn serialize_def_function(&self, node: &ItemDefFunction) -> Result<String, fp_core::Error> {
         Ok(format!("{node:?}"))
     }
 }

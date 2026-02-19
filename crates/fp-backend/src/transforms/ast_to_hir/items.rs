@@ -314,15 +314,15 @@ impl HirGenerator {
                     let trait_items = trait_def.items.clone();
                     // Synthesize default trait methods into the impl if they are missing.
                     for trait_item in &trait_items {
-                    let ast::ItemKind::DefFunction(func) = trait_item.kind() else {
-                        continue;
-                    };
-                    if should_drop_const_type_item(trait_item) {
-                        continue;
-                    }
-                    if method_names.contains(&func.name.name) {
-                        continue;
-                    }
+                        let ast::ItemKind::DefFunction(func) = trait_item.kind() else {
+                            continue;
+                        };
+                        if should_drop_const_type_item(trait_item) {
+                            continue;
+                        }
+                        if method_names.contains(&func.name.name) {
+                            continue;
+                        }
                         let method = self.transform_function_with_body(
                             func,
                             Some(self_ty.clone()),

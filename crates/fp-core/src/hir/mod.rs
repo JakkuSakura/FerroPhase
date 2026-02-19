@@ -690,12 +690,14 @@ impl ExprKind {
                 .flatten(),
             ),
             ExprKind::Assign(lhs, rhs) => Span::union([lhs.span(), rhs.span()]),
-            ExprKind::Return(expr) => {
-                expr.as_ref().map(|inner| inner.span()).unwrap_or_else(Span::null)
-            }
-            ExprKind::Break(expr) => {
-                expr.as_ref().map(|inner| inner.span()).unwrap_or_else(Span::null)
-            }
+            ExprKind::Return(expr) => expr
+                .as_ref()
+                .map(|inner| inner.span())
+                .unwrap_or_else(Span::null),
+            ExprKind::Break(expr) => expr
+                .as_ref()
+                .map(|inner| inner.span())
+                .unwrap_or_else(Span::null),
             ExprKind::Continue => Span::null(),
             ExprKind::Loop(block) => block.span(),
             ExprKind::While(cond, block) => Span::union([cond.span(), block.span()]),
@@ -944,9 +946,10 @@ impl GenericParam {
 impl GenericParamKind {
     pub fn span(&self) -> Span {
         match self {
-            GenericParamKind::Type { default } => {
-                default.as_ref().map(|ty| ty.span()).unwrap_or_else(Span::null)
-            }
+            GenericParamKind::Type { default } => default
+                .as_ref()
+                .map(|ty| ty.span())
+                .unwrap_or_else(Span::null),
             GenericParamKind::Const { ty } => ty.span(),
         }
     }

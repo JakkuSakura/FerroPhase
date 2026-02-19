@@ -7,8 +7,8 @@ use crate::ast::{
 };
 use crate::intrinsics::IntrinsicCallKind;
 use crate::ops::{BinOpKind, UnOpKind};
-use crate::{common_enum, common_struct};
 use crate::span::Span;
+use crate::{common_enum, common_struct};
 
 common_enum! {
     pub enum ExprInvokeTarget {
@@ -641,10 +641,7 @@ impl ExprClosure {
 
 impl ExprArray {
     pub fn span(&self) -> Span {
-        span_or(
-            self.span,
-            Span::union(self.values.iter().map(Expr::span)),
-        )
+        span_or(self.span, Span::union(self.values.iter().map(Expr::span)))
     }
 }
 
@@ -825,7 +822,8 @@ pub fn intrinsic_call_from_invoke(invoke: &ExprInvoke) -> Option<ExprIntrinsicCa
 
     match kind {
         IntrinsicCallKind::Print | IntrinsicCallKind::Println => {
-            let (template, skip) = build_string_template_from_args(&invoke.args, invoke.kwargs.len())?;
+            let (template, skip) =
+                build_string_template_from_args(&invoke.args, invoke.kwargs.len())?;
             let mut args = Vec::with_capacity(1 + invoke.args.len().saturating_sub(skip));
             args.push(Expr::new(ExprKind::FormatString(template)));
             args.extend(invoke.args.iter().skip(skip).cloned());

@@ -1,8 +1,8 @@
-pub mod config;
 mod codegen;
+pub mod config;
 
-use crate::config::{CraneliftConfig, EmitKind};
 use crate::codegen::CraneliftBackend;
+use crate::config::{CraneliftConfig, EmitKind};
 use fp_core::error::Result;
 use fp_core::lir::LirProgram;
 use std::path::{Path, PathBuf};

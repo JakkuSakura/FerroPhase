@@ -110,7 +110,10 @@ fn transform_index_expression_to_hir() -> Result<()> {
     let body = ast::Expr::block(ast::ExprBlock::new_expr(index_expr));
     let items = vec![make_fn(
         "pick",
-        vec![(ident("values"), array_ty), (ident("idx"), ty_ident("usize"))],
+        vec![
+            (ident("values"), array_ty),
+            (ident("idx"), ty_ident("usize")),
+        ],
         int_ty(),
         body,
     )];
@@ -210,10 +213,7 @@ fn transform_intrinsic_container_to_hir() -> Result<()> {
 
 #[test]
 fn transform_file_with_function_and_struct() -> Result<()> {
-    let point = make_struct(
-        "Point",
-        vec![("x", int_ty()), ("y", int_ty())],
-    );
+    let point = make_struct("Point", vec![("x", int_ty()), ("y", int_ty())]);
     let add_body = ast::Expr::from(ast::ExprKind::BinOp(ast::ExprBinOp {
         span: fp_core::span::Span::null(),
         kind: BinOpKind::Add,
@@ -370,14 +370,8 @@ fn transform_scoped_block_name_resolution() -> Result<()> {
         lhs: Box::new(ast::Expr::ident(ident("c"))),
         rhs: Box::new(ast::Expr::ident(ident("a"))),
     }));
-    let inner_block = ast::Expr::block(ast::ExprBlock::new_stmts_expr(
-        vec![stmt_c],
-        sum_expr,
-    ));
-    let outer_body = ast::Expr::block(ast::ExprBlock::new_stmts_expr(
-        vec![stmt_b],
-        inner_block,
-    ));
+    let inner_block = ast::Expr::block(ast::ExprBlock::new_stmts_expr(vec![stmt_c], sum_expr));
+    let outer_body = ast::Expr::block(ast::ExprBlock::new_stmts_expr(vec![stmt_b], inner_block));
     let items = vec![make_fn(
         "outer",
         vec![(ident("a"), int_ty())],

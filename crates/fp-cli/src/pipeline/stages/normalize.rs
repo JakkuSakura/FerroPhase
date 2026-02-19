@@ -1,6 +1,6 @@
 use super::super::*;
-use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use fp_core::ast::{File, ItemKind, Node, NodeKind};
+use fp_pipeline::{PipelineDiagnostics, PipelineError, PipelineStage};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -88,7 +88,10 @@ impl Pipeline {
                     let base_dir = std_path.parent().unwrap_or_else(|| Path::new("."));
                     let mut loader = FileModuleLoader::new(self, options, &frontend);
                     let items = loader.resolve_items(&file.items, base_dir)?;
-                    std_node = Node::file(File { path: file.path, items });
+                    std_node = Node::file(File {
+                        path: file.path,
+                        items,
+                    });
                 }
                 merged = merge_std_module(
                     merged,

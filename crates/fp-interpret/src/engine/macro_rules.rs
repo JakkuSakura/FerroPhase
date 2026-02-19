@@ -20,7 +20,10 @@ pub struct MacroRule {
 enum MacroMatcher {
     Token(String),
     Group(MacroDelimiter, Vec<MacroMatcher>),
-    MetaVar { name: String, kind: FragmentKind },
+    MetaVar {
+        name: String,
+        kind: FragmentKind,
+    },
     Repeat {
         inner: Vec<MacroMatcher>,
         separator: Option<String>,
@@ -185,7 +188,8 @@ fn parse_matchers(tokens: &[MacroTokenTree]) -> Result<Vec<MacroMatcher>> {
                     MacroTokenTree::Token(name_tok) => {
                         let name = name_tok.text.clone();
                         idx += 1;
-                        let kind = if matches!(tokens.get(idx), Some(MacroTokenTree::Token(tok)) if tok.text == ":") {
+                        let kind = if matches!(tokens.get(idx), Some(MacroTokenTree::Token(tok)) if tok.text == ":")
+                        {
                             idx += 1;
                             let Some(MacroTokenTree::Token(kind_tok)) = tokens.get(idx) else {
                                 return Err(Error::from("macro matcher missing fragment kind"));
@@ -314,10 +318,7 @@ fn parse_fragment_kind(text: &str) -> Result<FragmentKind> {
     })
 }
 
-fn match_rule(
-    matcher: &[MacroMatcher],
-    tokens: &[MacroTokenTree],
-) -> Result<Option<Captures>> {
+fn match_rule(matcher: &[MacroMatcher], tokens: &[MacroTokenTree]) -> Result<Option<Captures>> {
     let mut captures = Captures::default();
     if match_sequence(matcher, tokens, 0, &mut captures)?.is_some() {
         Ok(Some(captures))
@@ -352,8 +353,7 @@ fn match_sequence(
                     return Ok(None);
                 }
                 let mut inner_caps = Captures::default();
-                let Some(consumed) =
-                    match_sequence(inner, &group.tokens, 0, &mut inner_caps)?
+                let Some(consumed) = match_sequence(inner, &group.tokens, 0, &mut inner_caps)?
                 else {
                     return Ok(None);
                 };
@@ -382,7 +382,8 @@ fn match_sequence(
                 let mut count = 0usize;
                 loop {
                     let mut inner_caps = Captures::default();
-                    let Some(consumed) = match_sequence(inner, tokens, idx, &mut inner_caps)? else {
+                    let Some(consumed) = match_sequence(inner, tokens, idx, &mut inner_caps)?
+                    else {
                         break;
                     };
                     if consumed == idx {
@@ -451,7 +452,10 @@ fn match_variable_length(
     Ok(None)
 }
 
-fn expand_template(templates: &[MacroTemplate], captures: &Captures) -> Result<Vec<MacroTokenTree>> {
+fn expand_template(
+    templates: &[MacroTemplate],
+    captures: &Captures,
+) -> Result<Vec<MacroTokenTree>> {
     let mut out = Vec::new();
     for item in templates {
         match item {

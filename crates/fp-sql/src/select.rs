@@ -112,22 +112,19 @@ mod tests {
 
     #[test]
     fn detects_from_followed_by_quote() {
-        let projection = extract_select_projection("SELECT a FROM'table'")
-            .expect("projection");
+        let projection = extract_select_projection("SELECT a FROM'table'").expect("projection");
         assert_eq!(projection.trim(), "a");
     }
 
     #[test]
     fn detects_from_followed_by_double_quote() {
-        let projection = extract_select_projection("SELECT a FROM\"table\"")
-            .expect("projection");
+        let projection = extract_select_projection("SELECT a FROM\"table\"").expect("projection");
         assert_eq!(projection.trim(), "a");
     }
 
     #[test]
     fn detects_from_followed_by_backtick() {
-        let projection = extract_select_projection("SELECT a FROM`table`")
-            .expect("projection");
+        let projection = extract_select_projection("SELECT a FROM`table`").expect("projection");
         assert_eq!(projection.trim(), "a");
     }
 }

@@ -187,7 +187,10 @@ impl LirGenerator {
         let calling_convention = self.calling_convention_for_abi(&mir_func.abi);
         let linkage = if mir_func.is_extern {
             lir::Linkage::External
-        } else if matches!(mir_func.abi, mir::ty::Abi::C { .. } | mir::ty::Abi::System { .. }) {
+        } else if matches!(
+            mir_func.abi,
+            mir::ty::Abi::C { .. } | mir::ty::Abi::System { .. }
+        ) {
             lir::Linkage::External
         } else {
             lir::Linkage::Internal
@@ -949,10 +952,8 @@ impl LirGenerator {
                         let ptr_ty = lir::LirType::Ptr(Box::new(elem_lir_ty.clone()));
                         let base_ptr = match base_lir_ty.as_ref() {
                             Some(lir::LirType::Struct { .. })
-                                if Self::slice_element_type(
-                                    base_lir_ty.as_ref().unwrap(),
-                                )
-                                .is_some() =>
+                                if Self::slice_element_type(base_lir_ty.as_ref().unwrap())
+                                    .is_some() =>
                             {
                                 self.extract_slice_field(
                                     base_value,
@@ -982,7 +983,10 @@ impl LirGenerator {
                         let len_id = self.next_id();
                         instructions.push(lir::LirInstruction {
                             id: len_id,
-                            kind: lir::LirInstructionKind::Sub(end_value.clone(), start_value.clone()),
+                            kind: lir::LirInstructionKind::Sub(
+                                end_value.clone(),
+                                start_value.clone(),
+                            ),
                             type_hint: Some(lir::LirType::I64),
                             debug_info: None,
                         });

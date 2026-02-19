@@ -15,7 +15,7 @@ mod patterns; // pattern lowering // shared path/locator helpers
 #[cfg(test)]
 mod tests;
 
-use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
+use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
 
 const DIAGNOSTIC_CONTEXT: &str = "ast_to_hir";
 
@@ -625,9 +625,7 @@ impl HirGenerator {
         if self.module_path.is_empty() {
             name.to_string()
         } else {
-            self.module_path
-                .with_segment(name.to_string())
-                .to_key()
+            self.module_path.with_segment(name.to_string()).to_key()
         }
     }
 
@@ -1605,11 +1603,14 @@ impl HirGenerator {
         if let ast::Value::Type(ty) = value {
             return ty.clone();
         }
-        if let Some(ty) = self.literal_type_kind_from_value(value).and_then(|kind| match kind {
-            LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
-            LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
-            LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
-        }) {
+        if let Some(ty) = self
+            .literal_type_kind_from_value(value)
+            .and_then(|kind| match kind {
+                LiteralTypeKind::Primitive(prim) => Some(ast::Ty::Primitive(prim)),
+                LiteralTypeKind::Unit => Some(ast::Ty::Unit(ast::TypeUnit)),
+                LiteralTypeKind::Null => Some(ast::Ty::Nothing(ast::TypeNothing)),
+            })
+        {
             return ty;
         }
         self.add_error(
@@ -2068,12 +2069,8 @@ impl HirGenerator {
 
 fn should_drop_quote_item(item: &ast::Item) -> bool {
     match item.kind() {
-        ItemKind::DefFunction(func) => {
-            signature_contains_quote(&func.sig)
-        }
-        ItemKind::DeclFunction(func) => {
-            signature_contains_quote(&func.sig)
-        }
+        ItemKind::DefFunction(func) => signature_contains_quote(&func.sig),
+        ItemKind::DeclFunction(func) => signature_contains_quote(&func.sig),
         ItemKind::DefConst(def) => {
             def.ty_annotation()
                 .or_else(|| def.ty.as_ref())
@@ -2105,7 +2102,10 @@ fn should_drop_const_type_item(item: &ast::Item) -> bool {
                     .ty_annotation
                     .as_ref()
                     .is_some_and(ty_contains_type_type)
-                || func.ty.as_ref().is_some_and(type_function_contains_type_type)
+                || func
+                    .ty
+                    .as_ref()
+                    .is_some_and(type_function_contains_type_type)
         }
         ItemKind::DeclFunction(func) => {
             func.sig.is_const && signature_contains_type_type(&func.sig)
@@ -2137,20 +2137,26 @@ fn ty_contains_quote(ty: &ast::Ty) -> bool {
         ast::Ty::Vec(vec) => ty_contains_quote(&vec.ty),
         ast::Ty::Reference(reference) => ty_contains_quote(&reference.ty),
         ast::Ty::Slice(slice) => ty_contains_quote(&slice.elem),
-        ast::Ty::Struct(def) => def.fields.iter().any(|field| ty_contains_quote(&field.value)),
-        ast::Ty::Structural(def) => def.fields.iter().any(|field| ty_contains_quote(&field.value)),
+        ast::Ty::Struct(def) => def
+            .fields
+            .iter()
+            .any(|field| ty_contains_quote(&field.value)),
+        ast::Ty::Structural(def) => def
+            .fields
+            .iter()
+            .any(|field| ty_contains_quote(&field.value)),
         ast::Ty::Enum(def) => def
             .variants
             .iter()
             .any(|variant| ty_contains_quote(&variant.value)),
-        ast::Ty::Function(func) => func.params.iter().any(ty_contains_quote)
-            || func
-                .ret_ty
-                .as_ref()
-                .is_some_and(|ty| ty_contains_quote(ty.as_ref())),
-        ast::Ty::TypeBinaryOp(op) => {
-            ty_contains_quote(&op.lhs) || ty_contains_quote(&op.rhs)
+        ast::Ty::Function(func) => {
+            func.params.iter().any(ty_contains_quote)
+                || func
+                    .ret_ty
+                    .as_ref()
+                    .is_some_and(|ty| ty_contains_quote(ty.as_ref()))
         }
+        ast::Ty::TypeBinaryOp(op) => ty_contains_quote(&op.lhs) || ty_contains_quote(&op.rhs),
         ast::Ty::TypeBounds(bounds) => bounds
             .bounds
             .iter()
@@ -2177,7 +2183,10 @@ fn ty_contains_type_type(ty: &ast::Ty) -> bool {
         ast::Ty::Vec(vec) => ty_contains_type_type(&vec.ty),
         ast::Ty::Reference(reference) => ty_contains_type_type(&reference.ty),
         ast::Ty::Slice(slice) => ty_contains_type_type(&slice.elem),
-        ast::Ty::Struct(def) => def.fields.iter().any(|field| ty_contains_type_type(&field.value)),
+        ast::Ty::Struct(def) => def
+            .fields
+            .iter()
+            .any(|field| ty_contains_type_type(&field.value)),
         ast::Ty::Structural(def) => def
             .fields
             .iter()
@@ -2232,11 +2241,9 @@ fn expr_contains_type_type(expr: &ast::Expr) -> bool {
 fn value_contains_quote(value: &ast::Value) -> bool {
     match value {
         ast::Value::QuoteToken(_) => true,
-        ast::Value::List(list) => !list.values.is_empty()
-            && list
-                .values
-                .iter()
-                .all(|value| value_contains_quote(value)),
+        ast::Value::List(list) => {
+            !list.values.is_empty() && list.values.iter().all(|value| value_contains_quote(value))
+        }
         _ => false,
     }
 }

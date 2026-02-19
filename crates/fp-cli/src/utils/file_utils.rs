@@ -155,8 +155,8 @@ impl FileWatcher {
     pub fn check_for_changes(&mut self) -> Result<Vec<PathBuf>> {
         let mut changed_files = Vec::new();
 
-        self.watched_files.retain(|file| {
-            match FileUtils::modification_time(file) {
+        self.watched_files
+            .retain(|file| match FileUtils::modification_time(file) {
                 Ok(current_time) => {
                     if let Some(&last_time) = self.last_modified.get(file) {
                         if current_time > last_time {
@@ -174,8 +174,7 @@ impl FileWatcher {
                     false
                 }
                 Err(_) => true,
-            }
-        });
+            });
 
         Ok(changed_files)
     }

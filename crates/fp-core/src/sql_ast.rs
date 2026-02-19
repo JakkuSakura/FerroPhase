@@ -544,7 +544,11 @@ impl Display for Expr {
             Expr::Array(exprs) => write!(f, "[{}]", join_display(exprs, ", ")),
             Expr::Function(func) => write!(f, "{func}"),
             Expr::Cast { expr, data_type } => write!(f, "CAST({expr} AS {data_type})"),
-            Expr::InList { expr, list, negated } => {
+            Expr::InList {
+                expr,
+                list,
+                negated,
+            } => {
                 let not = if *negated { " NOT" } else { "" };
                 write!(f, "{expr}{not} IN ({})", join_display(list, ", "))
             }
@@ -608,7 +612,10 @@ impl Display for WindowSpec {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
         if !self.partition_by.is_empty() {
-            parts.push(format!("PARTITION BY {}", join_display(&self.partition_by, ", ")));
+            parts.push(format!(
+                "PARTITION BY {}",
+                join_display(&self.partition_by, ", ")
+            ));
         }
         if !self.order_by.is_empty() {
             parts.push(format!("ORDER BY {}", join_display(&self.order_by, ", ")));

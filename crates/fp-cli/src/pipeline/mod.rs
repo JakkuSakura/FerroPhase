@@ -1,9 +1,9 @@
 use crate::CliError;
 use crate::codegen::CodeGenerator;
 use crate::languages::frontend::{
-    FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, HclFrontend,
-    JsonFrontend, JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, PythonFrontend, GoFrontend,
-    SqlFrontend, TomlFrontend, TypeScriptFrontend, WitFrontend,
+    FerroFrontend, FlatbuffersFrontend, FrontendResult, FrontendSnapshot, GoFrontend, HclFrontend,
+    JsonFrontend, JsonSchemaFrontend, LanguageFrontend, PrqlFrontend, PythonFrontend, SqlFrontend,
+    TomlFrontend, TypeScriptFrontend, WitFrontend,
 };
 use crate::languages::{self, detect_source_language};
 use fp_backend::transformations::{HirGenerator, LirGenerator, MirLowering};
@@ -42,9 +42,7 @@ mod options;
 mod stages;
 use self::diagnostics as diag;
 use artifacts::LlvmArtifacts;
-pub use options::{
-    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
-};
+pub use options::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 
 const STAGE_FRONTEND: &str = "frontend";
 const STAGE_CONST_EVAL: &str = "const-eval";
@@ -424,9 +422,7 @@ impl Pipeline {
             Ok(result) => result,
             Err(err) => {
                 if let fp_core::error::Error::Diagnostic(diag) = &err {
-                    let diag = diag
-                        .clone()
-                        .with_source_context(STAGE_FRONTEND.to_string());
+                    let diag = diag.clone().with_source_context(STAGE_FRONTEND.to_string());
                     diag::emit(&[diag], Some(STAGE_FRONTEND), options);
                     return Err(Self::stage_failure(STAGE_FRONTEND));
                 }
@@ -753,11 +749,8 @@ impl Pipeline {
                     } else if backend == "cranelift" || backend == "fp-cranelift" {
                         let stage_started = std::time::Instant::now();
                         info!("pipeline: start {}", STAGE_LINK_BINARY);
-                        let binary_path = self.stage_link_binary_cranelift(
-                            &lir.lir_program,
-                            base_path,
-                            options,
-                        )?;
+                        let binary_path =
+                            self.stage_link_binary_cranelift(&lir.lir_program, base_path, options)?;
                         info!(
                             "pipeline: finished {} in {:.2?}",
                             STAGE_LINK_BINARY,

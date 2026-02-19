@@ -512,10 +512,7 @@ impl MirLowering {
                         hir::ImplItemKind::Method(func) => {
                             for param in &func.sig.inputs {
                                 Self::collect_def_ids_from_type(
-                                    &param.ty,
-                                    full_map,
-                                    tail_map,
-                                    work,
+                                    &param.ty, full_map, tail_map, work,
                                 );
                             }
                             Self::collect_def_ids_from_type(
@@ -534,12 +531,7 @@ impl MirLowering {
                             }
                         }
                         hir::ImplItemKind::AssocConst(konst) => {
-                            Self::collect_def_ids_from_type(
-                                &konst.ty,
-                                full_map,
-                                tail_map,
-                                work,
-                            );
+                            Self::collect_def_ids_from_type(&konst.ty, full_map, tail_map, work);
                             Self::collect_def_ids_from_expr(
                                 &konst.body.value,
                                 full_map,
@@ -637,8 +629,7 @@ impl MirLowering {
                     work.push_back(def_id);
                 }
             }
-            hir::ExprKind::Binary(_, lhs, rhs)
-            | hir::ExprKind::Assign(lhs, rhs) => {
+            hir::ExprKind::Binary(_, lhs, rhs) | hir::ExprKind::Assign(lhs, rhs) => {
                 Self::collect_def_ids_from_expr(lhs, full_map, tail_map, work);
                 Self::collect_def_ids_from_expr(rhs, full_map, tail_map, work);
             }
@@ -1364,7 +1355,11 @@ impl MirLowering {
                     self.lower_type_expr_with_context_for_abi(&param.ty, method_context, &sig.abi)
                 })
                 .collect(),
-            output: self.lower_type_expr_with_context_for_abi(&sig.output, method_context, &sig.abi),
+            output: self.lower_type_expr_with_context_for_abi(
+                &sig.output,
+                method_context,
+                &sig.abi,
+            ),
         }
     }
 
@@ -1981,9 +1976,7 @@ impl MirLowering {
             hir::TypeExprKind::Never => Ty {
                 kind: TyKind::Never,
             },
-            hir::TypeExprKind::Infer => {
-                self.error_ty()
-            }
+            hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
             _ => {
                 self.emit_error(ty_expr.span, "type lowering not yet supported");
@@ -7792,13 +7785,12 @@ impl<'a> BodyBuilder<'a> {
                     }
                     if abi_is_c {
                         if let TyKind::Ref(_region, _inner, mutability) = &expected_ty.kind {
-                            let mut place = if let Some(place) =
-                                self.lower_place(&reference.expr)?
-                            {
-                                place
-                            } else {
-                                self.materialize_expr_place(&reference.expr)?
-                            };
+                            let mut place =
+                                if let Some(place) = self.lower_place(&reference.expr)? {
+                                    place
+                                } else {
+                                    self.materialize_expr_place(&reference.expr)?
+                                };
                             if let TyKind::Ref(_, inner_ty, _) = &place.ty.kind {
                                 place.place.projection.push(mir::PlaceElem::Deref);
                                 place.ty = inner_ty.as_ref().clone();
@@ -7849,8 +7841,7 @@ impl<'a> BodyBuilder<'a> {
             let mut operand = self.lower_operand(&arg.value, expected_ty)?;
             if let Some(expected_ty) = expected_ty {
                 if let TyKind::Ref(region, inner, mutability) = &expected_ty.kind {
-                    let borrow_expr = if let hir::ExprKind::Reference(reference) = &arg.value.kind
-                    {
+                    let borrow_expr = if let hir::ExprKind::Reference(reference) = &arg.value.kind {
                         reference.expr.as_ref()
                     } else {
                         &arg.value
@@ -7903,8 +7894,7 @@ impl<'a> BodyBuilder<'a> {
                         ty: ref_ty,
                     };
                 } else if let TyKind::RawPtr(type_and_mut) = &expected_ty.kind {
-                    let borrow_expr = if let hir::ExprKind::Reference(reference) = &arg.value.kind
-                    {
+                    let borrow_expr = if let hir::ExprKind::Reference(reference) = &arg.value.kind {
                         reference.expr.as_ref()
                     } else {
                         &arg.value
@@ -8531,7 +8521,6 @@ impl<'a> BodyBuilder<'a> {
             });
             return Ok((operand, info.sig.clone(), Some(info.fn_name.clone())));
         }
-
 
         self.lowering.emit_error(
             callee.span,
@@ -12392,9 +12381,9 @@ impl<'a> BodyBuilder<'a> {
                                         place,
                                         mir::Rvalue::ContainerLen {
                                             kind,
-                                            container: mir::Operand::copy(
-                                                mir::Place::from_local(local_id),
-                                            ),
+                                            container: mir::Operand::copy(mir::Place::from_local(
+                                                local_id,
+                                            )),
                                         },
                                     ),
                                 };

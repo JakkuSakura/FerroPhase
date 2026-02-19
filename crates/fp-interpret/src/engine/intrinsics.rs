@@ -57,7 +57,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                 .cloned()
                 .or_else(|| self.lookup_value(&ident))
             {
-                let rendered = format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
+                let rendered =
+                    format_value_with_spec(&value, None).map_err(|err| err.to_string())?;
                 out.push_str(&rendered);
             } else {
                 out.push('{');
@@ -402,7 +403,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 let input = self.eval_expr(&mut call.args[0]);
                 let Value::TokenStream(stream) = input else {
-                    self.emit_error("proc macro token_stream_to_string expects a TokenStream argument");
+                    self.emit_error(
+                        "proc macro token_stream_to_string expects a TokenStream argument",
+                    );
                     return Value::undefined();
                 };
                 Value::string(token_stream_to_string(&stream.tokens))
@@ -969,8 +972,7 @@ fn token_stream_to_string(tokens: &[MacroTokenTree]) -> String {
 
 fn split_format_call(
     call: &mut ExprIntrinsicCall,
-) -> std::result::Result<Option<(&mut ExprStringTemplate, &mut [Expr], &mut [ExprKwArg])>, String>
-{
+) -> std::result::Result<Option<(&mut ExprStringTemplate, &mut [Expr], &mut [ExprKwArg])>, String> {
     let (first, rest) = match call.args.split_first_mut() {
         Some(parts) => parts,
         None => return Ok(None),

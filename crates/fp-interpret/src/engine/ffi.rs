@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::ffi::{c_void, CString};
 
 use fp_core::ast::{
-    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive,
-    TypeReference, Value, ValueChar, ValuePointer,
+    Abi, DecimalType, ExprKind, FunctionSignature, Name, Ty, TypeInt, TypePrimitive, TypeReference,
+    Value, ValueChar, ValuePointer,
 };
 use fp_core::error::{Error, Result};
 use libffi::middle::{Arg, Cif, CodePtr, Type};
@@ -198,9 +198,9 @@ fn ffi_type_for_arg(ty: &Ty) -> Result<Type> {
             DecimalType::F32 => Type::f32(),
             _ => return Err(Error::from("unsupported extern decimal arg")),
         }),
-        Ty::Primitive(TypePrimitive::String) => Err(Error::from(
-            "unsupported extern string arg type; use &CStr",
-        )),
+        Ty::Primitive(TypePrimitive::String) => {
+            Err(Error::from("unsupported extern string arg type; use &CStr"))
+        }
         Ty::Reference(TypeReference { ty, .. }) => {
             if resolves_to_string(ty.as_ref()) {
                 Err(Error::from("unsupported extern &str arg type; use &CStr"))
@@ -270,9 +270,7 @@ fn push_arg_value(
             _ => return Err(Error::from("expected float argument")),
         },
         Ty::Primitive(TypePrimitive::String) => {
-            return Err(Error::from(
-                "unsupported extern string arg type; use &CStr",
-            ));
+            return Err(Error::from("unsupported extern string arg type; use &CStr"));
         }
         Ty::Reference(TypeReference { ty, .. }) => {
             if resolves_to_string(ty.as_ref()) {
@@ -398,8 +396,5 @@ fn load_libc() -> Result<Library> {
         }
     }
 
-    Err(Error::from(format!(
-        "failed to load libc: {:?}",
-        last_err
-    )))
+    Err(Error::from(format!("failed to load libc: {:?}", last_err)))
 }

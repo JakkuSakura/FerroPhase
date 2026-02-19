@@ -1,12 +1,12 @@
 pub use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 pub use fp_flatbuffers::FlatbuffersFrontend;
+pub use fp_golang::GoFrontend;
 pub use fp_hcl::HclFrontend;
 pub use fp_json::JsonFrontend;
 pub use fp_jsonschema::JsonSchemaFrontend;
 pub use fp_lang::FerroFrontend;
 pub use fp_prql::PrqlFrontend;
 pub use fp_python::PythonFrontend;
-pub use fp_golang::GoFrontend;
 pub use fp_sql::SqlFrontend;
 pub use fp_toml::TomlFrontend;
 pub use fp_typescript::TypeScriptFrontend;
