@@ -254,7 +254,15 @@ fn parse_prql_pipeline(pipeline: &str, passes: &mut Vec<MirPassName>) -> Result<
 
 fn parse_pass_list(raw: &str, passes: &mut Vec<MirPassName>) -> Result<(), Error> {
     for token in raw.split(|ch: char| ch == ',' || ch.is_whitespace() || ch == '|') {
-        let ident = token.trim().trim_matches('"').trim_matches('`');
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let trimmed = trimmed.trim_matches(|ch| ch == '"' || ch == '`' || ch == '\'');
+        let ident = match trimmed.find(|ch| ch == '"' || ch == '`' || ch == '\'') {
+            Some(idx) => &trimmed[..idx],
+            None => trimmed,
+        };
         if ident.is_empty() || ident == "*" {
             continue;
         }
