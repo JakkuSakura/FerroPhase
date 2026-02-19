@@ -294,7 +294,7 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
 
     for (idx, ch) in input.char_indices().skip(start) {
         match ch {
-            ''' if !in_double && !in_backtick => {
+            '\'' if !in_double && !in_backtick => {
                 if let Some(found) = flush_word(idx, &mut word_start) {
                     return Some(found);
                 }
