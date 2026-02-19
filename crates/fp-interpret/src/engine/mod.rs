@@ -1,26 +1,28 @@
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::io::Write;
 use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use std::io::Write;
 
+use crate::engine::ffi::FfiRuntime;
+use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
 use crate::error::interpretation_error;
 use crate::intrinsics::IntrinsicsRegistry;
 use fp_core::ast::DecimalType;
-use fp_core::ast::{Pattern, PatternKind};
 use fp_core::ast::{
-    Abi, AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure, ExprField,
-    ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
+    Abi, AttrMeta, AttrMetaNameValue, Attribute, BlockStmt, Expr, ExprBlock, ExprClosure,
+    ExprField, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprQuote, ExprRange,
     ExprRangeLimit, ExprStringTemplate, FormatArgRef, FormatTemplatePart, FunctionParam,
     FunctionSignature, Item, ItemDeclFunction, ItemDefFunction, ItemImport, ItemImportTree,
-    ItemKind, MacroDelimiter, MacroGroup,
-    MacroInvocation, MacroToken, MacroTokenTree, Node, NodeKind, Path, QuoteFragmentKind,
-    QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny, TypeTokenStream, TypeArray,
-    TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
-    TypeStruct, TypeStructural, TypeTuple, TypeType, TypeUnit, TypeVec, Value, ValueField,
-    ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream, ValueTuple,
+    ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Node,
+    NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
+    TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
+    TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeType, TypeUnit, TypeVec,
+    Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
+    ValueTuple,
 };
 use fp_core::ast::{Ident, Name};
+use fp_core::ast::{Pattern, PatternKind};
 use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
@@ -35,15 +37,13 @@ use fp_core::utils::anybox::AnyBox;
 use fp_typing::{AstTypeInferencer, TypeResolutionHook};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
-use crate::engine::macro_rules::{expand_macro, parse_macro_rules, MacroRulesDefinition};
-use crate::engine::ffi::FfiRuntime;
 mod blocks;
 mod closures;
 mod const_regions;
 mod env;
 mod eval_expr;
-mod ffi;
 mod eval_stmt;
+mod ffi;
 mod intrinsics;
 mod macro_rules;
 mod operators;
@@ -877,11 +877,15 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.runtime_tasks.clear();
         self.runtime_value_stack.clear();
         self.block_stack.clear();
-        self.runtime_tasks.push(RuntimeTask::Eval(expr as *mut Expr));
+        self.runtime_tasks
+            .push(RuntimeTask::Eval(expr as *mut Expr));
         Ok(())
     }
 
-    pub fn step_const_eval(&mut self, max_steps: usize) -> std::result::Result<EvalStepOutcome, String> {
+    pub fn step_const_eval(
+        &mut self,
+        max_steps: usize,
+    ) -> std::result::Result<EvalStepOutcome, String> {
         match self.active_eval {
             Some(ActiveEval::Const) => {}
             Some(ActiveEval::Runtime) => {
@@ -1100,11 +1104,15 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         let saved_value_env = std::mem::replace(&mut self.value_env, task.value_env.clone());
         let saved_type_env = std::mem::replace(&mut self.type_env, task.type_env.clone());
-        let saved_module_stack = std::mem::replace(&mut self.module_stack, task.module_stack.clone());
+        let saved_module_stack =
+            std::mem::replace(&mut self.module_stack, task.module_stack.clone());
         let saved_impl_stack = std::mem::replace(&mut self.impl_stack, task.impl_stack.clone());
-        let saved_runtime_tasks = std::mem::replace(&mut self.runtime_tasks, task.runtime_tasks.clone());
-        let saved_runtime_stack =
-            std::mem::replace(&mut self.runtime_value_stack, task.runtime_value_stack.clone());
+        let saved_runtime_tasks =
+            std::mem::replace(&mut self.runtime_tasks, task.runtime_tasks.clone());
+        let saved_runtime_stack = std::mem::replace(
+            &mut self.runtime_value_stack,
+            task.runtime_value_stack.clone(),
+        );
         let saved_block_stack = std::mem::replace(&mut self.block_stack, task.block_stack.clone());
         let saved_expr_stack = std::mem::replace(&mut self.expr_stack, task.expr_stack.clone());
         let saved_call_stack = std::mem::replace(&mut self.call_stack, task.call_stack.clone());
@@ -1125,7 +1133,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         self.stack_eval_active = true;
 
         if self.runtime_tasks.is_empty() {
-            self.runtime_tasks.push(RuntimeTask::Eval(task.expr.as_mut() as *mut Expr));
+            self.runtime_tasks
+                .push(RuntimeTask::Eval(task.expr.as_mut() as *mut Expr));
         }
 
         let outcome = self.run_runtime_tasks_limit(steps);
@@ -1135,7 +1144,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         task.module_stack = std::mem::replace(&mut self.module_stack, saved_module_stack);
         task.impl_stack = std::mem::replace(&mut self.impl_stack, saved_impl_stack);
         task.runtime_tasks = std::mem::replace(&mut self.runtime_tasks, saved_runtime_tasks);
-        task.runtime_value_stack = std::mem::replace(&mut self.runtime_value_stack, saved_runtime_stack);
+        task.runtime_value_stack =
+            std::mem::replace(&mut self.runtime_value_stack, saved_runtime_stack);
         task.block_stack = std::mem::replace(&mut self.block_stack, saved_block_stack);
         task.expr_stack = std::mem::replace(&mut self.expr_stack, saved_expr_stack);
         task.call_stack = std::mem::replace(&mut self.call_stack, saved_call_stack);
@@ -1380,10 +1390,7 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn ensure_expr_typed(&mut self, expr: &mut Expr) {
-        let has_type = expr
-            .ty()
-            .map(|ty| !self.is_unknown(ty))
-            .unwrap_or(false);
+        let has_type = expr.ty().map(|ty| !self.is_unknown(ty)).unwrap_or(false);
         if has_type {
             return;
         }
@@ -1510,11 +1517,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         name.map(|name| self.qualified_name(name))
     }
 
-    fn find_item_by_path_mut(
-        &self,
-        items_ptr: *mut Vec<Item>,
-        path: &[&str],
-    ) -> Option<*mut Item> {
+    fn find_item_by_path_mut(&self, items_ptr: *mut Vec<Item>, path: &[&str]) -> Option<*mut Item> {
         if path.is_empty() {
             return None;
         }
@@ -1542,7 +1545,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             for item in items.iter_mut() {
                 if let ItemKind::Module(module) = item.kind_mut() {
                     if module.name.as_str() == path[0] {
-                        return self.find_item_by_path_mut(&mut module.items as *mut Vec<Item>, &path[1..]);
+                        return self.find_item_by_path_mut(
+                            &mut module.items as *mut Vec<Item>,
+                            &path[1..],
+                        );
                     }
                 }
             }
@@ -1640,8 +1646,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             ItemKind::Expr(expr) => {
                 self.clear_expr_types(expr);
             }
-            ItemKind::Import(_) | ItemKind::Macro(_) | ItemKind::DeclConst(_)
-            | ItemKind::DeclStatic(_) | ItemKind::DeclFunction(_) | ItemKind::DeclType(_)
+            ItemKind::Import(_)
+            | ItemKind::Macro(_)
+            | ItemKind::DeclConst(_)
+            | ItemKind::DeclStatic(_)
+            | ItemKind::DeclFunction(_)
+            | ItemKind::DeclType(_)
             | ItemKind::Any(_) => {}
         }
     }
@@ -1993,8 +2003,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.clear_expr_types(expr);
                 }
             }
-            Ty::Primitive(_) | Ty::Unit(_) | Ty::Unknown(_) | Ty::Any(_) | Ty::TokenStream(_)
-            | Ty::ImplTraits(_) | Ty::Value(_) | Ty::Nothing(_) | Ty::AnyBox(_) => {}
+            Ty::Primitive(_)
+            | Ty::Unit(_)
+            | Ty::Unknown(_)
+            | Ty::Any(_)
+            | Ty::TokenStream(_)
+            | Ty::ImplTraits(_)
+            | Ty::Value(_)
+            | Ty::Nothing(_)
+            | Ty::AnyBox(_) => {}
         }
     }
 
@@ -2023,22 +2040,20 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.clear_value_types(&mut field.value);
                 }
             }
-            Value::QuoteToken(token) => {
-                match &mut token.value {
-                    QuoteTokenValue::Expr(expr) => self.clear_expr_types(expr),
-                    QuoteTokenValue::Stmts(stmts) => {
-                        for stmt in stmts {
-                            self.clear_stmt_types(stmt);
-                        }
+            Value::QuoteToken(token) => match &mut token.value {
+                QuoteTokenValue::Expr(expr) => self.clear_expr_types(expr),
+                QuoteTokenValue::Stmts(stmts) => {
+                    for stmt in stmts {
+                        self.clear_stmt_types(stmt);
                     }
-                    QuoteTokenValue::Items(items) => {
-                        for item in items {
-                            self.clear_item_types(item);
-                        }
-                    }
-                    QuoteTokenValue::Type(ty) => self.clear_ty(ty),
                 }
-            }
+                QuoteTokenValue::Items(items) => {
+                    for item in items {
+                        self.clear_item_types(item);
+                    }
+                }
+                QuoteTokenValue::Type(ty) => self.clear_ty(ty),
+            },
             _ => {}
         }
     }
@@ -2441,7 +2456,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         true
     }
 
-    fn proc_macro_registration(&mut self, func: &ItemDefFunction) -> Option<(String, ProcMacroKind)> {
+    fn proc_macro_registration(
+        &mut self,
+        func: &ItemDefFunction,
+    ) -> Option<(String, ProcMacroKind)> {
         let mut registration: Option<(String, ProcMacroKind)> = None;
         for attr in &func.attrs {
             let name = self.attr_name(attr)?;
@@ -2492,9 +2510,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                         continue;
                     }
                 }
-                if self.lookup_proc_macro(&name, ProcMacroKind::Attribute).is_some() {
+                if self
+                    .lookup_proc_macro(&name, ProcMacroKind::Attribute)
+                    .is_some()
+                {
                     if handled {
-                        self.emit_error("multiple proc-macro attributes on one item are not supported");
+                        self.emit_error(
+                            "multiple proc-macro attributes on one item are not supported",
+                        );
                         return true;
                     }
                     let Some(tokens) = self.proc_macro_attribute_tokens(attr, item) else {
@@ -2514,8 +2537,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let output = self.call_function(
                         def.function.clone(),
                         vec![
-                            Value::TokenStream(ValueTokenStream { tokens: attr_tokens }),
-                            Value::TokenStream(ValueTokenStream { tokens: item_tokens }),
+                            Value::TokenStream(ValueTokenStream {
+                                tokens: attr_tokens,
+                            }),
+                            Value::TokenStream(ValueTokenStream {
+                                tokens: item_tokens,
+                            }),
                         ],
                     );
                     let Value::TokenStream(stream) = output else {
@@ -2633,7 +2660,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 AttrMeta::NameValue(nv) => names.push(nv.name.last().as_str().to_string()),
             }
         }
-        if names.is_empty() { None } else { Some(names) }
+        if names.is_empty() {
+            None
+        } else {
+            Some(names)
+        }
     }
 
     fn proc_macro_attribute_tokens(
@@ -3200,10 +3231,8 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         let base_name = decl.name.as_str().to_string();
         let qualified = self.qualified_name(decl.name.as_str());
-        self.extern_functions
-            .insert(base_name, decl.sig.clone());
-        self.extern_functions
-            .insert(qualified, decl.sig.clone());
+        self.extern_functions.insert(base_name, decl.sig.clone());
+        self.extern_functions.insert(qualified, decl.sig.clone());
     }
 
     fn ensure_ffi_runtime(&mut self) -> Result<&mut FfiRuntime> {
@@ -4041,9 +4070,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::Unit(_)
             | Ty::Nothing(_)
             | Ty::Any(_)
-            | Ty::Unknown(_) => {
-                ty.clone()
-            }
+            | Ty::Unknown(_) => ty.clone(),
             Ty::Struct(strct) => Ty::Struct(self.substitute_struct(strct, subst)),
             Ty::Reference(reference) => Ty::Reference(TypeReference {
                 ty: Box::new(self.substitute_ty(&reference.ty, subst)),
@@ -4869,14 +4896,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             match update_value {
                 Value::Struct(value_struct) => {
                     for field in value_struct.structural.fields {
-                        update_fields
-                            .insert(field.name.as_str().to_string(), field.value);
+                        update_fields.insert(field.name.as_str().to_string(), field.value);
                     }
                 }
                 Value::Structural(structural) => {
                     for field in structural.fields {
-                        update_fields
-                            .insert(field.name.as_str().to_string(), field.value);
+                        update_fields.insert(field.name.as_str().to_string(), field.value);
                     }
                 }
                 other => {
@@ -4980,7 +5005,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
             }
             for update_field in update_fields.keys() {
-                if !expected.iter().any(|name| name.as_str() == update_field.as_str()) {
+                if !expected
+                    .iter()
+                    .any(|name| name.as_str() == update_field.as_str())
+                {
                     self.emit_error(format!(
                         "field '{}' does not exist on this struct",
                         update_field
@@ -5471,9 +5499,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
             Value::BigInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
             Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
-            Value::BigDecimal(_) => {
-                Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::BigDecimal)))
-            }
+            Value::BigDecimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(
+                DecimalType::BigDecimal,
+            ))),
             Value::Bool(_) => Some(Ty::Primitive(TypePrimitive::Bool)),
             Value::Char(_) => Some(Ty::Primitive(TypePrimitive::Char)),
             Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
@@ -5564,14 +5592,12 @@ impl<'ctx> AstInterpreter<'ctx> {
             match update_value {
                 Value::Struct(value_struct) => {
                     for field in value_struct.structural.fields {
-                        update_fields
-                            .insert(field.name.as_str().to_string(), field.value);
+                        update_fields.insert(field.name.as_str().to_string(), field.value);
                     }
                 }
                 Value::Structural(structural) => {
                     for field in structural.fields {
-                        update_fields
-                            .insert(field.name.as_str().to_string(), field.value);
+                        update_fields.insert(field.name.as_str().to_string(), field.value);
                     }
                 }
                 other => {
@@ -5735,61 +5761,59 @@ impl<'ctx> AstInterpreter<'ctx> {
                 let replacement = Expr::value(Value::int(len));
                 *array_ty.len = replacement.into();
             }
-            Ty::Expr(expr) => {
-                match expr.kind() {
-                    ExprKind::ConstBlock(_) => {
-                        let value = self.eval_expr(expr.as_mut());
-                        match value {
-                            Value::Type(resolved_ty) => {
-                                *ty = resolved_ty;
-                            }
-                            other => {
-                                self.emit_error(format!(
-                                    "type expression must evaluate to a type, found {}",
-                                    other
-                                ));
-                            }
+            Ty::Expr(expr) => match expr.kind() {
+                ExprKind::ConstBlock(_) => {
+                    let value = self.eval_expr(expr.as_mut());
+                    match value {
+                        Value::Type(resolved_ty) => {
+                            *ty = resolved_ty;
+                        }
+                        other => {
+                            self.emit_error(format!(
+                                "type expression must evaluate to a type, found {}",
+                                other
+                            ));
                         }
                     }
-                    ExprKind::Macro(macro_expr) => {
-                        let parser = match self.macro_parser.clone() {
-                            Some(parser) => parser,
-                            None => {
-                                self.emit_error_at(
-                                    macro_expr.invocation.span,
-                                    "macro expansion requires a parser hook",
-                                );
-                                return;
-                            }
-                        };
-                        if self.macro_depth > 64 {
+                }
+                ExprKind::Macro(macro_expr) => {
+                    let parser = match self.macro_parser.clone() {
+                        Some(parser) => parser,
+                        None => {
                             self.emit_error_at(
                                 macro_expr.invocation.span,
-                                "macro expansion exceeded recursion limit",
+                                "macro expansion requires a parser hook",
                             );
                             return;
                         }
-                        self.macro_depth += 1;
-                        let expanded = self
-                            .expand_macro_invocation(
-                                &macro_expr.invocation,
-                                MacroExpansionContext::Type,
-                            )
-                            .and_then(|tokens| parser.parse_type(&tokens));
-                        self.macro_depth = self.macro_depth.saturating_sub(1);
-                        match expanded {
-                            Ok(new_ty) => {
-                                *ty = new_ty;
-                                self.mark_mutated();
-                            }
-                            Err(err) => {
-                                self.emit_error_at(macro_expr.invocation.span, err.to_string());
-                            }
+                    };
+                    if self.macro_depth > 64 {
+                        self.emit_error_at(
+                            macro_expr.invocation.span,
+                            "macro expansion exceeded recursion limit",
+                        );
+                        return;
+                    }
+                    self.macro_depth += 1;
+                    let expanded = self
+                        .expand_macro_invocation(
+                            &macro_expr.invocation,
+                            MacroExpansionContext::Type,
+                        )
+                        .and_then(|tokens| parser.parse_type(&tokens));
+                    self.macro_depth = self.macro_depth.saturating_sub(1);
+                    match expanded {
+                        Ok(new_ty) => {
+                            *ty = new_ty;
+                            self.mark_mutated();
+                        }
+                        Err(err) => {
+                            self.emit_error_at(macro_expr.invocation.span, err.to_string());
                         }
                     }
-                    _ => {}
                 }
-            }
+                _ => {}
+            },
             _ => {}
         }
     }
@@ -5807,10 +5831,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 .eval_type_method_call(target, "struct_size", Vec::new())
                 .unwrap_or_else(|| Value::undefined()),
             Value::Type(_) => {
-                self.emit_error(format!(
-                    "cannot access field '{}' on type values",
-                    field
-                ));
+                self.emit_error(format!("cannot access field '{}' on type values", field));
                 Value::undefined()
             }
             Value::Struct(value_struct) => value_struct
@@ -6055,10 +6076,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let replacement = match value {
                         Value::List(list) => match key {
                             _ => match self.numeric_to_non_negative_usize(&key, "list index") {
-                                Some(index) => list.values.get(index).cloned().unwrap_or_else(|| {
-                                    self.emit_error("index out of bounds for list");
-                                    Value::undefined()
-                                }),
+                                Some(index) => {
+                                    list.values.get(index).cloned().unwrap_or_else(|| {
+                                        self.emit_error("index out of bounds for list");
+                                        Value::undefined()
+                                    })
+                                }
                                 None => Value::undefined(),
                             },
                         },
@@ -6802,7 +6825,12 @@ fn meta_list_tokens(items: &[AttrMeta]) -> Vec<MacroTokenTree> {
     }
     texts
         .into_iter()
-        .map(|text| MacroTokenTree::Token(MacroToken { text, span: Span::null() }))
+        .map(|text| {
+            MacroTokenTree::Token(MacroToken {
+                text,
+                span: Span::null(),
+            })
+        })
         .collect()
 }
 
@@ -6815,7 +6843,12 @@ fn meta_name_value_tokens(nv: &AttrMetaNameValue) -> Vec<MacroTokenTree> {
     }
     texts
         .into_iter()
-        .map(|text| MacroTokenTree::Token(MacroToken { text, span: Span::null() }))
+        .map(|text| {
+            MacroTokenTree::Token(MacroToken {
+                text,
+                span: Span::null(),
+            })
+        })
         .collect()
 }
 
@@ -6876,7 +6909,9 @@ fn attr_value_text(expr: &Expr) -> Option<String> {
     }
 }
 
-fn macro_token_trees_from_proc_macro_stream(stream: proc_macro2::TokenStream) -> Vec<MacroTokenTree> {
+fn macro_token_trees_from_proc_macro_stream(
+    stream: proc_macro2::TokenStream,
+) -> Vec<MacroTokenTree> {
     stream
         .into_iter()
         .flat_map(macro_token_trees_from_proc_macro_tree)

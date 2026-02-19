@@ -1,8 +1,6 @@
 //! Expression evaluation command implementation
 
-use crate::pipeline::{
-    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
-};
+use crate::pipeline::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 use crate::{
     CliError, Result,
     cli::CliConfig,

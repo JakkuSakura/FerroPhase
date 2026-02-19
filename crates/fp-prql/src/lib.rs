@@ -4,8 +4,8 @@ pub mod compile;
 pub mod dialect;
 pub mod frontend;
 
+pub use compile::{compile_prql, PrqlCompileResult};
 pub use fp_core::query::SqlDialect;
-pub use compile::{PrqlCompileResult, compile_prql};
 pub use frontend::PrqlFrontend;
 
 /// Canonical language identifier for PRQL sources.

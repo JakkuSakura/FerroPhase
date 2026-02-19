@@ -1,7 +1,7 @@
 //! Utility functions for the magnet CLI tool
 
 use crate::models::ManifestModel;
-use eyre::{bail, Result};
+use eyre::{Result, bail};
 use std::path::{Path, PathBuf};
 use tracing::warn;
 use tracing_subscriber::{EnvFilter, fmt};

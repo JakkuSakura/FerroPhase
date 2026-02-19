@@ -6,7 +6,7 @@ use fp_core::ast::{
     DecimalType, EnumTypeVariant, Expr, ExprBlock, ExprInvoke, ExprInvokeTarget, ExprKind, File,
     FunctionParam, FunctionSignature, Ident, Item, ItemDeclConst, ItemDefConst, ItemDefEnum,
     ItemDefFunction, ItemDefStruct, ItemDefType, ItemImport, ItemImportGroup, ItemImportPath,
-    ItemImportRename, ItemImportTree, ItemKind, Name, Module as AstModule, Node, NodeKind,
+    ItemImportRename, ItemImportTree, ItemKind, Module as AstModule, Name, Node, NodeKind,
     StructuralField, Ty, TypeEnum, TypeInt, TypePrimitive, TypeStruct, TypeStructural, TypeTuple,
     TypeVec, Value, Visibility,
 };

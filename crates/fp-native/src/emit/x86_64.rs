@@ -3619,7 +3619,7 @@ fn emit_store(
                 _ => {
                     return Err(Error::from(
                         "unsupported array element size in constant store",
-                    ))
+                    ));
                 }
             }
             Ok(())

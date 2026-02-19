@@ -1259,11 +1259,7 @@ fn render_expr_inline(expr: &ast::Expr) -> String {
             render_expr_inline(index.index.as_ref())
         ),
         ast::ExprKind::Invoke(invoke) => {
-            let mut parts: Vec<String> = invoke
-                .args
-                .iter()
-                .map(render_expr_inline)
-                .collect();
+            let mut parts: Vec<String> = invoke.args.iter().map(render_expr_inline).collect();
             parts.extend(
                 invoke
                     .kwargs

@@ -95,7 +95,11 @@ impl HirGenerator {
                     root_modules.insert(first.to_string());
                 }
             }
-            for key in self.global_type_defs.keys().chain(self.global_value_defs.keys()) {
+            for key in self
+                .global_type_defs
+                .keys()
+                .chain(self.global_value_defs.keys())
+            {
                 if let Ok(parsed) = parse_path(key) {
                     if let Some(head) = parsed.segments.first() {
                         root_modules.insert(head.clone());
@@ -147,10 +151,8 @@ impl HirGenerator {
                 item_exists,
                 scope_contains,
             ) {
-                let mut canonical_segments =
-                    Vec::with_capacity(canonical.segments.len());
-                let offset =
-                    canonical.segments.len().saturating_sub(segments.len());
+                let mut canonical_segments = Vec::with_capacity(canonical.segments.len());
+                let offset = canonical.segments.len().saturating_sub(segments.len());
                 for (idx, seg) in canonical.segments.iter().enumerate() {
                     let args = if idx >= offset {
                         segments[idx - offset].args.clone()

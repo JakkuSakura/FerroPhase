@@ -27,7 +27,8 @@ impl PipelineStage for MaterializeStage {
         context: MaterializeContext,
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<Node, PipelineError> {
-        let materializer = IntrinsicsMaterializer::for_target(&context.target, context.backend.as_deref());
+        let materializer =
+            IntrinsicsMaterializer::for_target(&context.target, context.backend.as_deref());
         let mut ast = context.ast;
         match materializer.materialize(&mut ast) {
             Ok(()) => Ok(ast),
@@ -77,7 +78,10 @@ impl IntrinsicsMaterializer {
         match target {
             BackendKind::Llvm | BackendKind::Binary => {
                 let wants_cranelift = backend
-                    .map(|value| value.eq_ignore_ascii_case("cranelift") || value.eq_ignore_ascii_case("fp-cranelift"))
+                    .map(|value| {
+                        value.eq_ignore_ascii_case("cranelift")
+                            || value.eq_ignore_ascii_case("fp-cranelift")
+                    })
                     .unwrap_or(false);
                 if wants_cranelift {
                     Self {

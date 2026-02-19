@@ -5,7 +5,7 @@
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
-use fp_core::pretty::{PrettyOptions, pretty};
+use fp_core::pretty::{pretty, PrettyOptions};
 use fp_core::Result;
 use pretty_assertions::assert_eq;
 

@@ -293,8 +293,7 @@ pub fn intrinsic_addfield() -> IntrinsicFunction {
             Value::Type(Ty::Struct(type_struct)) => {
                 let mut new_fields = type_struct.fields.clone();
 
-                if let Some(existing) = new_fields.iter_mut().find(|f| f.name.name == field_name)
-                {
+                if let Some(existing) = new_fields.iter_mut().find(|f| f.name.name == field_name) {
                     existing.value = field_type;
                 } else {
                     new_fields.push(StructuralField {

@@ -164,9 +164,7 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
                 call_args.extend(args[skip..].iter().cloned());
                 let replacement = Expr::from_parts(
                     ty_slot.clone(),
-                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(
-                        kind, call_args, Vec::new(),
-                    )),
+                    ExprKind::IntrinsicCall(ExprIntrinsicCall::new(kind, call_args, Vec::new())),
                 );
                 return Ok(NormalizeOutcome::Normalized(replacement));
             }
@@ -180,11 +178,11 @@ impl IntrinsicNormalizer for FerroIntrinsicNormalizer {
             }
         }
 
-    Ok(NormalizeOutcome::Ignored(Expr::from_parts(
-        ty_slot,
-        ExprKind::Macro(macro_expr),
-    )))
-}
+        Ok(NormalizeOutcome::Ignored(Expr::from_parts(
+            ty_slot,
+            ExprKind::Macro(macro_expr),
+        )))
+    }
 }
 
 fn intrinsic_macro_kind(name: &str) -> Option<IntrinsicCallKind> {
@@ -246,8 +244,8 @@ fn parse_expr_macro_tokens(tokens: &[MacroTokenTree]) -> Result<Vec<Expr>> {
             idx += 1;
             continue;
         }
-        let (expr_cst, consumed) =
-            parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id).map_err(|err| {
+        let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id)
+            .map_err(|err| {
                 fp_core::error::Error::from(format!("assert macro parse error: {}", err))
             })?;
         let expr = lower_expr_from_cst(&expr_cst)
@@ -307,13 +305,13 @@ fn parse_macro_tokens_with_type_args(
                     idx += consumed;
                 }
                 Err(_) => {
-                    let (expr_cst, consumed) =
-                        parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id).map_err(|err| {
-                            fp_core::error::Error::from(format!(
-                                "assert macro parse error: {}",
-                                err
-                            ))
-                        })?;
+                    let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(
+                        &lexemes[idx..],
+                        file_id,
+                    )
+                    .map_err(|err| {
+                        fp_core::error::Error::from(format!("assert macro parse error: {}", err))
+                    })?;
                     let expr = lower_expr_from_cst(&expr_cst)
                         .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
                     args.push(Expr::value(Value::Type(Ty::Expr(expr.into()))));
@@ -321,10 +319,10 @@ fn parse_macro_tokens_with_type_args(
                 }
             }
         } else {
-            let (expr_cst, consumed) =
-                parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id).map_err(|err| {
-                    fp_core::error::Error::from(format!("assert macro parse error: {}", err))
-                })?;
+            let (expr_cst, consumed) = parse_expr_lexemes_prefix_to_cst(&lexemes[idx..], file_id)
+                .map_err(|err| {
+                fp_core::error::Error::from(format!("assert macro parse error: {}", err))
+            })?;
             let expr = lower_expr_from_cst(&expr_cst)
                 .map_err(|err| fp_core::error::Error::from(err.to_string()))?;
             args.push(expr);
@@ -345,7 +343,10 @@ fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
     for token in tokens {
         match token {
             MacroTokenTree::Token(tok) => {
-                out.push(Lexeme::token(tok.text.clone(), lex_span_from_span(tok.span)));
+                out.push(Lexeme::token(
+                    tok.text.clone(),
+                    lex_span_from_span(tok.span),
+                ));
             }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {
@@ -527,8 +528,7 @@ fn build_print_template_from_args(args: &[Expr]) -> Result<(ExprStringTemplate, 
                 }
 
                 let template = string.value.clone();
-                let looks_like_format_template =
-                    template.contains('{') || template.contains('%');
+                let looks_like_format_template = template.contains('{') || template.contains('%');
                 if looks_like_format_template {
                     let parts = parse_format_template(&template)?;
                     return Ok((ExprStringTemplate { parts }, 1));

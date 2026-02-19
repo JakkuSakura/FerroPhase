@@ -2,31 +2,30 @@ use crate::ast::items::LowerItemsError;
 use crate::cst::parse_expr_lexemes_prefix_to_cst;
 use crate::lexer::lexeme::{Lexeme, LexemeKind};
 use crate::lexer::tokenizer::lex_lexemes;
-use crate::lexer::tokenizer::Span as LexSpan;
 use crate::lexer::tokenizer::strip_number_suffix;
-use bigdecimal::BigDecimal;
-use num_bigint::BigInt;
+use crate::lexer::tokenizer::Span as LexSpan;
 use crate::syntax::{SyntaxKind, SyntaxNode};
+use bigdecimal::BigDecimal;
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
-    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor, ExprIf,
-    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg, ExprLoop,
-    ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
-    ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple,
-    ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits,
-    Name, MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment,
-    Path, Pattern,
-    PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
-    PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
-    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
-    DecimalType, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeQuote, TypeReference, TypeSlice, TypeStructural, TypeTuple, TypeType,
-    TypeVec, Value, ValueNone, ValueString,
+    BlockStmt, BlockStmtExpr, DecimalType, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait,
+    ExprBinOp, ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
+    ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg,
+    ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
+    ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
+    ExprTry, ExprTuple, ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
+    Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name, ParameterPath,
+    ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent, PatternKind, PatternQuote,
+    PatternQuotePlural, PatternStruct, PatternStructField, PatternStructural, PatternTuple,
+    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
+    QuoteItemKind, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind,
+    TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
+    TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::PathPrefix;
 use fp_core::ops::{BinOpKind, UnOpKind};
+use num_bigint::BigInt;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LowerError {
@@ -1703,7 +1702,10 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
             let value = normalized
                 .parse::<BigInt>()
                 .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok((Value::big_int(value), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
+            ))
         }
         "fb" => {
             let value = normalized
@@ -1716,8 +1718,8 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 ))),
             ))
         }
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-        | "u128" | "usize" => {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => {
             if normalized.contains('.') {
                 return Err(LowerError::InvalidNumber(raw.to_string()));
             }
@@ -1736,7 +1738,10 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 "i128" | "u128" | "isize" | "usize" => TypeInt::I64,
                 _ => TypeInt::I64,
             };
-            Ok((Value::int(value), Some(Ty::Primitive(TypePrimitive::Int(ty)))))
+            Ok((
+                Value::int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(ty))),
+            ))
         }
         "f32" | "f64" => {
             let value = normalized
@@ -1746,7 +1751,10 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 "f32" => DecimalType::F32,
                 _ => DecimalType::F64,
             };
-            Ok((Value::decimal(value), Some(Ty::Primitive(TypePrimitive::Decimal(ty)))))
+            Ok((
+                Value::decimal(value),
+                Some(Ty::Primitive(TypePrimitive::Decimal(ty))),
+            ))
         }
         _ => {
             if normalized.contains('.') {
@@ -2015,7 +2023,7 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
         let file_id = macro_tokens_file_id(&macro_tokens.token_trees);
         let (ty_cst, consumed) =
             crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
-            .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
+                .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
         if lexemes[consumed..]
             .iter()
             .any(|l| l.kind == crate::lexer::LexemeKind::Token)
@@ -2049,7 +2057,10 @@ fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
     for token in tokens {
         match token {
             MacroTokenTree::Token(tok) => {
-                out.push(Lexeme::token(tok.text.clone(), lex_span_from_span(tok.span)));
+                out.push(Lexeme::token(
+                    tok.text.clone(),
+                    lex_span_from_span(tok.span),
+                ));
             }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {
@@ -2325,7 +2336,10 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
         }
         "super" => {
             let mut depth = 0;
-            while segments.first().is_some_and(|ident| ident.as_str() == "super") {
+            while segments
+                .first()
+                .is_some_and(|ident| ident.as_str() == "super")
+            {
                 segments.remove(0);
                 depth += 1;
             }
@@ -2863,7 +2877,6 @@ fn direct_last_ident_token_text(node: &SyntaxNode) -> Option<String> {
         _ => None,
     })
 }
-
 
 fn binop_from_text(op: &str) -> Option<BinOpKind> {
     Some(match op {

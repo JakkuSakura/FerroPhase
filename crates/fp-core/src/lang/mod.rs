@@ -1,9 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 
-use crate::ast::{
-    AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Name, Node, Path, Value,
-};
+use crate::ast::{AttrMeta, Attribute, ExprKind, Ident, Item, ItemKind, Name, Node, Path, Value};
 use crate::intrinsics::IntrinsicCallKind;
 
 #[derive(Clone, Default)]

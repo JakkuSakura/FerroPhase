@@ -56,14 +56,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.runtime_value_stack.push(flow);
                         }
                         ExprKind::BinOp(binop) => {
+                            self.runtime_tasks.push(RuntimeTask::ApplyBinOp(binop.kind));
                             self.runtime_tasks
-                                .push(RuntimeTask::ApplyBinOp(binop.kind));
-                            self.runtime_tasks.push(RuntimeTask::Eval(
-                                binop.rhs.as_mut() as *mut Expr,
-                            ));
-                            self.runtime_tasks.push(RuntimeTask::Eval(
-                                binop.lhs.as_mut() as *mut Expr,
-                            ));
+                                .push(RuntimeTask::Eval(binop.rhs.as_mut() as *mut Expr));
+                            self.runtime_tasks
+                                .push(RuntimeTask::Eval(binop.lhs.as_mut() as *mut Expr));
                         }
                         ExprKind::UnOp(unop) => {
                             self.runtime_tasks
@@ -89,7 +86,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 kind: CollectKind::Tuple,
                             });
                             for expr in tuple.values.iter_mut().rev() {
-                                self.runtime_tasks.push(RuntimeTask::Eval(expr as *mut Expr));
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr as *mut Expr));
                             }
                         }
                         ExprKind::Array(array) => {
@@ -99,7 +97,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 kind: CollectKind::Array,
                             });
                             for expr in array.values.iter_mut().rev() {
-                                self.runtime_tasks.push(RuntimeTask::Eval(expr as *mut Expr));
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(expr as *mut Expr));
                             }
                         }
                         ExprKind::Range(range) => {
@@ -145,9 +144,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                     self.runtime_tasks
                                         .push(RuntimeTask::Eval(expr.as_mut() as *mut Expr));
                                 }
-                                self.runtime_tasks.push(RuntimeTask::Eval(
-                                    index_expr.obj.as_mut() as *mut Expr,
-                                ));
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(index_expr.obj.as_mut() as *mut Expr));
                             } else {
                                 self.runtime_tasks.push(RuntimeTask::ApplyIndex {
                                     has_start: true,
@@ -157,9 +155,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 self.runtime_tasks.push(RuntimeTask::Eval(
                                     index_expr.index.as_mut() as *mut Expr,
                                 ));
-                                self.runtime_tasks.push(RuntimeTask::Eval(
-                                    index_expr.obj.as_mut() as *mut Expr,
-                                ));
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(index_expr.obj.as_mut() as *mut Expr));
                             }
                         }
                         ExprKind::Paren(paren) => {
@@ -206,8 +203,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let RuntimeFlow::Value(lhs_value) = lhs else {
                         return RuntimeStepOutcome::Complete(lhs);
                     };
-                    let value =
-                        self.handle_result(self.evaluate_binop(op, lhs_value, rhs_value));
+                    let value = self.handle_result(self.evaluate_binop(op, lhs_value, rhs_value));
                     self.runtime_value_stack.push(RuntimeFlow::Value(value));
                 }
                 RuntimeTask::ApplyUnOp(op) => {
@@ -278,17 +274,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return RuntimeStepOutcome::Complete(flow);
                     };
                     let result = self.cast_value_to_type(value, &ty);
-                    self.runtime_value_stack
-                        .push(RuntimeFlow::Value(result));
+                    self.runtime_value_stack.push(RuntimeFlow::Value(result));
                 }
                 RuntimeTask::EvalBlock { block, idx } => {
                     let block = unsafe { &mut *block };
                     let block_ptr = block as *mut ExprBlock;
                     if idx >= block.stmts.len() {
-                        let frame = self
-                            .block_stack
-                            .pop()
-                            .unwrap_or(BlockFrame { last_value: Value::unit() });
+                        let frame = self.block_stack.pop().unwrap_or(BlockFrame {
+                            last_value: Value::unit(),
+                        });
                         self.pop_scope();
                         self.runtime_value_stack
                             .push(RuntimeFlow::Value(frame.last_value));
@@ -309,10 +303,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                                             });
                                             continue;
                                         };
-                                        if fragments
-                                            .iter()
-                                            .any(|fragment| matches!(fragment, QuotedFragment::Type(_)))
-                                        {
+                                        if fragments.iter().any(|fragment| {
+                                            matches!(fragment, QuotedFragment::Type(_))
+                                        }) {
                                             self.emit_error(
                                                 "splice<type> is not valid in statement position",
                                             );
@@ -336,14 +329,16 @@ impl<'ctx> AstInterpreter<'ctx> {
                                                 }
                                                 QuotedFragment::Items(items) => {
                                                     for item in items {
-                                                        to_append.push(BlockStmt::Item(Box::new(item)));
+                                                        to_append
+                                                            .push(BlockStmt::Item(Box::new(item)));
                                                     }
                                                 }
                                                 QuotedFragment::Type(_) => {}
                                             }
                                         }
                                         if !to_append.is_empty() {
-                                            if let Some(pending) = self.pending_stmt_splices.last_mut()
+                                            if let Some(pending) =
+                                                self.pending_stmt_splices.last_mut()
                                             {
                                                 pending.extend(to_append);
                                             }
@@ -376,7 +371,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 self.runtime_tasks.push(RuntimeTask::ApplyLet {
                                     pat: stmt_let.pat.clone(),
                                 });
-                                self.runtime_tasks.push(RuntimeTask::Eval(init as *mut Expr));
+                                self.runtime_tasks
+                                    .push(RuntimeTask::Eval(init as *mut Expr));
                             } else {
                                 self.emit_error(
                                     "let bindings without initializer are not supported in runtime",
@@ -543,12 +539,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         let RuntimeFlow::Value(target) = target_flow else {
                             return RuntimeStepOutcome::Complete(target_flow);
                         };
-                        let value = self.evaluate_range_index_slices(
-                            target,
-                            start,
-                            end,
-                            inclusive,
-                        );
+                        let value = self.evaluate_range_index_slices(target, start, end, inclusive);
                         self.runtime_value_stack.push(RuntimeFlow::Value(value));
                     }
                 }
@@ -882,18 +873,21 @@ impl<'ctx> AstInterpreter<'ctx> {
                         None => None,
                     };
                     let start_idx = match start {
-                        Some(value) => match self.numeric_to_non_negative_usize(&value, "range start")
-                        {
-                            Some(value) => Some(value),
-                            None => return RuntimeFlow::Value(Value::undefined()),
-                        },
+                        Some(value) => {
+                            match self.numeric_to_non_negative_usize(&value, "range start") {
+                                Some(value) => Some(value),
+                                None => return RuntimeFlow::Value(Value::undefined()),
+                            }
+                        }
                         None => None,
                     };
                     let end_idx = match end {
-                        Some(value) => match self.numeric_to_non_negative_usize(&value, "range end") {
-                            Some(value) => Some(value),
-                            None => return RuntimeFlow::Value(Value::undefined()),
-                        },
+                        Some(value) => {
+                            match self.numeric_to_non_negative_usize(&value, "range end") {
+                                Some(value) => Some(value),
+                                None => return RuntimeFlow::Value(Value::undefined()),
+                            }
+                        }
                         None => None,
                     };
                     return RuntimeFlow::Value(self.evaluate_range_index_slices(
@@ -921,9 +915,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                         if let Some(ident) = locator.as_ident() {
                             if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
                                 if let Some(shared) = stored.shared_handle() {
-                                    return RuntimeFlow::Value(Value::Any(AnyBox::new(RuntimeRef {
-                                        shared,
-                                    })));
+                                    return RuntimeFlow::Value(Value::Any(AnyBox::new(
+                                        RuntimeRef { shared },
+                                    )));
                                 }
                                 self.emit_error(format!(
                                     "mutable reference requires mutable binding for '{}'",
@@ -1118,16 +1112,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                             self.const_value_stack.push(value);
                         }
                         ExprKind::BinOp(binop) => {
-                            self.const_tasks
-                                .push(ConstTask::ApplyBinOp(binop.kind));
+                            self.const_tasks.push(ConstTask::ApplyBinOp(binop.kind));
                             self.const_tasks
                                 .push(ConstTask::Eval(binop.rhs.as_mut() as *mut Expr));
                             self.const_tasks
                                 .push(ConstTask::Eval(binop.lhs.as_mut() as *mut Expr));
                         }
                         ExprKind::UnOp(unop) => {
-                            self.const_tasks
-                                .push(ConstTask::ApplyUnOp(unop.op.clone()));
+                            self.const_tasks.push(ConstTask::ApplyUnOp(unop.op.clone()));
                             self.const_tasks
                                 .push(ConstTask::Eval(unop.val.as_mut() as *mut Expr));
                         }
@@ -1170,15 +1162,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                                 self.const_tasks
                                     .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
                             } else {
-                                self.const_tasks
-                                    .push(ConstTask::PushValue(Value::int(0)));
+                                self.const_tasks.push(ConstTask::PushValue(Value::int(0)));
                             }
                             if let Some(expr) = range.start.as_mut() {
                                 self.const_tasks
                                     .push(ConstTask::Eval(expr.as_mut() as *mut Expr));
                             } else {
-                                self.const_tasks
-                                    .push(ConstTask::PushValue(Value::int(0)));
+                                self.const_tasks.push(ConstTask::PushValue(Value::int(0)));
                             }
                         }
                         ExprKind::Select(select) => {
@@ -1239,13 +1229,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.const_value_stack.push(value);
                 }
                 ConstTask::ApplyBinOp(op) => {
-                    let rhs = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
-                    let lhs = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let rhs = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let lhs = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
                     let value = self.handle_result(self.evaluate_binop(op, lhs, rhs));
                     self.const_value_stack.push(value);
                 }
                 ConstTask::ApplyUnOp(op) => {
-                    let value = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let value = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
                     let value = self.handle_result(self.evaluate_unary(op, value));
                     self.const_value_stack.push(value);
                 }
@@ -1253,7 +1252,10 @@ impl<'ctx> AstInterpreter<'ctx> {
                     then_expr,
                     else_expr,
                 } => {
-                    let cond = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let cond = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
                     match cond {
                         Value::Bool(b) => {
                             if b.value {
@@ -1273,7 +1275,11 @@ impl<'ctx> AstInterpreter<'ctx> {
                 ConstTask::ApplyCollect { len, kind } => {
                     let mut values = Vec::with_capacity(len);
                     for _ in 0..len {
-                        values.push(self.const_value_stack.pop().unwrap_or_else(Value::undefined));
+                        values.push(
+                            self.const_value_stack
+                                .pop()
+                                .unwrap_or_else(Value::undefined),
+                        );
                     }
                     values.reverse();
                     let value = match kind {
@@ -1283,13 +1289,22 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.const_value_stack.push(value);
                 }
                 ConstTask::ApplyCast { ty } => {
-                    let value = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let value = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
                     let result = self.cast_value_to_type(value, &ty);
                     self.const_value_stack.push(result);
                 }
                 ConstTask::ApplyRange { inclusive } => {
-                    let end = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
-                    let start = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let end = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
+                    let start = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
                     let start = match self.numeric_to_i64(&start, "range start") {
                         Some(value) => value,
                         None => {
@@ -1314,10 +1329,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                         values.push(Value::int(current));
                         current += 1;
                     }
-                    self.const_value_stack.push(Value::List(ValueList::new(values)));
+                    self.const_value_stack
+                        .push(Value::List(ValueList::new(values)));
                 }
                 ConstTask::ApplySelect { field } => {
-                    let target = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                    let target = self
+                        .const_value_stack
+                        .pop()
+                        .unwrap_or_else(Value::undefined);
                     let value = self.evaluate_select(target, &field);
                     self.const_value_stack.push(value);
                 }
@@ -1327,32 +1346,40 @@ impl<'ctx> AstInterpreter<'ctx> {
                     inclusive,
                 } => {
                     if has_start && has_end {
-                        let index_value =
-                            self.const_value_stack.pop().unwrap_or_else(Value::undefined);
-                        let target = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                        let index_value = self
+                            .const_value_stack
+                            .pop()
+                            .unwrap_or_else(Value::undefined);
+                        let target = self
+                            .const_value_stack
+                            .pop()
+                            .unwrap_or_else(Value::undefined);
                         let value = self.evaluate_index(target, index_value);
                         self.const_value_stack.push(value);
                     } else {
                         let end = if has_end {
-                            let end = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                            let end = self
+                                .const_value_stack
+                                .pop()
+                                .unwrap_or_else(Value::undefined);
                             self.numeric_to_non_negative_usize(&end, "range end")
                         } else {
                             None
                         };
                         let start = if has_start {
-                            let start =
-                                self.const_value_stack.pop().unwrap_or_else(Value::undefined);
+                            let start = self
+                                .const_value_stack
+                                .pop()
+                                .unwrap_or_else(Value::undefined);
                             self.numeric_to_non_negative_usize(&start, "range start")
                         } else {
                             None
                         };
-                        let target = self.const_value_stack.pop().unwrap_or_else(Value::undefined);
-                        let value = self.evaluate_range_index_slices(
-                            target,
-                            start,
-                            end,
-                            inclusive,
-                        );
+                        let target = self
+                            .const_value_stack
+                            .pop()
+                            .unwrap_or_else(Value::undefined);
+                        let value = self.evaluate_range_index_slices(target, start, end, inclusive);
                         self.const_value_stack.push(value);
                     }
                 }
@@ -1881,8 +1908,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             ) {
                 let receiver_value = self.eval_expr(select.obj.as_mut());
                 let args = self.evaluate_args(&mut invoke.args);
-                if let Some(value) = self.eval_type_method_call(receiver_value, method_name, args)
-                {
+                if let Some(value) = self.eval_type_method_call(receiver_value, method_name, args) {
                     return value;
                 }
             }
@@ -1895,8 +1921,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 let found = list.values.iter().any(|value| match value {
                     Value::Structural(structural) => {
-                        if let Some(field) = structural.get_field(&Ident::new("name".to_string()))
-                        {
+                        if let Some(field) = structural.get_field(&Ident::new("name".to_string())) {
                             field.value == needle
                         } else {
                             *value == needle
@@ -2731,12 +2756,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             if let Name::ParameterPath(path) = locator {
                 if path.segments.len() >= 2 {
-                    let type_name = path.segments[path.segments.len() - 2]
-                        .ident
-                        .as_str();
-                    let func_name = path.segments[path.segments.len() - 1]
-                        .ident
-                        .as_str();
+                    let type_name = path.segments[path.segments.len() - 2].ident.as_str();
+                    let func_name = path.segments[path.segments.len() - 1].ident.as_str();
                     let short = format!("{}::{}", type_name, func_name);
                     if !candidate_names.contains(&short) {
                         candidate_names.push(short);
@@ -2783,7 +2804,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn apply_kwargs_to_invoke(&mut self, invoke: &mut ExprInvoke, params: &[FunctionParam]) -> bool {
+    fn apply_kwargs_to_invoke(
+        &mut self,
+        invoke: &mut ExprInvoke,
+        params: &[FunctionParam],
+    ) -> bool {
         if invoke.kwargs.is_empty() {
             return true;
         }

@@ -1,9 +1,7 @@
 //! Compilation command implementation
 
 use crate::commands::{setup_progress_bar, validate_paths_exist};
-use crate::pipeline::{
-    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
-};
+use crate::pipeline::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 use crate::{
     CliError, Result,
     cli::CliConfig,

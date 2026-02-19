@@ -4,14 +4,14 @@ use std::sync::Arc;
 use fp_core::ast::{
     AstSerializer, BlockStmt, BlockStmtExpr, ExprBlock, ExprConstBlock, ExprField, ExprInvoke,
     ExprKind, ExprSelect, ExprSelectType, ExprStruct, File, Item, ItemDefConst, ItemDefStruct,
-    ItemKind, Node, NodeKind, Pattern, PatternIdent, PatternKind, StmtLet, StructuralField,
-    TypeInt, TypePrimitive, Ty, Value,
+    ItemKind, Node, NodeKind, Pattern, PatternIdent, PatternKind, StmtLet, StructuralField, Ty,
+    TypeInt, TypePrimitive, Value,
 };
 use fp_core::context::SharedScopedContext;
-use fp_core::Result;
-use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 use fp_core::ops::BinOpKind;
 use fp_core::span::Span;
+use fp_core::Result;
+use fp_interpret::const_eval::ConstEvaluationOrchestrator;
 
 #[test]
 fn const_eval_replaces_consts_and_records_results() -> Result<()> {
@@ -27,9 +27,9 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
             name: ident("WIDTH"),
-            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
-                fp_core::ast::TypeInt::I64,
-            ))),
+            ty: Some(fp_core::ast::Ty::Primitive(
+                fp_core::ast::TypePrimitive::Int(fp_core::ast::TypeInt::I64),
+            )),
             value: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(6))),
         },
     ));
@@ -40,20 +40,19 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
             name: ident("HEIGHT"),
-            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
-                fp_core::ast::TypeInt::I64,
-            ))),
+            ty: Some(fp_core::ast::Ty::Primitive(
+                fp_core::ast::TypePrimitive::Int(fp_core::ast::TypeInt::I64),
+            )),
             value: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(7))),
         },
     ));
-    let area_expr = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
-        fp_core::ast::ExprBinOp {
+    let area_expr =
+        fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(fp_core::ast::ExprBinOp {
             span: fp_core::span::Span::null(),
             kind: BinOpKind::Mul,
             lhs: Box::new(fp_core::ast::Expr::ident(ident("WIDTH"))),
             rhs: Box::new(fp_core::ast::Expr::ident(ident("HEIGHT"))),
-        },
-    ));
+        }));
     let area = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
             attrs: Vec::new(),
@@ -61,9 +60,9 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Private,
             name: ident("AREA"),
-            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
-                fp_core::ast::TypeInt::I64,
-            ))),
+            ty: Some(fp_core::ast::Ty::Primitive(
+                fp_core::ast::TypePrimitive::Int(fp_core::ast::TypeInt::I64),
+            )),
             value: Box::new(area_expr),
         },
     ));
@@ -75,20 +74,19 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Public,
             name: ident("EDGE"),
-            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
-                fp_core::ast::TypeInt::I64,
-            ))),
+            ty: Some(fp_core::ast::Ty::Primitive(
+                fp_core::ast::TypePrimitive::Int(fp_core::ast::TypeInt::I64),
+            )),
             value: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(3))),
         },
     ));
-    let perimeter_expr = fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(
-        fp_core::ast::ExprBinOp {
+    let perimeter_expr =
+        fp_core::ast::Expr::from(fp_core::ast::ExprKind::BinOp(fp_core::ast::ExprBinOp {
             span: fp_core::span::Span::null(),
             kind: BinOpKind::Mul,
             lhs: Box::new(fp_core::ast::Expr::ident(ident("EDGE"))),
             rhs: Box::new(fp_core::ast::Expr::value(fp_core::ast::Value::int(4))),
-        },
-    ));
+        }));
     let perimeter = fp_core::ast::Item::from(fp_core::ast::ItemKind::DefConst(
         fp_core::ast::ItemDefConst {
             attrs: Vec::new(),
@@ -96,21 +94,19 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
             ty_annotation: None,
             visibility: fp_core::ast::Visibility::Public,
             name: ident("PERIMETER"),
-            ty: Some(fp_core::ast::Ty::Primitive(fp_core::ast::TypePrimitive::Int(
-                fp_core::ast::TypeInt::I64,
-            ))),
+            ty: Some(fp_core::ast::Ty::Primitive(
+                fp_core::ast::TypePrimitive::Int(fp_core::ast::TypeInt::I64),
+            )),
             value: Box::new(perimeter_expr),
         },
     ));
-    let shapes = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(
-        fp_core::ast::Module {
-            attrs: Vec::new(),
-            name: ident("shapes"),
-            items: vec![edge, perimeter],
-            visibility: fp_core::ast::Visibility::Private,
-            is_external: false,
-        },
-    ));
+    let shapes = fp_core::ast::Item::from(fp_core::ast::ItemKind::Module(fp_core::ast::Module {
+        attrs: Vec::new(),
+        name: ident("shapes"),
+        items: vec![edge, perimeter],
+        visibility: fp_core::ast::Visibility::Private,
+        is_external: false,
+    }));
 
     let items = vec![width, height, area, shapes];
 
@@ -227,7 +223,10 @@ fn const_eval_materializes_late_type_for_typing() -> Result<()> {
     let struct_expr = ExprKind::Struct(ExprStruct {
         span: Span::null(),
         name: Box::new(fp_core::ast::Expr::ident(ident("Later"))),
-        fields: vec![ExprField::new(ident("x"), fp_core::ast::Expr::value(Value::int(1)))],
+        fields: vec![ExprField::new(
+            ident("x"),
+            fp_core::ast::Expr::value(Value::int(1)),
+        )],
         update: None,
     });
 

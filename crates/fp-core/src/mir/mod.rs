@@ -632,11 +632,10 @@ impl TerminatorKind {
                     .chain(destination.as_ref().map(|(place, _)| place.span())),
             ),
             TerminatorKind::Assert { cond, .. } => cond.span(),
-            TerminatorKind::Yield { value, resume_arg, .. } => {
-                Span::union([value.span(), resume_arg.span()])
-            }
-            TerminatorKind::FalseEdge { .. }
-            | TerminatorKind::FalseUnwind { .. } => Span::null(),
+            TerminatorKind::Yield {
+                value, resume_arg, ..
+            } => Span::union([value.span(), resume_arg.span()]),
+            TerminatorKind::FalseEdge { .. } | TerminatorKind::FalseUnwind { .. } => Span::null(),
             TerminatorKind::InlineAsm { line_spans, .. } => Span::union(line_spans.iter().copied()),
         }
     }
@@ -653,8 +652,9 @@ impl Rvalue {
             Rvalue::AddressOf(_, place) => place.span(),
             Rvalue::Len(place) => place.span(),
             Rvalue::Cast(_, op, _) => op.span(),
-            Rvalue::BinaryOp(_, lhs, rhs)
-            | Rvalue::CheckedBinaryOp(_, lhs, rhs) => Span::union([lhs.span(), rhs.span()]),
+            Rvalue::BinaryOp(_, lhs, rhs) | Rvalue::CheckedBinaryOp(_, lhs, rhs) => {
+                Span::union([lhs.span(), rhs.span()])
+            }
             Rvalue::NullaryOp(_, _) => Span::null(),
             Rvalue::UnaryOp(_, op) => op.span(),
             Rvalue::Discriminant(place) => place.span(),
@@ -662,11 +662,9 @@ impl Rvalue {
             Rvalue::ContainerLiteral { elements, .. } => {
                 Span::union(elements.iter().map(Operand::span))
             }
-            Rvalue::ContainerMapLiteral { entries, .. } => Span::union(
-                entries
-                    .iter()
-                    .flat_map(|(k, v)| [k.span(), v.span()]),
-            ),
+            Rvalue::ContainerMapLiteral { entries, .. } => {
+                Span::union(entries.iter().flat_map(|(k, v)| [k.span(), v.span()]))
+            }
             Rvalue::ContainerLen { container, .. } => container.span(),
             Rvalue::ContainerGet { container, key, .. } => {
                 Span::union([container.span(), key.span()])

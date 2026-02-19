@@ -6,7 +6,7 @@ use fp_core::ast::{
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, Name, MacroDelimiter, MacroInvocation, Module, Path,
+    ItemImportTree, ItemKind, ItemMacro, MacroDelimiter, MacroInvocation, Module, Name, Path,
     QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
     Visibility,
 };
@@ -127,9 +127,7 @@ fn lower_extern_fn_decl(
 
 fn lower_extern_abi(node: &SyntaxNode) -> Result<Abi, LowerItemsError> {
     let abi_text = node.children.iter().find_map(|child| match child {
-        SyntaxElement::Token(tok)
-            if tok.text.starts_with('"') || tok.text.starts_with("r#") =>
-        {
+        SyntaxElement::Token(tok) if tok.text.starts_with('"') || tok.text.starts_with("r#") => {
             Some(tok.text.clone())
         }
         _ => None,
@@ -605,10 +603,7 @@ fn lower_attr(node: &SyntaxNode, style: AttrStyle) -> Option<Attribute> {
     }
 
     let meta = parse_attr_meta(&inner_tokens)?;
-    Some(Attribute {
-        style,
-        meta,
-    })
+    Some(Attribute { style, meta })
 }
 
 fn parse_attr_meta(tokens: &[String]) -> Option<AttrMeta> {
@@ -708,7 +703,10 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
         }
         "super" => {
             let mut depth = 0;
-            while segments.first().is_some_and(|ident| ident.as_str() == "super") {
+            while segments
+                .first()
+                .is_some_and(|ident| ident.as_str() == "super")
+            {
                 segments.remove(0);
                 depth += 1;
             }
@@ -719,7 +717,11 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
 }
 
 fn parse_attr_value_expr(tokens: &[String]) -> Option<BExpr> {
-    let cleaned: Vec<&str> = tokens.iter().map(|tok| tok.as_str()).filter(|t| !t.is_empty()).collect();
+    let cleaned: Vec<&str> = tokens
+        .iter()
+        .map(|tok| tok.as_str())
+        .filter(|t| !t.is_empty())
+        .collect();
     if let Some(expr) = parse_include_str_macro_expr(&cleaned) {
         return Some(expr);
     }
@@ -807,7 +809,9 @@ fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {
     let tokens_text = inner.join(" ");
     let path = Path::plain(vec![Ident::new("include_str".to_string())]);
     let invocation = MacroInvocation::new(path, MacroDelimiter::Parenthesis, tokens_text);
-    Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(invocation)))))
+    Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(
+        invocation,
+    )))))
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
@@ -1029,9 +1033,13 @@ fn lower_item_macro(node: &SyntaxNode) -> Result<ItemMacro, LowerItemsError> {
     };
 
     Ok(ItemMacro {
-        invocation: MacroInvocation::new(Path::from_ident(name), macro_tokens.delimiter, macro_tokens.text)
-            .with_token_trees(macro_tokens.token_trees)
-            .with_span(node.span),
+        invocation: MacroInvocation::new(
+            Path::from_ident(name),
+            macro_tokens.delimiter,
+            macro_tokens.text,
+        )
+        .with_token_trees(macro_tokens.token_trees)
+        .with_span(node.span),
         declared_name,
     })
 }

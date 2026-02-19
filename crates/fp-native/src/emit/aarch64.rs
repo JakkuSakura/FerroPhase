@@ -1655,7 +1655,9 @@ fn emit_store(
                     emit_store_to_sp(asm, Reg::X16, offset);
                     Ok(())
                 }
-                _ => Err(Error::from("unsupported array element size in constant store")),
+                _ => Err(Error::from(
+                    "unsupported array element size in constant store",
+                )),
             }
         };
         let store_elem_reg = |asm: &mut Assembler| -> Result<()> {
@@ -1676,7 +1678,9 @@ fn emit_store(
                     emit_store_to_reg(asm, Reg::X16, Reg::X9);
                     Ok(())
                 }
-                _ => Err(Error::from("unsupported array element size in constant store")),
+                _ => Err(Error::from(
+                    "unsupported array element size in constant store",
+                )),
             }
         };
         match address {

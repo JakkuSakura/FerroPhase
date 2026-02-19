@@ -1,6 +1,6 @@
 use super::*;
-use fp_core::frontend::LanguageFrontend;
 use fp_core::diagnostics::DiagnosticLevel;
+use fp_core::frontend::LanguageFrontend;
 
 #[test]
 fn parses_basic_select() {
@@ -23,13 +23,11 @@ fn parses_basic_select() {
         other => panic!("expected query node, found {other:?}"),
     }
 
-    assert!(
-        !result
-            .diagnostics
-            .get_diagnostics()
-            .iter()
-            .any(|d| d.level == DiagnosticLevel::Error)
-    );
+    assert!(!result
+        .diagnostics
+        .get_diagnostics()
+        .iter()
+        .any(|d| d.level == DiagnosticLevel::Error));
 }
 
 #[test]
