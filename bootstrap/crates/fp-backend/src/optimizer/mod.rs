@@ -249,7 +249,7 @@ fn parse_sql_statement(statement: &str, passes: &mut Vec<MirPassName>) -> Result
     }
 
     let select_len = "select".len();
-    let from_idx = lower.find(" from ");
+    let from_idx = find_keyword_outside_quotes(trimmed, "from", select_len);
     let selection = match from_idx {
         Some(idx) => {
             if idx < select_len {
@@ -274,6 +274,68 @@ fn parse_sql_statement(statement: &str, passes: &mut Vec<MirPassName>) -> Result
     };
 
     parse_pass_list(selection, passes)
+}
+
+fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Option<usize> {
+    let mut in_single = false;
+    let mut in_double = false;
+    let mut in_backtick = false;
+    let mut word_start: Option<usize> = None;
+
+    let mut flush_word = |end_idx: usize, word_start: &mut Option<usize>| {
+        if let Some(start_idx) = word_start.take() {
+            let word = &input[start_idx..end_idx];
+            if word.eq_ignore_ascii_case(keyword) {
+                return Some(start_idx);
+            }
+        }
+        None
+    };
+
+    for (idx, ch) in input.char_indices().skip(start) {
+        match ch {
+            ''' if !in_double && !in_backtick => {
+                if let Some(found) = flush_word(idx, &mut word_start) {
+                    return Some(found);
+                }
+                in_single = !in_single;
+                continue;
+            }
+            '"' if !in_single && !in_backtick => {
+                if let Some(found) = flush_word(idx, &mut word_start) {
+                    return Some(found);
+                }
+                in_double = !in_double;
+                continue;
+            }
+            '`' if !in_single && !in_double => {
+                if let Some(found) = flush_word(idx, &mut word_start) {
+                    return Some(found);
+                }
+                in_backtick = !in_backtick;
+                continue;
+            }
+            _ => {}
+        }
+
+        if in_single || in_double || in_backtick {
+            continue;
+        }
+
+        if ch.is_ascii_alphanumeric() || ch == '_' {
+            if word_start.is_none() {
+                word_start = Some(idx);
+            }
+        } else if let Some(found) = flush_word(idx, &mut word_start) {
+            return Some(found);
+        }
+    }
+
+    if let Some(found) = flush_word(input.len(), &mut word_start) {
+        return Some(found);
+    }
+
+    None
 }
 
 fn parse_prql_pipeline(pipeline: &str, passes: &mut Vec<MirPassName>) -> Result<(), Error> {
