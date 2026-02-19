@@ -39,12 +39,13 @@ fn find_keyword_outside_quotes(input: &str, keyword: &str, start: usize) -> Opti
     let mut word_start: Option<usize> = None;
 
     let mut flush_word = |end_idx: usize, word_start: &mut Option<usize>| {
-        if let Some(start_idx) = word_start.take() {
+        if let Some(start_idx) = *word_start {
             let word = &input[start_idx..end_idx];
             if word.eq_ignore_ascii_case(keyword) {
                 return Some(start_idx);
             }
         }
+        *word_start = None;
         None
     };
 
