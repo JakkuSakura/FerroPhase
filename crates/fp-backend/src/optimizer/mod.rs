@@ -287,7 +287,7 @@ fn parse_pass_list(raw: &str, passes: &mut Vec<MirPassName>) -> Result<(), Error
                     push_current(&mut current)?;
                 }
                 in_quote = Some(ch);
-                collect_quoted = was_empty;
+                collect_quoted = true;
             }
             ',' | '|' => {
                 if !current.is_empty() {
