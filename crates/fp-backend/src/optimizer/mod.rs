@@ -253,23 +253,60 @@ fn parse_prql_pipeline(pipeline: &str, passes: &mut Vec<MirPassName>) -> Result<
 }
 
 fn parse_pass_list(raw: &str, passes: &mut Vec<MirPassName>) -> Result<(), Error> {
-    for token in raw.split(|ch: char| ch == ',' || ch.is_whitespace() || ch == '|') {
-        let trimmed = token.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let quote_idx = trimmed.find(|ch| ch == '"' || ch == '`' || ch == '\'');
-        let ident = match quote_idx {
-            Some(0) => trimmed.trim_matches(|ch| ch == '"' || ch == '`' || ch == '\''),
-            Some(idx) => trimmed[..idx].trim_matches(|ch| ch == '"' || ch == '`' || ch == '\''),
-            None => trimmed.trim_matches(|ch| ch == '"' || ch == '`' || ch == '\''),
-        };
+    let mut current = String::new();
+    let mut in_quote: Option<char> = None;
+    let mut collect_quoted = false;
+
+    let mut push_current = |current: &mut String| -> Result<(), Error> {
+        let ident = current.trim();
         if ident.is_empty() || ident == "*" {
-            continue;
+            current.clear();
+            return Ok(());
         }
         let pass = MirPassName::from_ident(ident)
             .ok_or_else(|| optimization_error(format!("unknown MIR optimization pass: {ident}")))?;
         passes.push(pass);
+        current.clear();
+        Ok(())
+    };
+
+    for ch in raw.chars() {
+        if let Some(quote) = in_quote {
+            if ch == quote {
+                in_quote = None;
+            } else if collect_quoted {
+                current.push(ch);
+            }
+            continue;
+        }
+
+        match ch {
+            '"' | '`' | '\'' => {
+                if current.is_empty() {
+                    in_quote = Some(ch);
+                    collect_quoted = true;
+                } else {
+                    push_current(&mut current)?;
+                    in_quote = Some(ch);
+                    collect_quoted = false;
+                }
+            }
+            ',' | '|' => {
+                if !current.is_empty() {
+                    push_current(&mut current)?;
+                }
+            }
+            ch if ch.is_whitespace() => {
+                if !current.is_empty() {
+                    push_current(&mut current)?;
+                }
+            }
+            _ => current.push(ch),
+        }
+    }
+
+    if !current.is_empty() {
+        push_current(&mut current)?;
     }
     Ok(())
 }
