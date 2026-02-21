@@ -258,10 +258,11 @@ fn parse_pass_list(raw: &str, passes: &mut Vec<MirPassName>) -> Result<(), Error
         if trimmed.is_empty() {
             continue;
         }
-        let trimmed = trimmed.trim_matches(|ch| ch == '"' || ch == '`' || ch == '\'');
-        let ident = match trimmed.find(|ch| ch == '"' || ch == '`' || ch == '\'') {
-            Some(idx) => &trimmed[..idx],
-            None => trimmed,
+        let quote_idx = trimmed.find(|ch| ch == '"' || ch == '`' || ch == '\'');
+        let ident = match quote_idx {
+            Some(0) => trimmed.trim_matches(|ch| ch == '"' || ch == '`' || ch == '\''),
+            Some(idx) => trimmed[..idx].trim_matches(|ch| ch == '"' || ch == '`' || ch == '\''),
+            None => trimmed.trim_matches(|ch| ch == '"' || ch == '`' || ch == '\''),
         };
         if ident.is_empty() || ident == "*" {
             continue;
