@@ -1,6 +1,7 @@
 use super::*;
 use fp_core::diagnostics::DiagnosticLevel;
 use fp_core::query::QueryKind;
+use fp_core::LanguageFrontend;
 
 #[test]
 fn parses_pipeline_and_compiles_select() {
