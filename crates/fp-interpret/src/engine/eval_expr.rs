@@ -2364,12 +2364,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return RuntimeFlow::Value(Value::unit());
                 }
 
-                if let Some(value) =
-                    self.try_handle_const_collection_invoke(&locator, &mut invoke.args)
-                {
-                    return RuntimeFlow::Value(value);
-                }
-
                 let args = match self.evaluate_args_runtime(&mut invoke.args) {
                     Ok(values) => values,
                     Err(flow) => return flow,
@@ -2423,6 +2417,12 @@ impl<'ctx> AstInterpreter<'ctx> {
                         return flow;
                     }
                     return self.call_function_runtime(function, args);
+                }
+
+                if let Some(value) =
+                    self.try_handle_const_collection_invoke(&locator, &mut invoke.args)
+                {
+                    return RuntimeFlow::Value(value);
                 }
 
                 let mut candidate_names = vec![locator.to_string()];
@@ -2559,6 +2559,14 @@ impl<'ctx> AstInterpreter<'ctx> {
                 return RuntimeFlow::Value(value);
             }
         }
+        if let Some(function) = self.resolve_method_function(&receiver, &method_name, args) {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            return self.call_method_runtime(function, receiver, arg_values);
+        }
+
         if method_name.as_str() == "contains" && args.len() == 1 {
             let Value::List(list) = &receiver.value else {
                 self.emit_error("contains expects a list receiver");
@@ -2695,16 +2703,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
 
-        let Some(function) = self.resolve_method_function(&receiver, &method_name, args) else {
-            self.emit_error(format!("cannot resolve method '{}'", method_name));
-            return RuntimeFlow::Value(Value::undefined());
-        };
-
-        let arg_values = match self.evaluate_args_runtime(args) {
-            Ok(values) => values,
-            Err(flow) => return flow,
-        };
-        self.call_method_runtime(function, receiver, arg_values)
+        self.emit_error(format!("cannot resolve method '{}'", method_name));
+        return RuntimeFlow::Value(Value::undefined());
     }
 
     pub(super) fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
