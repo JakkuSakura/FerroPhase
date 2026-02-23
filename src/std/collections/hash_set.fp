@@ -1,26 +1,18 @@
-struct HashSetNode<T> {
-    value: T,
-    left: i64,
-    right: i64,
-}
-
-pub struct HashSet<T> {
-    root: i64,
+pub struct FpHashSet<T> {
     len: i64,
-    nodes: Vec<HashSetNode<T>>,
+    values: Vec<T>,
 }
 
-impl<T> HashSet<T> {
-    fn new() -> HashSet<T> {
-        HashSet {
-            root: -1,
+impl FpHashSet<T> {
+    fn new() -> FpHashSet<T> {
+        FpHashSet {
             len: 0,
-            nodes: Vec::new(),
+            values: Vec::new(),
         }
     }
 
-    fn from(values: Vec<T>) -> HashSet<T> {
-        let mut set = HashSet::new();
+    fn from(values: Vec<T>) -> FpHashSet<T> {
+        let mut set = FpHashSet::new();
         let mut idx = 0;
         let values_len = values.len();
         while idx < values_len {
@@ -39,88 +31,43 @@ impl<T> HashSet<T> {
     }
 
     fn clear(&mut self) {
-        self.root = -1;
         self.len = 0;
-        self.nodes = Vec::new();
+        self.values = Vec::new();
     }
 
-    fn contains(&self, value: T) -> bool {
+    fn contains_value(&self, value: T) -> bool {
         self.find_node_idx(value) >= 0
     }
 
+    fn contains(&self, value: T) -> bool {
+        self.contains_value(value)
+    }
+
     fn insert(&mut self, value: T) {
-        if self.root < 0 {
-            self.nodes.push(HashSetNode {
-                value,
-                left: -1,
-                right: -1,
-            });
-            self.root = 0;
-            self.len = 1;
-            return;
-        }
-
-        let mut current = self.root;
-        loop {
-            let current_idx = current as usize;
-            let node = self.nodes[current_idx];
-
-            if value == node.value {
+        let mut values = self.values;
+        let mut idx = 0;
+        let values_len = values.len();
+        while idx < values_len {
+            if values[idx] == value {
+                self.values = values;
                 return;
             }
-
-            if value < node.value {
-                if node.left < 0 {
-                    let child_idx = self.nodes.len() as i64;
-                    self.nodes.push(HashSetNode {
-                        value,
-                        left: -1,
-                        right: -1,
-                    });
-                    self.nodes[current_idx] = HashSetNode {
-                        value: node.value,
-                        left: child_idx,
-                        right: node.right,
-                    };
-                    self.len = self.len + 1;
-                    return;
-                }
-                current = node.left;
-                continue;
-            }
-
-            if node.right < 0 {
-                let child_idx = self.nodes.len() as i64;
-                self.nodes.push(HashSetNode {
-                    value,
-                    left: -1,
-                    right: -1,
-                });
-                self.nodes[current_idx] = HashSetNode {
-                    value: node.value,
-                    left: node.left,
-                    right: child_idx,
-                };
-                self.len = self.len + 1;
-                return;
-            }
-
-            current = node.right;
+            idx = idx + 1;
         }
+
+        values.push(value);
+        self.values = values;
+        self.len = self.len + 1;
     }
 
     fn find_node_idx(&self, value: T) -> i64 {
-        let mut current = self.root;
-        while current >= 0 {
-            let node = self.nodes[current as usize];
-            if value == node.value {
-                return current;
+        let mut idx = 0;
+        let values_len = self.values.len();
+        while idx < values_len {
+            if self.values[idx] == value {
+                return idx as i64;
             }
-            if value < node.value {
-                current = node.left;
-            } else {
-                current = node.right;
-            }
+            idx = idx + 1;
         }
         -1
     }

@@ -3,7 +3,7 @@ pub struct BinaryHeap<T> {
     len: i64,
 }
 
-impl<T> BinaryHeap<T> {
+impl BinaryHeap<T> {
     fn new() -> BinaryHeap<T> {
         BinaryHeap {
             values: Vec::new(),
@@ -16,7 +16,7 @@ impl<T> BinaryHeap<T> {
         let mut idx = 0;
         let items_len = items.len();
         while idx < items_len {
-            heap.push(items[idx]);
+            heap.insert(items[idx]);
             idx = idx + 1;
         }
         heap
@@ -35,26 +35,34 @@ impl<T> BinaryHeap<T> {
         self.len = 0;
     }
 
-    fn push(&mut self, value: T) {
-        if self.len < self.values.len() as i64 {
-            self.values[self.len as usize] = value;
-        } else {
-            self.values.push(value);
-        }
-        self.len = self.len + 1;
+    fn insert(&mut self, value: T) {
+        let mut values = self.values;
 
+        if self.len < values.len() as i64 {
+            values[self.len as usize] = value;
+        } else {
+            values.push(value);
+        }
+
+        self.len = self.len + 1;
         let mut idx = self.len - 1;
         while idx > 0 {
-            let parent = (idx - 1) / 2;
-            if self.values[parent as usize] >= self.values[idx as usize] {
+            let parent = idx - 1;
+            if values[parent as usize] >= values[idx as usize] {
                 break;
             }
 
-            let parent_value = self.values[parent as usize];
-            self.values[parent as usize] = self.values[idx as usize];
-            self.values[idx as usize] = parent_value;
+            let parent_value = values[parent as usize];
+            values[parent as usize] = values[idx as usize];
+            values[idx as usize] = parent_value;
             idx = parent;
         }
+
+        self.values = values;
+    }
+
+    fn push(&mut self, value: T) {
+        self.insert(value);
     }
 
     fn peek_unchecked(&self) -> T {
@@ -62,40 +70,17 @@ impl<T> BinaryHeap<T> {
     }
 
     fn pop_unchecked(&mut self) -> T {
-        let head = self.values[0];
+        let mut values = self.values;
+        let head = values[0];
 
-        if self.len == 1 {
-            self.len = 0;
-            return head;
+        let mut idx = 1;
+        while idx < self.len {
+            values[(idx - 1) as usize] = values[idx as usize];
+            idx = idx + 1;
         }
 
+        self.values = values;
         self.len = self.len - 1;
-        self.values[0] = self.values[self.len as usize];
-
-        let mut idx = 0;
-        loop {
-            let left = idx * 2 + 1;
-            let right = idx * 2 + 2;
-            let mut largest = idx;
-
-            if left < self.len && self.values[left as usize] > self.values[largest as usize] {
-                largest = left;
-            }
-
-            if right < self.len && self.values[right as usize] > self.values[largest as usize] {
-                largest = right;
-            }
-
-            if largest == idx {
-                break;
-            }
-
-            let value = self.values[idx as usize];
-            self.values[idx as usize] = self.values[largest as usize];
-            self.values[largest as usize] = value;
-            idx = largest;
-        }
-
         head
     }
 }

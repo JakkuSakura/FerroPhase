@@ -6,21 +6,13 @@ pub struct LinkedNode<T> {
 
 pub struct LinkedList<T> {
     values: Vec<T>,
-    prev: Vec<i64>,
-    next: Vec<i64>,
-    head: i64,
-    tail: i64,
     len: i64,
 }
 
-impl<T> LinkedList<T> {
+impl LinkedList<T> {
     fn new() -> LinkedList<T> {
         LinkedList {
             values: Vec::new(),
-            prev: Vec::new(),
-            next: Vec::new(),
-            head: -1,
-            tail: -1,
             len: 0,
         }
     }
@@ -46,80 +38,71 @@ impl<T> LinkedList<T> {
 
     fn clear(&mut self) {
         self.values = Vec::new();
-        self.prev = Vec::new();
-        self.next = Vec::new();
-        self.head = -1;
-        self.tail = -1;
         self.len = 0;
     }
 
     fn push_back(&mut self, value: T) {
-        let idx = self.values.len() as i64;
-        self.values.push(value);
-        self.prev.push(self.tail);
-        self.next.push(-1);
-
-        if self.tail >= 0 {
-            self.next[self.tail as usize] = idx;
+        let mut values = self.values;
+        if self.len < values.len() as i64 {
+            values[self.len as usize] = value;
         } else {
-            self.head = idx;
+            values.push(value);
         }
-
-        self.tail = idx;
+        self.values = values;
         self.len = self.len + 1;
     }
 
     fn push_front(&mut self, value: T) {
-        let idx = self.values.len() as i64;
-        self.values.push(value);
-        self.prev.push(-1);
-        self.next.push(self.head);
-
-        if self.head >= 0 {
-            self.prev[self.head as usize] = idx;
-        } else {
-            self.tail = idx;
+        let mut values = self.values;
+        if self.len < values.len() as i64 {
+            let mut idx = self.len;
+            while idx > 0 {
+                values[idx as usize] = values[(idx - 1) as usize];
+                idx = idx - 1;
+            }
+            values[0] = value;
+            self.values = values;
+            self.len = self.len + 1;
+            return;
         }
 
-        self.head = idx;
+        let mut shifted: Vec<T> = Vec::new();
+        shifted.push(value);
+        let mut idx = 0;
+        while idx < self.len {
+            shifted.push(values[idx as usize]);
+            idx = idx + 1;
+        }
+
+        self.values = shifted;
         self.len = self.len + 1;
     }
 
     fn pop_back_unchecked(&mut self) -> T {
-        let idx = self.tail;
-        let prev_idx = self.prev[idx as usize];
-
-        if prev_idx >= 0 {
-            self.next[prev_idx as usize] = -1;
-        } else {
-            self.head = -1;
-        }
-
-        self.tail = prev_idx;
         self.len = self.len - 1;
-        self.values[idx as usize]
+        self.values[self.len as usize]
     }
 
     fn pop_front_unchecked(&mut self) -> T {
-        let idx = self.head;
-        let next_idx = self.next[idx as usize];
+        let mut values = self.values;
+        let front = values[0];
 
-        if next_idx >= 0 {
-            self.prev[next_idx as usize] = -1;
-        } else {
-            self.tail = -1;
+        let mut idx = 1;
+        while idx < self.len {
+            values[(idx - 1) as usize] = values[idx as usize];
+            idx = idx + 1;
         }
 
-        self.head = next_idx;
+        self.values = values;
         self.len = self.len - 1;
-        self.values[idx as usize]
+        front
     }
 
     fn front_unchecked(&self) -> T {
-        self.values[self.head as usize]
+        self.values[0]
     }
 
     fn back_unchecked(&self) -> T {
-        self.values[self.tail as usize]
+        self.values[(self.len - 1) as usize]
     }
 }

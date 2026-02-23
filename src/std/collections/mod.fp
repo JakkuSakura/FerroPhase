@@ -6,9 +6,9 @@ pub mod hash_set;
 pub mod linked_list;
 pub mod vec_deque;
 
-use std::collections::hash_map::HashMap as HashMap;
-use std::collections::hash_map::HashMapEntry as HashMapEntry;
-use std::collections::hash_set::HashSet as HashSet;
+use std::collections::hash_map::FpHashMap as HashMap;
+use std::collections::hash_map::FpHashMapEntry as HashMapEntry;
+use std::collections::hash_set::FpHashSet as HashSet;
 use std::collections::btree_map::BTreeMap as BTreeMap;
 use std::collections::btree_map::BTreeMapEntry as BTreeMapEntry;
 use std::collections::btree_set::BTreeSet as BTreeSet;
