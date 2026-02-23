@@ -1,18 +1,18 @@
-pub struct FpHashSet<T> {
+pub struct HashSet<T> {
     len: i64,
     values: Vec<T>,
 }
 
-impl FpHashSet<T> {
-    fn new() -> FpHashSet<T> {
-        FpHashSet {
+impl<T> HashSet<T> {
+    fn new() -> HashSet<T> {
+        HashSet {
             len: 0,
             values: Vec::new(),
         }
     }
 
-    fn from(values: Vec<T>) -> FpHashSet<T> {
-        let mut set = FpHashSet::new();
+    fn from(values: Vec<T>) -> HashSet<T> {
+        let mut set = HashSet::new();
         let mut idx = 0;
         let values_len = values.len();
         while idx < values_len {
@@ -35,12 +35,8 @@ impl FpHashSet<T> {
         self.values = Vec::new();
     }
 
-    fn contains_value(&self, value: T) -> bool {
-        self.find_node_idx(value) >= 0
-    }
-
     fn contains(&self, value: T) -> bool {
-        self.contains_value(value)
+        self.find_node_idx(value) >= 0
     }
 
     fn insert(&mut self, value: T) {

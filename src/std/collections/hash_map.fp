@@ -1,25 +1,25 @@
-pub struct FpHashMapEntry<K, V> {
+pub struct HashMapEntry<K, V> {
     key: K,
     value: V,
 }
 
-pub struct FpHashMap<K, V> {
+pub struct HashMap<K, V> {
     len: i64,
     keys: Vec<K>,
     values: Vec<V>,
 }
 
-impl FpHashMap<K, V> {
-    fn new() -> FpHashMap<K, V> {
-        FpHashMap {
+impl<K, V> HashMap<K, V> {
+    fn new() -> HashMap<K, V> {
+        HashMap {
             len: 0,
             keys: Vec::new(),
             values: Vec::new(),
         }
     }
 
-    fn from(entries: Vec<FpHashMapEntry<K, V>>) -> FpHashMap<K, V> {
-        let mut map = FpHashMap::new();
+    fn from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
+        let mut map = HashMap::new();
         let mut idx = 0;
         let entries_len = entries.len();
         while idx < entries_len {

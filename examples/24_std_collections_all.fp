@@ -5,9 +5,9 @@ use std::collections::binary_heap::BinaryHeap;
 use std::collections::btree_map::BTreeMap;
 use std::collections::btree_map::BTreeMapEntry;
 use std::collections::btree_set::BTreeSet;
-use std::collections::hash_map::FpHashMap as HashMap;
-use std::collections::hash_map::FpHashMapEntry as HashMapEntry;
-use std::collections::hash_set::FpHashSet as HashSet;
+use std::collections::hash_map::HashMap;
+use std::collections::hash_map::HashMapEntry;
+use std::collections::hash_set::HashSet;
 use std::collections::linked_list::LinkedList;
 use std::collections::vec_deque::VecDeque;
 
@@ -32,11 +32,11 @@ fn main() {
 
     let mut btree_set: BTreeSet<i64> = BTreeSet::from([3, 1, 2]);
     btree_set.insert(4);
-    println!("btree_set.contains_value(4) = {}", btree_set.contains_value(4));
+    println!("btree_set.contains(4) = {}", btree_set.contains(4));
 
     let mut hash_set: HashSet<i64> = HashSet::from([7, 8, 9]);
     hash_set.insert(10);
-    println!("hash_set.contains_value(10) = {}", hash_set.contains_value(10));
+    println!("hash_set.contains(10) = {}", hash_set.contains(10));
 
     let mut deque: VecDeque<i64> = VecDeque::new();
     deque.push_back(2);
@@ -57,7 +57,7 @@ fn main() {
     println!("list.pop_back = {}", list.pop_back_unchecked());
 
     let mut heap: BinaryHeap<i64> = BinaryHeap::from([10, 30, 20]);
-    heap.insert(40);
+    heap.push(40);
     println!("heap.peek = {}", heap.peek_unchecked());
     println!("heap.pop = {}", heap.pop_unchecked());
     println!("heap.pop = {}", heap.pop_unchecked());

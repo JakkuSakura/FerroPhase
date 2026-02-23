@@ -2703,6 +2703,83 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
 
+        if method_name == "contains_key" && args.len() == 1 {
+            let key = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            if let Value::Map(map) = &receiver.value {
+                return RuntimeFlow::Value(Value::bool(map.entries.iter().any(|entry| entry.key == key)));
+            }
+        }
+
+        if method_name == "get_unchecked" && args.len() == 1 {
+            let key = match self.evaluate_args_runtime(args) {
+                Ok(mut values) => values.pop().unwrap_or_else(Value::undefined),
+                Err(flow) => return flow,
+            };
+            if let Value::Map(map) = &receiver.value {
+                if let Some(value) = map.get(&key) {
+                    return RuntimeFlow::Value(value.clone());
+                }
+                self.emit_error("HashMap::get_unchecked key not found");
+                return RuntimeFlow::Value(Value::undefined());
+            }
+        }
+
+        if method_name == "insert" && args.len() == 2 {
+            let arg_values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return flow,
+            };
+            let key = arg_values.first().cloned().unwrap_or_else(Value::undefined);
+            let value = arg_values.get(1).cloned().unwrap_or_else(Value::undefined);
+
+            let Some(shared) = receiver.shared.as_ref() else {
+                self.emit_error("insert requires a mutable receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+
+            let mut guard = match shared.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+
+            match &mut *guard {
+                Value::Map(map) => {
+                    map.insert(key, value);
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                _ => {}
+            }
+        }
+
+        if method_name == "clear" && args.is_empty() {
+            let Some(shared) = receiver.shared.as_ref() else {
+                self.emit_error("clear requires a mutable receiver");
+                return RuntimeFlow::Value(Value::undefined());
+            };
+
+            let mut guard = match shared.lock() {
+                Ok(guard) => guard,
+                Err(err) => err.into_inner(),
+            };
+
+            match &mut *guard {
+                Value::Map(map) => {
+                    map.entries.clear();
+                    return RuntimeFlow::Value(Value::unit());
+                }
+                _ => {}
+            }
+        }
+
+        if method_name == "is_empty" && args.is_empty() {
+            if let Value::Map(map) = &receiver.value {
+                return RuntimeFlow::Value(Value::bool(map.entries.is_empty()));
+            }
+        }
+
         self.emit_error(format!("cannot resolve method '{}'", method_name));
         return RuntimeFlow::Value(Value::undefined());
     }
@@ -3057,9 +3134,45 @@ impl<'ctx> AstInterpreter<'ctx> {
                                         return Some(Value::undefined());
                                     }
                                 }
+                                Value::Struct(struct_value)
+                                    if struct_value.ty.name.as_str() == "HashMapEntry" =>
+                                {
+                                    let key = struct_value
+                                        .structural
+                                        .get_field(&Ident::new("key".to_string()))
+                                        .map(|field| field.value.clone());
+                                    let value = struct_value
+                                        .structural
+                                        .get_field(&Ident::new("value".to_string()))
+                                        .map(|field| field.value.clone());
+                                    if let (Some(key), Some(value)) = (key, value) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from HashMapEntry is missing key/value fields",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
+                                Value::Structural(structural) => {
+                                    let key = structural
+                                        .get_field(&Ident::new("key".to_string()))
+                                        .map(|field| field.value.clone());
+                                    let value = structural
+                                        .get_field(&Ident::new("value".to_string()))
+                                        .map(|field| field.value.clone());
+                                    if let (Some(key), Some(value)) = (key, value) {
+                                        pairs.push((key, value));
+                                    } else {
+                                        self.emit_error(
+                                            "HashMap::from structural entry is missing key/value fields",
+                                        );
+                                        return Some(Value::undefined());
+                                    }
+                                }
                                 other => {
                                     self.emit_error(format!(
-                                        "HashMap::from expects entries to be tuples or 2-element lists, found {:?}",
+                                        "HashMap::from expects entries to be HashMapEntry, tuples, or 2-element lists, found {:?}",
                                         other
                                     ));
                                     return Some(Value::undefined());
