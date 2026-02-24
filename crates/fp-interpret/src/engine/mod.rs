@@ -1225,11 +1225,19 @@ impl<'ctx> AstInterpreter<'ctx> {
             let handle = self.spawn_runtime_future(future);
             return self.run_scheduler_until_task(handle.id);
         }
-        self.emit_error("await expects a Future value");
+        self.emit_error("await expects a Future-like value (impl Future)");
         RuntimeFlow::Value(Value::undefined())
     }
 
     fn extract_runtime_future(&mut self, value: &Value) -> Option<RuntimeFuture> {
+        self.extract_runtime_future_from_value(value)
+    }
+
+    fn extract_spawned_future_handle(&self, value: &Value) -> Option<u64> {
+        self.extract_spawned_future_handle_from_value(value)
+    }
+
+    fn extract_runtime_future_from_value(&self, value: &Value) -> Option<RuntimeFuture> {
         match value {
             Value::Any(any) => any.downcast_ref::<RuntimeFuture>().cloned(),
             Value::Struct(value_struct) => {
@@ -1240,7 +1248,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn extract_spawned_future_handle(&self, value: &Value) -> Option<u64> {
+    fn extract_spawned_future_handle_from_value(&self, value: &Value) -> Option<u64> {
         match value {
             Value::Any(any) => any.downcast_ref::<TaskHandle>().map(|handle| handle.id),
             Value::Struct(value_struct) => {
@@ -1257,32 +1265,35 @@ impl<'ctx> AstInterpreter<'ctx> {
         &self,
         structural: &ValueStructural,
     ) -> Option<RuntimeFuture> {
+        let handle = Ident::new("handle");
         let future = Ident::new("future");
-        let field = structural.get_field(&future)?;
-        match &field.value {
-            Value::Any(any) => any.downcast_ref::<RuntimeFuture>().cloned(),
-            _ => None,
-        }
+        let field = structural
+            .get_field(&handle)
+            .or_else(|| structural.get_field(&future))?;
+        self.extract_runtime_future_from_value(&field.value)
     }
 
     fn extract_spawned_future_handle_from_struct(
         &self,
         structural: &ValueStructural,
     ) -> Option<u64> {
+        let handle = Ident::new("handle");
         let future = Ident::new("future");
-        let field = structural.get_field(&future)?;
-        match &field.value {
-            Value::Any(any) => any.downcast_ref::<TaskHandle>().map(|handle| handle.id),
-            Value::Int(int) => Some(int.value as u64),
-            _ => None,
-        }
+        let field = structural
+            .get_field(&handle)
+            .or_else(|| structural.get_field(&future))?;
+        self.extract_spawned_future_handle_from_value(&field.value)
+            .or_else(|| match &field.value {
+                Value::Int(int) => Some(int.value as u64),
+                _ => None,
+            })
     }
 
     fn future_runtime_type(&self) -> TypeStruct {
         TypeStruct {
             name: Ident::new("Future"),
             generics_params: Vec::new(),
-            fields: vec![StructuralField::new(Ident::new("future"), Ty::Any(TypeAny))],
+            fields: vec![StructuralField::new(Ident::new("handle"), Ty::Any(TypeAny))],
         }
     }
 
@@ -1290,7 +1301,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         Value::Struct(ValueStruct::new(
             self.future_runtime_type(),
             vec![ValueField::new(
-                Ident::new("future"),
+                Ident::new("handle"),
                 Value::Any(AnyBox::new(future)),
             )],
         ))
@@ -1300,7 +1311,7 @@ impl<'ctx> AstInterpreter<'ctx> {
         Value::Struct(ValueStruct::new(
             self.future_runtime_type(),
             vec![ValueField::new(
-                Ident::new("future"),
+                Ident::new("handle"),
                 Value::int(handle.id as i64),
             )],
         ))
