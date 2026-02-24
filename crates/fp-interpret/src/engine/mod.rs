@@ -29,13 +29,14 @@ use fp_core::cfg::TargetEnv;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer};
-use fp_core::module::path::PathPrefix;
+use fp_core::module::path::{parse_path, PathPrefix};
 use fp_core::module::resolver::{ModuleImport, ResolvedSymbol, ResolverError, ResolverRegistry};
 use fp_core::module::{ModuleId, ModuleLanguage, SymbolDescriptor, SymbolKind};
 use fp_core::ops::{format_runtime_string, format_value_with_spec, BinOpKind, UnOpKind};
 use fp_core::package::graph::PackageGraph;
 use fp_core::span::Span;
 use fp_core::utils::anybox::AnyBox;
+use fp_typing::runtime_types::{resolve_type_binding_match, TypeBindingMatch};
 use fp_typing::{AstTypeInferencer, TypeResolutionHook};
 use num_traits::ToPrimitive;
 use proc_macro2::{Delimiter, TokenTree};
@@ -1450,12 +1451,17 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             return true;
         }
-        let segments: Vec<&str> = name.split("::").filter(|seg| !seg.is_empty()).collect();
-        let simple = segments.last().copied().unwrap_or(name);
-        if segments.len() > 1 {
+        let symbol_path = self.parse_symbol_path(name);
+        let simple = symbol_path
+            .as_ref()
+            .and_then(|path| path.segments.last())
+            .map(|ident| ident.as_str())
+            .unwrap_or(name);
+        if let Some(path) = symbol_path.as_ref().filter(|path| path.segments.len() > 1) {
             if let Some(root) = self.root_items {
+                let segments = self.path_segments(path);
                 if let Some(item_ptr) = self.find_item_by_path_mut(root, &segments) {
-                    let qualified = segments.join("::");
+                    let qualified = name.to_string();
                     if !self.lazy_evaluated.contains(&qualified) {
                         unsafe {
                             self.evaluate_item(&mut *item_ptr);
@@ -3340,6 +3346,28 @@ impl<'ctx> AstInterpreter<'ctx> {
                 .last()
                 .map(|seg| seg.ident.as_str().trim_start_matches('#').to_string())
                 .unwrap_or_default(),
+        }
+    }
+
+    fn locator_path(locator: &Name) -> Option<Path> {
+        match locator {
+            Name::Ident(ident) => Some(Path::plain(vec![Ident::new(
+                ident.as_str().trim_start_matches('#'),
+            )])),
+            Name::Path(path) => Some(Path::new(
+                path.prefix,
+                path.segments
+                    .iter()
+                    .map(|segment| Ident::new(segment.as_str().trim_start_matches('#')))
+                    .collect(),
+            )),
+            Name::ParameterPath(path) => Some(Path::new(
+                path.prefix,
+                path.segments
+                    .iter()
+                    .map(|segment| Ident::new(segment.ident.as_str().trim_start_matches('#')))
+                    .collect(),
+            )),
         }
     }
 
@@ -6132,41 +6160,32 @@ impl<'ctx> AstInterpreter<'ctx> {
         None
     }
 
-    fn resolve_type_binding(&mut self, name: &str) -> Option<Ty> {
-        let base = name.rsplit("::").next().unwrap_or(name);
-        for idx in (0..self.type_env.len()).rev() {
-            if let Some(ty) = self.type_env[idx].get(name).cloned() {
+    fn resolve_type_binding(&mut self, path: &Path) -> Option<Ty> {
+        match resolve_type_binding_match(
+            &self.type_env,
+            &self.global_types,
+            &self.imported_types,
+            path,
+        ) {
+            TypeBindingMatch::Scoped { index, key, ty } => {
                 let resolved = self.materialize_const_type(ty);
-                self.type_env[idx].insert(name.to_string(), resolved.clone());
-                return Some(resolved);
+                self.type_env[index].insert(key, resolved.clone());
+                Some(resolved)
             }
-            if base != name {
-                if let Some(ty) = self.type_env[idx].get(base).cloned() {
-                    let resolved = self.materialize_const_type(ty);
-                    self.type_env[idx].insert(base.to_string(), resolved.clone());
-                    return Some(resolved);
-                }
-            }
-        }
-        if let Some(ty) = self.global_types.get(name).cloned() {
-            let resolved = self.materialize_const_type(ty);
-            self.global_types.insert(name.to_string(), resolved.clone());
-            return Some(resolved);
-        }
-        if base != name {
-            if let Some(ty) = self.global_types.get(base).cloned() {
+            TypeBindingMatch::Global { key, ty } => {
                 let resolved = self.materialize_const_type(ty);
-                self.global_types.insert(base.to_string(), resolved.clone());
-                return Some(resolved);
+                self.global_types.insert(key, resolved.clone());
+                Some(resolved)
             }
+            TypeBindingMatch::MissingImported { name } => {
+                self.emit_error(format!(
+                    "imported type '{}' cannot be resolved without module execution",
+                    name
+                ));
+                None
+            }
+            TypeBindingMatch::Missing => None,
         }
-        if self.imported_types.contains(name) {
-            self.emit_error(format!(
-                "imported type '{}' cannot be resolved without module execution",
-                name
-            ));
-        }
-        None
     }
 
     fn materialize_const_type(&mut self, ty: Ty) -> Ty {
@@ -6179,6 +6198,21 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
         }
         Ty::Expr(expr)
+    }
+
+    fn parse_symbol_path(&self, spec: &str) -> Option<Path> {
+        let parsed = parse_path(spec).ok()?;
+        if parsed.segments.is_empty() {
+            return None;
+        }
+        Some(Path::new(
+            parsed.prefix,
+            parsed.segments.into_iter().map(Ident::new).collect(),
+        ))
+    }
+
+    fn path_segments<'a>(&self, path: &'a Path) -> Vec<&'a str> {
+        path.segments.iter().map(|segment| segment.as_str()).collect()
     }
 
     fn handle_import(&mut self, import: &ItemImport) {
@@ -6304,10 +6338,8 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn local_module_exports(&self, module_spec: &str) -> Option<Vec<String>> {
         let root = self.root_items?;
-        let segments: Vec<&str> = module_spec
-            .split("::")
-            .filter(|segment| !segment.is_empty())
-            .collect();
+        let path = self.parse_symbol_path(module_spec)?;
+        let segments = self.path_segments(&path);
         if segments.is_empty() {
             return None;
         }
@@ -6492,13 +6524,8 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn module_alias_from_spec(&self, spec: &str) -> Option<String> {
-        spec.rsplit("::").next().and_then(|segment| {
-            if segment.is_empty() {
-                None
-            } else {
-                Some(segment.to_string())
-            }
-        })
+        self.parse_symbol_path(spec)
+            .and_then(|path| path.segments.last().map(|segment| segment.as_str().to_string()))
     }
 
     fn register_imported_symbol(
@@ -6604,13 +6631,17 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         if symbol == "Self" {
             if let Some(self_ty) = self.impl_stack.last().and_then(|ctx| ctx.self_ty.clone()) {
-                if let Some(ty) = self.resolve_type_binding(&self_ty) {
-                    return Value::Type(ty);
+                if let Some(path) = self.parse_symbol_path(&self_ty) {
+                    if let Some(ty) = self.resolve_type_binding(&path) {
+                        return Value::Type(ty);
+                    }
                 }
             }
         }
-        if let Some(ty) = self.resolve_type_binding(&symbol) {
-            return Value::Type(ty);
+        if let Some(path) = self.parse_symbol_path(&symbol) {
+            if let Some(ty) = self.resolve_type_binding(&path) {
+                return Value::Type(ty);
+            }
         }
         if symbol == "printf" {
             return Value::unit();
@@ -6631,8 +6662,10 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Some(value) = self.evaluated_constants.get(&qualified) {
                 return value.clone();
             }
-            if let Some(ty) = self.resolve_type_binding(&symbol) {
-                return Value::Type(ty);
+            if let Some(path) = self.parse_symbol_path(&symbol) {
+                if let Some(ty) = self.resolve_type_binding(&path) {
+                    return Value::Type(ty);
+                }
             }
             if let Some(value) = self.lookup_value(&symbol) {
                 return value;

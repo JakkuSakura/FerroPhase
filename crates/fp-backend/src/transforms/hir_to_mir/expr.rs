@@ -209,6 +209,10 @@ pub struct MirLowering {
     next_synthetic_hir_def_id: hir::DefId,
 }
 
+fn terminal_segment(name: &str) -> &str {
+    name.split("::").last().unwrap_or(name)
+}
+
 impl MirLowering {
     fn default_runtime_signatures() -> HashMap<String, mir::FunctionSig> {
         let mut map = HashMap::new();
@@ -453,7 +457,7 @@ impl MirLowering {
                 _ => continue,
             };
             full.insert(name.clone(), item.def_id);
-            let tail = name.split("::").last().unwrap_or(name.as_str()).to_string();
+            let tail = terminal_segment(&name).to_string();
             tails
                 .entry(tail)
                 .and_modify(|entry| *entry = None)
@@ -9282,7 +9286,7 @@ impl<'a> BodyBuilder<'a> {
                     for (def_id, item) in &self.program.def_map {
                         if let hir::ItemKind::Const(konst) = &item.kind {
                             let konst_name = konst.name.as_str();
-                            let konst_tail = konst_name.split("::").last().unwrap_or(konst_name);
+                            let konst_tail = terminal_segment(konst_name);
                             if konst_name == name || konst_tail == name || konst_tail == tail {
                                 self.lowering
                                     .register_const_value(self.program, *def_id, konst);
@@ -13411,7 +13415,7 @@ impl<'a> BodyBuilder<'a> {
         }
         self.container_type_name(ty)
             .map(|name| {
-                let tail = name.split("::").last().unwrap_or(name.as_str());
+                let tail = terminal_segment(&name);
                 matches!(tail, "Vec" | "List" | "list")
             })
             .unwrap_or(false)
@@ -13420,7 +13424,7 @@ impl<'a> BodyBuilder<'a> {
     fn is_map_container(&self, ty: &Ty) -> bool {
         self.container_type_name(ty)
             .map(|name| {
-                let tail = name.split("::").last().unwrap_or(name.as_str());
+                let tail = terminal_segment(&name);
                 tail == "HashMap"
             })
             .unwrap_or(false)
