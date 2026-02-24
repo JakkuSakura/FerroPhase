@@ -1,4 +1,5 @@
 use fp_core::ast::*;
+use fp_core::module::path::PathPrefix;
 use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
@@ -19,42 +20,98 @@ pub fn resolve_type_binding_match(
         return TypeBindingMatch::Missing;
     };
 
-    let qualified = path.to_string();
-    let base = base_ident.as_str().to_string();
-
-    let mut lookup_keys = vec![qualified.clone()];
-    if base != qualified {
-        lookup_keys.push(base.clone());
-    }
-
     for idx in (0..type_env.len()).rev() {
-        for key in &lookup_keys {
-            if let Some(ty) = type_env[idx].get(key).cloned() {
-                return TypeBindingMatch::Scoped {
-                    index: idx,
-                    key: key.clone(),
-                    ty,
-                };
-            }
+        if let Some((key, ty)) = type_env[idx]
+            .iter()
+            .find(|(key, _)| key_matches_path(key, path))
+            .map(|(key, ty)| (key.clone(), ty.clone()))
+        {
+            return TypeBindingMatch::Scoped {
+                index: idx,
+                key,
+                ty,
+            };
         }
-    }
 
-    for key in &lookup_keys {
-        if let Some(ty) = global_types.get(key).cloned() {
-            return TypeBindingMatch::Global {
-                key: key.clone(),
+        if let Some((key, ty)) = type_env[idx]
+            .iter()
+            .find(|(key, _)| key_matches_base_ident(key, base_ident))
+            .map(|(key, ty)| (key.clone(), ty.clone()))
+        {
+            return TypeBindingMatch::Scoped {
+                index: idx,
+                key,
                 ty,
             };
         }
     }
 
-    for key in &lookup_keys {
-        if imported_types.contains(key) {
-            return TypeBindingMatch::MissingImported { name: key.clone() };
-        }
+    if let Some((key, ty)) = global_types
+        .iter()
+        .find(|(key, _)| key_matches_path(key, path))
+        .map(|(key, ty)| (key.clone(), ty.clone()))
+    {
+        return TypeBindingMatch::Global { key, ty };
+    }
+
+    if let Some((key, ty)) = global_types
+        .iter()
+        .find(|(key, _)| key_matches_base_ident(key, base_ident))
+        .map(|(key, ty)| (key.clone(), ty.clone()))
+    {
+        return TypeBindingMatch::Global { key, ty };
+    }
+
+    if let Some(name) = imported_types.iter().find(|key| key_matches_path(key, path)) {
+        return TypeBindingMatch::MissingImported { name: name.clone() };
+    }
+
+    if let Some(name) = imported_types
+        .iter()
+        .find(|key| key_matches_base_ident(key, base_ident))
+    {
+        return TypeBindingMatch::MissingImported { name: name.clone() };
     }
 
     TypeBindingMatch::Missing
+}
+
+fn key_matches_path(key: &str, path: &Path) -> bool {
+    let mut key_iter = key.split("::").filter(|segment| !segment.is_empty());
+
+    match path.prefix {
+        PathPrefix::Root => {}
+        PathPrefix::Crate => {
+            if key_iter.next() != Some("crate") {
+                return false;
+            }
+        }
+        PathPrefix::SelfMod => {
+            if key_iter.next() != Some("self") {
+                return false;
+            }
+        }
+        PathPrefix::Super(depth) => {
+            for _ in 0..depth {
+                if key_iter.next() != Some("super") {
+                    return false;
+                }
+            }
+        }
+        PathPrefix::Plain => {}
+    }
+
+    for segment in &path.segments {
+        if key_iter.next() != Some(segment.as_str()) {
+            return false;
+        }
+    }
+
+    key_iter.next().is_none()
+}
+
+fn key_matches_base_ident(key: &str, base_ident: &Ident) -> bool {
+    !key.contains("::") && key == base_ident.as_str()
 }
 
 pub fn builtin_type_bindings() -> HashMap<String, Ty> {
