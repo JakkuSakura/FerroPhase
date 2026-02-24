@@ -19,7 +19,7 @@ impl HirGenerator {
         scope: PathResolutionScope,
     ) -> Result<hir::Path> {
         // Build segments from the locator.
-        let (segments, path_prefix) = match locator {
+        let (mut segments, mut path_prefix) = match locator {
             Name::Ident(ident) => (
                 vec![self.make_path_segment(&ident.name, None)],
                 PathPrefix::Plain,
@@ -45,13 +45,38 @@ impl HirGenerator {
             }
         };
 
+        if path_prefix == PathPrefix::Plain && !segments.is_empty() {
+            let first = segments[0].name.as_str();
+            if first == "crate" {
+                path_prefix = PathPrefix::Crate;
+                segments.remove(0);
+            } else if first == "self" {
+                path_prefix = PathPrefix::SelfMod;
+                segments.remove(0);
+            } else if first == "super" {
+                let mut depth = 0usize;
+                while depth < segments.len() && segments[depth].name.as_str() == "super" {
+                    depth += 1;
+                }
+                path_prefix = PathPrefix::Super(depth);
+                segments.drain(0..depth);
+            }
+        }
+
         let mut resolved = None;
 
-        if segments.len() == 1 && path_prefix == PathPrefix::Plain {
-            resolved = segments.last().and_then(|segment| match scope {
-                PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
-                PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
-            });
+        if segments.len() == 1 {
+            if path_prefix == PathPrefix::Plain || path_prefix == PathPrefix::SelfMod {
+                resolved = segments.last().and_then(|segment| match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+                    PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                });
+            } else if matches!(path_prefix, PathPrefix::Super(_)) {
+                resolved = segments.last().and_then(|segment| match scope {
+                    PathResolutionScope::Value => self.resolve_value_symbol(&segment.name),
+                    PathResolutionScope::Type => self.resolve_type_symbol(&segment.name),
+                });
+            }
         }
 
         if segments.len() > 1 && path_prefix == PathPrefix::Plain {
@@ -254,6 +279,21 @@ impl HirGenerator {
         if resolved.is_none() {
             let canonical = self.canonicalize_segments(&segments);
             resolved = self.lookup_global_res(&canonical, scope);
+        }
+
+        if resolved.is_none() && path_prefix != PathPrefix::Plain {
+            let mut relative_segments = match path_prefix {
+                PathPrefix::Root | PathPrefix::Crate => Vec::new(),
+                PathPrefix::SelfMod => self.module_path.segments.clone(),
+                PathPrefix::Super(depth) => {
+                    let keep = self.module_path.segments.len().saturating_sub(depth as usize);
+                    self.module_path.segments[..keep].to_vec()
+                }
+                PathPrefix::Plain => Vec::new(),
+            };
+            relative_segments.extend(segments.iter().map(|seg| seg.name.as_str().to_string()));
+            let relative = QualifiedPath::new(relative_segments);
+            resolved = self.lookup_global_res(&relative, scope);
         }
 
         Ok(hir::Path {

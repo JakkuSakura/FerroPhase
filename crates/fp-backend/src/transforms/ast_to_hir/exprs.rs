@@ -180,17 +180,15 @@ impl HirGenerator {
                 hir::ExprKind::Block(block)
             }
             ExprKind::Try(expr_try) => {
-                let inner_expr = self.transform_expr_to_hir(expr_try.expr.as_ref())?;
+                self.transform_expr_to_hir(expr_try.expr.as_ref())?;
                 self.add_error_or_warning(
                     Diagnostic::error("`?` operator lowering not implemented".to_string())
                         .with_source_context(DIAGNOSTIC_CONTEXT)
                         .with_span(expr_span),
                 );
-                return Ok(hir::Expr {
-                    hir_id,
-                    kind: inner_expr.kind,
-                    span,
-                });
+                return Err(fp_core::error::Error::from(
+                    "`?` operator lowering not implemented",
+                ));
             }
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;

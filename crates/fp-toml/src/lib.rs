@@ -147,7 +147,7 @@ mod tests {
 
     #[test]
     fn parses_simple_toml() {
-        let input = r#"name = \"fp\"\ncount = 3\n"#;
+        let input = "name = \"fp\"\ncount = 3\n";
         let frontend = TomlFrontend::new();
         let result = frontend.parse(input, None).expect("parse toml");
         let fp_core::ast::NodeKind::Expr(expr) = result.ast.kind() else {

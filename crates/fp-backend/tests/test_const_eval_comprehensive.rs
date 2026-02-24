@@ -118,7 +118,7 @@ fn const_eval_replaces_consts_and_records_results() -> Result<()> {
     let ctx = SharedScopedContext::new();
     fp_core::ast::register_threadlocal_serializer(serializer.clone());
     let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
-    let outcome = orchestrator.evaluate(&mut ast, &ctx, None)?;
+    let outcome = orchestrator.evaluate(&mut ast, &ctx, None, None)?;
 
     assert!(
         outcome.mutations_applied,
@@ -273,7 +273,7 @@ fn const_eval_materializes_late_type_for_typing() -> Result<()> {
 
     let ctx = SharedScopedContext::new();
     let mut orchestrator = ConstEvaluationOrchestrator::new(serializer);
-    let outcome = orchestrator.evaluate(&mut ast, &ctx, None)?;
+    let outcome = orchestrator.evaluate(&mut ast, &ctx, None, None)?;
 
     assert!(!outcome.has_errors, "const eval should succeed");
 

@@ -390,7 +390,7 @@ fn load_libc() -> Result<Library> {
 
     let mut last_err = None;
     for name in candidates {
-        match unsafe { Library::new(name) } {
+        match unsafe { Library::new(*name) } {
             Ok(lib) => return Ok(lib),
             Err(err) => last_err = Some(err),
         }

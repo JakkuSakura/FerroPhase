@@ -19,7 +19,11 @@ impl<K, V> HashMap<K, V> {
     }
 
     fn from(entries: Vec<HashMapEntry<K, V>>) -> HashMap<K, V> {
-        let mut map = HashMap::new();
+        let mut map = HashMap {
+            len: 0,
+            keys: Vec::new(),
+            values: Vec::new(),
+        };
         let mut idx = 0;
         let entries_len = entries.len();
         while idx < entries_len {

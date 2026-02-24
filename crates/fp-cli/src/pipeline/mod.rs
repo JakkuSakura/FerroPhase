@@ -1327,6 +1327,8 @@ mod tests {
             let pipeline = Pipeline::new();
             let mut options = PipelineOptions::default();
             options.target = target.clone();
+            options.lossy.enabled = true;
+            options.lossy.max_errors = 0;
             options.base_path = Some(PathBuf::from("unit_test_output"));
             Self { pipeline, options }
         }
@@ -1341,7 +1343,7 @@ mod tests {
             panic!("{} must succeed: {:?}", stage, err);
         }
 
-        fn normalize(&self, ast: &mut Node) {
+        fn normalize(&mut self, ast: &mut Node) {
             if let Err(err) = self.pipeline.stage_normalize_intrinsics(ast, &self.options) {
                 self.fail_with_error("intrinsic normalization", err);
             }

@@ -18,13 +18,14 @@ use fp_core::ast::{
     ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Node,
     NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
     TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeType, TypeUnit, TypeVec,
+    TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit, TypeVec,
     Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
     ValueTuple,
 };
 use fp_core::ast::{Ident, Name};
 use fp_core::ast::{Pattern, PatternKind};
 use fp_core::context::SharedScopedContext;
+use fp_core::cfg::TargetEnv;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer};
@@ -121,6 +122,7 @@ impl<'ctx> TypeResolutionHook for InterpreterTypeHook<'ctx> {
 #[derive(Clone)]
 pub struct InterpreterOptions {
     pub mode: InterpreterMode,
+    pub target_env: TargetEnv,
     pub debug_assertions: bool,
     pub diagnostics: Option<Arc<DiagnosticManager>>,
     pub diagnostic_context: &'static str,
@@ -135,6 +137,7 @@ impl Default for InterpreterOptions {
     fn default() -> Self {
         Self {
             mode: InterpreterMode::CompileTime,
+            target_env: TargetEnv::host(),
             debug_assertions: false,
             diagnostics: None,
             diagnostic_context: DEFAULT_DIAGNOSTIC_CONTEXT,
@@ -215,6 +218,11 @@ impl PartialEq for RuntimeRef {
     fn eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct RuntimeBox {
+    value: Value,
 }
 
 impl StoredValue {
@@ -2016,7 +2024,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::ImplTraits(_)
             | Ty::Value(_)
             | Ty::Nothing(_)
-            | Ty::AnyBox(_) => {}
+            | Ty::AnyBox(_) | Ty::RawPtr(_) => {}
         }
     }
 
@@ -4128,7 +4136,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::Type(_)
             | Ty::Value(_)
             | Ty::TypeBinaryOp(_)
-            | Ty::AnyBox(_) => ty.clone(),
+            | Ty::AnyBox(_) | Ty::RawPtr(_) => ty.clone(),
         }
     }
 

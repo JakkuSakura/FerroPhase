@@ -2,7 +2,8 @@
 
 use assert_cmd::Command;
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{CompileArgs, compile_command};
+use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::pipeline::BackendKind;
 use predicates::prelude::*;
 use std::fs;
 use std::path::Path;
@@ -100,8 +101,9 @@ async fn compile_example_async(example_name: &str) {
 
     let args = CompileArgs {
         input: vec![source_path.clone()],
-        backend: "binary".to_string(),
-        emitter: "native".to_string(),
+        backend: BackendKind::Bytecode,
+        target: None,
+        emitter: EmitterKind::Native,
         target_triple: None,
         target_cpu: None,
         target_features: None,
@@ -117,10 +119,13 @@ async fn compile_example_async(example_name: &str) {
         define: Vec::new(),
         exec: false,
         save_intermediates: false,
-        lossy: false,
+        lossy: true,
         max_errors: 0,
         source_language: None,
         disable_stage: Vec::new(),
+        const_eval: true,
+        type_defs: false,
+        single_world: false,
     };
 
     if let Err(err) = compile_command(args, &CliConfig::default()).await {

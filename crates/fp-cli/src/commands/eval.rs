@@ -71,6 +71,7 @@ async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -
     let output = match input {
         PipelineInput::Expression(_) => {
             options.disabled_stages.push("const-eval".to_string());
+            options.disabled_stages.push("intrinsic-normalize".to_string());
             pipeline.execute_with_options(input, options).await?
         }
         _ => pipeline.execute_with_options(input, options).await?,
@@ -127,7 +128,12 @@ fn eval_pipeline_options(args: &EvalArgs) -> PipelineOptions {
             print_passes: args.print_passes,
             verbose: false,
         },
-        lossy: LossyOptions::default(),
+        lossy: LossyOptions {
+            enabled: true,
+            max_errors: 0,
+            show_all_errors: true,
+            continue_on_error: true,
+        },
         release: false,
         execute_main: false,
         disabled_stages: Vec::new(),

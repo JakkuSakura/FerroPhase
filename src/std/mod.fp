@@ -1,4 +1,3 @@
-pub mod bench;
 pub mod collections;
 pub mod ffi;
 pub mod future;

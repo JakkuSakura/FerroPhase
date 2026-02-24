@@ -2,7 +2,7 @@ use crate::typing::scheme::{SchemeType, TypeScheme};
 use crate::{AstTypeInferencer, TypeVarId};
 use fp_core::ast::*;
 use fp_core::error::{Error, Result};
-use fp_core::module::path::{PathPrefix, QualifiedPath};
+use fp_core::module::path::PathPrefix;
 
 #[derive(Clone, Debug)]
 pub(crate) struct TypeVar {
@@ -1042,15 +1042,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                         self.bind(var, TypeTerm::Struct(self.make_hashmap_struct()));
                         return Ok(var);
                     }
-                    let key = self.qualify_path(QualifiedPath::new(vec![name.clone()]));
-                    if let Some(struct_ty) = self.struct_defs.get(&key) {
-                        self.bind(var, TypeTerm::Struct(struct_ty.clone()));
-                        return Ok(var);
-                    }
-                    if let Some(enum_ty) = self.enum_defs.get(&key) {
-                        self.bind(var, TypeTerm::Enum(enum_ty.clone()));
-                        return Ok(var);
-                    }
                 }
                 if let ExprKind::Invoke(invoke) = expr.kind() {
                     if let Some(name) = invoke_target_name(invoke) {
@@ -1062,20 +1053,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                             };
                             self.bind(var, TypeTerm::Struct(struct_ty));
                             return Ok(var);
-                        }
-                    }
-                }
-                if let Some(hook) = self.type_eval_hook.as_mut() {
-                    match hook.eval_type_expr(expr) {
-                        Ok(Some(ty)) => {
-                            let resolved = self.type_from_ast_ty(&ty)?;
-                            self.unify(var, resolved)?;
-                            return Ok(var);
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            self.emit_error_with_span(self.span_option(expr.span()), err.to_string());
-                            return Ok(self.error_type_var());
                         }
                     }
                 }

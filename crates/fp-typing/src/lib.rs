@@ -2,6 +2,8 @@ use fp_core::config;
 use std::collections::{HashMap, HashSet};
 
 pub mod typing;
+pub mod runtime_types;
+pub use runtime_types::{materialize_type_with_hooks, type_from_value, TypeMaterializeHooks};
 pub use typing::types::{TypingDiagnostic, TypingDiagnosticLevel, TypingOutcome};
 
 use crate::typing::scheme::TypeScheme;

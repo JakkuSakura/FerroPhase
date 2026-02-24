@@ -122,7 +122,7 @@ mod tests {
 
     #[test]
     fn parses_simple_json() {
-        let input = r#"{\"name\": \"fp\", \"count\": 2, \"ok\": true}"#;
+        let input = r#"{"name": "fp", "count": 2, "ok": true}"#;
         let frontend = JsonFrontend::new();
         let result = frontend.parse(input, None).expect("parse json");
         let fp_core::ast::NodeKind::Expr(expr) = result.ast.kind() else {

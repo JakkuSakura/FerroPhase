@@ -7,7 +7,8 @@ use fp_core::ast::{
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
     ItemImportTree, ItemKind, ItemMacro, MacroDelimiter, MacroInvocation, Module, Name, Path,
-    QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
+    QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
+    TypeEnum, TypeQuote, TypeStruct, Value, ValueNone,
     Visibility,
 };
 use fp_core::cst::CstCategory;
@@ -297,8 +298,24 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         );
         let ty_node = first_child_by_category(field, CstCategory::Type)
             .ok_or(LowerItemsError::MissingToken("field type"))?;
-        let fty = lower_type_from_cst(ty_node)
+        let mut fty = lower_type_from_cst(ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(field.kind))?;
+        let is_optional = field.children.iter().any(|c| {
+            matches!(
+                c,
+                SyntaxElement::Token(t) if !t.is_trivia() && t.text == "?"
+            )
+        });
+        if is_optional {
+            fty = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(fty),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
         fields.push(StructuralField::new(fname, fty));
     }
     Ok(ItemDefStruct {

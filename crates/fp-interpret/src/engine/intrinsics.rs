@@ -195,9 +195,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("task::join intrinsic expects at least one argument");
                     return RuntimeFlow::Value(Value::undefined());
                 }
-                let mut handles = Vec::with_capacity(call.args.len());
                 let mut scheduler_handles = Vec::with_capacity(call.args.len());
-                let mut compio_handles = Vec::with_capacity(call.args.len());
                 for arg in call.args.iter_mut() {
                     let flow = self.eval_expr_runtime(arg);
                     let value = match flow {
@@ -205,35 +203,15 @@ impl<'ctx> AstInterpreter<'ctx> {
                         other => return other,
                     };
                     if let Some(handle) = self.extract_task_handle(&value) {
-                        handles.push(handle);
+                        scheduler_handles.push(handle.id);
                         continue;
                     }
                     if let Some(future) = self.extract_runtime_future(&value) {
                         let handle = self.spawn_runtime_future(future);
-                        handles.push(handle);
+                        scheduler_handles.push(handle.id);
                         continue;
                     }
                     self.emit_error("task::join expects Task or Future arguments");
-                    return RuntimeFlow::Value(Value::undefined());
-                }
-
-                for handle in handles {
-                    match handle {
-                        RuntimeTaskHandle::Scheduler(handle) => scheduler_handles.push(handle.id),
-                        RuntimeTaskHandle::Compio(handle) => compio_handles.push(handle),
-                    }
-                }
-
-                if self.compio_runtime.is_some() {
-                    if !scheduler_handles.is_empty() {
-                        self.emit_error("cannot join scheduler tasks inside compio runtime");
-                        return RuntimeFlow::Value(Value::undefined());
-                    }
-                    return self.join_compio_tasks(&compio_handles);
-                }
-
-                if !compio_handles.is_empty() {
-                    self.emit_error("compio tasks cannot be joined without a runtime");
                     return RuntimeFlow::Value(Value::undefined());
                 }
 
@@ -270,9 +248,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     self.emit_error("task::select intrinsic expects at least two arguments");
                     return RuntimeFlow::Value(Value::undefined());
                 }
-                let mut handles = Vec::with_capacity(call.args.len());
                 let mut scheduler_handles = Vec::with_capacity(call.args.len());
-                let mut compio_handles = Vec::with_capacity(call.args.len());
                 for arg in call.args.iter_mut() {
                     let flow = self.eval_expr_runtime(arg);
                     let value = match flow {
@@ -280,59 +256,28 @@ impl<'ctx> AstInterpreter<'ctx> {
                         other => return other,
                     };
                     if let Some(handle) = self.extract_task_handle(&value) {
-                        handles.push(handle);
+                        scheduler_handles.push(handle.id);
                         continue;
                     }
                     if let Some(future) = self.extract_runtime_future(&value) {
                         let handle = self.spawn_runtime_future(future);
-                        handles.push(handle);
+                        scheduler_handles.push(handle.id);
                         continue;
                     }
                     self.emit_error("task::select expects Task or Future arguments");
                     return RuntimeFlow::Value(Value::undefined());
                 }
-                for handle in handles {
-                    match handle {
-                        RuntimeTaskHandle::Scheduler(handle) => scheduler_handles.push(handle.id),
-                        RuntimeTaskHandle::Compio(handle) => compio_handles.push(handle),
+                match self.run_scheduler_until_any(&scheduler_handles) {
+                    Some((idx, RuntimeFlow::Value(value))) => {
+                        RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
+                            Value::int(idx as i64),
+                            value,
+                        ])))
                     }
-                }
-
-                if self.compio_runtime.is_some() {
-                    if !scheduler_handles.is_empty() {
-                        self.emit_error("cannot select scheduler tasks inside compio runtime");
-                        return RuntimeFlow::Value(Value::undefined());
-                    }
-                    match self.select_compio_tasks(&compio_handles) {
-                        Some((idx, RuntimeFlow::Value(value))) => {
-                            RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
-                                Value::int(idx as i64),
-                                value,
-                            ])))
-                        }
-                        Some((_idx, flow)) => flow,
-                        None => {
-                            self.emit_error("no runnable tasks available during select");
-                            RuntimeFlow::Value(Value::undefined())
-                        }
-                    }
-                } else {
-                    if !compio_handles.is_empty() {
-                        self.emit_error("compio tasks cannot be selected without a runtime");
-                        return RuntimeFlow::Value(Value::undefined());
-                    }
-                    match self.run_scheduler_until_any(&scheduler_handles) {
-                        Some((idx, RuntimeFlow::Value(value))) => {
-                            RuntimeFlow::Value(Value::Tuple(ValueTuple::new(vec![
-                                Value::int(idx as i64),
-                                value,
-                            ])))
-                        }
-                        Some((_idx, flow)) => flow,
-                        None => {
-                            self.emit_error("no runnable tasks available during select");
-                            RuntimeFlow::Value(Value::undefined())
-                        }
+                    Some((_idx, flow)) => flow,
+                    None => {
+                        self.emit_error("no runnable tasks available during select");
+                        RuntimeFlow::Value(Value::undefined())
                     }
                 }
             }

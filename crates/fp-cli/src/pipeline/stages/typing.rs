@@ -102,7 +102,9 @@ impl Pipeline {
 
     #[cfg(test)]
     pub(crate) fn stage_type_check_for_tests(&mut self, ast: &mut Node) -> Result<(), CliError> {
-        let options = PipelineOptions::default();
+        let mut options = PipelineOptions::default();
+        options.lossy.enabled = true;
+        options.lossy.max_errors = 0;
         self.stage_type_check(ast, STAGE_TYPE_ENRICH, &options)
     }
 }

@@ -371,15 +371,17 @@ fn parse_item_cst(
                         break;
                     }
                     let field_name = expect_ident_token(input)?;
+                    let mut field_children = vec![SyntaxElement::Token(field_name)];
+                    if matches_symbol(input.first(), "?") {
+                        let optional_tok =
+                            advance(input).ok_or_else(|| ErrMode::Cut(ContextError::new()))?;
+                        field_children
+                            .push(SyntaxElement::Token(syntax_token_from_token(&optional_tok)));
+                    }
                     expect_symbol(input, ":")?;
                     let ty = parse_type_prefix_from_tokens(input, &[",", "}"])?;
-                    let field = node(
-                        SyntaxKind::StructFieldDecl,
-                        vec![
-                            SyntaxElement::Token(field_name),
-                            SyntaxElement::Node(Box::new(ty)),
-                        ],
-                    );
+                    field_children.push(SyntaxElement::Node(Box::new(ty)));
+                    let field = node(SyntaxKind::StructFieldDecl, field_children);
                     children.push(SyntaxElement::Node(Box::new(field)));
                     if match_symbol(input, ",") {
                         continue;
@@ -1339,21 +1341,50 @@ fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode
 
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
-    let lexemes = lexemes_from_tokens(input);
-    let (node, consumed) =
-        cst::parse_type_lexemes_prefix_to_cst(&lexemes, current_items_file(), stops).map_err(
-            |err| {
-                ErrMode::Cut(
-                    <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
-                        &lexemes,
-                        ErrorKind::Fail,
-                        err,
-                    ),
-                )
-            },
-        )?;
-    *input = &input[consumed..];
+    let (lexemes, lexeme_to_token_end) = lexemes_from_tokens_for_type(input);
+    let (node, consumed) = cst::parse_type_lexemes_prefix_to_cst(&lexemes, current_items_file(), stops)
+        .map_err(|err| {
+            ErrMode::Cut(
+                <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+                    &lexemes,
+                    ErrorKind::Fail,
+                    err,
+                ),
+            )
+        })?;
+
+    let consumed_tokens = if consumed == 0 {
+        0
+    } else {
+        *lexeme_to_token_end
+            .get(consumed - 1)
+            .ok_or_else(|| ErrMode::Cut(ContextError::new()))?
+    };
+    *input = &input[consumed_tokens..];
     Ok(node)
+}
+
+fn lexemes_from_tokens_for_type(tokens: &[Token]) -> (Vec<Lexeme>, Vec<usize>) {
+    let mut lexemes = Vec::new();
+    let mut lexeme_to_token_end = Vec::new();
+
+    for (idx, token) in tokens.iter().enumerate() {
+        if token.kind == TokenKind::Symbol
+            && token.lexeme.len() > 1
+            && token.lexeme.chars().all(|ch| ch == '>')
+        {
+            for _ in 0..token.lexeme.len() {
+                lexemes.push(Lexeme::token(">".to_string(), token.span));
+                lexeme_to_token_end.push(idx + 1);
+            }
+            continue;
+        }
+
+        lexemes.push(Lexeme::token(token.lexeme.clone(), token.span));
+        lexeme_to_token_end.push(idx + 1);
+    }
+
+    (lexemes, lexeme_to_token_end)
 }
 
 fn parse_type_bound_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {

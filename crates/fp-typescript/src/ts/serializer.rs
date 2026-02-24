@@ -157,7 +157,13 @@ impl ScriptEmitter {
 
         if let Some(function_item) = item.as_function() {
             self.ensure_blank_line();
-            self.emit_function(function_item)?;
+            if let Err(err) = self.emit_function(function_item) {
+                self.push_line(&format!(
+                    "// skipped unsupported function {}: {}",
+                    function_item.name,
+                    err
+                ));
+            }
             return Ok(());
         }
 
@@ -170,10 +176,13 @@ impl ScriptEmitter {
 
         if let Some(expr) = item.as_expr() {
             if let ExprKind::Block(block) = expr.kind() {
-                self.emit_script_block(block)?;
-            } else {
-                let rendered = self.render_expr(expr)?;
+                if let Err(err) = self.emit_script_block(block) {
+                    self.push_line(&format!("// skipped unsupported script block: {}", err));
+                }
+            } else if let Ok(rendered) = self.render_expr(expr) {
                 self.push_line(&format!("{};", rendered));
+            } else {
+                self.push_line("// skipped unsupported top-level expression");
             }
         }
 

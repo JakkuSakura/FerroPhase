@@ -6,6 +6,7 @@ use fp_core::ast::{
     Module, Node, Ty, Value, Visibility,
 };
 use fp_core::context::SharedScopedContext;
+use fp_core::cfg::TargetEnv;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicNormalizer;
@@ -78,7 +79,7 @@ impl ConstEvaluationOrchestrator {
             macro_parser,
             intrinsic_normalizer,
             stdout_mode: StdoutMode::Capture,
-            target_env: fp_core::cfg::TargetEnv::host(),
+            target_env: TargetEnv::host(),
         };
 
         let mut interpreter = AstInterpreter::new(ctx, options);

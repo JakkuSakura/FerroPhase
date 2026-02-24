@@ -1,7 +1,16 @@
+pub enum Option<T> {
+    Some(T),
+    None,
+}
+
+pub struct Box<T> {
+    value: T,
+}
+
 pub struct LinkedNode<T> {
     value: T,
-    prev: Option<Box<LinkedNode<T>>>,
-    next: Option<Box<LinkedNode<T>>>,
+    prev: Option<Box<LinkedNode<T> > >,
+    next: Option<Box<LinkedNode<T> > >,
 }
 
 pub struct LinkedList<T> {

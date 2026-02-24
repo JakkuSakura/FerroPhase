@@ -1654,10 +1654,16 @@ fn decode_string_literal(raw: &str) -> Option<String> {
         Some(out)
     }
 
-    // Cooked string literal: "..."
+    // Cooked string literals: "..." and b"..."
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
         let inner = &raw[1..raw.len() - 1];
         return unescape_cooked(inner);
+    }
+    if let Some(rest) = raw.strip_prefix('b') {
+        if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+            let inner = &rest[1..rest.len() - 1];
+            return unescape_cooked(inner);
+        }
     }
 
     // Raw string literals: r"...", r#"..."#, br"...", br#"..."#
@@ -1926,6 +1932,7 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyUnknown => Ok(Ty::unknown()),
         SyntaxKind::TyPath => lower_ty_path(node),
         SyntaxKind::TyRef => lower_ty_ref(node),
+        SyntaxKind::TyPtr => lower_ty_ptr(node),
         SyntaxKind::TySlice => lower_ty_slice(node),
         SyntaxKind::TyArray => lower_ty_array(node),
         SyntaxKind::TyFn => lower_ty_fn(node),
@@ -2465,6 +2472,29 @@ fn lower_ty_ref(node: &SyntaxNode) -> Result<Ty, LowerError> {
     ))
 }
 
+fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
+    let mut mutability: Option<bool> = None;
+    for child in &node.children {
+        let crate::syntax::SyntaxElement::Token(tok) = child else {
+            continue;
+        };
+        if tok.is_trivia() {
+            continue;
+        }
+        if tok.text == "mut" {
+            mutability = Some(true);
+        } else if tok.text == "const" {
+            mutability = Some(false);
+        }
+    }
+
+    let inner = node_children_types(node)
+        .next()
+        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
+    let inner = lower_type_from_cst(inner)?;
+    Ok(Ty::raw_ptr(inner, mutability))
+}
+
 fn lower_ty_slice(node: &SyntaxNode) -> Result<Ty, LowerError> {
     let elem = node_children_types(node)
         .next()
@@ -2557,7 +2587,23 @@ fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
         let ty_node = node_children_types(field)
             .next()
             .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyField))?;
-        let value = lower_type_from_cst(ty_node)?;
+        let mut value = lower_type_from_cst(ty_node)?;
+        let is_optional = field.children.iter().any(|c| {
+            matches!(
+                c,
+                crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "?"
+            )
+        });
+        if is_optional {
+            value = Ty::TypeBinaryOp(
+                TypeBinaryOp {
+                    kind: TypeBinaryOpKind::Union,
+                    lhs: Box::new(value),
+                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
+                }
+                .into(),
+            );
+        }
         fields.push(StructuralField::new(Ident::new(name), value));
     }
     let mut update: Option<Ty> = None;

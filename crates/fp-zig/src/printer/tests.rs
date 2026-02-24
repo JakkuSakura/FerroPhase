@@ -60,6 +60,7 @@ fn renders_struct_literal() {
 #[test]
 fn renders_assignment_expression() {
     let assign_expr = Expr::from(ExprAssign {
+        span: fp_core::span::Span::null(),
         target: Expr::ident(ast::Ident::new("value")).into(),
         value: Expr::value(Value::int(42)).into(),
     });
