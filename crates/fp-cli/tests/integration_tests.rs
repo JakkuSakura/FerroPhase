@@ -9,9 +9,13 @@ use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 
+fn fp_cmd() -> Command {
+    Command::new(env!("CARGO_BIN_EXE_fp"))
+}
+
 #[test]
 fn test_cli_help() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
+    let mut cmd = fp_cmd();
     cmd.arg("--help");
     cmd.assert()
         .success()
@@ -20,7 +24,7 @@ fn test_cli_help() {
 
 #[test]
 fn test_cli_version() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
+    let mut cmd = fp_cmd();
     cmd.arg("--version");
     cmd.assert()
         .success()
@@ -29,7 +33,7 @@ fn test_cli_version() {
 
 #[test]
 fn test_cli_parse_help() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
+    let mut cmd = fp_cmd();
     cmd.arg("parse").arg("--help");
     cmd.assert()
         .success()
@@ -38,7 +42,7 @@ fn test_cli_parse_help() {
 
 #[test]
 fn test_cli_completions_basic() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
+    let mut cmd = fp_cmd();
     cmd.arg("completions").arg("bash");
     cmd.assert()
         .success()
@@ -47,7 +51,7 @@ fn test_cli_completions_basic() {
 
 #[test]
 fn test_cli_eval_simple() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
+    let mut cmd = fp_cmd();
     cmd.arg("eval").arg("--expr").arg("1 + 2");
 
     cmd.assert()
@@ -57,8 +61,7 @@ fn test_cli_eval_simple() {
 
 #[test]
 fn test_cli_compile_missing_file() {
-    let output = Command::cargo_bin("fp")
-        .unwrap()
+    let output = fp_cmd()
         .arg("compile")
         .arg("nonexistent.fp")
         .output()
@@ -82,7 +85,7 @@ fn test_cli_compile_missing_file() {
 
 #[test]
 fn test_cli_invalid_command() {
-    let mut cmd = Command::cargo_bin("fp").unwrap();
+    let mut cmd = fp_cmd();
     cmd.arg("invalid_command");
 
     cmd.assert().failure();
