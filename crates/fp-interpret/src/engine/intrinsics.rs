@@ -182,7 +182,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 if let Some(future) = self.extract_runtime_future(&value) {
                     let handle = self.spawn_runtime_future(future);
-                    return RuntimeFlow::Value(Value::any(handle));
+                    return RuntimeFlow::Value(self.make_task_runtime_value(handle));
                 }
                 self.emit_error("task::spawn expects a Future value");
                 RuntimeFlow::Value(Value::undefined())

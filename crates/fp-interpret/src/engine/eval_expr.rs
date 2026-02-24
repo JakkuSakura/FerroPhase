@@ -1032,7 +1032,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Async(async_expr) => {
                 let future = self.capture_runtime_future(async_expr.expr.as_ref());
-                RuntimeFlow::Value(Value::Any(AnyBox::new(future)))
+                RuntimeFlow::Value(self.make_future_runtime_value(future))
             }
             ExprKind::Await(await_expr) => {
                 let flow = self.eval_expr_runtime(await_expr.base.as_mut());
