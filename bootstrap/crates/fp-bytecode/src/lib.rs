@@ -1,4 +1,5 @@
 pub use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 use fp_core::mir;
 use fp_core::winnow::ModalResult;
 use fp_core::winnow::Parser;
@@ -7,6 +8,7 @@ use fp_core::winnow::token::{literal, take_till, take_while};
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"FPBC";
 pub const BYTECODE_VERSION: u32 = 1;
+const BYTECODE_LOWERING_CONTEXT: &str = "mir→bytecode";
 
 #[derive(Debug, Clone)]
 pub struct BytecodeFile {
@@ -1148,6 +1150,17 @@ pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, Bytecode
         functions,
         entry,
     })
+}
+
+fn emit_lowering_warning(message: impl Into<String>) {
+    diagnostic_manager().add_diagnostic(
+        Diagnostic::warning(message.into()).with_source_context(BYTECODE_LOWERING_CONTEXT),
+    );
+}
+
+fn push_dummy_unit(code: &mut Vec<BytecodeInstr>, const_pool: &mut Vec<BytecodeConst>) {
+    let id = push_const(const_pool, BytecodeConst::Unit);
+    code.push(BytecodeInstr::LoadConst(id));
 }
 
 fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
