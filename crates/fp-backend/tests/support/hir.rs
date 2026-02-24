@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use fp_core::hir::{
     self, Body, Expr, ExprKind, Function, FunctionSig, Generics, Item, ItemKind, Program, TypeExpr,
     TypeExprKind,

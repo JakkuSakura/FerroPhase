@@ -28,7 +28,7 @@ pub fn emit_text_from_lir(
 
     for block in &func.basic_blocks {
         for inst in &block.instructions {
-            if let LirInstructionKind::Call { function, args, .. } = &inst.kind {
+            if let LirInstructionKind::Call { function: _, args, .. } = &inst.kind {
                 if !args.iter().all(is_call_arg_value) {
                     return Err(Error::from(
                         "native emitter only supports register/constant/local/stack call args",

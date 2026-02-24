@@ -10,8 +10,8 @@ use libc;
 
 #[derive(Debug)]
 pub struct JitModule {
-    text: JitMemory,
-    rodata: JitMemory,
+    _text: JitMemory,
+    _rodata: JitMemory,
     entry: *const c_void,
     symbols: HashMap<String, *const c_void>,
     _lib: Arc<DynamicLibrary>,
@@ -76,8 +76,8 @@ impl JitEngine {
         let entry = (text_base + plan.entry_offset) as *const c_void;
 
         Ok(JitModule {
-            text,
-            rodata,
+            _text: text,
+            _rodata: rodata,
             entry,
             symbols,
             _lib: Arc::clone(&self.lib),
