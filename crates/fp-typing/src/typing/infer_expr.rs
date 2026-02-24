@@ -588,8 +588,6 @@ impl<'ctx> AstTypeInferencer<'ctx> {
 
                     if let Some(inner_ty) = extract_std_task_inner_ty(&base_ty, "Future") {
                         self.type_from_ast_ty(&inner_ty)?
-                    } else if let Some(inner_ty) = extract_std_task_inner_ty(&base_ty, "Task") {
-                        self.type_from_ast_ty(&inner_ty)?
                     } else {
                         base_var
                     }
