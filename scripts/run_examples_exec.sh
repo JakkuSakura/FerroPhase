@@ -12,7 +12,11 @@ fi
 
 for f in examples/*.fp; do
   echo "==> ${f}"
-  if ! cargo run --bin fp --release -- compile --exec --save-intermediates "${f}"; then
+  name="$(basename "${f}" .fp)"
+  out_dir="examples/generated"
+  mkdir -p "${out_dir}"
+  out_file="${out_dir}/${name}.out"
+  if ! cargo run --bin fp --release -- compile --exec --save-intermediates --output "${out_file}" "${f}"; then
     echo "FAILED: ${f}"
   fi
 done

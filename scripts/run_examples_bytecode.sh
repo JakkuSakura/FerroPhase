@@ -12,8 +12,11 @@ fi
 
 for f in examples/*.fp; do
   echo "==> ${f}"
-  cargo run --bin fp --release -- compile --emitter bytecode --save-intermediates "${f}"
-  fbc="${f%.fp}.fbc"
+  name="$(basename "${f}" .fp)"
+  out_dir="examples/generated"
+  mkdir -p "${out_dir}"
+  fbc="${out_dir}/${name}.fbc"
+  cargo run --bin fp --release -- compile --emitter bytecode --save-intermediates --output "${fbc}" "${f}"
   if [[ ! -f "${fbc}" ]]; then
     echo "Missing bytecode output: ${fbc}"
     exit 1
