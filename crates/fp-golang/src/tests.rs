@@ -52,7 +52,10 @@ func main() {
 fn serialize_basic_go_ast() {
     let fields = vec![
         StructuralField::new(Ident::new("Name"), Ty::Primitive(TypePrimitive::String)),
-        StructuralField::new(Ident::new("Age"), Ty::Primitive(TypePrimitive::Int(fp_core::ast::TypeInt::I64))),
+        StructuralField::new(
+            Ident::new("Age"),
+            Ty::Primitive(TypePrimitive::Int(fp_core::ast::TypeInt::I64)),
+        ),
     ];
     let mut user_struct = ItemDefStruct::new(Ident::new("User"), fields);
     user_struct.visibility = fp_core::ast::Visibility::Public;
@@ -81,7 +84,9 @@ fn serialize_basic_go_ast() {
 
     let node = Node::from(NodeKind::File(file));
     let serializer = GoSerializer::default();
-    let output = serializer.serialize_node(&node).expect("serialize should succeed");
+    let output = serializer
+        .serialize_node(&node)
+        .expect("serialize should succeed");
 
     assert!(output.contains("package main"));
     assert!(output.contains("type User struct"));

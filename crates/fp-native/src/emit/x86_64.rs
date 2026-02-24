@@ -439,7 +439,9 @@ fn encode_const_bytes(constant: &LirConstant, ty: &LirType) -> Result<Vec<u8>> {
             }
             Ok(out)
         }
-        _ => Err(Error::from("unsupported global initializer for native rodata")),
+        _ => Err(Error::from(
+            "unsupported global initializer for native rodata",
+        )),
     }
 }
 
@@ -449,10 +451,11 @@ fn const_to_u8(constant: &LirConstant) -> Result<u8> {
         LirConstant::UInt(value, _) => Ok(*value as u8),
         LirConstant::Bool(value) => Ok(if *value { 1 } else { 0 }),
         LirConstant::Null(_) | LirConstant::Undef(_) => Ok(0),
-        _ => Err(Error::from("unsupported global array element for native rodata")),
+        _ => Err(Error::from(
+            "unsupported global array element for native rodata",
+        )),
     }
 }
-
 
 fn spill_arguments(
     asm: &mut Assembler,
@@ -1134,7 +1137,9 @@ fn load_value(
             }
             if let LirConstant::GlobalRef(name, _, indices) = constant {
                 if indices.iter().any(|idx| *idx != 0) {
-                    return Err(Error::from("unsupported non-zero GlobalRef indices for x86_64"));
+                    return Err(Error::from(
+                        "unsupported non-zero GlobalRef indices for x86_64",
+                    ));
                 }
                 emit_mov_symbol_addr(asm, dst, name.as_str(), 0)?;
                 return Ok(());
@@ -3708,7 +3713,7 @@ fn emit_store(
                 _ => {
                     return Err(Error::from(
                         "unsupported array element size in constant store",
-                    ))
+                    ));
                 }
             }
             Ok(())
@@ -4844,9 +4849,7 @@ fn store_constant_aggregate_to_reg(
                     4 => emit_mov_mr32(asm, base, dst, Reg::R10),
                     8 => emit_mov_mr64(asm, base, dst, Reg::R10),
                     _ => {
-                        return Err(Error::from(
-                            "unsupported aggregate field size in return",
-                        ));
+                        return Err(Error::from("unsupported aggregate field size in return"));
                     }
                 }
             }
@@ -4885,9 +4888,7 @@ fn store_constant_aggregate_to_reg(
                     4 => emit_mov_mr32(asm, base, offset, Reg::R10),
                     8 => emit_mov_mr64(asm, base, offset, Reg::R10),
                     _ => {
-                        return Err(Error::from(
-                            "unsupported array element size in return",
-                        ));
+                        return Err(Error::from("unsupported array element size in return"));
                     }
                 }
             }

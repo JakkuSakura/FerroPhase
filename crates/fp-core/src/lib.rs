@@ -4,8 +4,8 @@
 pub mod macros;
 
 pub mod ast;
-pub mod collections;
 pub mod cfg;
+pub mod collections;
 pub mod config;
 pub mod context;
 pub mod cst;

@@ -19,11 +19,7 @@ pub fn compile_prql(
 
     if let QueryKind::Prql(prql) = &document.kind {
         target = prql.target.clone();
-        statements = prql
-            .compiled
-            .iter()
-            .map(|stmt| stmt.text.clone())
-            .collect();
+        statements = prql.compiled.iter().map(|stmt| stmt.text.clone()).collect();
     }
 
     Ok(PrqlCompileResult { target, statements })

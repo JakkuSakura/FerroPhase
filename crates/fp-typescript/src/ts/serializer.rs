@@ -160,8 +160,7 @@ impl ScriptEmitter {
             if let Err(err) = self.emit_function(function_item) {
                 self.push_line(&format!(
                     "// skipped unsupported function {}: {}",
-                    function_item.name,
-                    err
+                    function_item.name, err
                 ));
             }
             return Ok(());

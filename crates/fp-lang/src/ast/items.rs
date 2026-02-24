@@ -7,9 +7,8 @@ use fp_core::ast::{
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
     ItemImportTree, ItemKind, ItemMacro, MacroDelimiter, MacroInvocation, Module, Name, Path,
-    QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
-    TypeEnum, TypeQuote, TypeStruct, Value, ValueNone,
-    Visibility,
+    QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeEnum,
+    TypeQuote, TypeStruct, Value, ValueNone, Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;

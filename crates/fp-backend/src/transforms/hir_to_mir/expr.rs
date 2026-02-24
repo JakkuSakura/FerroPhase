@@ -5117,10 +5117,7 @@ impl<'a> BodyBuilder<'a> {
         span: Span,
     ) -> Result<()> {
         let init_span = init.as_ref().map(|expr| expr.span).unwrap_or(span);
-        let ty_is_infer = matches!(
-            ty.kind,
-            hir::TypeExprKind::Infer | hir::TypeExprKind::Error
-        );
+        let ty_is_infer = matches!(ty.kind, hir::TypeExprKind::Infer | hir::TypeExprKind::Error);
         let mut declared_ty = if ty_is_infer {
             None
         } else {
@@ -5197,7 +5194,12 @@ impl<'a> BodyBuilder<'a> {
                 declared_ty.as_ref(),
                 init_expr,
             );
-            self.lower_assignment(local_id, declared_ty.as_ref(), annotated_enum_def, init_expr)?;
+            self.lower_assignment(
+                local_id,
+                declared_ty.as_ref(),
+                annotated_enum_def,
+                init_expr,
+            )?;
         }
 
         Ok(())
@@ -9388,10 +9390,8 @@ impl<'a> BodyBuilder<'a> {
                 let target_ty = self.lower_type_expr(ty_expr);
                 if let hir::ExprKind::Literal(hir::Lit::Integer(value)) = &inner.kind {
                     if matches!(target_ty.kind, TyKind::Int(_) | TyKind::Uint(_)) {
-                        let (literal, ty) = self.lower_literal(
-                            &hir::Lit::Integer(*value),
-                            Some(&target_ty),
-                        );
+                        let (literal, ty) =
+                            self.lower_literal(&hir::Lit::Integer(*value), Some(&target_ty));
                         return Ok(OperandInfo {
                             operand: mir::Operand::Constant(mir::Constant {
                                 span: expr.span,

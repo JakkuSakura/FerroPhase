@@ -2,7 +2,7 @@
 
 use assert_cmd::Command;
 use fp_cli::cli::CliConfig;
-use fp_cli::commands::compile::{compile_command, CompileArgs, EmitterKind};
+use fp_cli::commands::compile::{CompileArgs, EmitterKind, compile_command};
 use fp_cli::pipeline::BackendKind;
 use predicates::prelude::*;
 use std::fs;

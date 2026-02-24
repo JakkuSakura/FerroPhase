@@ -1,8 +1,6 @@
 //! Expression evaluation command implementation
 
-use crate::pipeline::{
-    BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig,
-};
+use crate::pipeline::{BackendKind, DebugOptions, LossyOptions, PipelineOptions, RuntimeConfig};
 use crate::{
     CliError, Result,
     cli::CliConfig,
@@ -71,7 +69,9 @@ async fn eval_single(input: PipelineInput, description: &str, args: &EvalArgs) -
     let output = match input {
         PipelineInput::Expression(_) => {
             options.disabled_stages.push("const-eval".to_string());
-            options.disabled_stages.push("intrinsic-normalize".to_string());
+            options
+                .disabled_stages
+                .push("intrinsic-normalize".to_string());
             pipeline.execute_with_options(input, options).await?
         }
         _ => pipeline.execute_with_options(input, options).await?,

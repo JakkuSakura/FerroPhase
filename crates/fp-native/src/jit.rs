@@ -2,11 +2,11 @@ use crate::emit::{EmitPlan, RelocKind, RelocSection, TargetArch, TargetFormat};
 use crate::ffi::DynamicLibrary;
 use fp_core::error::{Error, Result};
 use fp_core::lir::LirProgram;
+#[cfg(unix)]
+use libc;
 use std::collections::HashMap;
 use std::ffi::c_void;
 use std::sync::Arc;
-#[cfg(unix)]
-use libc;
 
 #[derive(Debug)]
 pub struct JitModule {
@@ -130,7 +130,12 @@ impl JitEngine {
                             "Aarch64AdrpAdd relocation only supported on aarch64",
                         ));
                     }
-                    self.apply_aarch64_adrp_add(section_mem, reloc.offset as usize, location, target)?;
+                    self.apply_aarch64_adrp_add(
+                        section_mem,
+                        reloc.offset as usize,
+                        location,
+                        target,
+                    )?;
                 }
             }
         }
@@ -268,14 +273,18 @@ impl JitMemory {
 
     fn make_executable(&self) -> Result<()> {
         match self.kind {
-            MemoryKind::Text => unsafe { protect_pages(self.ptr, self.len, MemoryProtection::ReadExecute) },
+            MemoryKind::Text => unsafe {
+                protect_pages(self.ptr, self.len, MemoryProtection::ReadExecute)
+            },
             MemoryKind::Rodata => Ok(()),
         }
     }
 
     fn make_readonly(&self) -> Result<()> {
         match self.kind {
-            MemoryKind::Rodata => unsafe { protect_pages(self.ptr, self.len, MemoryProtection::ReadOnly) },
+            MemoryKind::Rodata => unsafe {
+                protect_pages(self.ptr, self.len, MemoryProtection::ReadOnly)
+            },
             MemoryKind::Text => Ok(()),
         }
     }
@@ -339,7 +348,10 @@ mod tests {
         let program = minimal_program();
         let mut engine = JitEngine::new(None).expect("jit engine");
         let module = engine.compile(&program).expect("jit compile");
-        assert!(!module.entry_ptr().is_null(), "entry pointer should be non-null");
+        assert!(
+            !module.entry_ptr().is_null(),
+            "entry pointer should be non-null"
+        );
         assert!(
             module.symbol_ptr("main").is_some(),
             "main symbol should be present"
@@ -465,7 +477,14 @@ const MAP_FAILED: *mut c_void = !0 as *mut c_void;
 
 #[cfg(unix)]
 unsafe extern "C" {
-    fn mmap(addr: *mut c_void, len: usize, prot: i32, flags: i32, fd: i32, offset: isize) -> *mut c_void;
+    fn mmap(
+        addr: *mut c_void,
+        len: usize,
+        prot: i32,
+        flags: i32,
+        fd: i32,
+        offset: isize,
+    ) -> *mut c_void;
     fn mprotect(addr: *mut c_void, len: usize, prot: i32) -> i32;
     fn munmap(addr: *mut c_void, len: usize) -> i32;
 }
@@ -503,7 +522,12 @@ struct SYSTEM_INFO {
 #[cfg(windows)]
 unsafe extern "system" {
     fn VirtualAlloc(addr: *mut c_void, size: usize, alloc_type: u32, protect: u32) -> *mut c_void;
-    fn VirtualProtect(addr: *mut c_void, size: usize, new_protect: u32, old_protect: *mut u32) -> i32;
+    fn VirtualProtect(
+        addr: *mut c_void,
+        size: usize,
+        new_protect: u32,
+        old_protect: *mut u32,
+    ) -> i32;
     fn VirtualFree(addr: *mut c_void, size: usize, free_type: u32) -> i32;
     fn GetSystemInfo(info: *mut SYSTEM_INFO);
 }

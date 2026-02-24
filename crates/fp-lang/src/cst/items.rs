@@ -1342,16 +1342,18 @@ fn parse_expr_prefix_from_tokens(input: &mut &[Token]) -> ModalResult<SyntaxNode
 #[allow(deprecated)] // ErrorKind required by winnow 0.6 FromExternalError API.
 fn parse_type_prefix_from_tokens(input: &mut &[Token], stops: &[&str]) -> ModalResult<SyntaxNode> {
     let (lexemes, lexeme_to_token_end) = lexemes_from_tokens_for_type(input);
-    let (node, consumed) = cst::parse_type_lexemes_prefix_to_cst(&lexemes, current_items_file(), stops)
-        .map_err(|err| {
-            ErrMode::Cut(
-                <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
-                    &lexemes,
-                    ErrorKind::Fail,
-                    err,
-                ),
-            )
-        })?;
+    let (node, consumed) =
+        cst::parse_type_lexemes_prefix_to_cst(&lexemes, current_items_file(), stops).map_err(
+            |err| {
+                ErrMode::Cut(
+                    <ContextError as FromExternalError<Vec<Lexeme>, _>>::from_external_error(
+                        &lexemes,
+                        ErrorKind::Fail,
+                        err,
+                    ),
+                )
+            },
+        )?;
 
     let consumed_tokens = if consumed == 0 {
         0
