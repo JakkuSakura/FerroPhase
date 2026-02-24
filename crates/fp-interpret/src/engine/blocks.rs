@@ -77,6 +77,11 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             ExprKind::Continue(_) => {}
             ExprKind::Name(locator) => {
+                if let Some(expected_ty) = &expr_ty_snapshot {
+                    if matches!(expected_ty, Ty::Function(_)) {
+                        self.specialize_function_reference(locator, expected_ty);
+                    }
+                }
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
                         let mut replacement = Expr::value(value);
@@ -352,14 +357,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                 self.evaluate_function_body(repeat.len.as_mut());
             }
             ExprKind::Cast(cast) => self.evaluate_function_body(cast.expr.as_mut()),
-            ExprKind::Name(locator) => {
-                // Try to specialize generic function references
-                if let Some(expected_ty) = &expr_ty_snapshot {
-                    if matches!(expected_ty, Ty::Function(_)) {
-                        self.specialize_function_reference(locator, expected_ty);
-                    }
-                }
-            }
             ExprKind::Item(item) => self.evaluate_item(item.as_mut()),
             ExprKind::UnOp(unop) => self.evaluate_function_body(unop.val.as_mut()),
             ExprKind::BinOp(binop) => {

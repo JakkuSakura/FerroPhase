@@ -433,14 +433,6 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let mode = self.intrinsic_type_arg_mode(call.kind, idx);
                     let value = match mode {
                         TypeArgMode::Required => self.eval_intrinsic_type_arg(arg),
-                        TypeArgMode::Fallback => {
-                            let value = self.eval_expr(arg);
-                            if matches!(value, Value::Undefined(_)) {
-                                self.eval_intrinsic_type_arg(arg)
-                            } else {
-                                self.materialize_type_value(value)
-                            }
-                        }
                         TypeArgMode::None => self.eval_expr(arg),
                     };
                     evaluated.push(value);
@@ -902,7 +894,6 @@ impl<'ctx> AstInterpreter<'ctx> {
 #[derive(Clone, Copy)]
 enum TypeArgMode {
     Required,
-    Fallback,
     None,
 }
 

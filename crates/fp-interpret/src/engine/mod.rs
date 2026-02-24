@@ -343,9 +343,9 @@ type ExprDiscriminant = std::mem::Discriminant<ExprKind>;
 
 #[derive(Debug, Clone, Copy)]
 struct ExprFrame {
-    mode: EvalMode,
-    span: Option<Span>,
-    kind: ExprDiscriminant,
+    _mode: EvalMode,
+    _span: Option<Span>,
+    _kind: ExprDiscriminant,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -353,21 +353,20 @@ enum CallFrameKind {
     Function(String),
     Method(String),
     ValueFunction,
-    Closure,
     ConstClosure,
 }
 
 #[derive(Debug, Clone)]
 struct CallFrame {
-    mode: EvalMode,
-    kind: CallFrameKind,
-    span: Option<Span>,
-    module_depth: usize,
-    value_env_depth: usize,
-    type_env_depth: usize,
-    impl_depth: usize,
-    loop_depth: usize,
-    function_depth: usize,
+    _mode: EvalMode,
+    _kind: CallFrameKind,
+    _span: Option<Span>,
+    _module_depth: usize,
+    _value_env_depth: usize,
+    _type_env_depth: usize,
+    _impl_depth: usize,
+    _loop_depth: usize,
+    _function_depth: usize,
 }
 
 struct ExprFrameGuard<'ctx> {
@@ -421,7 +420,6 @@ enum TaskStatus {
 
 #[derive(Debug, Clone)]
 struct TaskState {
-    id: u64,
     expr: Box<Expr>,
     value_env: Vec<HashMap<String, StoredValue>>,
     type_env: Vec<HashMap<String, Ty>>,
@@ -621,6 +619,7 @@ pub struct AstInterpreter<'ctx> {
     imported_modules: HashMap<String, ModuleId>,
     imported_symbols: HashMap<String, SymbolDescriptor>,
     imported_types: HashSet<String>,
+    symbol_path_cache: HashMap<String, Option<Path>>,
     local_imports: HashMap<String, String>,
     loop_depth: usize,
     function_depth: usize,
@@ -698,6 +697,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             imported_modules: HashMap::new(),
             imported_symbols: HashMap::new(),
             imported_types: HashSet::new(),
+            symbol_path_cache: HashMap::new(),
             local_imports: HashMap::new(),
             loop_depth: 0,
             function_depth: 0,
@@ -977,7 +977,6 @@ impl<'ctx> AstInterpreter<'ctx> {
         let id = self.task_counter;
         self.task_counter += 1;
         let state = TaskState {
-            id,
             expr: future.expr,
             value_env: future.value_env,
             type_env: future.type_env,
@@ -1278,9 +1277,9 @@ impl<'ctx> AstInterpreter<'ctx> {
 
     fn push_expr_frame(&mut self, mode: EvalMode, expr: &Expr) -> ExprFrameGuard<'ctx> {
         let frame = ExprFrame {
-            mode,
-            span: expr.span,
-            kind: std::mem::discriminant(expr.kind()),
+            _mode: mode,
+            _span: expr.span,
+            _kind: std::mem::discriminant(expr.kind()),
         };
         self.expr_stack.push(frame);
         ExprFrameGuard {
@@ -1295,32 +1294,20 @@ impl<'ctx> AstInterpreter<'ctx> {
         span: Option<Span>,
     ) -> CallFrameGuard<'ctx> {
         let frame = CallFrame {
-            mode,
-            kind,
-            span,
-            module_depth: self.module_stack.len(),
-            value_env_depth: self.value_env.len(),
-            type_env_depth: self.type_env.len(),
-            impl_depth: self.impl_stack.len(),
-            loop_depth: self.loop_depth,
-            function_depth: self.function_depth,
+            _mode: mode,
+            _kind: kind,
+            _span: span,
+            _module_depth: self.module_stack.len(),
+            _value_env_depth: self.value_env.len(),
+            _type_env_depth: self.type_env.len(),
+            _impl_depth: self.impl_stack.len(),
+            _loop_depth: self.loop_depth,
+            _function_depth: self.function_depth,
         };
         self.call_stack.push(frame);
         CallFrameGuard {
             interpreter: self as *mut _,
         }
-    }
-
-    fn record_const_value(&mut self, base_len: usize, value: Value) -> Value {
-        self.const_value_stack.truncate(base_len);
-        self.const_value_stack.push(value.clone());
-        value
-    }
-
-    fn record_runtime_value(&mut self, base_len: usize, flow: RuntimeFlow) -> RuntimeFlow {
-        self.runtime_value_stack.truncate(base_len);
-        self.runtime_value_stack.push(flow.clone());
-        flow
     }
 
     fn mark_mutated(&mut self) {
@@ -1451,7 +1438,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             return true;
         }
-        let symbol_path = self.parse_symbol_path(name);
+        let symbol_path = self.parse_symbol_path_cached(name);
         let simple = symbol_path
             .as_ref()
             .and_then(|path| path.segments.last())
@@ -6189,8 +6176,18 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn resolve_type_binding_spec(&mut self, spec: &str) -> Option<Ty> {
-        let path = self.parse_symbol_path(spec)?;
+        let path = self.parse_symbol_path_cached(spec)?;
         self.resolve_type_binding(&path)
+    }
+
+    fn parse_symbol_path_cached(&mut self, spec: &str) -> Option<Path> {
+        if let Some(path) = self.symbol_path_cache.get(spec) {
+            return path.clone();
+        }
+        let parsed = self.parse_symbol_path(spec);
+        self.symbol_path_cache
+            .insert(spec.to_string(), parsed.clone());
+        parsed
     }
 
     fn materialize_const_type(&mut self, ty: Ty) -> Ty {
@@ -6341,9 +6338,9 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn local_module_exports(&self, module_spec: &str) -> Option<Vec<String>> {
+    fn local_module_exports(&mut self, module_spec: &str) -> Option<Vec<String>> {
         let root = self.root_items?;
-        let path = self.parse_symbol_path(module_spec)?;
+        let path = self.parse_symbol_path_cached(module_spec)?;
         let segments = self.path_segments(&path);
         if segments.is_empty() {
             return None;
