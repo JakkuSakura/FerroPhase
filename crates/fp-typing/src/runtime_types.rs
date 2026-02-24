@@ -21,23 +21,7 @@ pub fn resolve_type_binding_match(
     };
 
     for idx in (0..type_env.len()).rev() {
-        if let Some((key, ty)) = type_env[idx]
-            .iter()
-            .find(|(key, _)| key_matches_path(key, path))
-            .map(|(key, ty)| (key.clone(), ty.clone()))
-        {
-            return TypeBindingMatch::Scoped {
-                index: idx,
-                key,
-                ty,
-            };
-        }
-
-        if let Some((key, ty)) = type_env[idx]
-            .iter()
-            .find(|(key, _)| key_matches_base_ident(key, base_ident))
-            .map(|(key, ty)| (key.clone(), ty.clone()))
-        {
+        if let Some((key, ty)) = find_map_binding_match(&type_env[idx], path, base_ident) {
             return TypeBindingMatch::Scoped {
                 index: idx,
                 key,
@@ -46,34 +30,49 @@ pub fn resolve_type_binding_match(
         }
     }
 
-    if let Some((key, ty)) = global_types
-        .iter()
-        .find(|(key, _)| key_matches_path(key, path))
-        .map(|(key, ty)| (key.clone(), ty.clone()))
-    {
+    if let Some((key, ty)) = find_map_binding_match(global_types, path, base_ident) {
         return TypeBindingMatch::Global { key, ty };
     }
 
-    if let Some((key, ty)) = global_types
-        .iter()
-        .find(|(key, _)| key_matches_base_ident(key, base_ident))
-        .map(|(key, ty)| (key.clone(), ty.clone()))
-    {
-        return TypeBindingMatch::Global { key, ty };
-    }
-
-    if let Some(name) = imported_types.iter().find(|key| key_matches_path(key, path)) {
-        return TypeBindingMatch::MissingImported { name: name.clone() };
-    }
-
-    if let Some(name) = imported_types
-        .iter()
-        .find(|key| key_matches_base_ident(key, base_ident))
-    {
+    if let Some(name) = find_set_binding_match(imported_types, path, base_ident) {
         return TypeBindingMatch::MissingImported { name: name.clone() };
     }
 
     TypeBindingMatch::Missing
+}
+
+fn find_map_binding_match(
+    map: &HashMap<String, Ty>,
+    path: &Path,
+    base_ident: &Ident,
+) -> Option<(String, Ty)> {
+    let mut base_match: Option<(String, Ty)> = None;
+    for (key, ty) in map {
+        if key_matches_path(key, path) {
+            return Some((key.clone(), ty.clone()));
+        }
+        if base_match.is_none() && key_matches_base_ident(key, base_ident) {
+            base_match = Some((key.clone(), ty.clone()));
+        }
+    }
+    base_match
+}
+
+fn find_set_binding_match<'a>(
+    set: &'a HashSet<String>,
+    path: &Path,
+    base_ident: &Ident,
+) -> Option<&'a String> {
+    let mut base_match = None;
+    for key in set {
+        if key_matches_path(key, path) {
+            return Some(key);
+        }
+        if base_match.is_none() && key_matches_base_ident(key, base_ident) {
+            base_match = Some(key);
+        }
+    }
+    base_match
 }
 
 fn key_matches_path(key: &str, path: &Path) -> bool {

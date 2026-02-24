@@ -516,15 +516,13 @@ impl<'ctx> AstInterpreter<'ctx> {
                     if let Some((lifetime, base_name)) =
                         Self::split_static_lifetime_name(key.as_str())
                     {
-                        if let Some(path) = self.parse_symbol_path(base_name) {
-                            if let Some(base_ty) = self.resolve_type_binding(&path) {
-                                let ty = Ty::Reference(TypeReference {
-                                    ty: base_ty.into(),
-                                    mutability: reference.mutable,
-                                    lifetime: Some(Ident::new(lifetime)),
-                                });
-                                return Some(Value::Type(ty));
-                            }
+                        if let Some(base_ty) = self.resolve_type_binding_spec(base_name) {
+                            let ty = Ty::Reference(TypeReference {
+                                ty: base_ty.into(),
+                                mutability: reference.mutable,
+                                lifetime: Some(Ident::new(lifetime)),
+                            });
+                            return Some(Value::Type(ty));
                         }
                     }
                 }
@@ -547,10 +545,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                             return Some(self.materialize_type_value(value));
                         }
                     }
-                    if let Some(path) = self.parse_symbol_path(ident.as_str()) {
-                        if let Some(ty) = self.resolve_type_binding(&path) {
-                            return Some(Value::Type(ty));
-                        }
+                    if let Some(ty) = self.resolve_type_binding_spec(ident.as_str()) {
+                        return Some(Value::Type(ty));
                     }
                 }
                 let value = self.resolve_qualified(locator.to_string());

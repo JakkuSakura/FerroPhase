@@ -6188,6 +6188,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
+    fn resolve_type_binding_spec(&mut self, spec: &str) -> Option<Ty> {
+        let path = self.parse_symbol_path(spec)?;
+        self.resolve_type_binding(&path)
+    }
+
     fn materialize_const_type(&mut self, ty: Ty) -> Ty {
         let Ty::Expr(mut expr) = ty else {
             return ty;
@@ -6631,17 +6636,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
         if symbol == "Self" {
             if let Some(self_ty) = self.impl_stack.last().and_then(|ctx| ctx.self_ty.clone()) {
-                if let Some(path) = self.parse_symbol_path(&self_ty) {
-                    if let Some(ty) = self.resolve_type_binding(&path) {
-                        return Value::Type(ty);
-                    }
+                if let Some(ty) = self.resolve_type_binding_spec(&self_ty) {
+                    return Value::Type(ty);
                 }
             }
         }
-        if let Some(path) = self.parse_symbol_path(&symbol) {
-            if let Some(ty) = self.resolve_type_binding(&path) {
-                return Value::Type(ty);
-            }
+        if let Some(ty) = self.resolve_type_binding_spec(&symbol) {
+            return Value::Type(ty);
         }
         if symbol == "printf" {
             return Value::unit();
@@ -6662,10 +6663,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             if let Some(value) = self.evaluated_constants.get(&qualified) {
                 return value.clone();
             }
-            if let Some(path) = self.parse_symbol_path(&symbol) {
-                if let Some(ty) = self.resolve_type_binding(&path) {
-                    return Value::Type(ty);
-                }
+            if let Some(ty) = self.resolve_type_binding_spec(&symbol) {
+                return Value::Type(ty);
             }
             if let Some(value) = self.lookup_value(&symbol) {
                 return value;
