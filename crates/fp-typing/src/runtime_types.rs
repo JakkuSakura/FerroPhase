@@ -46,13 +46,23 @@ fn find_map_binding_match(
     path: &Path,
     base_ident: &Ident,
 ) -> Option<(String, Ty)> {
+    let base = base_ident.as_str();
     let mut base_match: Option<(String, Ty)> = None;
     for (key, ty) in map {
+        if key_terminal_segment(key) != base {
+            continue;
+        }
         if key_matches_path(key, path) {
             return Some((key.clone(), ty.clone()));
         }
         if base_match.is_none() && key_matches_base_ident(key, base_ident) {
             base_match = Some((key.clone(), ty.clone()));
+        }
+    }
+
+    if base_match.is_none() {
+        if let Some(ty) = map.get(base) {
+            return Some((base.to_string(), ty.clone()));
         }
     }
     base_match
@@ -63,8 +73,12 @@ fn find_set_binding_match<'a>(
     path: &Path,
     base_ident: &Ident,
 ) -> Option<&'a String> {
+    let base = base_ident.as_str();
     let mut base_match = None;
     for key in set {
+        if key_terminal_segment(key) != base {
+            continue;
+        }
         if key_matches_path(key, path) {
             return Some(key);
         }
@@ -111,6 +125,13 @@ fn key_matches_path(key: &str, path: &Path) -> bool {
 
 fn key_matches_base_ident(key: &str, base_ident: &Ident) -> bool {
     !key.contains("::") && key == base_ident.as_str()
+}
+
+fn key_terminal_segment(key: &str) -> &str {
+    match key.rsplit_once("::") {
+        Some((_, tail)) => tail,
+        None => key,
+    }
 }
 
 pub fn builtin_type_bindings() -> HashMap<String, Ty> {
