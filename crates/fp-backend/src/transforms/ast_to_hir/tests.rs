@@ -164,6 +164,60 @@ fn transform_index_expression_to_hir() -> Result<()> {
 }
 
 #[test]
+fn transform_await_expression_to_hir_passthrough() -> Result<()> {
+    let mut generator = HirGenerator::new();
+    let await_expr = ast::Expr::from(ast::ExprKind::Await(ast::ExprAwait {
+        span: Span::null(),
+        base: Box::new(ast::Expr::ident(ident("future"))),
+    }));
+
+    let lowered = generator.transform_expr_to_hir(&await_expr)?;
+    match lowered.kind {
+        hir::ExprKind::Path(path) => {
+            assert_eq!(path.segments.len(), 1);
+            assert_eq!(path.segments[0].name.as_str(), "future");
+        }
+        other => {
+            return Err(crate::error::optimization_error(format!(
+                "expected await passthrough to path, got {:?}",
+                other
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
+fn transform_async_await_expression_to_hir_passthrough() -> Result<()> {
+    let mut generator = HirGenerator::new();
+    let await_expr = ast::Expr::from(ast::ExprKind::Await(ast::ExprAwait {
+        span: Span::null(),
+        base: Box::new(ast::Expr::ident(ident("future"))),
+    }));
+    let async_expr = ast::Expr::from(ast::ExprKind::Async(ast::ExprAsync {
+        span: Span::null(),
+        expr: Box::new(await_expr),
+    }));
+
+    let lowered = generator.transform_expr_to_hir(&async_expr)?;
+    match lowered.kind {
+        hir::ExprKind::Path(path) => {
+            assert_eq!(path.segments.len(), 1);
+            assert_eq!(path.segments[0].name.as_str(), "future");
+        }
+        other => {
+            return Err(crate::error::optimization_error(format!(
+                "expected async/await passthrough to path, got {:?}",
+                other
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[test]
 fn cfg_filters_items_by_target_os() -> Result<()> {
     let mut linux_fn = make_fn(
         "linux_only",
