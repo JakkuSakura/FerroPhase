@@ -25,7 +25,7 @@
 //! fp repl
 //! ```
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use fp_cli::{
     Result,
     cli::CliConfig,
@@ -66,6 +66,14 @@ struct Cli {
     #[arg(short, long, global = true)]
     quiet: bool,
 
+    /// Set log level (overrides --verbose/--quiet)
+    #[arg(long, global = true, value_enum)]
+    log: Option<LogLevel>,
+
+    /// Set log output format
+    #[arg(long, global = true, value_enum, default_value = "pretty")]
+    log_format: LogFormat,
+
     /// Configuration file path
     #[arg(short, long, global = true)]
     config: Option<PathBuf>,
@@ -73,6 +81,21 @@ struct Cli {
     /// Working directory
     #[arg(short = 'C', long, global = true)]
     directory: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogLevel {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Trace,
+}
+
+#[derive(Clone, Copy, Debug, ValueEnum)]
+enum LogFormat {
+    Pretty,
+    Json,
 }
 
 #[derive(Subcommand)]
@@ -107,7 +130,7 @@ async fn main() -> Result<()> {
     setup_error_reporting()?;
 
     // Configure logging
-    setup_logging(cli.verbose, cli.quiet)?;
+    setup_logging(cli.verbose, cli.quiet, cli.log, cli.log_format)?;
 
     // Change working directory if specified
     if let Some(dir) = &cli.directory {
@@ -149,42 +172,52 @@ async fn main() -> Result<()> {
     }
 }
 
-fn setup_logging(verbose: u8, quiet: bool) -> Result<()> {
+fn setup_logging(
+    verbose: u8,
+    quiet: bool,
+    log_level: Option<LogLevel>,
+    log_format: LogFormat,
+) -> Result<()> {
     use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
-    let filter = if quiet {
+    let filter = if let Some(level) = log_level {
+        EnvFilter::new(match level {
+            LogLevel::Error => "error",
+            LogLevel::Warn => "warn",
+            LogLevel::Info => "info",
+            LogLevel::Debug => "debug",
+            LogLevel::Trace => "trace",
+        })
+    } else if quiet {
         EnvFilter::new("error")
     } else {
         match verbose {
             0 => EnvFilter::new("info"),
             1 => EnvFilter::new("debug"),
             2 => EnvFilter::new("trace"),
-            // For very verbose runs, try to add a more specific directive, but never panic
-            _ => {
-                let base = EnvFilter::new("trace");
-                match "fp=trace".parse() {
-                    Ok(d) => base.add_directive(d),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Failed to parse log directive 'fp=trace': {}; falling back to 'trace'",
-                            e
-                        );
-                        base
-                    }
-                }
-            }
+            _ => EnvFilter::new("trace"),
         }
     };
 
-    tracing_subscriber::registry()
-        .with(
-            tracing_subscriber::fmt::layer()
-                .with_target(false)
-                .with_timer(tracing_subscriber::fmt::time::uptime())
-                .with_level(true),
-        )
-        .with(filter)
-        .init();
+    let formatter = tracing_subscriber::fmt::layer()
+        .with_target(false)
+        .with_timer(tracing_subscriber::fmt::time::uptime())
+        .with_level(true);
+
+    match log_format {
+        LogFormat::Pretty => {
+            tracing_subscriber::registry()
+                .with(formatter)
+                .with(filter)
+                .init();
+        }
+        LogFormat::Json => {
+            tracing_subscriber::registry()
+                .with(formatter.json())
+                .with(filter)
+                .init();
+        }
+    }
 
     Ok(())
 }

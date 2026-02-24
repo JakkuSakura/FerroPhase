@@ -46,7 +46,7 @@ globset = "0.4"
 
 # Logging and diagnostics
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 miette = { version = "7.6.0", features = ["fancy"] }
 termwiz = "0.23.3"
 
