@@ -1,4 +1,5 @@
 pub use fp_core::intrinsics::IntrinsicCallKind;
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 use fp_core::mir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -9,6 +10,7 @@ use winnow::token::{literal, take_till, take_while};
 
 pub const BYTECODE_MAGIC: [u8; 4] = *b"FPBC";
 pub const BYTECODE_VERSION: u32 = 1;
+const BYTECODE_LOWERING_CONTEXT: &str = "mir→bytecode";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BytecodeFile {
@@ -162,6 +164,16 @@ pub enum BytecodeError {
     Decode(bincode::Error),
     #[error("bytecode format error: {message}")]
     Format { message: String },
+}
+
+#[derive(Debug, Error)]
+enum LoweringFallbackError {
+    #[error("missing cleanup target for assert to bb{0}")]
+    MissingAssertCleanup(u32),
+    #[error("terminator_otherwise expects assert terminator")]
+    InvalidOtherwiseTerminator,
+    #[error("unsupported binary op: {0:?}")]
+    UnsupportedBinaryOp(mir::BinOp),
 }
 
 pub fn encode_file(program: &BytecodeProgram) -> Result<Vec<u8>, BytecodeError> {
@@ -469,6 +481,17 @@ pub fn lower_program(program: &mir::Program) -> Result<BytecodeProgram, Bytecode
         functions,
         entry,
     })
+}
+
+fn emit_lowering_warning(message: impl Into<String>) {
+    diagnostic_manager().add_diagnostic(
+        Diagnostic::warning(message.into()).with_source_context(BYTECODE_LOWERING_CONTEXT),
+    );
+}
+
+fn push_dummy_unit(code: &mut Vec<BytecodeInstr>, const_pool: &mut Vec<BytecodeConst>) {
+    let id = push_const(const_pool, BytecodeConst::Unit);
+    code.push(BytecodeInstr::LoadConst(id));
 }
 
 fn parse_program_winnow(input: &mut &str) -> ModalResult<BytecodeProgram> {
@@ -1525,7 +1548,10 @@ fn lower_terminator(
             ..
         } => {
             lower_operand(cond, code, const_pool)?;
-            let otherwise = terminator_otherwise(term)?;
+            let otherwise = terminator_otherwise(term).unwrap_or_else(|error| {
+                emit_lowering_warning(error.to_string());
+                *target
+            });
             let terminator = if *expected {
                 BytecodeTerminator::JumpIfTrue {
                     target: *target,
@@ -1561,13 +1587,10 @@ fn lower_terminator(
                 .as_ref()
                 .map(|(place, _)| lower_place(place))
                 .transpose()?;
-            let target =
-                destination
-                    .as_ref()
-                    .map(|(_, bb)| *bb)
-                    .ok_or_else(|| BytecodeError::Lowering {
-                        message: "call terminator missing destination".to_string(),
-                    })?;
+            let target = destination.as_ref().map(|(_, bb)| *bb).unwrap_or_else(|| {
+                emit_lowering_warning("call terminator missing destination; falling back to bb0");
+                0
+            });
             Ok(BytecodeTerminator::Call {
                 callee,
                 arg_count: args.len() as u32,
@@ -1590,25 +1613,25 @@ fn lower_terminator(
         }
         mir::TerminatorKind::Abort => Ok(BytecodeTerminator::Abort),
         mir::TerminatorKind::Unreachable => Ok(BytecodeTerminator::Unreachable),
-        _ => Err(BytecodeError::Lowering {
-            message: format!("unsupported terminator: {:?}", term.kind),
-        }),
+        _ => {
+            emit_lowering_warning(format!(
+                "unsupported terminator: {:?}; lowering to unreachable",
+                term.kind
+            ));
+            Ok(BytecodeTerminator::Unreachable)
+        }
     }
 }
 
-fn terminator_otherwise(term: &mir::Terminator) -> Result<u32, BytecodeError> {
+fn terminator_otherwise(term: &mir::Terminator) -> Result<u32, LoweringFallbackError> {
     match &term.kind {
         mir::TerminatorKind::Assert {
             cleanup, target, ..
         } => match cleanup {
             Some(otherwise) => Ok(*otherwise),
-            None => Err(BytecodeError::Lowering {
-                message: format!("missing cleanup target for assert to bb{}", target),
-            }),
+            None => Err(LoweringFallbackError::MissingAssertCleanup(*target)),
         },
-        _ => Err(BytecodeError::Lowering {
-            message: "terminator_otherwise expects assert terminator".to_string(),
-        }),
+        _ => Err(LoweringFallbackError::InvalidOtherwiseTerminator),
     }
 }
 
@@ -1625,7 +1648,13 @@ fn lower_rvalue(
         mir::Rvalue::BinaryOp(op, lhs, rhs) => {
             lower_operand(lhs, code, const_pool)?;
             lower_operand(rhs, code, const_pool)?;
-            code.push(BytecodeInstr::BinaryOp(lower_binop(op)?));
+            match lower_binop(op) {
+                Ok(bin_op) => code.push(BytecodeInstr::BinaryOp(bin_op)),
+                Err(error) => {
+                    emit_lowering_warning(error.to_string());
+                    push_dummy_unit(code, const_pool);
+                }
+            }
             Ok(())
         }
         mir::Rvalue::UnaryOp(op, value) => {
@@ -1651,9 +1680,12 @@ fn lower_rvalue(
         }
         mir::Rvalue::Repeat(operand, len) => {
             if *len > u32::MAX as u64 {
-                return Err(BytecodeError::Lowering {
-                    message: format!("repeat length {} exceeds bytecode limits", len),
-                });
+                emit_lowering_warning(format!(
+                    "repeat length {} exceeds bytecode limits; using unit dummy",
+                    len
+                ));
+                push_dummy_unit(code, const_pool);
+                return Ok(());
             }
             for _ in 0..*len {
                 lower_operand(operand, code, const_pool)?;
@@ -1674,9 +1706,14 @@ fn lower_rvalue(
                     code.push(BytecodeInstr::MakeArray(operands.len() as u32));
                     Ok(())
                 }
-                _ => Err(BytecodeError::Lowering {
-                    message: format!("unsupported aggregate: {:?}", kind),
-                }),
+                _ => {
+                    emit_lowering_warning(format!(
+                        "unsupported aggregate: {:?}; using unit dummy",
+                        kind
+                    ));
+                    push_dummy_unit(code, const_pool);
+                    Ok(())
+                }
             }
         }
         mir::Rvalue::ContainerLiteral { kind, elements } => {
@@ -1688,9 +1725,14 @@ fn lower_rvalue(
                     code.push(BytecodeInstr::MakeList(elements.len() as u32));
                     Ok(())
                 }
-                _ => Err(BytecodeError::Lowering {
-                    message: format!("unsupported container literal: {:?}", kind),
-                }),
+                _ => {
+                    emit_lowering_warning(format!(
+                        "unsupported container literal: {:?}; using unit dummy",
+                        kind
+                    ));
+                    push_dummy_unit(code, const_pool);
+                    Ok(())
+                }
             }
         }
         mir::Rvalue::ContainerMapLiteral { kind, entries } => {
@@ -1703,9 +1745,14 @@ fn lower_rvalue(
                     code.push(BytecodeInstr::MakeMap(entries.len() as u32));
                     Ok(())
                 }
-                _ => Err(BytecodeError::Lowering {
-                    message: format!("unsupported container map literal: {:?}", kind),
-                }),
+                _ => {
+                    emit_lowering_warning(format!(
+                        "unsupported container map literal: {:?}; using unit dummy",
+                        kind
+                    ));
+                    push_dummy_unit(code, const_pool);
+                    Ok(())
+                }
             }
         }
         mir::Rvalue::ContainerLen { container, .. } => {
@@ -1719,9 +1766,11 @@ fn lower_rvalue(
             code.push(BytecodeInstr::ContainerGet);
             Ok(())
         }
-        _ => Err(BytecodeError::Lowering {
-            message: format!("unsupported rvalue: {:?}", rvalue),
-        }),
+        _ => {
+            emit_lowering_warning(format!("unsupported rvalue: {:?}; using unit dummy", rvalue));
+            push_dummy_unit(code, const_pool);
+            Ok(())
+        }
     }
 }
 
@@ -1736,7 +1785,10 @@ fn lower_operand(
             Ok(())
         }
         mir::Operand::Constant(constant) => {
-            let value = lower_constant(constant)?;
+            let value = lower_constant(constant).unwrap_or_else(|error| {
+                emit_lowering_warning(error.to_string());
+                BytecodeConst::Unit
+            });
             let id = push_const(const_pool, value);
             code.push(BytecodeInstr::LoadConst(id));
             Ok(())
@@ -1759,9 +1811,13 @@ fn lower_constant(constant: &mir::Constant) -> Result<BytecodeConst, BytecodeErr
             Ok(BytecodeConst::Function(symbol.as_str().to_string()))
         }
         mir::ConstantKind::Val(value, _) => lower_const_value(value),
-        mir::ConstantKind::Ty(_) => Err(BytecodeError::Lowering {
-            message: format!("unsupported constant: {:?}", constant.literal),
-        }),
+        mir::ConstantKind::Ty(_) => {
+            emit_lowering_warning(format!(
+                "unsupported constant: {:?}; using unit dummy",
+                constant.literal
+            ));
+            Ok(BytecodeConst::Unit)
+        }
     }
 }
 
@@ -1796,9 +1852,10 @@ fn lower_const_value(value: &mir::ConstValue) -> Result<BytecodeConst, BytecodeE
             }
             Ok(BytecodeConst::Map(lowered))
         }
-        _ => Err(BytecodeError::Lowering {
-            message: format!("unsupported const value: {:?}", value),
-        }),
+        _ => {
+            emit_lowering_warning(format!("unsupported const value: {:?}; using unit dummy", value));
+            Ok(BytecodeConst::Unit)
+        }
     }
 }
 
@@ -1814,9 +1871,10 @@ fn lower_place(place: &mir::Place) -> Result<BytecodePlace, BytecodeError> {
             }
             mir::PlaceElem::Deref => {}
             _ => {
-                return Err(BytecodeError::Lowering {
-                    message: format!("unsupported place projection: {:?}", elem),
-                });
+                emit_lowering_warning(format!(
+                    "unsupported place projection: {:?}; projection element dropped",
+                    elem
+                ));
             }
         }
     }
@@ -1836,9 +1894,13 @@ fn lower_callee(operand: &mir::Operand) -> Result<BytecodeCallee, BytecodeError>
             mir::ConstantKind::Global(symbol, _) => {
                 Ok(BytecodeCallee::Function(symbol.as_str().to_string()))
             }
-            _ => Err(BytecodeError::Lowering {
-                message: format!("unsupported call operand: {:?}", constant.literal),
-            }),
+            _ => {
+                emit_lowering_warning(format!(
+                    "unsupported call operand: {:?}; using dummy callee",
+                    constant.literal
+                ));
+                Ok(BytecodeCallee::Function("__fp_unsupported_callee__".to_string()))
+            }
         },
         mir::Operand::Copy(place) | mir::Operand::Move(place) => {
             Ok(BytecodeCallee::Local(lower_place(place)?))
@@ -1851,7 +1913,7 @@ fn push_const(pool: &mut Vec<BytecodeConst>, value: BytecodeConst) -> u32 {
     (pool.len() - 1) as u32
 }
 
-fn lower_binop(op: &mir::BinOp) -> Result<BytecodeBinOp, BytecodeError> {
+fn lower_binop(op: &mir::BinOp) -> Result<BytecodeBinOp, LoweringFallbackError> {
     let lowered = match op {
         mir::BinOp::Add => BytecodeBinOp::Add,
         mir::BinOp::Sub => BytecodeBinOp::Sub,
@@ -1872,9 +1934,7 @@ fn lower_binop(op: &mir::BinOp) -> Result<BytecodeBinOp, BytecodeError> {
         mir::BinOp::Ge => BytecodeBinOp::Ge,
         mir::BinOp::Gt => BytecodeBinOp::Gt,
         _ => {
-            return Err(BytecodeError::Lowering {
-                message: format!("unsupported binary op: {:?}", op),
-            });
+            return Err(LoweringFallbackError::UnsupportedBinaryOp(op.clone()));
         }
     };
     Ok(lowered)
