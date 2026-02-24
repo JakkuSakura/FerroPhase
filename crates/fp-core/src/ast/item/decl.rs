@@ -1,6 +1,6 @@
 use crate::ast::{FunctionSignature, Ident, Ty, TySlot, TypeBounds};
-use crate::span::Span;
 use crate::common_struct;
+use crate::span::Span;
 
 common_struct! {
     pub struct ItemDeclConst {

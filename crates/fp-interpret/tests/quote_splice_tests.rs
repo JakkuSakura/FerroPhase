@@ -3,8 +3,8 @@ use std::path::PathBuf;
 use fp_core::ast::*;
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
-use fp_core::Result;
 use fp_core::span::Span;
+use fp_core::Result;
 use fp_interpret::engine::{AstInterpreter, InterpreterMode, InterpreterOptions, StdoutMode};
 
 fn i32_ty() -> Ty {

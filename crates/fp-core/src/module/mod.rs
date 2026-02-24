@@ -74,7 +74,6 @@ pub struct ModuleDescriptor {
     pub requires_features: Vec<FeatureRef>,
 }
 
+pub mod path;
 pub mod resolver;
 pub mod resolvers;
-pub mod path;
-pub mod resolution;

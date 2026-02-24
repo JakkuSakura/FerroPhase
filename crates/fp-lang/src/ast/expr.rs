@@ -2,31 +2,30 @@ use crate::ast::items::LowerItemsError;
 use crate::cst::parse_expr_lexemes_prefix_to_cst;
 use crate::lexer::lexeme::{Lexeme, LexemeKind};
 use crate::lexer::tokenizer::lex_lexemes;
-use crate::lexer::tokenizer::Span as LexSpan;
 use crate::lexer::tokenizer::strip_number_suffix;
-use bigdecimal::BigDecimal;
-use num_bigint::BigInt;
+use crate::lexer::tokenizer::Span as LexSpan;
 use crate::syntax::{SyntaxKind, SyntaxNode};
+use bigdecimal::BigDecimal;
 use fp_core::ast::{
-    BlockStmt, BlockStmtExpr, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait, ExprBinOp,
-    ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor, ExprIf,
-    ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg, ExprLoop,
-    ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn, ExprSelect,
-    ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural, ExprTry, ExprTuple,
-    ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart, Ident, ImplTraits,
-    Name, MacroDelimiter, MacroInvocation, MacroTokenTree, ParameterPath, ParameterPathSegment,
-    Path, Pattern,
-    PatternBind, PatternIdent, PatternKind, PatternQuote, PatternQuotePlural, PatternStruct,
-    PatternStructField, PatternStructural, PatternTuple, PatternTupleStruct, PatternType,
-    PatternVariant, PatternWildcard, QuoteFragmentKind, QuoteItemKind, StmtLet, StructuralField,
-    DecimalType, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind, TypeBounds, TypeFunction, TypeInt,
-    TypePrimitive, TypeQuote, TypeRawPtr, TypeReference, TypeSlice, TypeStructural, TypeTuple,
-    TypeType, TypeVec, Value, ValueNone, ValueString,
+    BlockStmt, BlockStmtExpr, DecimalType, Expr, ExprArray, ExprArrayRepeat, ExprAsync, ExprAwait,
+    ExprBinOp, ExprBlock, ExprBreak, ExprClosure, ExprConstBlock, ExprContinue, ExprField, ExprFor,
+    ExprIf, ExprIndex, ExprIntrinsicCall, ExprInvoke, ExprInvokeTarget, ExprKind, ExprKwArg,
+    ExprLoop, ExprMatch, ExprMatchCase, ExprQuote, ExprRange, ExprRangeLimit, ExprReturn,
+    ExprSelect, ExprSelectType, ExprSplice, ExprStringTemplate, ExprStruct, ExprStructural,
+    ExprTry, ExprTuple, ExprWhile, FormatArgRef, FormatPlaceholder, FormatSpec, FormatTemplatePart,
+    Ident, ImplTraits, MacroDelimiter, MacroInvocation, MacroTokenTree, Name, ParameterPath,
+    ParameterPathSegment, Path, Pattern, PatternBind, PatternIdent, PatternKind, PatternQuote,
+    PatternQuotePlural, PatternStruct, PatternStructField, PatternStructural, PatternTuple,
+    PatternTupleStruct, PatternType, PatternVariant, PatternWildcard, QuoteFragmentKind,
+    QuoteItemKind, StmtLet, StructuralField, Ty, TypeArray, TypeBinaryOp, TypeBinaryOpKind,
+    TypeBounds, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference, TypeSlice,
+    TypeStructural, TypeTuple, TypeType, TypeVec, Value, ValueNone, ValueString,
 };
 use fp_core::cst::CstCategory;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::module::path::PathPrefix;
 use fp_core::ops::{BinOpKind, UnOpKind};
+use num_bigint::BigInt;
 
 #[derive(Debug, thiserror::Error)]
 pub enum LowerError {
@@ -932,12 +931,6 @@ pub fn lower_expr_from_cst(node: &SyntaxNode) -> Result<Expr, LowerError> {
                     referee: Box::new(inner),
                 })
                 .into()),
-                "box" => Ok(ExprKind::UnOp(fp_core::ast::ExprUnOp {
-                    span: node.span,
-                    op: UnOpKind::Any(Ident::new("box")),
-                    val: Box::new(inner),
-                })
-                .into()),
                 "&" => {
                     let is_mut = node.children.iter().any(|c| {
                         matches!(c, crate::syntax::SyntaxElement::Token(t) if !t.is_trivia() && t.text == "mut")
@@ -1661,13 +1654,9 @@ fn decode_string_literal(raw: &str) -> Option<String> {
         Some(out)
     }
 
-    // Cooked string literal: "..." or b"..."
+    // Cooked string literal: "..."
     if raw.starts_with('"') && raw.ends_with('"') && raw.len() >= 2 {
         let inner = &raw[1..raw.len() - 1];
-        return unescape_cooked(inner);
-    }
-    if raw.starts_with("b\"") && raw.ends_with('"') && raw.len() >= 3 {
-        let inner = &raw[2..raw.len() - 1];
         return unescape_cooked(inner);
     }
 
@@ -1694,7 +1683,7 @@ fn decode_string_literal(raw: &str) -> Option<String> {
     }
     let inner = &after_quote[..end_idx];
 
-    // `br"..."`/`b"..."` are byte strings in Rust; FerroPhase currently models strings as UTF-8 `&str`.
+    // `br"..."` is a byte string in Rust; FerroPhase currently models strings as UTF-8 `&str`.
     // Keep the contents as-is.
     let _ = prefix;
     Some(inner.to_string())
@@ -1704,18 +1693,6 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
     let stripped = strip_number_suffix(raw);
     let normalized = stripped.replace('_', "");
     let suffix = &raw[stripped.len()..];
-    let parse_int = |text: &str| -> Result<i64, LowerError> {
-        if let Some(hex) = text.strip_prefix("0x").or_else(|| text.strip_prefix("0X")) {
-            i64::from_str_radix(hex, 16).map_err(|_| LowerError::InvalidNumber(raw.to_string()))
-        } else if let Some(bin) = text.strip_prefix("0b").or_else(|| text.strip_prefix("0B")) {
-            i64::from_str_radix(bin, 2).map_err(|_| LowerError::InvalidNumber(raw.to_string()))
-        } else if let Some(oct) = text.strip_prefix("0o").or_else(|| text.strip_prefix("0O")) {
-            i64::from_str_radix(oct, 8).map_err(|_| LowerError::InvalidNumber(raw.to_string()))
-        } else {
-            text.parse::<i64>()
-                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))
-        }
-    };
 
     match suffix {
         "ib" => {
@@ -1725,7 +1702,10 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
             let value = normalized
                 .parse::<BigInt>()
                 .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
-            Ok((Value::big_int(value), Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt)))))
+            Ok((
+                Value::big_int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
+            ))
         }
         "fb" => {
             let value = normalized
@@ -1738,12 +1718,14 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 ))),
             ))
         }
-        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64"
-        | "u128" | "usize" => {
+        "i8" | "i16" | "i32" | "i64" | "i128" | "isize" | "u8" | "u16" | "u32" | "u64" | "u128"
+        | "usize" => {
             if normalized.contains('.') {
                 return Err(LowerError::InvalidNumber(raw.to_string()));
             }
-            let value = parse_int(&normalized)?;
+            let value = normalized
+                .parse::<i64>()
+                .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
             let ty = match suffix {
                 "i8" => TypeInt::I8,
                 "i16" => TypeInt::I16,
@@ -1756,7 +1738,10 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 "i128" | "u128" | "isize" | "usize" => TypeInt::I64,
                 _ => TypeInt::I64,
             };
-            Ok((Value::int(value), Some(Ty::Primitive(TypePrimitive::Int(ty)))))
+            Ok((
+                Value::int(value),
+                Some(Ty::Primitive(TypePrimitive::Int(ty))),
+            ))
         }
         "f32" | "f64" => {
             let value = normalized
@@ -1766,7 +1751,10 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                 "f32" => DecimalType::F32,
                 _ => DecimalType::F64,
             };
-            Ok((Value::decimal(value), Some(Ty::Primitive(TypePrimitive::Decimal(ty)))))
+            Ok((
+                Value::decimal(value),
+                Some(Ty::Primitive(TypePrimitive::Decimal(ty))),
+            ))
         }
         _ => {
             if normalized.contains('.') {
@@ -1775,7 +1763,9 @@ fn parse_numeric_literal(raw: &str) -> Result<(Value, Option<Ty>), LowerError> {
                     .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
                 Ok((Value::decimal(d), None))
             } else {
-                let i = parse_int(&normalized)?;
+                let i = normalized
+                    .parse::<i64>()
+                    .map_err(|_| LowerError::InvalidNumber(raw.to_string()))?;
                 Ok((Value::int(i), None))
             }
         }
@@ -1936,7 +1926,6 @@ pub(crate) fn lower_type_from_cst(node: &SyntaxNode) -> Result<fp_core::ast::Ty,
         SyntaxKind::TyUnknown => Ok(Ty::unknown()),
         SyntaxKind::TyPath => lower_ty_path(node),
         SyntaxKind::TyRef => lower_ty_ref(node),
-        SyntaxKind::TyPtr => lower_ty_ptr(node),
         SyntaxKind::TySlice => lower_ty_slice(node),
         SyntaxKind::TyArray => lower_ty_array(node),
         SyntaxKind::TyFn => lower_ty_fn(node),
@@ -2034,7 +2023,7 @@ fn lower_ty_macro_call(node: &SyntaxNode) -> Result<Ty, LowerError> {
         let file_id = macro_tokens_file_id(&macro_tokens.token_trees);
         let (ty_cst, consumed) =
             crate::cst::parse_type_lexemes_prefix_to_cst(&lexemes, file_id, &[])
-            .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
+                .map_err(|_| LowerError::UnexpectedNode(SyntaxKind::TyMacroCall))?;
         if lexemes[consumed..]
             .iter()
             .any(|l| l.kind == crate::lexer::LexemeKind::Token)
@@ -2068,7 +2057,10 @@ fn append_macro_lexemes(tokens: &[MacroTokenTree], out: &mut Vec<Lexeme>) {
     for token in tokens {
         match token {
             MacroTokenTree::Token(tok) => {
-                out.push(Lexeme::token(tok.text.clone(), lex_span_from_span(tok.span)));
+                out.push(Lexeme::token(
+                    tok.text.clone(),
+                    lex_span_from_span(tok.span),
+                ));
             }
             MacroTokenTree::Group(group) => {
                 let (open, close) = match group.delimiter {
@@ -2344,7 +2336,10 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
         }
         "super" => {
             let mut depth = 0;
-            while segments.first().is_some_and(|ident| ident.as_str() == "super") {
+            while segments
+                .first()
+                .is_some_and(|ident| ident.as_str() == "super")
+            {
                 segments.remove(0);
                 depth += 1;
             }
@@ -2470,35 +2465,6 @@ fn lower_ty_ref(node: &SyntaxNode) -> Result<Ty, LowerError> {
     ))
 }
 
-fn lower_ty_ptr(node: &SyntaxNode) -> Result<Ty, LowerError> {
-    let mut mutability: Option<bool> = None;
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(tok) = child else {
-            continue;
-        };
-        if tok.is_trivia() {
-            continue;
-        }
-        if tok.text == "mut" {
-            mutability = Some(true);
-        } else if tok.text == "const" {
-            mutability = Some(false);
-        }
-    }
-
-    let inner = node_children_types(node)
-        .next()
-        .ok_or_else(|| LowerError::UnexpectedNode(node.kind))?;
-    let inner = lower_type_from_cst(inner)?;
-    Ok(Ty::RawPtr(
-        TypeRawPtr {
-            ty: Box::new(inner),
-            mutability,
-        }
-        .into(),
-    ))
-}
-
 fn lower_ty_slice(node: &SyntaxNode) -> Result<Ty, LowerError> {
     let elem = node_children_types(node)
         .next()
@@ -2591,17 +2557,7 @@ fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
         let ty_node = node_children_types(field)
             .next()
             .ok_or_else(|| LowerError::UnexpectedNode(SyntaxKind::TyField))?;
-        let mut value = lower_type_from_cst(ty_node)?;
-        if ty_field_has_optional_marker(field) {
-            value = Ty::TypeBinaryOp(
-                TypeBinaryOp {
-                    kind: TypeBinaryOpKind::Union,
-                    lhs: Box::new(value),
-                    rhs: Box::new(Ty::value(Value::None(ValueNone))),
-                }
-                .into(),
-            );
-        }
+        let value = lower_type_from_cst(ty_node)?;
         fields.push(StructuralField::new(Ident::new(name), value));
     }
     let mut update: Option<Ty> = None;
@@ -2641,21 +2597,6 @@ fn lower_ty_structural(node: &SyntaxNode) -> Result<Ty, LowerError> {
     }
 
     Ok(Ty::Structural(TypeStructural { fields }.into()))
-}
-
-fn ty_field_has_optional_marker(node: &SyntaxNode) -> bool {
-    for child in &node.children {
-        let crate::syntax::SyntaxElement::Token(token) = child else {
-            continue;
-        };
-        if token.is_trivia() {
-            continue;
-        }
-        if token.text == "?" {
-            return true;
-        }
-    }
-    false
 }
 
 fn lower_ty_binary(node: &SyntaxNode) -> Result<Ty, LowerError> {
@@ -2863,12 +2804,11 @@ fn direct_operator_token_text(node: &SyntaxNode) -> Option<String> {
     node.children.iter().find_map(|child| match child {
         crate::syntax::SyntaxElement::Token(t)
             if !t.is_trivia()
-                && (t.text == "box"
-                    || !t
-                        .text
-                        .chars()
-                        .next()
-                        .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_')) =>
+                && !t
+                    .text
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') =>
         {
             Some(t.text.clone())
         }
@@ -2937,7 +2877,6 @@ fn direct_last_ident_token_text(node: &SyntaxNode) -> Option<String> {
         _ => None,
     })
 }
-
 
 fn binop_from_text(op: &str) -> Option<BinOpKind> {
     Some(match op {

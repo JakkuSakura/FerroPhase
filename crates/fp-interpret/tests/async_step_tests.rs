@@ -1,7 +1,9 @@
 use fp_core::ast::{Expr, ExprBinOp, ExprKind, ExprRange, ExprRangeLimit, Value};
 use fp_core::context::SharedScopedContext;
 use fp_core::ops::BinOpKind;
-use fp_interpret::engine::{AstInterpreter, EvalStepOutcome, InterpreterMode, InterpreterOptions, RuntimeStepOutcome};
+use fp_interpret::engine::{
+    AstInterpreter, EvalStepOutcome, InterpreterMode, InterpreterOptions, RuntimeStepOutcome,
+};
 
 fn binop_expr(lhs: i64, rhs: i64, op: BinOpKind) -> Expr {
     Expr::new(ExprKind::BinOp(ExprBinOp {
@@ -18,7 +20,9 @@ fn const_step_eval_yields_then_completes() {
     let mut interpreter = AstInterpreter::new(&ctx, InterpreterOptions::default());
 
     let mut expr = binop_expr(1, 2, BinOpKind::Add);
-    interpreter.begin_const_eval(&mut expr).expect("begin const eval");
+    interpreter
+        .begin_const_eval(&mut expr)
+        .expect("begin const eval");
 
     let first = interpreter.step_const_eval(1).expect("step const eval");
     assert!(matches!(first, EvalStepOutcome::Yielded));
@@ -50,14 +54,19 @@ fn runtime_step_eval_yields_then_completes() {
     );
 
     let mut expr = binop_expr(4, 5, BinOpKind::Mul);
-    interpreter.begin_runtime_eval(&mut expr).expect("begin runtime eval");
+    interpreter
+        .begin_runtime_eval(&mut expr)
+        .expect("begin runtime eval");
 
     let first = interpreter.step_runtime_eval(1).expect("step runtime eval");
     assert!(matches!(first, RuntimeStepOutcome::Yielded));
 
     let mut final_flow = None;
     for _ in 0..8 {
-        match interpreter.step_runtime_eval(10).expect("step runtime eval") {
+        match interpreter
+            .step_runtime_eval(10)
+            .expect("step runtime eval")
+        {
             RuntimeStepOutcome::Yielded => continue,
             RuntimeStepOutcome::Complete(flow) => {
                 final_flow = Some(flow);
@@ -89,9 +98,12 @@ fn const_range_eval_uses_stack_tasks() {
     }));
 
     let value = interpreter.evaluate_expression(&mut expr);
-    assert_eq!(value, Value::List(fp_core::ast::ValueList::new(vec![
-        Value::int(1),
-        Value::int(2),
-        Value::int(3),
-    ])));
+    assert_eq!(
+        value,
+        Value::List(fp_core::ast::ValueList::new(vec![
+            Value::int(1),
+            Value::int(2),
+            Value::int(3),
+        ]))
+    );
 }

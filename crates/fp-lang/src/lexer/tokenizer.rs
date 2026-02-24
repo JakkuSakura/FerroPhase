@@ -326,15 +326,13 @@ pub fn lex_lexemes(source: &str) -> Result<Vec<Lexeme>, LexerError> {
             continue;
         }
 
-        token_parser()
-            .parse_next(&mut input)
-            .map_err(|err| {
-                let span = Span {
-                    start,
-                    end: (start + 1).min(source.len()),
-                };
-                LexerError::with_span(err.to_string(), span)
-            })?;
+        token_parser().parse_next(&mut input).map_err(|err| {
+            let span = Span {
+                start,
+                end: (start + 1).min(source.len()),
+            };
+            LexerError::with_span(err.to_string(), span)
+        })?;
         let end = source.len() - input.len();
         out.push(Lexeme::token(
             source[start..end].to_string(),

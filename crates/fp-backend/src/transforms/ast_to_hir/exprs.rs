@@ -76,9 +76,13 @@ impl HirGenerator {
             ExprKind::Index(index_expr) => {
                 if let ast::ExprKind::Range(range) = index_expr.index.kind() {
                     if range.step.is_some() {
-                        self.add_warning(Diagnostic::warning(
-                            "range steps are not supported in slicing; ignoring step".to_string(),
-                        ).with_span(expr_span));
+                        self.add_warning(
+                            Diagnostic::warning(
+                                "range steps are not supported in slicing; ignoring step"
+                                    .to_string(),
+                            )
+                            .with_span(expr_span),
+                        );
                     }
                     let base_expr = self.transform_expr_to_hir(index_expr.obj.as_ref())?;
                     let start_expr = match range.start.as_ref() {
@@ -147,9 +151,11 @@ impl HirGenerator {
             }
             ExprKind::Quote(_quote) => {
                 self.add_error(
-                    Diagnostic::error("quote expressions should be removed by const-eval".to_string())
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(expr_span),
+                    Diagnostic::error(
+                        "quote expressions should be removed by const-eval".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(expr_span),
                 );
                 let block = hir::Block {
                     hir_id: self.next_id(),
@@ -160,9 +166,11 @@ impl HirGenerator {
             }
             ExprKind::Splice(_splice) => {
                 self.add_error(
-                    Diagnostic::error("splice expressions should be removed by const-eval".to_string())
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(expr_span),
+                    Diagnostic::error(
+                        "splice expressions should be removed by const-eval".to_string(),
+                    )
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(expr_span),
                 );
                 let block = hir::Block {
                     hir_id: self.next_id(),
@@ -1212,11 +1220,9 @@ impl HirGenerator {
         };
         if tuple.patterns.len() != 2 {
             self.add_error(
-                Diagnostic::error(
-                    "enumerate() loop pattern must bind (index, value)".to_string(),
-                )
-                .with_source_context(DIAGNOSTIC_CONTEXT)
-                .with_span(for_expr.span()),
+                Diagnostic::error("enumerate() loop pattern must bind (index, value)".to_string())
+                    .with_source_context(DIAGNOSTIC_CONTEXT)
+                    .with_span(for_expr.span()),
             );
             return Ok(None);
         }
@@ -1309,11 +1315,9 @@ impl HirGenerator {
             Some(ident) => ident.clone(),
             None => {
                 self.add_error(
-                    Diagnostic::error(
-                        "iter() loop pattern must be a simple binding".to_string(),
-                    )
-                    .with_source_context(DIAGNOSTIC_CONTEXT)
-                    .with_span(for_expr.span()),
+                    Diagnostic::error("iter() loop pattern must be a simple binding".to_string())
+                        .with_source_context(DIAGNOSTIC_CONTEXT)
+                        .with_span(for_expr.span()),
                 );
                 return Ok(None);
             }

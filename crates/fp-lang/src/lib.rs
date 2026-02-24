@@ -8,12 +8,12 @@ mod serializer;
 use crate::macro_parser::FerroMacroExpansionParser;
 use crate::normalization::FerroIntrinsicNormalizer;
 use fp_core::ast::{Expr, ExprKind, Node};
-pub use serializer::PrettyAstSerializer;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
-use fp_core::span::FileId;
 use fp_core::intrinsics::IntrinsicNormalizer;
+use fp_core::span::FileId;
 use fp_core::Result as CoreResult;
+pub use serializer::PrettyAstSerializer;
 
 /// Canonical identifier for the FerroPhase source language.
 pub const FERROPHASE: &str = "ferrophase";
@@ -98,7 +98,10 @@ impl LanguageFrontend for FerroFrontend {
                     .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
                     let snapshot = FrontendSnapshot {
                         language: self.language().to_string(),
-                        description: format!("FerroPhase LAST for {}", source_path_display.display()),
+                        description: format!(
+                            "FerroPhase LAST for {}",
+                            source_path_display.display()
+                        ),
                         serialized: None,
                     };
 

@@ -206,8 +206,7 @@ impl Parser {
                 let ty = self.parse_type_node()?;
                 children.push(SyntaxElement::Node(Box::new(ty)));
             } else if kind == SyntaxKind::ExprRange && self.range_end_is_missing() {
-                let span =
-                    span_for_children(&children);
+                let span = span_for_children(&children);
                 left = SyntaxNode::new(kind, children, span);
                 continue;
             } else {
@@ -348,8 +347,7 @@ impl Parser {
                     children.push(SyntaxElement::Node(Box::new(base.clone())));
                     self.bump_trivia_into(&mut children);
                     self.bump_token_into(&mut children);
-                    let span =
-                        span_for_children(&children);
+                    let span = span_for_children(&children);
                     base = SyntaxNode::new(SyntaxKind::ExprTry, children, span);
                 }
                 Some(".") => {
@@ -945,8 +943,7 @@ impl Parser {
             self.bump_trivia_into(&mut typed_children);
             let ty = self.parse_type_node_until(&[",", "|"])?;
             typed_children.push(SyntaxElement::Node(Box::new(ty)));
-            let span =
-                span_for_children(&typed_children);
+            let span = span_for_children(&typed_children);
             pat_node = SyntaxNode::new(SyntaxKind::PatternType, typed_children, span);
         }
 
@@ -1033,8 +1030,7 @@ impl Parser {
         match self.peek_non_trivia_token_kind() {
             Some(TokenKind::Ident) => {
                 self.bump_token_into(&mut children);
-                let span =
-                    span_for_children(&children);
+                let span = span_for_children(&children);
                 Ok(SyntaxNode::new(SyntaxKind::ExprSelect, children, span))
             }
             _ => {
@@ -1083,7 +1079,9 @@ impl Parser {
 
     fn parse_call_arg(&mut self) -> Result<(SyntaxNode, bool), ExprCstParseError> {
         if self.peek_non_trivia_token_kind() == Some(TokenKind::Ident)
-            && self.peek_nth_non_trivia(2).is_some_and(|tok| tok.raw.as_str() == "=")
+            && self
+                .peek_nth_non_trivia(2)
+                .is_some_and(|tok| tok.raw.as_str() == "=")
         {
             let mut children = Vec::new();
             self.bump_trivia_into(&mut children);
@@ -1212,8 +1210,7 @@ impl Parser {
                 children.push(SyntaxElement::Node(Box::new(left)));
                 self.bump_trivia_into(&mut children);
                 self.bump_token_into(&mut children);
-                let span =
-                    span_for_children(&children);
+                let span = span_for_children(&children);
                 left = SyntaxNode::new(SyntaxKind::TyOptional, children, span);
                 continue;
             }

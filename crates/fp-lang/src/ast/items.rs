@@ -6,9 +6,9 @@ use fp_core::ast::{
     FunctionSignature, GenericParam, Ident, Item, ItemDeclConst, ItemDeclFunction, ItemDeclType,
     ItemDefConst, ItemDefEnum, ItemDefFunction, ItemDefStatic, ItemDefStruct, ItemDefTrait,
     ItemDefType, ItemImpl, ItemImport, ItemImportGroup, ItemImportPath, ItemImportRename,
-    ItemImportTree, ItemKind, ItemMacro, Name, MacroDelimiter, MacroInvocation, Module, Path,
-    QuoteFragmentKind, StructuralField, Ty, TypeBinaryOp, TypeBinaryOpKind, TypeBounds,
-    TypeEnum, TypeQuote, TypeStruct, Value, ValueNone, Visibility,
+    ItemImportTree, ItemKind, ItemMacro, MacroDelimiter, MacroInvocation, Module, Name, Path,
+    QuoteFragmentKind, StructuralField, Ty, TypeBounds, TypeEnum, TypeQuote, TypeStruct, Value,
+    Visibility,
 };
 use fp_core::cst::CstCategory;
 use fp_core::module::path::PathPrefix;
@@ -127,9 +127,7 @@ fn lower_extern_fn_decl(
 
 fn lower_extern_abi(node: &SyntaxNode) -> Result<Abi, LowerItemsError> {
     let abi_text = node.children.iter().find_map(|child| match child {
-        SyntaxElement::Token(tok)
-            if tok.text.starts_with('"') || tok.text.starts_with("r#") =>
-        {
+        SyntaxElement::Token(tok) if tok.text.starts_with('"') || tok.text.starts_with("r#") => {
             Some(tok.text.clone())
         }
         _ => None,
@@ -299,11 +297,8 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
         );
         let ty_node = first_child_by_category(field, CstCategory::Type)
             .ok_or(LowerItemsError::MissingToken("field type"))?;
-        let mut fty = lower_type_from_cst(ty_node)
+        let fty = lower_type_from_cst(ty_node)
             .map_err(|_| LowerItemsError::UnexpectedNode(field.kind))?;
-        if has_optional_field_marker(field) {
-            fty = wrap_optional_type(fty);
-        }
         fields.push(StructuralField::new(fname, fty));
     }
     Ok(ItemDefStruct {
@@ -316,32 +311,6 @@ fn lower_struct(node: &SyntaxNode) -> Result<ItemDefStruct, LowerItemsError> {
             fields,
         },
     })
-}
-
-fn has_optional_field_marker(node: &SyntaxNode) -> bool {
-    for child in &node.children {
-        let SyntaxElement::Token(token) = child else {
-            continue;
-        };
-        if token.is_trivia() {
-            continue;
-        }
-        if token.text == "?" {
-            return true;
-        }
-    }
-    false
-}
-
-fn wrap_optional_type(inner: Ty) -> Ty {
-    Ty::TypeBinaryOp(
-        TypeBinaryOp {
-            kind: TypeBinaryOpKind::Union,
-            lhs: Box::new(inner),
-            rhs: Box::new(Ty::value(Value::None(ValueNone))),
-        }
-        .into(),
-    )
 }
 
 fn is_const_struct(node: &SyntaxNode) -> bool {
@@ -634,10 +603,7 @@ fn lower_attr(node: &SyntaxNode, style: AttrStyle) -> Option<Attribute> {
     }
 
     let meta = parse_attr_meta(&inner_tokens)?;
-    Some(Attribute {
-        style,
-        meta,
-    })
+    Some(Attribute { style, meta })
 }
 
 fn parse_attr_meta(tokens: &[String]) -> Option<AttrMeta> {
@@ -672,57 +638,17 @@ fn parse_attr_meta_at(tokens: &[String], mut idx: usize) -> Option<(AttrMeta, us
 
     if tokens.get(idx).is_some_and(|tok| tok == "=") {
         idx += 1;
-        let end = find_attr_value_end(tokens, idx);
-        let value_expr = parse_attr_value_expr(&tokens[idx..end])?;
+        let value_expr = parse_attr_value_expr(&tokens[idx..])?;
         return Some((
             AttrMeta::NameValue(AttrMetaNameValue {
                 name: path,
                 value: value_expr,
             }),
-            end,
+            tokens.len(),
         ));
     }
 
     Some((AttrMeta::Path(path), idx))
-}
-
-fn find_attr_value_end(tokens: &[String], mut idx: usize) -> usize {
-    let mut paren_depth = 0i32;
-    let mut bracket_depth = 0i32;
-    let mut brace_depth = 0i32;
-    while let Some(tok) = tokens.get(idx) {
-        match tok.as_str() {
-            "(" => paren_depth += 1,
-            ")" => {
-                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
-                    break;
-                }
-                paren_depth = (paren_depth - 1).max(0);
-            }
-            "[" => bracket_depth += 1,
-            "]" => {
-                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
-                    break;
-                }
-                bracket_depth = (bracket_depth - 1).max(0);
-            }
-            "{" => brace_depth += 1,
-            "}" => {
-                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
-                    break;
-                }
-                brace_depth = (brace_depth - 1).max(0);
-            }
-            "," => {
-                if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 {
-                    break;
-                }
-            }
-            _ => {}
-        }
-        idx += 1;
-    }
-    idx
 }
 
 fn parse_attr_path(tokens: &[String], mut idx: usize) -> Option<(Path, usize)> {
@@ -777,7 +703,10 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
         }
         "super" => {
             let mut depth = 0;
-            while segments.first().is_some_and(|ident| ident.as_str() == "super") {
+            while segments
+                .first()
+                .is_some_and(|ident| ident.as_str() == "super")
+            {
                 segments.remove(0);
                 depth += 1;
             }
@@ -788,7 +717,11 @@ fn split_path_prefix(mut segments: Vec<Ident>, saw_root: bool) -> (PathPrefix, V
 }
 
 fn parse_attr_value_expr(tokens: &[String]) -> Option<BExpr> {
-    let cleaned: Vec<&str> = tokens.iter().map(|tok| tok.as_str()).filter(|t| !t.is_empty()).collect();
+    let cleaned: Vec<&str> = tokens
+        .iter()
+        .map(|tok| tok.as_str())
+        .filter(|t| !t.is_empty())
+        .collect();
     if let Some(expr) = parse_include_str_macro_expr(&cleaned) {
         return Some(expr);
     }
@@ -834,10 +767,6 @@ fn decode_string_literal(raw: &str) -> Option<String> {
         let inner = &raw[1..raw.len() - 1];
         return unescape_cooked(inner);
     }
-    if raw.starts_with("b\"") && raw.ends_with('"') && raw.len() >= 3 {
-        let inner = &raw[2..raw.len() - 1];
-        return unescape_cooked(inner);
-    }
 
     let (prefix, rest) = if let Some(r) = raw.strip_prefix("br") {
         ("br", r)
@@ -880,7 +809,9 @@ fn parse_include_str_macro_expr(tokens: &[&str]) -> Option<BExpr> {
     let tokens_text = inner.join(" ");
     let path = Path::plain(vec![Ident::new("include_str".to_string())]);
     let invocation = MacroInvocation::new(path, MacroDelimiter::Parenthesis, tokens_text);
-    Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(invocation)))))
+    Some(Box::new(Expr::new(ExprKind::Macro(ExprMacro::new(
+        invocation,
+    )))))
 }
 
 fn lower_trait(node: &SyntaxNode) -> Result<ItemDefTrait, LowerItemsError> {
@@ -1102,9 +1033,13 @@ fn lower_item_macro(node: &SyntaxNode) -> Result<ItemMacro, LowerItemsError> {
     };
 
     Ok(ItemMacro {
-        invocation: MacroInvocation::new(Path::from_ident(name), macro_tokens.delimiter, macro_tokens.text)
-            .with_token_trees(macro_tokens.token_trees)
-            .with_span(node.span),
+        invocation: MacroInvocation::new(
+            Path::from_ident(name),
+            macro_tokens.delimiter,
+            macro_tokens.text,
+        )
+        .with_token_trees(macro_tokens.token_trees)
+        .with_span(node.span),
         declared_name,
     })
 }

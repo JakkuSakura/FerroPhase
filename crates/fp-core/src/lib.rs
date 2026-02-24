@@ -4,7 +4,6 @@
 pub mod macros;
 
 pub mod ast;
-pub mod sql_ast;
 pub mod collections;
 pub mod cfg;
 pub mod config;
@@ -27,6 +26,7 @@ pub mod printer;
 pub mod query;
 pub mod source_map;
 pub mod span;
+pub mod sql_ast;
 pub mod utils;
 pub mod vfs;
 pub mod workspace;

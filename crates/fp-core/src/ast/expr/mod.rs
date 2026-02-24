@@ -1,6 +1,6 @@
 use crate::ast::{
-    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, Name, MacroInvocation, Path,
-    Ty, TySlot, Value, ValueUnit,
+    get_threadlocal_serializer, BItem, BValue, ExprMacro, Ident, MacroInvocation, Name, Path, Ty,
+    TySlot, Value, ValueUnit,
 };
 use crate::span::Span;
 use crate::utils::anybox::{AnyBox, AnyBoxable};
@@ -237,9 +237,7 @@ impl ExprKind {
             ExprKind::Let(expr_let) => expr_let.span(),
             ExprKind::Closure(closure) => closure.span(),
             ExprKind::Array(array) => union_spans(array.values.iter().map(Expr::span)),
-            ExprKind::ArrayRepeat(repeat) => {
-                union_spans([repeat.elem.span(), repeat.len.span()])
-            }
+            ExprKind::ArrayRepeat(repeat) => union_spans([repeat.elem.span(), repeat.len.span()]),
             ExprKind::ConstBlock(block) => block.expr.span(),
             ExprKind::IntrinsicContainer(container) => container.span(),
             ExprKind::IntrinsicCall(call) => call.span(),
