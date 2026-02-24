@@ -4,6 +4,15 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 
 ## Why FerroPhase
 
+### Semantic Invariant (Most Important)
+
+**The program must have exactly the same semantics in every representation (CST/LAST/AST/HIR/MIR/LIR) and in every execution mode (interpreter, bytecode VM, and compiled backends).**
+
+- Any semantic difference between modes or IRs is a correctness bug.
+- Pipeline stages may change representation, optimize, or lower, but never observable behavior.
+- Backend-specific details are allowed only when they preserve the same language-level result.
+- `FERROPHASE_LOSSY` is explicitly outside this guarantee and must stay disabled for correctness validation.
+
 - Structural metaprogramming: generate fields, methods, and whole types with hygienic transformations.
 - Multi-mode toolchain: interpret, compile to native backends, or emit AST targets without changing source.
 - Compile-time intelligence: query layouts, traits, and type metadata during const evaluation to shape emitted code.
@@ -33,7 +42,8 @@ FerroPhase is a meta-compilation toolkit that lets you write Rust-adjacent code 
 
 - Const evaluation with intrinsics like `sizeof!`, `hasfield!`, and `clone_struct!`, plus structural editors built on strict `std::intrinsic` lang items.
 - Declarative type creation (`type T = { ... }`) with conditionals and loops embedded in compile-time blocks.
-- Unified pipeline: CST → LAST → AST → ASTᵗ (typed) → ASTᶜ (const-evaluated) → HIRᵗ → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR, shared by all execution modes.
+- Unified semantics pipeline: CST → LAST → AST → ASTᵗ (typed) → ASTᶜ (const-evaluated) → HIRᵗ → MIR (Mid-level Intermediate Representation; SSA CFG) → LIR.
+- Execution modes can branch at different stages (for example, interpreter from typed AST; bytecode/native from lower IRs) but must remain semantically equivalent.
 - Multi-target outputs: native/LLVM, custom bytecode + VM, high-level Rust transpilation with optional type annotations.
 
 ## Architecture at a Glance

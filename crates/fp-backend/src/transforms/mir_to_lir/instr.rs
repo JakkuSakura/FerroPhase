@@ -6,6 +6,7 @@
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::lir::layout;
+use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
@@ -68,6 +69,8 @@ enum PlaceAccess {
 }
 
 impl LirGenerator {
+    const DIAGNOSTIC_CONTEXT: &'static str = "mir→lir";
+
     fn skip_large_return_storage(&self) -> bool {
         self.current_return_type
             .as_ref()
@@ -142,6 +145,12 @@ impl LirGenerator {
         }
 
         Ok(lir_program)
+    }
+
+    fn emit_warning(&self, message: impl Into<String>) {
+        diagnostic_manager().add_diagnostic(
+            Diagnostic::warning(message.into()).with_source_context(Self::DIAGNOSTIC_CONTEXT),
+        );
     }
 
     fn predeclare_function_signatures(&mut self, program: &mir::Program) {
@@ -402,13 +411,10 @@ impl LirGenerator {
         match init {
             mir::Operand::Constant(constant) => self.constant_to_lir_constant(constant, ty),
             other => {
-                fp_core::diagnostics::report_warning_with_context(
-                    "mir→lir",
-                    format!(
-                        "unsupported static initializer operand {:?}; lowering to undef",
-                        other
-                    ),
-                );
+                self.emit_warning(format!(
+                    "unsupported static initializer operand {:?}; lowering to undef",
+                    other
+                ));
                 Ok(lir::LirConstant::Undef(self.lir_type_from_ty(ty)))
             }
         }
@@ -454,10 +460,7 @@ impl LirGenerator {
                 Vec::new(),
             ),
             mir::ConstantKind::Ty(_) => {
-                fp_core::diagnostics::report_warning_with_context(
-                    "mir→lir",
-                    "type-only constant in static initializer lowered to undef".to_string(),
-                );
+                self.emit_warning("type-only constant in static initializer lowered to undef");
                 lir::LirConstant::Undef(target_ty.clone())
             }
         };
@@ -832,13 +835,10 @@ impl LirGenerator {
                         ))
                     }
                     _ => {
-                        fp_core::diagnostics::report_warning_with_context(
-                            "mir→lir",
-                            format!(
-                                "unsupported MIR intrinsic in LIR lowering: {:?}; ignoring",
-                                kind
-                            ),
-                        );
+                        self.emit_warning(format!(
+                            "unsupported MIR intrinsic in LIR lowering: {:?}; ignoring",
+                            kind
+                        ));
                         return Ok(Vec::new());
                     }
                 };
@@ -967,13 +967,10 @@ impl LirGenerator {
                     }
                     IntrinsicCallKind::Slice => {
                         if args.len() != 3 {
-                            fp_core::diagnostics::report_warning_with_context(
-                                "mir→lir",
-                                format!(
-                                    "slice intrinsic expects 3 arguments, got {}; lowering to undef",
-                                    args.len()
-                                ),
-                            );
+                            self.emit_warning(format!(
+                                "slice intrinsic expects 3 arguments, got {}; lowering to undef",
+                                args.len()
+                            ));
                             let fallback_ty =
                                 destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
                             result_value = Some(lir::LirValue::Constant(lir::LirConstant::Undef(
@@ -1021,13 +1018,10 @@ impl LirGenerator {
                             }
                             Some(lir::LirType::Ptr(_)) => base_value,
                             other => {
-                                fp_core::diagnostics::report_warning_with_context(
-                                    "mir→lir",
-                                    format!(
-                                        "slice intrinsic base type {:?} not supported; lowering to undef",
-                                        other
-                                    ),
-                                );
+                                self.emit_warning(format!(
+                                    "slice intrinsic base type {:?} not supported; lowering to undef",
+                                    other
+                                ));
                                 let fallback_ty =
                                     destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
                                 result_value = Some(lir::LirValue::Constant(
@@ -1077,13 +1071,10 @@ impl LirGenerator {
                         return Ok(instructions);
                     }
                     _ => {
-                        fp_core::diagnostics::report_warning_with_context(
-                            "mir→lir",
-                            format!(
-                                "unsupported intrinsic in assignment: {:?}; lowering to undef",
-                                kind
-                            ),
-                        );
+                        self.emit_warning(format!(
+                            "unsupported intrinsic in assignment: {:?}; lowering to undef",
+                            kind
+                        ));
                         let fallback_ty = destination_lir_ty.clone().unwrap_or(lir::LirType::I32);
                         result_value = Some(lir::LirValue::Constant(lir::LirConstant::Undef(
                             fallback_ty,
@@ -1978,13 +1969,10 @@ impl LirGenerator {
                 }
             }
             other => {
-                fp_core::diagnostics::report_warning_with_context(
-                    "mir→lir",
-                    format!(
-                        "unhandled MIR terminator lowered to unreachable: {:?}",
-                        other
-                    ),
-                );
+                self.emit_warning(format!(
+                    "unhandled MIR terminator lowered to unreachable: {:?}",
+                    other
+                ));
                 Ok(lir::LirTerminator::Unreachable)
             }
         }
@@ -2488,10 +2476,7 @@ impl LirGenerator {
                 }
             }
             mir::PlaceElem::Downcast(_, _) => {
-                fp_core::diagnostics::report_warning_with_context(
-                    "mir→lir",
-                    "ignoring downcast place projection during lowering",
-                );
+                self.emit_warning("ignoring downcast place projection during lowering");
                 Ok(base_access)
             }
         }
@@ -4410,10 +4395,7 @@ impl LirGenerator {
             return Ok(lir::LirTerminator::Br(*dest_bb));
         }
 
-        fp_core::diagnostics::report_warning_with_context(
-            "mir→lir",
-            "call terminator without destination lowered to unreachable".to_string(),
-        );
+        self.emit_warning("call terminator without destination lowered to unreachable");
         Ok(lir::LirTerminator::Unreachable)
     }
 
