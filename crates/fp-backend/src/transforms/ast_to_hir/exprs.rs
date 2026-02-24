@@ -192,11 +192,6 @@ impl HirGenerator {
             }
             ExprKind::Await(expr_await) => {
                 let inner_expr = self.transform_expr_to_hir(expr_await.base.as_ref())?;
-                self.add_error_or_warning(
-                    Diagnostic::error("`await` lowering not implemented".to_string())
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(expr_span),
-                );
                 return Ok(hir::Expr {
                     hir_id,
                     kind: inner_expr.kind,
@@ -205,11 +200,6 @@ impl HirGenerator {
             }
             ExprKind::Async(async_expr) => {
                 let inner_expr = self.transform_expr_to_hir(async_expr.expr.as_ref())?;
-                self.add_error_or_warning(
-                    Diagnostic::error("`async` lowering not implemented".to_string())
-                        .with_source_context(DIAGNOSTIC_CONTEXT)
-                        .with_span(expr_span),
-                );
                 return Ok(hir::Expr {
                     hir_id,
                     kind: inner_expr.kind,
@@ -1927,6 +1917,60 @@ impl HirGenerator {
                 name: kwarg.name.clone().into(),
                 value: self.transform_expr_to_hir(&kwarg.value)?,
             });
+        }
+
+        if matches!(
+            call.kind,
+            IntrinsicCallKind::Print | IntrinsicCallKind::Println | IntrinsicCallKind::Format
+        ) {
+            let mut existing = callargs
+                .iter()
+                .map(|arg| arg.name.as_str().to_string())
+                .collect::<std::collections::HashSet<_>>();
+
+            let captured_names = callargs
+                .first()
+                .and_then(|first| match &first.value.kind {
+                    hir::ExprKind::FormatString(template) => Some(
+                        template
+                            .parts
+                            .iter()
+                            .filter_map(|part| match part {
+                                hir::FormatTemplatePart::Placeholder(placeholder) => {
+                                    match &placeholder.arg_ref {
+                                        hir::FormatArgRef::Named(name) => Some(name.as_str()),
+                                        _ => None,
+                                    }
+                                }
+                                _ => None,
+                            })
+                            .collect::<Vec<_>>(),
+                    ),
+                    _ => None,
+                })
+                .unwrap_or_default();
+
+            for name in captured_names {
+                if existing.contains(name) {
+                    continue;
+                }
+
+                let path = self.locator_to_hir_path_with_scope(
+                    &Name::Ident(ast::Ident::new(name)),
+                    PathResolutionScope::Value,
+                )?;
+                let value = hir::Expr {
+                    hir_id: self.next_id(),
+                    kind: hir::ExprKind::Path(path),
+                    span: self.create_span(1),
+                };
+
+                callargs.push(hir::CallArg {
+                    name: hir::Symbol::new(name.to_string()),
+                    value,
+                });
+                existing.insert(name.to_string());
+            }
         }
 
         Ok(hir::ExprKind::IntrinsicCall(hir::IntrinsicCallExpr {

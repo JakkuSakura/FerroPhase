@@ -4960,10 +4960,17 @@ impl<'a> BodyBuilder<'a> {
                 self.local_map.insert(pat.hir_id, local);
             }
             _ => {
-                self.lowering.emit_error(
-                    self.span,
-                    "complex pattern bindings are not yet supported in MIR lowering",
-                );
+                self.local_map.insert(pat.hir_id, local);
+                let place = mir::Place::from_local(local);
+                let scrutinee_ty = ty.cloned().unwrap_or_else(|| {
+                    self.locals
+                        .get(local as usize)
+                        .map(|decl| decl.ty.clone())
+                        .unwrap_or(Ty {
+                            kind: TyKind::Tuple(Vec::new()),
+                        })
+                });
+                self.bind_match_pattern(pat, &place, &scrutinee_ty, self.span);
             }
         }
     }
@@ -9900,6 +9907,108 @@ impl<'a> BodyBuilder<'a> {
                         ty: len_ty,
                     });
                 }
+                if matches!(
+                    call.kind,
+                    IntrinsicCallKind::Spawn | IntrinsicCallKind::Join | IntrinsicCallKind::Select
+                ) {
+                    let mut lowered_args = Vec::with_capacity(call.callargs.len());
+                    for arg in &call.callargs {
+                        lowered_args.push(self.lower_operand(&arg.value, None)?);
+                    }
+
+                    match call.kind {
+                        IntrinsicCallKind::Spawn | IntrinsicCallKind::Select => {
+                            if lowered_args.is_empty() {
+                                self.lowering.emit_error(
+                                    expr.span,
+                                    format!(
+                                        "{:?} intrinsic expects at least one argument",
+                                        call.kind
+                                    ),
+                                );
+                                let unit_ty = MirLowering::unit_ty();
+                                let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                                let local_place = mir::Place::from_local(local_id);
+                                self.push_statement(mir::Statement {
+                                    source_info: expr.span,
+                                    kind: mir::StatementKind::Assign(
+                                        local_place.clone(),
+                                        mir::Rvalue::Aggregate(
+                                            mir::AggregateKind::Tuple,
+                                            Vec::new(),
+                                        ),
+                                    ),
+                                });
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::copy(local_place),
+                                    ty: unit_ty,
+                                });
+                            }
+
+                            let mut lowered_args = lowered_args.into_iter();
+                            let first = lowered_args
+                                .next()
+                                .expect("checked non-empty intrinsic args");
+                            return Ok(first);
+                        }
+                        IntrinsicCallKind::Join => {
+                            if lowered_args.is_empty() {
+                                self.lowering
+                                    .emit_error(expr.span, "join intrinsic expects arguments");
+                                let unit_ty = MirLowering::unit_ty();
+                                let local_id = self.allocate_temp(unit_ty.clone(), expr.span);
+                                let local_place = mir::Place::from_local(local_id);
+                                self.push_statement(mir::Statement {
+                                    source_info: expr.span,
+                                    kind: mir::StatementKind::Assign(
+                                        local_place.clone(),
+                                        mir::Rvalue::Aggregate(
+                                            mir::AggregateKind::Tuple,
+                                            Vec::new(),
+                                        ),
+                                    ),
+                                });
+                                return Ok(OperandInfo {
+                                    operand: mir::Operand::copy(local_place),
+                                    ty: unit_ty,
+                                });
+                            }
+
+                            if lowered_args.len() == 1 {
+                                return Ok(lowered_args
+                                    .into_iter()
+                                    .next()
+                                    .expect("single intrinsic arg"));
+                            }
+
+                            let tuple_tys = lowered_args
+                                .iter()
+                                .map(|arg| Box::new(arg.ty.clone()))
+                                .collect::<Vec<_>>();
+                            let tuple_ty = Ty {
+                                kind: TyKind::Tuple(tuple_tys),
+                            };
+                            let local_id = self.allocate_temp(tuple_ty.clone(), expr.span);
+                            let local_place = mir::Place::from_local(local_id);
+                            let operands = lowered_args
+                                .into_iter()
+                                .map(|arg| arg.operand)
+                                .collect::<Vec<_>>();
+                            self.push_statement(mir::Statement {
+                                source_info: expr.span,
+                                kind: mir::StatementKind::Assign(
+                                    local_place.clone(),
+                                    mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
+                                ),
+                            });
+                            return Ok(OperandInfo {
+                                operand: mir::Operand::copy(local_place),
+                                ty: tuple_ty,
+                            });
+                        }
+                        _ => unreachable!(),
+                    }
+                }
                 if let Some((literal, ty)) = self.lower_intrinsic_constant(call, expr.span) {
                     let operand = mir::Operand::Constant(mir::Constant {
                         span: expr.span,
@@ -10318,12 +10427,12 @@ impl<'a> BodyBuilder<'a> {
             match part {
                 hir::FormatTemplatePart::Literal(text) => format.push_str(text.as_str()),
                 hir::FormatTemplatePart::Placeholder(placeholder) => {
-                    let (prepared_ref, missing_message) = match &placeholder.arg_ref {
+                    let (prepared, missing_message) = match &placeholder.arg_ref {
                         hir::FormatArgRef::Implicit => {
                             let current = implicit_index;
                             implicit_index += 1;
                             (
-                                prepared_positional.get(current).and_then(Option::as_ref),
+                                prepared_positional.get(current).cloned().flatten(),
                                 format!(
                                     "format placeholder references missing argument at index {}",
                                     current
@@ -10331,29 +10440,19 @@ impl<'a> BodyBuilder<'a> {
                             )
                         }
                         hir::FormatArgRef::Positional(index) => (
-                            prepared_positional.get(*index).and_then(Option::as_ref),
+                            prepared_positional.get(*index).cloned().flatten(),
                             format!(
                                 "format placeholder references missing argument at index {}",
                                 index
                             ),
                         ),
-                        hir::FormatArgRef::Named(name) => {
-                            let Some(index) = name_map.get(name) else {
-                                self.lowering.emit_error(
-                                    span,
-                                    format!(
-                                        "format placeholder references missing argument `{name}`"
-                                    ),
-                                );
-                                return Ok(());
-                            };
-                            (
-                                prepared_named.get(*index),
-                                format!("format placeholder references missing argument `{name}`"),
-                            )
-                        }
+                        hir::FormatArgRef::Named(name) => (
+                            name_map
+                                .get(name)
+                                .and_then(|index| prepared_named.get(*index).cloned()),
+                            format!("format placeholder references missing argument `{name}`"),
+                        ),
                     };
-                    let prepared = prepared_ref.cloned();
 
                     let Some((operand, _ty, spec)) = prepared else {
                         self.lowering.emit_error(span, missing_message);
@@ -10440,12 +10539,12 @@ impl<'a> BodyBuilder<'a> {
             match part {
                 hir::FormatTemplatePart::Literal(text) => format.push_str(text.as_str()),
                 hir::FormatTemplatePart::Placeholder(placeholder) => {
-                    let (prepared_ref, missing_message) = match &placeholder.arg_ref {
+                    let (prepared, missing_message) = match &placeholder.arg_ref {
                         hir::FormatArgRef::Implicit => {
                             let current = implicit_index;
                             implicit_index += 1;
                             (
-                                prepared_positional.get(current).and_then(Option::as_ref),
+                                prepared_positional.get(current).cloned().flatten(),
                                 format!(
                                     "format placeholder references missing argument at index {}",
                                     current
@@ -10453,29 +10552,19 @@ impl<'a> BodyBuilder<'a> {
                             )
                         }
                         hir::FormatArgRef::Positional(index) => (
-                            prepared_positional.get(*index).and_then(Option::as_ref),
+                            prepared_positional.get(*index).cloned().flatten(),
                             format!(
                                 "format placeholder references missing argument at index {}",
                                 index
                             ),
                         ),
-                        hir::FormatArgRef::Named(name) => {
-                            let Some(index) = name_map.get(name) else {
-                                self.lowering.emit_error(
-                                    span,
-                                    format!(
-                                        "format placeholder references missing argument `{name}`"
-                                    ),
-                                );
-                                return Ok((String::new(), Vec::new()));
-                            };
-                            (
-                                prepared_named.get(*index),
-                                format!("format placeholder references missing argument `{name}`"),
-                            )
-                        }
+                        hir::FormatArgRef::Named(name) => (
+                            name_map
+                                .get(name)
+                                .and_then(|index| prepared_named.get(*index).cloned()),
+                            format!("format placeholder references missing argument `{name}`"),
+                        ),
                     };
-                    let prepared = prepared_ref.cloned();
 
                     let Some((operand, _ty, spec)) = prepared else {
                         self.lowering.emit_error(span, missing_message);
@@ -12053,6 +12142,61 @@ impl<'a> BodyBuilder<'a> {
                                 format: String::new(),
                                 args: Vec::new(),
                             },
+                        ),
+                    };
+                    self.push_statement(statement);
+                    return Ok(());
+                }
+                IntrinsicCallKind::Spawn | IntrinsicCallKind::Select => {
+                    if let Some(first) = call.callargs.first() {
+                        self.lower_expr_into_place(&first.value, place.clone(), expected_ty)?;
+                    } else {
+                        self.lowering.emit_error(
+                            expr.span,
+                            format!("{:?} intrinsic expects at least one argument", call.kind),
+                        );
+                        let statement = mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                place.clone(),
+                                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                            ),
+                        };
+                        self.push_statement(statement);
+                    }
+                    return Ok(());
+                }
+                IntrinsicCallKind::Join => {
+                    let args = &call.callargs;
+                    if args.is_empty() {
+                        self.lowering
+                            .emit_error(expr.span, "join intrinsic expects arguments");
+                        let statement = mir::Statement {
+                            source_info: expr.span,
+                            kind: mir::StatementKind::Assign(
+                                place.clone(),
+                                mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, Vec::new()),
+                            ),
+                        };
+                        self.push_statement(statement);
+                        return Ok(());
+                    }
+
+                    if args.len() == 1 {
+                        self.lower_expr_into_place(&args[0].value, place.clone(), expected_ty)?;
+                        return Ok(());
+                    }
+
+                    let mut operands = Vec::with_capacity(args.len());
+                    for arg in args {
+                        let value = self.lower_operand(&arg.value, None)?;
+                        operands.push(value.operand);
+                    }
+                    let statement = mir::Statement {
+                        source_info: expr.span,
+                        kind: mir::StatementKind::Assign(
+                            place.clone(),
+                            mir::Rvalue::Aggregate(mir::AggregateKind::Tuple, operands),
                         ),
                     };
                     self.push_statement(statement);
