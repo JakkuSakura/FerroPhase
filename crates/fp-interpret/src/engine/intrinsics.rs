@@ -184,7 +184,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                     let handle = self.spawn_runtime_future(future);
                     return RuntimeFlow::Value(self.make_spawned_future_runtime_value(handle));
                 }
-                self.emit_error("task::spawn expects a Future value");
+                self.emit_error("task::spawn expects a Future-like value (impl Future)");
                 RuntimeFlow::Value(Value::undefined())
             }
             IntrinsicCallKind::Join => {
@@ -211,7 +211,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         scheduler_handles.push(handle.id);
                         continue;
                     }
-                    self.emit_error("task::join expects Future arguments");
+                    self.emit_error("task::join expects Future-like arguments (impl Future)");
                     return RuntimeFlow::Value(Value::undefined());
                 }
 
@@ -264,7 +264,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         scheduler_handles.push(handle.id);
                         continue;
                     }
-                    self.emit_error("task::select expects Future arguments");
+                    self.emit_error("task::select expects Future-like arguments (impl Future)");
                     return RuntimeFlow::Value(Value::undefined());
                 }
                 match self.run_scheduler_until_any(&scheduler_handles) {
