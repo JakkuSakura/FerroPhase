@@ -349,7 +349,6 @@ mod tests {
 
 #[derive(Debug, Clone, Copy)]
 enum MemoryProtection {
-    ReadWrite,
     ReadOnly,
     ReadExecute,
 }
@@ -375,7 +374,6 @@ unsafe fn alloc_pages(len: usize) -> Result<*mut u8> {
 #[cfg(unix)]
 unsafe fn protect_pages(ptr: *mut u8, len: usize, prot: MemoryProtection) -> Result<()> {
     let flags = match prot {
-        MemoryProtection::ReadWrite => PROT_READ | PROT_WRITE,
         MemoryProtection::ReadOnly => PROT_READ,
         MemoryProtection::ReadExecute => PROT_READ | PROT_EXEC,
     };
@@ -423,7 +421,6 @@ unsafe fn alloc_pages(len: usize) -> Result<*mut u8> {
 #[cfg(windows)]
 unsafe fn protect_pages(ptr: *mut u8, len: usize, prot: MemoryProtection) -> Result<()> {
     let flags = match prot {
-        MemoryProtection::ReadWrite => PAGE_READWRITE,
         MemoryProtection::ReadOnly => PAGE_READONLY,
         MemoryProtection::ReadExecute => PAGE_EXECUTE_READ,
     };
