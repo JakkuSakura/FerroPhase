@@ -2028,6 +2028,7 @@ impl HirGenerator {
             .collect())
     }
 
+    #[allow(dead_code)]
     pub(super) fn program_def_params(&self, def_id: hir::DefId) -> Option<Vec<hir::Symbol>> {
         let Some(item) = self.program_def_map.get(&def_id) else {
             return None;

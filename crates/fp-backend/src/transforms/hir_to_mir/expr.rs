@@ -542,7 +542,6 @@ impl MirLowering {
                     }
                 }
             }
-            _ => {}
         }
     }
 
@@ -1987,10 +1986,6 @@ impl MirLowering {
             },
             hir::TypeExprKind::Infer => self.error_ty(),
             hir::TypeExprKind::Error => self.error_ty(),
-            _ => {
-                self.emit_error(ty_expr.span, "type lowering not yet supported");
-                self.error_ty()
-            }
         }
     }
 
