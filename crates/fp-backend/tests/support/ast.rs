@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use fp_core::ast::{Expr, File, Value};
 use std::path::PathBuf;
 

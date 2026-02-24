@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use fp_core::lir::{
     self, LirBasicBlock, LirFunction, LirFunctionSignature, LirProgram, LirTerminator, LirType,
 };

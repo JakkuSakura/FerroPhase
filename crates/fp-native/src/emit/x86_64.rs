@@ -1180,8 +1180,8 @@ fn load_i128_value(
     value: &LirValue,
     lo: Reg,
     hi: Reg,
-    reg_types: &HashMap<u32, LirType>,
-    local_types: &HashMap<u32, LirType>,
+    _reg_types: &HashMap<u32, LirType>,
+    _local_types: &HashMap<u32, LirType>,
 ) -> Result<()> {
     match value {
         LirValue::Register(id) => {
@@ -1890,6 +1890,7 @@ fn emit_shr_cl(asm: &mut Assembler, dst: Reg) {
     emit_modrm(asm, 0b11, 5, dst.id());
 }
 
+#[allow(dead_code)]
 fn emit_sar_cl(asm: &mut Assembler, dst: Reg) {
     emit_rex(asm, true, 0, dst.id());
     asm.push(0xD3);
@@ -4685,6 +4686,7 @@ fn copy_reg_to_sp(asm: &mut Assembler, src: Reg, dst: i32, size: i32) -> Result<
     Ok(())
 }
 
+#[allow(dead_code)]
 fn copy_reg_to_reg(asm: &mut Assembler, src: Reg, dst: Reg, size: i32) -> Result<()> {
     if size <= 0 {
         return Ok(());

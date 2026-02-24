@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use fp_core::mir::ty::{IntTy, Ty};
 use fp_core::mir::{
     self, BasicBlockData, Body, BodyId, Function, FunctionSig, Item, ItemKind, Program, Statement,
