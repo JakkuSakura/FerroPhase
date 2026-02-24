@@ -13,50 +13,45 @@ pub fn resolve_type_binding_match(
     type_env: &[HashMap<String, Ty>],
     global_types: &HashMap<String, Ty>,
     imported_types: &HashSet<String>,
-    name: &str,
+    path: &Path,
 ) -> TypeBindingMatch {
-    let base = name.rsplit("::").next().unwrap_or(name);
+    let Some(base_ident) = path.segments.last() else {
+        return TypeBindingMatch::Missing;
+    };
+
+    let qualified = path.to_string();
+    let base = base_ident.as_str().to_string();
+
+    let mut lookup_keys = vec![qualified.clone()];
+    if base != qualified {
+        lookup_keys.push(base.clone());
+    }
 
     for idx in (0..type_env.len()).rev() {
-        if let Some(ty) = type_env[idx].get(name).cloned() {
-            return TypeBindingMatch::Scoped {
-                index: idx,
-                key: name.to_string(),
-                ty,
-            };
-        }
-
-        if base != name {
-            if let Some(ty) = type_env[idx].get(base).cloned() {
+        for key in &lookup_keys {
+            if let Some(ty) = type_env[idx].get(key).cloned() {
                 return TypeBindingMatch::Scoped {
                     index: idx,
-                    key: base.to_string(),
+                    key: key.clone(),
                     ty,
                 };
             }
         }
     }
 
-    if let Some(ty) = global_types.get(name).cloned() {
-        return TypeBindingMatch::Global {
-            key: name.to_string(),
-            ty,
-        };
-    }
-
-    if base != name {
-        if let Some(ty) = global_types.get(base).cloned() {
+    for key in &lookup_keys {
+        if let Some(ty) = global_types.get(key).cloned() {
             return TypeBindingMatch::Global {
-                key: base.to_string(),
+                key: key.clone(),
                 ty,
             };
         }
     }
 
-    if imported_types.contains(name) {
-        return TypeBindingMatch::MissingImported {
-            name: name.to_string(),
-        };
+    for key in &lookup_keys {
+        if imported_types.contains(key) {
+            return TypeBindingMatch::MissingImported { name: key.clone() };
+        }
     }
 
     TypeBindingMatch::Missing
@@ -138,5 +133,89 @@ pub fn materialize_type_with_hooks(ty: Ty, hooks: &mut impl TypeMaterializeHooks
         ExprKind::Name(locator) => hooks.resolve_name(locator).unwrap_or(Ty::Expr(expr)),
         ExprKind::ConstBlock(_) => hooks.eval_const_expr(expr.as_mut()).unwrap_or(Ty::Expr(expr)),
         _ => Ty::Expr(expr),
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_prefers_most_local_qualified_key() {
+        let mut scope0 = HashMap::new();
+        scope0.insert("Vec".to_string(), Ty::Primitive(TypePrimitive::Bool));
+        let mut scope1 = HashMap::new();
+        scope1.insert(
+            "std::collections::Vec".to_string(),
+            Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+        );
+
+        let result = resolve_type_binding_match(
+            &[scope0, scope1],
+            &HashMap::new(),
+            &HashSet::new(),
+            &Path::plain(vec![
+                Ident::new("std"),
+                Ident::new("collections"),
+                Ident::new("Vec"),
+            ]),
+        );
+
+        match result {
+            TypeBindingMatch::Scoped { index, key, .. } => {
+                assert_eq!(index, 1);
+                assert_eq!(key, "std::collections::Vec");
+            }
+            other => panic!("expected scoped match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_falls_back_to_base_segment() {
+        let mut globals = HashMap::new();
+        globals.insert(
+            "Vec".to_string(),
+            Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+        );
+
+        let result = resolve_type_binding_match(
+            &[],
+            &globals,
+            &HashSet::new(),
+            &Path::plain(vec![
+                Ident::new("std"),
+                Ident::new("collections"),
+                Ident::new("Vec"),
+            ]),
+        );
+
+        match result {
+            TypeBindingMatch::Global { key, .. } => assert_eq!(key, "Vec"),
+            other => panic!("expected global match, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_reports_missing_import_by_qualified_key() {
+        let mut imported = HashSet::new();
+        imported.insert("crate::types::UserId".to_string());
+
+        let result = resolve_type_binding_match(
+            &[],
+            &HashMap::new(),
+            &imported,
+            &Path::new(
+                fp_core::module::path::PathPrefix::Crate,
+                vec![Ident::new("types"), Ident::new("UserId")],
+            ),
+        );
+
+        match result {
+            TypeBindingMatch::MissingImported { name } => {
+                assert_eq!(name, "crate::types::UserId")
+            }
+            other => panic!("expected missing import match, got {other:?}"),
+        }
     }
 }
