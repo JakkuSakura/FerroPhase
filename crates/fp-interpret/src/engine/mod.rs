@@ -1255,11 +1255,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         &self,
         structural: &ValueStructural,
     ) -> Option<RuntimeFuture> {
-        let handle = Ident::new("handle");
         let future = Ident::new("future");
+        let handle = Ident::new("handle");
         let field = structural
-            .get_field(&handle)
-            .or_else(|| structural.get_field(&future))?;
+            .get_field(&future)
+            .or_else(|| structural.get_field(&handle))?;
         match &field.value {
             Value::Any(any) => any.downcast_ref::<RuntimeFuture>().cloned(),
             _ => None,
@@ -1271,8 +1271,50 @@ impl<'ctx> AstInterpreter<'ctx> {
         let field = structural.get_field(&handle)?;
         match &field.value {
             Value::Any(any) => any.downcast_ref::<TaskHandle>().copied(),
+            Value::Int(int) => Some(TaskHandle {
+                id: int.value as u64,
+            }),
             _ => None,
         }
+    }
+
+    fn future_runtime_type(&self) -> TypeStruct {
+        TypeStruct {
+            name: Ident::new("Future"),
+            generics_params: Vec::new(),
+            fields: vec![StructuralField::new(Ident::new("future"), Ty::Any(TypeAny))],
+        }
+    }
+
+    fn task_runtime_type(&self) -> TypeStruct {
+        TypeStruct {
+            name: Ident::new("Task"),
+            generics_params: Vec::new(),
+            fields: vec![StructuralField::new(
+                Ident::new("handle"),
+                Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
+            )],
+        }
+    }
+
+    fn make_future_runtime_value(&self, future: RuntimeFuture) -> Value {
+        Value::Struct(ValueStruct::new(
+            self.future_runtime_type(),
+            vec![ValueField::new(
+                Ident::new("future"),
+                Value::Any(AnyBox::new(future)),
+            )],
+        ))
+    }
+
+    fn make_task_runtime_value(&self, handle: TaskHandle) -> Value {
+        Value::Struct(ValueStruct::new(
+            self.task_runtime_type(),
+            vec![ValueField::new(
+                Ident::new("handle"),
+                Value::int(handle.id as i64),
+            )],
+        ))
     }
 
     fn push_expr_frame(&mut self, mode: EvalMode, expr: &Expr) -> ExprFrameGuard<'ctx> {

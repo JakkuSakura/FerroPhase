@@ -124,6 +124,40 @@ fn quote_ty_from_fragment(kind: QuoteFragmentKind, inner: Option<Ty>) -> Ty {
     })
 }
 
+fn make_std_task_param_ty(name: &str, arg: Ty) -> Ty {
+    let path = ParameterPath::new(
+        PathPrefix::Plain,
+        vec![
+            ParameterPathSegment::from_ident(Ident::new("std")),
+            ParameterPathSegment::from_ident(Ident::new("task")),
+            ParameterPathSegment::new(Ident::new(name), vec![arg]),
+        ],
+    );
+    Ty::expr(Expr::name(Name::parameter_path(path)))
+}
+
+fn extract_std_task_inner_ty(ty: &Ty, container: &str) -> Option<Ty> {
+    let Ty::Expr(expr) = ty else {
+        return None;
+    };
+    let ExprKind::Name(Name::ParameterPath(path)) = expr.kind() else {
+        return None;
+    };
+    let [std_seg, task_seg, container_seg] = path.segments.as_slice() else {
+        return None;
+    };
+    if std_seg.ident.as_str() != "std" || task_seg.ident.as_str() != "task" {
+        return None;
+    }
+    if container_seg.ident.as_str() != container {
+        return None;
+    }
+    if container_seg.args.len() != 1 {
+        return None;
+    }
+    Some(container_seg.args[0].clone())
+}
+
 fn block_contains_return(block: &ExprBlock) -> bool {
     block.stmts.iter().any(|stmt| match stmt {
         BlockStmt::Expr(expr_stmt) => expr_contains_return(expr_stmt.expr.as_ref()),
@@ -548,8 +582,24 @@ impl<'ctx> AstTypeInferencer<'ctx> {
                 ExprKind::Closure(closure) => self.infer_closure(closure)?,
                 ExprKind::IntrinsicCall(call) => self.infer_intrinsic(call)?,
                 ExprKind::Range(range) => self.infer_range(range)?,
-                ExprKind::Await(await_expr) => self.infer_expr(await_expr.base.as_mut())?,
-                ExprKind::Async(async_expr) => self.infer_expr(async_expr.expr.as_mut())?,
+                ExprKind::Await(await_expr) => {
+                    let base_var = self.infer_expr(await_expr.base.as_mut())?;
+                    let base_ty = self.resolve_to_ty(base_var)?;
+
+                    if let Some(inner_ty) = extract_std_task_inner_ty(&base_ty, "Future") {
+                        self.type_from_ast_ty(&inner_ty)?
+                    } else if let Some(inner_ty) = extract_std_task_inner_ty(&base_ty, "Task") {
+                        self.type_from_ast_ty(&inner_ty)?
+                    } else {
+                        base_var
+                    }
+                }
+                ExprKind::Async(async_expr) => {
+                    let inner_var = self.infer_expr(async_expr.expr.as_mut())?;
+                    let inner_ty = self.resolve_to_ty(inner_var)?;
+                    let future_ty = make_std_task_param_ty("Future", inner_ty);
+                    self.type_from_ast_ty(&future_ty)?
+                }
                 ExprKind::Splat(splat) => self.infer_splat(splat)?,
                 ExprKind::SplatDict(splat) => self.infer_splat_dict(splat)?,
                 ExprKind::Macro(macro_expr) => {
