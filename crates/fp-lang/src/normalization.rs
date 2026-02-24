@@ -275,6 +275,7 @@ fn parse_vec_macro_tokens(tokens: &[MacroTokenTree], span: Span) -> Result<Expr>
     lower_expr_from_cst(&expr_cst).map_err(|err| fp_core::error::Error::from(err.to_string()))
 }
 
+#[allow(dead_code)]
 fn parse_macro_tokens_with_type_args(
     tokens: &[MacroTokenTree],
     type_positions: &[usize],

@@ -237,7 +237,7 @@ impl Parser {
         }
         if self.peek_non_trivia_normalized() == Some("await") {
             let mut children = Vec::new();
-            let start_span = self
+            let _start_span = self
                 .peek_any_span()
                 .unwrap_or_else(|| Span::new(self.file, 0, 0));
             self.bump_trivia_into(&mut children);
@@ -286,7 +286,7 @@ impl Parser {
         match self.peek_non_trivia_raw() {
             Some("+") | Some("-") | Some("!") | Some("&") | Some("*") | Some("box") => {
                 let mut children = Vec::new();
-                let start_span = self
+                let _start_span = self
                     .peek_any_span()
                     .unwrap_or_else(|| Span::new(self.file, 0, 0));
                 self.bump_trivia_into(&mut children);
@@ -396,7 +396,7 @@ impl Parser {
 
     fn parse_block_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -447,7 +447,7 @@ impl Parser {
 
     fn parse_item_stmt(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -489,7 +489,7 @@ impl Parser {
 
     fn parse_let_stmt(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -525,7 +525,7 @@ impl Parser {
 
     fn parse_expr_stmt(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -549,7 +549,7 @@ impl Parser {
 
     fn parse_quote_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -613,7 +613,7 @@ impl Parser {
 
     fn parse_splice_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -638,7 +638,7 @@ impl Parser {
 
     fn parse_async_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -652,7 +652,7 @@ impl Parser {
 
     fn parse_const_block_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -666,7 +666,7 @@ impl Parser {
 
     fn parse_if_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -695,7 +695,7 @@ impl Parser {
 
     fn parse_loop_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -709,7 +709,7 @@ impl Parser {
 
     fn parse_while_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -726,7 +726,7 @@ impl Parser {
 
     fn parse_pattern(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -779,7 +779,7 @@ impl Parser {
 
     fn parse_for_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -807,7 +807,7 @@ impl Parser {
 
     fn parse_match_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -841,7 +841,7 @@ impl Parser {
 
     fn parse_match_arm(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -878,7 +878,7 @@ impl Parser {
 
     fn parse_closure_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -953,7 +953,7 @@ impl Parser {
 
     fn parse_return_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -969,7 +969,7 @@ impl Parser {
 
     fn parse_break_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -985,7 +985,7 @@ impl Parser {
 
     fn parse_continue_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1130,7 +1130,7 @@ impl Parser {
         start: Option<SyntaxNode>,
     ) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let span_start = self
+        let _span_start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
 
@@ -1305,7 +1305,7 @@ impl Parser {
         }
     }
 
-    fn parse_type_value(&mut self, start: Span) -> Result<SyntaxNode, ExprCstParseError> {
+    fn parse_type_value(&mut self, _start: Span) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
         self.bump_trivia_into(&mut children);
         self.bump_token_into(&mut children);
@@ -1315,7 +1315,7 @@ impl Parser {
 
     fn parse_paren_type(&mut self, _stops: &[&str]) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1374,7 +1374,7 @@ impl Parser {
 
     fn parse_ref_type(&mut self, stops: &[&str]) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1414,7 +1414,7 @@ impl Parser {
 
     fn parse_array_or_slice_type(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1471,7 +1471,7 @@ impl Parser {
 
     fn parse_fn_type(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1514,7 +1514,7 @@ impl Parser {
 
     fn parse_impl_traits_type(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1561,7 +1561,7 @@ impl Parser {
 
     fn parse_structural_type(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1609,7 +1609,7 @@ impl Parser {
 
     fn parse_structural_type_field(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1631,7 +1631,7 @@ impl Parser {
 
     fn parse_path_type(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1768,7 +1768,7 @@ impl Parser {
 
     fn parse_paren_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1816,7 +1816,7 @@ impl Parser {
 
     fn parse_array_literal_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1865,7 +1865,7 @@ impl Parser {
 
     fn parse_structural_literal_expr(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1886,7 +1886,7 @@ impl Parser {
 
     fn parse_struct_literal(&mut self, base: SyntaxNode) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = base.span;
+        let _start = base.span;
         children.push(SyntaxElement::Node(Box::new(base)));
         self.bump_trivia_into(&mut children);
         self.expect_token_raw("{")?;
@@ -1956,7 +1956,7 @@ impl Parser {
 
     fn parse_struct_field(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -1985,7 +1985,7 @@ impl Parser {
 
     fn parse_name_or_path(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -2073,7 +2073,7 @@ impl Parser {
 
     fn parse_number(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
@@ -2084,7 +2084,7 @@ impl Parser {
 
     fn parse_string(&mut self) -> Result<SyntaxNode, ExprCstParseError> {
         let mut children = Vec::new();
-        let start = self
+        let _start = self
             .peek_any_span()
             .unwrap_or_else(|| Span::new(self.file, 0, 0));
         self.bump_trivia_into(&mut children);
