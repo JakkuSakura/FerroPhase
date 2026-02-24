@@ -827,7 +827,7 @@ impl<'ctx> AstInterpreter<'ctx> {
             InterpreterMode::RunTime => {
                 let flow = self.call_function_runtime(function, Vec::new());
                 let value = self.finish_runtime_flow(flow);
-                let should_await = self.extract_task_handle(&value).is_some()
+                let should_await = self.extract_spawned_future_handle(&value).is_some()
                     || self.extract_runtime_future(&value).is_some();
                 if should_await {
                     let awaited = self.await_runtime_value(value);
@@ -1218,14 +1218,14 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn await_runtime_value(&mut self, value: Value) -> RuntimeFlow {
-        if let Some(handle) = self.extract_task_handle(&value) {
-            return self.run_scheduler_until_task(handle.id);
+        if let Some(id) = self.extract_spawned_future_handle(&value) {
+            return self.run_scheduler_until_task(id);
         }
         if let Some(future) = self.extract_runtime_future(&value) {
             let handle = self.spawn_runtime_future(future);
             return self.run_scheduler_until_task(handle.id);
         }
-        self.emit_error("await expects a Future or Task value");
+        self.emit_error("await expects a Future value");
         RuntimeFlow::Value(Value::undefined())
     }
 
@@ -1240,13 +1240,13 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn extract_task_handle(&mut self, value: &Value) -> Option<TaskHandle> {
+    fn extract_spawned_future_handle(&self, value: &Value) -> Option<u64> {
         match value {
-            Value::Any(any) => any.downcast_ref::<TaskHandle>().copied(),
+            Value::Any(any) => any.downcast_ref::<TaskHandle>().map(|handle| handle.id),
             Value::Struct(value_struct) => {
-                self.extract_task_handle_from_struct(&value_struct.structural)
+                self.extract_spawned_future_handle_from_struct(&value_struct.structural)
             }
-            Value::Structural(structural) => self.extract_task_handle_from_struct(structural),
+            Value::Structural(structural) => self.extract_spawned_future_handle_from_struct(structural),
             _ => None,
         }
     }
@@ -1256,24 +1256,19 @@ impl<'ctx> AstInterpreter<'ctx> {
         structural: &ValueStructural,
     ) -> Option<RuntimeFuture> {
         let future = Ident::new("future");
-        let handle = Ident::new("handle");
-        let field = structural
-            .get_field(&future)
-            .or_else(|| structural.get_field(&handle))?;
+        let field = structural.get_field(&future)?;
         match &field.value {
             Value::Any(any) => any.downcast_ref::<RuntimeFuture>().cloned(),
             _ => None,
         }
     }
 
-    fn extract_task_handle_from_struct(&self, structural: &ValueStructural) -> Option<TaskHandle> {
-        let handle = Ident::new("handle");
-        let field = structural.get_field(&handle)?;
+    fn extract_spawned_future_handle_from_struct(&self, structural: &ValueStructural) -> Option<u64> {
+        let future = Ident::new("future");
+        let field = structural.get_field(&future)?;
         match &field.value {
-            Value::Any(any) => any.downcast_ref::<TaskHandle>().copied(),
-            Value::Int(int) => Some(TaskHandle {
-                id: int.value as u64,
-            }),
+            Value::Any(any) => any.downcast_ref::<TaskHandle>().map(|handle| handle.id),
+            Value::Int(int) => Some(int.value as u64),
             _ => None,
         }
     }
@@ -1283,17 +1278,6 @@ impl<'ctx> AstInterpreter<'ctx> {
             name: Ident::new("Future"),
             generics_params: Vec::new(),
             fields: vec![StructuralField::new(Ident::new("future"), Ty::Any(TypeAny))],
-        }
-    }
-
-    fn task_runtime_type(&self) -> TypeStruct {
-        TypeStruct {
-            name: Ident::new("Task"),
-            generics_params: Vec::new(),
-            fields: vec![StructuralField::new(
-                Ident::new("handle"),
-                Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
-            )],
         }
     }
 
@@ -1307,11 +1291,11 @@ impl<'ctx> AstInterpreter<'ctx> {
         ))
     }
 
-    fn make_task_runtime_value(&self, handle: TaskHandle) -> Value {
+    fn make_spawned_future_runtime_value(&self, handle: TaskHandle) -> Value {
         Value::Struct(ValueStruct::new(
-            self.task_runtime_type(),
+            self.future_runtime_type(),
             vec![ValueField::new(
-                Ident::new("handle"),
+                Ident::new("future"),
                 Value::int(handle.id as i64),
             )],
         ))

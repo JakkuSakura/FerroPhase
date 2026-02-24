@@ -182,7 +182,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                 };
                 if let Some(future) = self.extract_runtime_future(&value) {
                     let handle = self.spawn_runtime_future(future);
-                    return RuntimeFlow::Value(self.make_task_runtime_value(handle));
+                    return RuntimeFlow::Value(self.make_spawned_future_runtime_value(handle));
                 }
                 self.emit_error("task::spawn expects a Future value");
                 RuntimeFlow::Value(Value::undefined())
@@ -202,8 +202,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                         RuntimeFlow::Value(value) => value,
                         other => return other,
                     };
-                    if let Some(handle) = self.extract_task_handle(&value) {
-                        scheduler_handles.push(handle.id);
+                    if let Some(id) = self.extract_spawned_future_handle(&value) {
+                        scheduler_handles.push(id);
                         continue;
                     }
                     if let Some(future) = self.extract_runtime_future(&value) {
@@ -211,7 +211,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         scheduler_handles.push(handle.id);
                         continue;
                     }
-                    self.emit_error("task::join expects Task or Future arguments");
+                    self.emit_error("task::join expects Future arguments");
                     return RuntimeFlow::Value(Value::undefined());
                 }
 
@@ -255,8 +255,8 @@ impl<'ctx> AstInterpreter<'ctx> {
                         RuntimeFlow::Value(value) => value,
                         other => return other,
                     };
-                    if let Some(handle) = self.extract_task_handle(&value) {
-                        scheduler_handles.push(handle.id);
+                    if let Some(id) = self.extract_spawned_future_handle(&value) {
+                        scheduler_handles.push(id);
                         continue;
                     }
                     if let Some(future) = self.extract_runtime_future(&value) {
@@ -264,7 +264,7 @@ impl<'ctx> AstInterpreter<'ctx> {
                         scheduler_handles.push(handle.id);
                         continue;
                     }
-                    self.emit_error("task::select expects Task or Future arguments");
+                    self.emit_error("task::select expects Future arguments");
                     return RuntimeFlow::Value(Value::undefined());
                 }
                 match self.run_scheduler_until_any(&scheduler_handles) {
