@@ -2039,9 +2039,7 @@ impl LirGenerator {
                         self.lir_type_from_ty(ty),
                     ))
                 }
-            mir::ConstantKind::Str(s) => {
-                    Ok(lir::LirValue::Constant(self.const_string_ptr(s)))
-            }
+                mir::ConstantKind::Str(s) => Ok(lir::LirValue::Constant(self.const_string_ptr(s))),
                 mir::ConstantKind::Int(value) => Ok(lir::LirValue::Constant(
                     lir::LirConstant::Int(*value, lir::LirType::I64),
                 )),
@@ -4332,13 +4330,19 @@ impl LirGenerator {
 
         if let Some((dest_place, dest_bb)) = destination.as_ref() {
             if let Some(ref ty) = result_type {
-                if matches!(ty, lir::LirType::Struct { .. } | lir::LirType::Array(_, _) | lir::LirType::Vector(_, _)) {
+                if matches!(
+                    ty,
+                    lir::LirType::Struct { .. }
+                        | lir::LirType::Array(_, _)
+                        | lir::LirType::Vector(_, _)
+                ) {
                     let alignment = Self::alignment_for_lir_type(ty);
                     let ptr = if let Some(storage) = self.local_storage.get(&dest_place.local) {
                         storage.ptr_value.clone()
                     } else {
                         let pointer_type = lir::LirType::Ptr(Box::new(ty.clone()));
-                        let size_value = lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
+                        let size_value =
+                            lir::LirValue::Constant(lir::LirConstant::Int(1, lir::LirType::I32));
                         let alloca_id = self.next_id();
                         block.instructions.push(lir::LirInstruction {
                             id: alloca_id,

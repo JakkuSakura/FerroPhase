@@ -18,14 +18,14 @@ use fp_core::ast::{
     ItemKind, MacroDelimiter, MacroGroup, MacroInvocation, MacroToken, MacroTokenTree, Node,
     NodeKind, Path, QuoteFragmentKind, QuoteTokenValue, StmtLet, StructuralField, Ty, TypeAny,
     TypeArray, TypeBinaryOpKind, TypeFunction, TypeInt, TypePrimitive, TypeQuote, TypeReference,
-    TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit, TypeVec,
-    Value, ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
+    TypeSlice, TypeStruct, TypeStructural, TypeTokenStream, TypeTuple, TypeUnit, TypeVec, Value,
+    ValueField, ValueFunction, ValueList, ValueStruct, ValueStructural, ValueTokenStream,
     ValueTuple,
 };
 use fp_core::ast::{Ident, Name};
 use fp_core::ast::{Pattern, PatternKind};
-use fp_core::context::SharedScopedContext;
 use fp_core::cfg::TargetEnv;
+use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::{Diagnostic, DiagnosticLevel, DiagnosticManager};
 use fp_core::error::Result;
 use fp_core::intrinsics::{IntrinsicCallKind, IntrinsicNormalizer};
@@ -1246,7 +1246,9 @@ impl<'ctx> AstInterpreter<'ctx> {
             Value::Struct(value_struct) => {
                 self.extract_spawned_future_handle_from_struct(&value_struct.structural)
             }
-            Value::Structural(structural) => self.extract_spawned_future_handle_from_struct(structural),
+            Value::Structural(structural) => {
+                self.extract_spawned_future_handle_from_struct(structural)
+            }
             _ => None,
         }
     }
@@ -1263,7 +1265,10 @@ impl<'ctx> AstInterpreter<'ctx> {
         }
     }
 
-    fn extract_spawned_future_handle_from_struct(&self, structural: &ValueStructural) -> Option<u64> {
+    fn extract_spawned_future_handle_from_struct(
+        &self,
+        structural: &ValueStructural,
+    ) -> Option<u64> {
         let future = Ident::new("future");
         let field = structural.get_field(&future)?;
         match &field.value {
@@ -2043,7 +2048,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::ImplTraits(_)
             | Ty::Value(_)
             | Ty::Nothing(_)
-            | Ty::AnyBox(_) | Ty::RawPtr(_) => {}
+            | Ty::AnyBox(_)
+            | Ty::RawPtr(_) => {}
         }
     }
 
@@ -4177,7 +4183,8 @@ impl<'ctx> AstInterpreter<'ctx> {
             | Ty::Type(_)
             | Ty::Value(_)
             | Ty::TypeBinaryOp(_)
-            | Ty::AnyBox(_) | Ty::RawPtr(_) => ty.clone(),
+            | Ty::AnyBox(_)
+            | Ty::RawPtr(_) => ty.clone(),
         }
     }
 
@@ -6240,7 +6247,10 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn path_segments<'a>(&self, path: &'a Path) -> Vec<&'a str> {
-        path.segments.iter().map(|segment| segment.as_str()).collect()
+        path.segments
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect()
     }
 
     fn handle_import(&mut self, import: &ItemImport) {
@@ -6552,8 +6562,11 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     fn module_alias_from_spec(&self, spec: &str) -> Option<String> {
-        self.parse_symbol_path(spec)
-            .and_then(|path| path.segments.last().map(|segment| segment.as_str().to_string()))
+        self.parse_symbol_path(spec).and_then(|path| {
+            path.segments
+                .last()
+                .map(|segment| segment.as_str().to_string())
+        })
     }
 
     fn register_imported_symbol(

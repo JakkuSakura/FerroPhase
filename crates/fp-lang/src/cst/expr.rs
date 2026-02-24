@@ -1457,9 +1457,7 @@ impl Parser {
                 self.bump_trivia_into(&mut children);
             }
             _ => {
-                return Err(self.error(
-                    "raw pointer types require `*const` or `*mut`",
-                ));
+                return Err(self.error("raw pointer types require `*const` or `*mut`"));
             }
         }
 

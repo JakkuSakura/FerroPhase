@@ -1,6 +1,6 @@
 use crate::config::CraneliftConfig;
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
-use cranelift_codegen::ir::{types, AbiParam, Block, Function, InstBuilder, MemFlags, Signature};
+use cranelift_codegen::ir::{AbiParam, Block, Function, InstBuilder, MemFlags, Signature, types};
 use cranelift_codegen::isa::{self, CallConv};
 use cranelift_codegen::settings::{self, Configurable};
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Switch, Variable};
@@ -9,9 +9,9 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use fp_core::error::Result;
 use fp_core::lir::layout::{size_of, struct_layout};
 use fp_core::lir::{
-    BasicBlockId, CallingConvention, LirBasicBlock, LirConstant, LirFunction, LirFunctionSignature,
-    LirInstruction, LirInstructionKind, LirIntrinsicKind, LirProgram, LirTerminator, LirType,
-    LirValue, Linkage as LirLinkage,
+    BasicBlockId, CallingConvention, Linkage as LirLinkage, LirBasicBlock, LirConstant,
+    LirFunction, LirFunctionSignature, LirInstruction, LirInstructionKind, LirIntrinsicKind,
+    LirProgram, LirTerminator, LirType, LirValue,
 };
 use std::collections::HashMap;
 use target_lexicon::Triple;
@@ -41,7 +41,8 @@ pub struct CraneliftBackend {
 impl CraneliftBackend {
     pub fn new(config: &CraneliftConfig) -> Result<Self> {
         let triple = if let Some(triple) = config.target_triple.as_deref() {
-            triple.parse::<Triple>()
+            triple
+                .parse::<Triple>()
                 .map_err(|e| fp_core::error::Error::from(e.to_string()))?
         } else {
             Triple::host()
@@ -50,8 +51,8 @@ impl CraneliftBackend {
         let mut flag_builder = settings::builder();
         let _ = flag_builder.set("is_pic", "true");
         let flags = settings::Flags::new(flag_builder);
-        let isa_builder = isa::lookup(triple)
-            .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
+        let isa_builder =
+            isa::lookup(triple).map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         let isa = isa_builder
             .finish(flags)
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
@@ -79,7 +80,9 @@ impl CraneliftBackend {
         self.declare_functions(program)?;
         self.define_globals(program)?;
         self.define_functions(program)?;
-        let obj = self.module.finish()
+        let obj = self
+            .module
+            .finish()
             .emit()
             .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
         Ok(obj)
@@ -108,8 +111,11 @@ impl CraneliftBackend {
             if self.func_ids.contains_key(&name) {
                 continue;
             }
-            let sig =
-                signature_from_lir(&func.signature, self.pointer_type, func.calling_convention.clone());
+            let sig = signature_from_lir(
+                &func.signature,
+                self.pointer_type,
+                func.calling_convention.clone(),
+            );
             let linkage = if func.is_declaration {
                 Linkage::Import
             } else {
@@ -134,13 +140,7 @@ impl CraneliftBackend {
             if let Some(initializer) = &global.initializer {
                 let mut bytes = vec![0u8; size_of(&global.ty) as usize];
                 let mut relocations = Vec::new();
-                encode_constant(
-                    &mut bytes,
-                    &mut relocations,
-                    initializer,
-                    &global.ty,
-                    0,
-                )?;
+                encode_constant(&mut bytes, &mut relocations, initializer, &global.ty, 0)?;
                 data_ctx.define(bytes.into_boxed_slice());
                 for reloc in relocations {
                     match reloc {
@@ -175,15 +175,12 @@ impl CraneliftBackend {
             if func.is_declaration {
                 continue;
             }
-            let func_id = *self
-                .func_ids
-                .get(&func.name.to_string())
-                .ok_or_else(|| {
-                    fp_core::error::Error::from(format!(
-                        "missing cranelift function id for {}",
-                        func.name
-                    ))
-                })?;
+            let func_id = *self.func_ids.get(&func.name.to_string()).ok_or_else(|| {
+                fp_core::error::Error::from(format!(
+                    "missing cranelift function id for {}",
+                    func.name
+                ))
+            })?;
             let mut ctx = self.module.make_context();
             ctx.func = Function::with_name_signature(
                 cranelift_codegen::ir::UserFuncName::user(0, func_id.as_u32()),
@@ -210,8 +207,7 @@ impl CraneliftBackend {
             self.module
                 .define_function(func_id, &mut ctx)
                 .map_err(|e| fp_core::error::Error::from(e.to_string()))?;
-            self.module
-                .clear_context(&mut ctx);
+            self.module.clear_context(&mut ctx);
         }
         Ok(())
     }
@@ -278,7 +274,8 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             .copied()
             .ok_or_else(|| fp_core::error::Error::from("missing entry block"))?;
 
-        self.builder.append_block_params_for_function_params(entry_block);
+        self.builder
+            .append_block_params_for_function_params(entry_block);
         self.builder.switch_to_block(entry_block);
 
         self.populate_locals(func, entry_block)?;
@@ -304,10 +301,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             self.local_types.insert(local.id, local.ty.clone());
             if local.is_argument {
                 let param = *params.get(param_idx).ok_or_else(|| {
-                    fp_core::error::Error::from(format!(
-                        "missing param for local {}",
-                        local.id
-                    ))
+                    fp_core::error::Error::from(format!("missing param for local {}", local.id))
                 })?;
                 self.local_values.insert(local.id, param);
                 param_idx += 1;
@@ -317,7 +311,8 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 self.builder.declare_var(var, ty);
                 let zero = self.zero_value(ty);
                 self.builder.def_var(var, zero);
-                self.local_values.insert(local.id, self.builder.use_var(var));
+                self.local_values
+                    .insert(local.id, self.builder.use_var(var));
             }
         }
         Ok(())
@@ -428,13 +423,39 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let result = self.builder.ins().bnot(val);
                 self.record_result(instr, result);
             }
-            LirInstructionKind::Eq(lhs, rhs) => self.lower_cmp(instr, lhs, rhs, IntCC::Equal, FloatCC::Equal)?,
-            LirInstructionKind::Ne(lhs, rhs) => self.lower_cmp(instr, lhs, rhs, IntCC::NotEqual, FloatCC::NotEqual)?,
-            LirInstructionKind::Lt(lhs, rhs) => self.lower_cmp(instr, lhs, rhs, IntCC::SignedLessThan, FloatCC::LessThan)?,
-            LirInstructionKind::Le(lhs, rhs) => self.lower_cmp(instr, lhs, rhs, IntCC::SignedLessThanOrEqual, FloatCC::LessThanOrEqual)?,
-            LirInstructionKind::Gt(lhs, rhs) => self.lower_cmp(instr, lhs, rhs, IntCC::SignedGreaterThan, FloatCC::GreaterThan)?,
-            LirInstructionKind::Ge(lhs, rhs) => self.lower_cmp(instr, lhs, rhs, IntCC::SignedGreaterThanOrEqual, FloatCC::GreaterThanOrEqual)?,
-            LirInstructionKind::Load { address, alignment, .. } => {
+            LirInstructionKind::Eq(lhs, rhs) => {
+                self.lower_cmp(instr, lhs, rhs, IntCC::Equal, FloatCC::Equal)?
+            }
+            LirInstructionKind::Ne(lhs, rhs) => {
+                self.lower_cmp(instr, lhs, rhs, IntCC::NotEqual, FloatCC::NotEqual)?
+            }
+            LirInstructionKind::Lt(lhs, rhs) => {
+                self.lower_cmp(instr, lhs, rhs, IntCC::SignedLessThan, FloatCC::LessThan)?
+            }
+            LirInstructionKind::Le(lhs, rhs) => self.lower_cmp(
+                instr,
+                lhs,
+                rhs,
+                IntCC::SignedLessThanOrEqual,
+                FloatCC::LessThanOrEqual,
+            )?,
+            LirInstructionKind::Gt(lhs, rhs) => self.lower_cmp(
+                instr,
+                lhs,
+                rhs,
+                IntCC::SignedGreaterThan,
+                FloatCC::GreaterThan,
+            )?,
+            LirInstructionKind::Ge(lhs, rhs) => self.lower_cmp(
+                instr,
+                lhs,
+                rhs,
+                IntCC::SignedGreaterThanOrEqual,
+                FloatCC::GreaterThanOrEqual,
+            )?,
+            LirInstructionKind::Load {
+                address, alignment, ..
+            } => {
                 let addr = self.value_for(address)?;
                 let ty = instr.type_hint.clone().unwrap_or(LirType::I64);
                 let mem_ty = clif_type_for_lir(&ty, self.pointer_type);
@@ -445,7 +466,12 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let value = self.builder.ins().load(mem_ty, flags, addr, 0);
                 self.record_result(instr, value);
             }
-            LirInstructionKind::Store { value, address, alignment, .. } => {
+            LirInstructionKind::Store {
+                value,
+                address,
+                alignment,
+                ..
+            } => {
                 let addr = self.value_for(address)?;
                 let stored = self.value_for(value)?;
                 let mut flags = MemFlags::new();
@@ -464,7 +490,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 };
                 let count = const_i64(size)?;
                 if count < 0 {
-                    return Err(fp_core::error::Error::from("alloca size must be non-negative"));
+                    return Err(fp_core::error::Error::from(
+                        "alloca size must be non-negative",
+                    ));
                 }
                 let elem_size = size_of(&inner) as i64;
                 let bytes = elem_size.saturating_mul(count).max(1) as u32;
@@ -561,15 +589,24 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let offset = aggregate_offset(&agg_ty, indices)?;
                 let elem_ty = aggregate_element_type(&agg_ty, indices)?;
                 let mem_ty = clif_type_for_lir(&elem_ty, self.pointer_type);
-                let value = self.builder.ins().load(mem_ty, MemFlags::new(), base, offset as i32);
+                let value = self
+                    .builder
+                    .ins()
+                    .load(mem_ty, MemFlags::new(), base, offset as i32);
                 self.record_result(instr, value);
             }
-            LirInstructionKind::InsertValue { aggregate, element, indices } => {
+            LirInstructionKind::InsertValue {
+                aggregate,
+                element,
+                indices,
+            } => {
                 let base = self.value_for(aggregate)?;
                 let agg_ty = self.type_for_value(aggregate)?;
                 let offset = aggregate_offset(&agg_ty, indices)?;
                 let element_val = self.value_for(element)?;
-                self.builder.ins().store(MemFlags::new(), element_val, base, offset as i32);
+                self.builder
+                    .ins()
+                    .store(MemFlags::new(), element_val, base, offset as i32);
                 self.record_result(instr, base);
             }
             LirInstructionKind::Call { function, args, .. } => {
@@ -597,7 +634,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 };
                 self.record_result(instr, casted);
             }
-            LirInstructionKind::Select { condition, if_true, if_false } => {
+            LirInstructionKind::Select {
+                condition,
+                if_true,
+                if_false,
+            } => {
                 let cond = self.value_for(condition)?;
                 let tval = self.value_for(if_true)?;
                 let fval = self.value_for(if_false)?;
@@ -619,7 +660,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 self.record_result(instr, zero);
             }
             LirInstructionKind::Unreachable => {
-                self.builder.ins().trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
+                self.builder
+                    .ins()
+                    .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
             }
             LirInstructionKind::Freeze(value) => {
                 let val = self.value_for(value)?;
@@ -630,7 +673,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         Ok(())
     }
 
-    fn lower_terminator(&mut self, term: &LirTerminator, current_block: BasicBlockId) -> Result<()> {
+    fn lower_terminator(
+        &mut self,
+        term: &LirTerminator,
+        current_block: BasicBlockId,
+    ) -> Result<()> {
         match term {
             LirTerminator::Return(value) => {
                 if let Some(value) = value {
@@ -644,15 +691,27 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let args = self.phi_args_for(*dest, current_block)?;
                 self.builder.ins().jump(self.blocks[dest], &args);
             }
-            LirTerminator::CondBr { condition, if_true, if_false } => {
+            LirTerminator::CondBr {
+                condition,
+                if_true,
+                if_false,
+            } => {
                 let cond = self.value_for(condition)?;
                 let t_args = self.phi_args_for(*if_true, current_block)?;
                 let f_args = self.phi_args_for(*if_false, current_block)?;
-                self.builder
-                    .ins()
-                    .brif(cond, self.blocks[if_true], &t_args, self.blocks[if_false], &f_args);
+                self.builder.ins().brif(
+                    cond,
+                    self.blocks[if_true],
+                    &t_args,
+                    self.blocks[if_false],
+                    &f_args,
+                );
             }
-            LirTerminator::Switch { value, default, cases } => {
+            LirTerminator::Switch {
+                value,
+                default,
+                cases,
+            } => {
                 let val = self.value_for(value)?;
                 let current_bb = current_block;
                 let current_block = self.blocks[&current_bb];
@@ -661,9 +720,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let default_shim = self.builder.create_block();
                 let default_args = self.phi_args_for(*default, current_bb)?;
                 self.builder.switch_to_block(default_shim);
-                self.builder
-                    .ins()
-                    .jump(self.blocks[default], &default_args);
+                self.builder.ins().jump(self.blocks[default], &default_args);
                 self.builder.seal_block(default_shim);
 
                 for (case_val, dest) in cases {
@@ -678,37 +735,57 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 self.builder.switch_to_block(current_block);
                 switch.emit(self.builder, val, default_shim);
             }
-            LirTerminator::IndirectBr { address, destinations } => {
+            LirTerminator::IndirectBr {
+                address,
+                destinations,
+            } => {
                 let _ = self.value_for(address)?;
                 let _ = destinations;
                 self.builder
                     .ins()
                     .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
             }
-            LirTerminator::Invoke { function, args, normal_dest, .. } => {
+            LirTerminator::Invoke {
+                function,
+                args,
+                normal_dest,
+                ..
+            } => {
                 let _ = self.lower_call(function, args, None)?;
                 let normal_args = self.phi_args_for(*normal_dest, current_block)?;
-                self.builder.ins().jump(self.blocks[normal_dest], &normal_args);
+                self.builder
+                    .ins()
+                    .jump(self.blocks[normal_dest], &normal_args);
             }
             LirTerminator::Resume(_) => {
-                self.builder.ins().trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
+                self.builder
+                    .ins()
+                    .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
             }
             LirTerminator::Unreachable => {
-                self.builder.ins().trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
+                self.builder
+                    .ins()
+                    .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
             }
             LirTerminator::CleanupRet { unwind_dest, .. } => {
                 if let Some(dest) = unwind_dest {
                     let args = self.phi_args_for(*dest, current_block)?;
                     self.builder.ins().jump(self.blocks[dest], &args);
                 } else {
-                    self.builder.ins().trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
+                    self.builder
+                        .ins()
+                        .trap(cranelift_codegen::ir::TrapCode::UnreachableCodeReached);
                 }
             }
             LirTerminator::CatchRet { successor, .. } => {
                 let args = self.phi_args_for(*successor, current_block)?;
                 self.builder.ins().jump(self.blocks[successor], &args);
             }
-            LirTerminator::CatchSwitch { handlers, unwind_dest, .. } => {
+            LirTerminator::CatchSwitch {
+                handlers,
+                unwind_dest,
+                ..
+            } => {
                 if let Some(dest) = unwind_dest {
                     let args = self.phi_args_for(*dest, current_block)?;
                     self.builder.ins().jump(self.blocks[dest], &args);
@@ -722,7 +799,11 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         Ok(())
     }
 
-    fn phi_args_for(&mut self, dest: BasicBlockId, current: BasicBlockId) -> Result<Vec<cranelift_codegen::ir::Value>> {
+    fn phi_args_for(
+        &mut self,
+        dest: BasicBlockId,
+        current: BasicBlockId,
+    ) -> Result<Vec<cranelift_codegen::ir::Value>> {
         let Some(phis) = self.phi_nodes.get(&dest).cloned() else {
             return Ok(Vec::new());
         };
@@ -775,7 +856,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             other => {
                 let callee = self.value_for(other)?;
                 let sig_ref = self.builder.import_signature(sig);
-                self.builder.ins().call_indirect(sig_ref, callee, &call_args)
+                self.builder
+                    .ins()
+                    .call_indirect(sig_ref, callee, &call_args)
             }
         };
 
@@ -830,10 +913,18 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let fmt_ptr = self.intern_cstring(format)?;
                 let count_val = self.builder.ins().iconst(self.pointer_type, count as i64);
                 let newline = matches!(kind, LirIntrinsicKind::Println);
-                let newline_val = self.builder.ins().iconst(types::I8, if newline { 1 } else { 0 });
+                let newline_val = self
+                    .builder
+                    .ins()
+                    .iconst(types::I8, if newline { 1 } else { 0 });
                 let func = self.declare_runtime(
                     "fp_cranelift_print",
-                    &[self.pointer_type, self.pointer_type, self.pointer_type, types::I8],
+                    &[
+                        self.pointer_type,
+                        self.pointer_type,
+                        self.pointer_type,
+                        types::I8,
+                    ],
                     None,
                 );
                 self.builder
@@ -1067,7 +1158,10 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                     Ok(self.builder.ins().f64const(*val))
                 }
             }
-            LirConstant::Bool(val) => Ok(self.builder.ins().iconst(types::I8, if *val { 1 } else { 0 })),
+            LirConstant::Bool(val) => Ok(self
+                .builder
+                .ins()
+                .iconst(types::I8, if *val { 1 } else { 0 })),
             LirConstant::String(text) => self.intern_cstring(text),
             LirConstant::Null(ty) | LirConstant::Undef(ty) => {
                 let clif_ty = clif_type_for_lir(ty, self.pointer_type);
@@ -1086,11 +1180,9 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                 let func_ref = self.module.declare_func_in_func(func_id, self.builder.func);
                 Ok(self.builder.ins().func_addr(self.pointer_type, func_ref))
             }
-            LirConstant::Array(_, _) | LirConstant::Struct(_, _) => {
-                Err(fp_core::error::Error::from(
-                    "aggregate constants must be lowered via globals",
-                ))
-            }
+            LirConstant::Array(_, _) | LirConstant::Struct(_, _) => Err(
+                fp_core::error::Error::from("aggregate constants must be lowered via globals"),
+            ),
         }
     }
 
@@ -1189,14 +1281,14 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
             }
             ArithOp::Rem => {
                 if clif_ty.is_float() {
-                    let name = if clif_ty == types::F32 { "fmodf" } else { "fmod" };
+                    let name = if clif_ty == types::F32 {
+                        "fmodf"
+                    } else {
+                        "fmod"
+                    };
                     let func = self.declare_external(name, &[clif_ty, clif_ty], Some(clif_ty));
                     let call = self.builder.ins().call(func, &[l, r]);
-                    *self
-                        .builder
-                        .inst_results(call)
-                        .get(0)
-                        .unwrap_or(&l)
+                    *self.builder.inst_results(call).get(0).unwrap_or(&l)
                 } else {
                     self.builder.ins().srem(l, r)
                 }
@@ -1281,7 +1373,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
                         _ => {
                             return Err(fp_core::error::Error::from(
                                 "struct GEP requires constant index",
-                            ))
+                            ));
                         }
                     };
                     let layout = struct_layout(&current)
@@ -1322,8 +1414,16 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
     ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
         let lty = self.builder.func.dfg.value_type(lhs);
         let rty = self.builder.func.dfg.value_type(rhs);
-        let l = if lty != ty { self.bitcast_value(ty, lhs) } else { lhs };
-        let r = if rty != ty { self.bitcast_value(ty, rhs) } else { rhs };
+        let l = if lty != ty {
+            self.bitcast_value(ty, lhs)
+        } else {
+            lhs
+        };
+        let r = if rty != ty {
+            self.bitcast_value(ty, rhs)
+        } else {
+            rhs
+        };
         (l, r)
     }
 
@@ -1332,9 +1432,7 @@ impl<'a, 'b> FunctionLowerer<'a, 'b> {
         target: cranelift_codegen::ir::Type,
         val: cranelift_codegen::ir::Value,
     ) -> cranelift_codegen::ir::Value {
-        self.builder
-            .ins()
-            .bitcast(target, MemFlags::new(), val)
+        self.builder.ins().bitcast(target, MemFlags::new(), val)
     }
 }
 
@@ -1380,7 +1478,10 @@ fn callconv_for_lir(calling: CallingConvention) -> CallConv {
     }
 }
 
-fn clif_type_for_lir(ty: &LirType, pointer: cranelift_codegen::ir::Type) -> cranelift_codegen::ir::Type {
+fn clif_type_for_lir(
+    ty: &LirType,
+    pointer: cranelift_codegen::ir::Type,
+) -> cranelift_codegen::ir::Type {
     match ty {
         LirType::I1 => types::I8,
         LirType::I8 => types::I8,
@@ -1395,7 +1496,9 @@ fn clif_type_for_lir(ty: &LirType, pointer: cranelift_codegen::ir::Type) -> cran
         LirType::Struct { .. } => pointer,
         LirType::Function { .. } => pointer,
         LirType::Vector(_, _) => pointer,
-        LirType::Void | LirType::Label | LirType::Token | LirType::Metadata | LirType::Error => types::INVALID,
+        LirType::Void | LirType::Label | LirType::Token | LirType::Metadata | LirType::Error => {
+            types::INVALID
+        }
     }
 }
 
@@ -1403,7 +1506,9 @@ fn map_linkage(linkage: LirLinkage) -> Linkage {
     match linkage {
         LirLinkage::External => Linkage::Export,
         LirLinkage::Internal | LirLinkage::Private => Linkage::Local,
-        LirLinkage::WeakAny | LirLinkage::WeakOdr | LirLinkage::ExternalWeak => Linkage::Preemptible,
+        LirLinkage::WeakAny | LirLinkage::WeakOdr | LirLinkage::ExternalWeak => {
+            Linkage::Preemptible
+        }
         _ => Linkage::Preemptible,
     }
 }
@@ -1422,7 +1527,9 @@ fn encode_constant(
 ) -> Result<()> {
     match constant {
         LirConstant::Int(val, _) => write_int(buf, base, *val as u128, size_of(ty) as usize, true),
-        LirConstant::UInt(val, _) => write_int(buf, base, *val as u128, size_of(ty) as usize, false),
+        LirConstant::UInt(val, _) => {
+            write_int(buf, base, *val as u128, size_of(ty) as usize, false)
+        }
         LirConstant::Float(val, _) => write_float(buf, base, *val, size_of(ty) as usize),
         LirConstant::Bool(val) => write_int(buf, base, if *val { 1 } else { 0 }, 1, false),
         LirConstant::String(text) => {
@@ -1436,7 +1543,10 @@ fn encode_constant(
             }
         }
         LirConstant::Struct(fields, struct_ty) => {
-            let LirType::Struct { fields: field_tys, .. } = struct_ty else {
+            let LirType::Struct {
+                fields: field_tys, ..
+            } = struct_ty
+            else {
                 return Err(fp_core::error::Error::from("struct constant type mismatch"));
             };
             let layout = struct_layout(struct_ty)
@@ -1447,10 +1557,16 @@ fn encode_constant(
             }
         }
         LirConstant::GlobalRef(name, _, _) => {
-            relocs.push(DataReloc::Data { offset: base, name: name.to_string() });
+            relocs.push(DataReloc::Data {
+                offset: base,
+                name: name.to_string(),
+            });
         }
         LirConstant::FunctionRef(name, _) => {
-            relocs.push(DataReloc::Func { offset: base, name: name.to_string() });
+            relocs.push(DataReloc::Func {
+                offset: base,
+                name: name.to_string(),
+            });
         }
         LirConstant::Null(_) | LirConstant::Undef(_) => {}
     }
@@ -1556,8 +1672,6 @@ fn const_i64(value: &LirValue) -> Result<i64> {
     match value {
         LirValue::Constant(LirConstant::Int(val, _)) => Ok(*val),
         LirValue::Constant(LirConstant::UInt(val, _)) => Ok(*val as i64),
-        _ => Err(fp_core::error::Error::from(
-            "alloca size must be constant",
-        )),
+        _ => Err(fp_core::error::Error::from("alloca size must be constant")),
     }
 }

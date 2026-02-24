@@ -136,14 +136,38 @@ fn key_terminal_segment(key: &str) -> &str {
 
 pub fn builtin_type_bindings() -> HashMap<String, Ty> {
     let mut bindings = HashMap::new();
-    bindings.insert("i64".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I64)));
-    bindings.insert("u64".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U64)));
-    bindings.insert("i32".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I32)));
-    bindings.insert("u32".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U32)));
-    bindings.insert("i16".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I16)));
-    bindings.insert("u16".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U16)));
-    bindings.insert("i8".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::I8)));
-    bindings.insert("u8".to_string(), Ty::Primitive(TypePrimitive::Int(TypeInt::U8)));
+    bindings.insert(
+        "i64".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
+    );
+    bindings.insert(
+        "u64".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U64)),
+    );
+    bindings.insert(
+        "i32".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I32)),
+    );
+    bindings.insert(
+        "u32".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U32)),
+    );
+    bindings.insert(
+        "i16".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I16)),
+    );
+    bindings.insert(
+        "u16".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U16)),
+    );
+    bindings.insert(
+        "i8".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::I8)),
+    );
+    bindings.insert(
+        "u8".to_string(),
+        Ty::Primitive(TypePrimitive::Int(TypeInt::U8)),
+    );
     bindings.insert(
         "isize".to_string(),
         Ty::Primitive(TypePrimitive::Int(TypeInt::I64)),
@@ -164,7 +188,9 @@ pub fn infer_value_ty(value: &Value) -> Option<Ty> {
         Value::Int(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::I64))),
         Value::BigInt(_) => Some(Ty::Primitive(TypePrimitive::Int(TypeInt::BigInt))),
         Value::Decimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::F64))),
-        Value::BigDecimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(DecimalType::BigDecimal))),
+        Value::BigDecimal(_) => Some(Ty::Primitive(TypePrimitive::Decimal(
+            DecimalType::BigDecimal,
+        ))),
         Value::Bool(_) => Some(Ty::Primitive(TypePrimitive::Bool)),
         Value::Char(_) => Some(Ty::Primitive(TypePrimitive::Char)),
         Value::String(_) => Some(Ty::Primitive(TypePrimitive::String)),
@@ -208,11 +234,12 @@ pub fn materialize_type_with_hooks(ty: Ty, hooks: &mut impl TypeMaterializeHooks
 
     match expr.kind() {
         ExprKind::Name(locator) => hooks.resolve_name(locator).unwrap_or(Ty::Expr(expr)),
-        ExprKind::ConstBlock(_) => hooks.eval_const_expr(expr.as_mut()).unwrap_or(Ty::Expr(expr)),
+        ExprKind::ConstBlock(_) => hooks
+            .eval_const_expr(expr.as_mut())
+            .unwrap_or(Ty::Expr(expr)),
         _ => Ty::Expr(expr),
     }
 }
-
 
 #[cfg(test)]
 mod tests {

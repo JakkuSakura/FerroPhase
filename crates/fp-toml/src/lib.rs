@@ -123,11 +123,7 @@ fn value_to_toml(value: &Value) -> CoreResult<TomlValue> {
             for entry in &map.entries {
                 let key = match &entry.key {
                     Value::String(s) => s.value.clone(),
-                    _ => {
-                        return Err(CoreError::from(
-                            "toml serializer expects string keys",
-                        ))
-                    }
+                    _ => return Err(CoreError::from("toml serializer expects string keys")),
                 };
                 let value = value_to_toml(&entry.value)?;
                 table.insert(key, value);

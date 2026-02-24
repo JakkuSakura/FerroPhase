@@ -32,13 +32,11 @@ from employees
         other => panic!("expected query node, found {other:?}"),
     }
 
-    assert!(
-        result
-            .diagnostics
-            .get_diagnostics()
-            .iter()
-            .all(|d| d.level != DiagnosticLevel::Error)
-    );
+    assert!(result
+        .diagnostics
+        .get_diagnostics()
+        .iter()
+        .all(|d| d.level != DiagnosticLevel::Error));
 }
 
 #[test]

@@ -327,10 +327,7 @@ fn link_object_with_clang(
     diagnostics: &mut PipelineDiagnostics,
     extra_inputs: &[PathBuf],
 ) -> Result<(), PipelineError> {
-    let linker = options
-        .linker
-        .as_deref()
-        .unwrap_or("clang");
+    let linker = options.linker.as_deref().unwrap_or("clang");
     let mut cmd = Command::new(linker);
     cmd.arg(object_path);
     for input in extra_inputs {

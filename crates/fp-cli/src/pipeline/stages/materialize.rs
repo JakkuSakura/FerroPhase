@@ -27,7 +27,8 @@ impl PipelineStage for MaterializeStage {
         context: MaterializeContext,
         diagnostics: &mut PipelineDiagnostics,
     ) -> Result<Node, PipelineError> {
-        let materializer = IntrinsicsMaterializer::for_target(&context.target, context.backend.as_deref());
+        let materializer =
+            IntrinsicsMaterializer::for_target(&context.target, context.backend.as_deref());
         let mut ast = context.ast;
         match materializer.materialize(&mut ast) {
             Ok(()) => Ok(ast),
