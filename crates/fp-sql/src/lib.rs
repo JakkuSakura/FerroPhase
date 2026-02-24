@@ -12,13 +12,11 @@ pub mod sql_ast;
 /// Canonical language identifier for SQL sources.
 pub const SQL: &str = "sql";
 
-pub use frontend::SqlFrontend;
 pub use dialect::{parse_sql_dialect, sqlparser_dialect};
+pub use frontend::SqlFrontend;
 pub use select::extract_select_projection;
 pub use split::{
-    ensure_engine_clause,
-    replace_engine_case_insensitive,
-    split_statements,
+    ensure_engine_clause, replace_engine_case_insensitive, split_statements,
     strip_leading_sql_comments,
 };
 

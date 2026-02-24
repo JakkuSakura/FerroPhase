@@ -27,10 +27,7 @@ pub fn filter_items_in_node(node: &mut Node, env: &TargetEnv) {
         NodeKind::Item(item) => {
             filter_item(item, env);
         }
-        NodeKind::Expr(_)
-        | NodeKind::Query(_)
-        | NodeKind::Schema(_)
-        | NodeKind::Workspace(_) => {}
+        NodeKind::Expr(_) | NodeKind::Query(_) | NodeKind::Schema(_) | NodeKind::Workspace(_) => {}
     }
 }
 

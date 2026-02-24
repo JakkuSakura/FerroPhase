@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::module::path::{ParsedPath, PathPrefix, QualifiedPath};
-use crate::module::{ModuleId, ModuleDescriptor};
 use crate::module::resolver::ResolverRegistry;
+use crate::module::{ModuleDescriptor, ModuleId};
 use crate::package::graph::PackageGraph;
 use crate::package::PackageId;
 
@@ -37,7 +37,8 @@ pub fn resolve_symbol_path(
 ) -> Option<QualifiedSymbol> {
     let module_id = ctx.current_module.as_ref()?;
     let module = ctx.graph.module(module_id)?;
-    let (package_id, base_segments, raw_segments) = resolve_base_segments(parsed, module, &ctx.graph)?;
+    let (package_id, base_segments, raw_segments) =
+        resolve_base_segments(parsed, module, &ctx.graph)?;
 
     if raw_segments.is_empty() {
         return None;
@@ -74,11 +75,9 @@ fn resolve_base_segments(
     }
 
     match parsed.prefix {
-        PathPrefix::Root | PathPrefix::Crate => Some((
-            module.package.clone(),
-            Vec::new(),
-            parsed.segments.clone(),
-        )),
+        PathPrefix::Root | PathPrefix::Crate => {
+            Some((module.package.clone(), Vec::new(), parsed.segments.clone()))
+        }
         PathPrefix::SelfMod => Some((
             module.package.clone(),
             module.module_path.clone(),

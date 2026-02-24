@@ -45,9 +45,7 @@ pub fn replace_engine_case_insensitive(sql: &str, engine: &str) -> String {
         cursor += 1;
     }
     let start = cursor;
-    while cursor < bytes.len()
-        && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_')
-    {
+    while cursor < bytes.len() && (bytes[cursor].is_ascii_alphanumeric() || bytes[cursor] == b'_') {
         cursor += 1;
     }
 

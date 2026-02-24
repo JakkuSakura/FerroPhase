@@ -30,9 +30,7 @@ pub async fn run_command(args: RunArgs, config: &CliConfig) -> Result<()> {
     crate::commands::validate_paths_exist(&[args.file.clone()], true, "run")?;
 
     if matches!(args.mode, RunMode::Interpret) {
-        let interpret_args = InterpretArgs {
-            input: args.file,
-        };
+        let interpret_args = InterpretArgs { input: args.file };
         return interpret_command(interpret_args, config).await;
     }
 

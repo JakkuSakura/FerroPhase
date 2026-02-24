@@ -9,13 +9,13 @@ use fp_core::ast::{
     ExprUnOp, FormatArgRef, FormatPlaceholder, FormatTemplatePart, Node, Path as AstPath, Value,
     ValueList, ValueMap,
 };
+use fp_core::ast::{Ident, Name};
 use fp_core::diagnostics::DiagnosticManager;
 use fp_core::error::{Error as CoreError, Result as CoreResult};
 use fp_core::frontend::{FrontendResult, FrontendSnapshot, LanguageFrontend};
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::ops::{BinOpKind, UnOpKind};
 use fp_core::span::Span;
-use fp_core::ast::{Ident, Name};
 use hcl::expr::{
     BinaryOp, BinaryOperator, Conditional, FuncCall, FuncName, ObjectKey, Operation, TemplateExpr,
     Traversal, TraversalOperator, UnaryOp, UnaryOperator,
@@ -119,7 +119,10 @@ fn hcl_body_to_value(body: &Body) -> CoreResult<Value> {
     }
 
     let mut entries = Vec::new();
-    entries.push((Value::string("attributes".to_string()), Value::Map(attributes)));
+    entries.push((
+        Value::string("attributes".to_string()),
+        Value::Map(attributes),
+    ));
     entries.push((
         Value::string("blocks".to_string()),
         Value::List(ValueList::new(blocks)),
@@ -177,11 +180,7 @@ fn lower_expression(expr: &Expression) -> CoreResult<Expr> {
                 let key_value = match key {
                     ObjectKey::Identifier(ident) => Value::string(ident.as_str().to_string()),
                     ObjectKey::Expression(expr) => Value::expr(lower_expression(expr)?),
-                    _ => {
-                        return Err(CoreError::from(
-                            "unsupported hcl object key expression",
-                        ))
-                    }
+                    _ => return Err(CoreError::from("unsupported hcl object key expression")),
                 };
                 let value_expr = lower_expression(value)?;
                 entries.push((key_value, Value::expr(value_expr)));
@@ -203,9 +202,7 @@ fn lower_expression(expr: &Expression) -> CoreResult<Expr> {
             elze: Some(Box::new(lower_expression(&cond.false_expr)?)),
         }))),
         Expression::Operation(operation) => lower_operation(operation),
-        Expression::ForExpr(_) => Err(CoreError::from(
-            "hcl for-expressions are not supported yet",
-        )),
+        Expression::ForExpr(_) => Err(CoreError::from("hcl for-expressions are not supported yet")),
         _ => Err(CoreError::from("unsupported hcl expression")),
     }
 }
@@ -225,8 +222,8 @@ fn lower_number(number: &hcl::Number) -> Value {
 }
 
 fn lower_template_expr(template_expr: &TemplateExpr) -> CoreResult<Expr> {
-    let template = Template::from_expr(template_expr)
-        .map_err(|err| CoreError::from(err.to_string()))?;
+    let template =
+        Template::from_expr(template_expr).map_err(|err| CoreError::from(err.to_string()))?;
 
     let mut parts = Vec::new();
     let mut args = Vec::new();
@@ -246,9 +243,7 @@ fn lower_template_expr(template_expr: &TemplateExpr) -> CoreResult<Expr> {
                 args.push(expr);
             }
             TemplateElement::Directive(_) => {
-                return Err(CoreError::from(
-                    "hcl template directives are not supported",
-                ));
+                return Err(CoreError::from("hcl template directives are not supported"));
             }
         }
     }
@@ -288,9 +283,7 @@ fn lower_traversal(traversal: &Traversal) -> CoreResult<Expr> {
                 index: Box::new(Expr::value(Value::int(*index as i64))),
             })),
             TraversalOperator::AttrSplat | TraversalOperator::FullSplat => {
-                return Err(CoreError::from(
-                    "hcl splat traversals are not supported",
-                ))
+                return Err(CoreError::from("hcl splat traversals are not supported"));
             }
         };
     }
@@ -385,8 +378,8 @@ fn value_to_hcl_body(value: &Value) -> CoreResult<Body> {
 
     let attributes = value_map_get(map, "attributes")
         .ok_or_else(|| CoreError::from("missing attributes section"))?;
-    let blocks = value_map_get(map, "blocks")
-        .ok_or_else(|| CoreError::from("missing blocks section"))?;
+    let blocks =
+        value_map_get(map, "blocks").ok_or_else(|| CoreError::from("missing blocks section"))?;
 
     let attributes_map = match attributes {
         Value::Map(map) => map,
@@ -405,11 +398,10 @@ fn value_to_hcl_body(value: &Value) -> CoreResult<Body> {
             _ => {
                 return Err(CoreError::from(
                     "attribute keys must be strings in serialized body",
-                ))
+                ));
             }
         };
-        let ident = hcl::Identifier::new(key)
-            .map_err(|err| CoreError::from(err.to_string()))?;
+        let ident = hcl::Identifier::new(key).map_err(|err| CoreError::from(err.to_string()))?;
         let expr = value_to_hcl_expression(&entry.value)?;
         structures.push(Structure::Attribute(Attribute { key: ident, expr }));
     }
@@ -428,16 +420,16 @@ fn value_to_hcl_block(value: &Value) -> CoreResult<Block> {
 
     let identifier = value_map_get(map, "identifier")
         .ok_or_else(|| CoreError::from("block identifier missing"))?;
-    let labels = value_map_get(map, "labels")
-        .ok_or_else(|| CoreError::from("block labels missing"))?;
+    let labels =
+        value_map_get(map, "labels").ok_or_else(|| CoreError::from("block labels missing"))?;
     let body = value_map_get(map, "body").ok_or_else(|| CoreError::from("block body missing"))?;
 
     let identifier = match identifier {
         Value::String(text) => text.value.clone(),
         _ => return Err(CoreError::from("block identifier must be a string")),
     };
-    let identifier = hcl::Identifier::new(identifier)
-        .map_err(|err| CoreError::from(err.to_string()))?;
+    let identifier =
+        hcl::Identifier::new(identifier).map_err(|err| CoreError::from(err.to_string()))?;
 
     let labels = match labels {
         Value::List(list) => list,
@@ -509,7 +501,7 @@ fn value_map_to_hcl_object(map: &ValueMap) -> CoreResult<hcl::Object<ObjectKey, 
             _ => {
                 return Err(CoreError::from(
                     "object keys must be strings or expressions",
-                ))
+                ));
             }
         };
         let value = value_to_hcl_expression(&entry.value)?;
@@ -543,11 +535,7 @@ fn value_to_hcl_value(value: &Value) -> CoreResult<HclValue> {
             for entry in &map.entries {
                 let key = match &entry.key {
                     Value::String(text) => text.value.clone(),
-                    _ => {
-                        return Err(CoreError::from(
-                            "hcl value serializer expects string keys",
-                        ))
-                    }
+                    _ => return Err(CoreError::from("hcl value serializer expects string keys")),
                 };
                 let value = value_to_hcl_value(&entry.value)?;
                 object.insert(key, value);
@@ -630,9 +618,9 @@ fn expr_to_hcl_expression_base(expr: &Expr) -> CoreResult<Expression> {
             };
             Ok(Expression::Conditional(Box::new(cond)))
         }
-        ExprKind::Paren(paren) => Ok(Expression::Parenthesis(Box::new(
-            expr_to_hcl_expression(&paren.expr)?,
-        ))),
+        ExprKind::Paren(paren) => Ok(Expression::Parenthesis(Box::new(expr_to_hcl_expression(
+            &paren.expr,
+        )?))),
         ExprKind::Array(array) => {
             let values = array
                 .values
@@ -659,7 +647,7 @@ fn expr_invoke_to_hcl_expression(call: &ExprInvoke) -> CoreResult<Expression> {
         _ => {
             return Err(CoreError::from(
                 "hcl serialization only supports function call targets",
-            ))
+            ));
         }
     };
 
@@ -692,12 +680,12 @@ fn locator_to_func_name(locator: &Name) -> CoreResult<FuncName> {
                     .map_err(|err| CoreError::from(err.to_string()))?,
             );
         }
-        let name = hcl::Identifier::new(last.as_str())
-            .map_err(|err| CoreError::from(err.to_string()))?;
+        let name =
+            hcl::Identifier::new(last.as_str()).map_err(|err| CoreError::from(err.to_string()))?;
         Ok(FuncName { namespace, name })
     } else {
-        let name = hcl::Identifier::new(first.as_str())
-            .map_err(|err| CoreError::from(err.to_string()))?;
+        let name =
+            hcl::Identifier::new(first.as_str()).map_err(|err| CoreError::from(err.to_string()))?;
         Ok(FuncName::new(name))
     }
 }

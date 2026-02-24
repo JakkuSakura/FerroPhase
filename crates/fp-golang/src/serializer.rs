@@ -6,8 +6,8 @@ use fp_core::ast::{
     AstSerializer, BlockStmt, BlockStmtExpr, Expr, ExprBlock, ExprIntrinsicCall, ExprInvoke,
     ExprInvokeTarget, ExprKind, File, Item, ItemDefConst, ItemDefEnum, ItemDefFunction,
     ItemDefStruct, ItemDefType, ItemImport, ItemImportPath, ItemImportRename, ItemImportTree,
-    ItemKind, Node, NodeKind, PatternKind, Ty, TypeArray, TypePrimitive, TypeTuple, TypeVec,
-    Value, ValueStruct, ValueTuple,
+    ItemKind, Node, NodeKind, PatternKind, Ty, TypeArray, TypePrimitive, TypeTuple, TypeVec, Value,
+    ValueStruct, ValueTuple,
 };
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
@@ -69,12 +69,10 @@ impl GoEmitter {
     fn emit_node(&mut self, node: &Node) -> Result<()> {
         match node.kind() {
             NodeKind::File(file) => self.emit_file(file),
-            NodeKind::Item(item) => {
-                self.emit_file(&File {
-                    path: Default::default(),
-                    items: vec![item.clone()],
-                })
-            }
+            NodeKind::Item(item) => self.emit_file(&File {
+                path: Default::default(),
+                items: vec![item.clone()],
+            }),
             NodeKind::Expr(expr) => {
                 self.emit_header();
                 if let Some(rendered) = self.render_expr(expr)? {
@@ -163,10 +161,7 @@ impl GoEmitter {
             ItemKind::Expr(expr) => self.emit_expr_item(expr),
             ItemKind::Import(_) => Ok(()),
             _ => {
-                self.push_comment(&format!(
-                    "unsupported item in Go output: {:?}",
-                    item.kind()
-                ));
+                self.push_comment(&format!("unsupported item in Go output: {:?}", item.kind()));
                 Ok(())
             }
         }
@@ -218,13 +213,15 @@ impl GoEmitter {
     }
 
     fn emit_const(&mut self, def: &ItemDefConst) -> Result<()> {
-        let keyword = if def.mutable == Some(true) { "var" } else { "const" };
+        let keyword = if def.mutable == Some(true) {
+            "var"
+        } else {
+            "const"
+        };
         let value = match self.render_expr(def.value.as_ref())? {
             Some(rendered) => rendered,
             None => {
-                self.push_comment(&format!(
-                    "unsupported initializer for {}", def.name.name
-                ));
+                self.push_comment(&format!("unsupported initializer for {}", def.name.name));
                 "0".to_string()
             }
         };

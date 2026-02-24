@@ -2727,7 +2727,9 @@ impl<'ctx> AstInterpreter<'ctx> {
                 Err(flow) => return flow,
             };
             if let Value::Map(map) = &receiver.value {
-                return RuntimeFlow::Value(Value::bool(map.entries.iter().any(|entry| entry.key == key)));
+                return RuntimeFlow::Value(Value::bool(
+                    map.entries.iter().any(|entry| entry.key == key),
+                ));
             }
         }
 

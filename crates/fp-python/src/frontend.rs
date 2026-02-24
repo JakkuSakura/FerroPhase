@@ -64,9 +64,7 @@ impl LanguageFrontend for PythonFrontend {
 
     fn parse(&self, source: &str, path: Option<&Path>) -> CoreResult<FrontendResult> {
         let diagnostics = Arc::new(DiagnosticManager::new());
-        let source_path = path
-            .and_then(|path| path.to_str())
-            .unwrap_or("<python>");
+        let source_path = path.and_then(|path| path.to_str()).unwrap_or("<python>");
         let program: py_ast::Suite = py_ast::Suite::parse(source, source_path)
             .map_err(|err| CoreError::from(err.to_string()))?;
         let items = lower_suite(&program)?;
@@ -148,9 +146,7 @@ fn lower_stmt_to_items(stmt: &PyStmt) -> CoreResult<Vec<Item>> {
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
         PyStmt::Continue(_) => {
-            let expr = Expr::new(ExprKind::Continue(ExprContinue {
-                span: Span::null(),
-            }));
+            let expr = Expr::new(ExprKind::Continue(ExprContinue { span: Span::null() }));
             Ok(vec![Item::from(ItemKind::Expr(expr))])
         }
         PyStmt::Pass(_) => Ok(vec![Item::from(ItemKind::Expr(Expr::unit()))]),
@@ -589,19 +585,15 @@ fn lower_constant(constant: &PyConstant) -> CoreResult<Expr> {
                 .collect::<CoreResult<Vec<_>>>()?;
             Value::Tuple(ValueTuple::new(values))
         }
-        _ => {
-            return Err(CoreError::from(
-                "python constant type is not supported",
-            ))
-        }
+        _ => return Err(CoreError::from("python constant type is not supported")),
     };
     Ok(Expr::value(value))
 }
 
 fn lower_bigint(value: &py_ast::bigint::BigInt) -> CoreResult<Value> {
     let text = value.to_string();
-    let parsed = NumBigInt::from_str(&text)
-        .map_err(|_| CoreError::from("failed to parse python int"))?;
+    let parsed =
+        NumBigInt::from_str(&text).map_err(|_| CoreError::from("failed to parse python int"))?;
     if let Some(i) = parsed.to_i64() {
         Ok(Value::int(i))
     } else {
@@ -617,19 +609,17 @@ fn lower_joined_str(joined: &py_ast::ExprJoinedStr<TextRange>) -> CoreResult<Exp
         match value {
             PyExpr::Constant(constant) => match &constant.value {
                 PyConstant::Str(text) => parts.push(FormatTemplatePart::Literal(text.clone())),
-                _ => {
-                    return Err(CoreError::from(
-                        "python f-string literals must be strings",
-                    ))
-                }
+                _ => return Err(CoreError::from("python f-string literals must be strings")),
             },
             PyExpr::FormattedValue(formatted) => {
                 let expr = lower_formatted_value(formatted)?;
                 let index = args.len();
-                parts.push(FormatTemplatePart::Placeholder(fp_core::ast::FormatPlaceholder {
-                    arg_ref: fp_core::ast::FormatArgRef::Positional(index),
-                    format_spec: None,
-                }));
+                parts.push(FormatTemplatePart::Placeholder(
+                    fp_core::ast::FormatPlaceholder {
+                        arg_ref: fp_core::ast::FormatArgRef::Positional(index),
+                        format_spec: None,
+                    },
+                ));
                 args.push(expr);
             }
             _ => return Err(CoreError::from("python f-string element unsupported")),
@@ -649,14 +639,16 @@ fn lower_joined_str(joined: &py_ast::ExprJoinedStr<TextRange>) -> CoreResult<Exp
     })))
 }
 
-fn lower_formatted_value(
-    formatted: &py_ast::ExprFormattedValue<TextRange>,
-) -> CoreResult<Expr> {
+fn lower_formatted_value(formatted: &py_ast::ExprFormattedValue<TextRange>) -> CoreResult<Expr> {
     if formatted.format_spec.is_some() {
-        return Err(CoreError::from("python f-string format spec is not supported"));
+        return Err(CoreError::from(
+            "python f-string format spec is not supported",
+        ));
     }
     if formatted.conversion != py_ast::ConversionFlag::None {
-        return Err(CoreError::from("python f-string conversion is not supported"));
+        return Err(CoreError::from(
+            "python f-string conversion is not supported",
+        ));
     }
     lower_expr(&formatted.value)
 }
@@ -710,9 +702,9 @@ fn lower_import_from(
     if imported.len() == 1 {
         path.push(imported.remove(0));
     } else {
-        path.push(fp_core::ast::ItemImportTree::Group(fp_core::ast::ItemImportGroup {
-            items: imported,
-        }));
+        path.push(fp_core::ast::ItemImportTree::Group(
+            fp_core::ast::ItemImportGroup { items: imported },
+        ));
     }
 
     Ok(fp_core::ast::ItemImport {
@@ -742,11 +734,7 @@ fn lower_import_alias(alias: &PyAlias) -> CoreResult<fp_core::ast::ItemImportTre
         if let Some(last) = path.segments.pop() {
             let from = match last {
                 fp_core::ast::ItemImportTree::Ident(ident) => ident,
-                _ => {
-                    return Err(CoreError::from(
-                        "python import rename expects identifier",
-                    ))
-                }
+                _ => return Err(CoreError::from("python import rename expects identifier")),
             };
             let rename = fp_core::ast::ItemImportRename {
                 from,

@@ -5,8 +5,8 @@ use fp_core::ast::{
     register_threadlocal_serializer, AstSerializer, Ident, Item, ItemKind, MacroExpansionParser,
     Module, Node, Ty, Value, Visibility,
 };
-use fp_core::context::SharedScopedContext;
 use fp_core::cfg::TargetEnv;
+use fp_core::context::SharedScopedContext;
 use fp_core::diagnostics::Diagnostic;
 use fp_core::error::Result as CoreResult;
 use fp_core::intrinsics::IntrinsicNormalizer;
