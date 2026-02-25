@@ -3,10 +3,10 @@
 // gradually split into layout and abi submodules.
 
 // BEGIN ORIGINAL CONTENT
+use fp_core::diagnostics::{diagnostic_manager, Diagnostic};
 use fp_core::error::Result;
 use fp_core::intrinsics::IntrinsicCallKind;
 use fp_core::lir::layout;
-use fp_core::diagnostics::{Diagnostic, diagnostic_manager};
 use fp_core::mir::ty::{
     ConstKind, ConstValue, FloatTy, IntTy, Scalar, Ty, TyKind, TypeAndMut, UintTy,
 };
