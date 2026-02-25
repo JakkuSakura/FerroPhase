@@ -1953,7 +1953,7 @@ impl HirGenerator {
                 .unwrap_or_default();
 
             for name in captured_names {
-                if existing.contains(name.as_str()) {
+                if existing.contains(&name) {
                     continue;
                 }
 
