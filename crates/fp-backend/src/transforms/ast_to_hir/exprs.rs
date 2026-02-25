@@ -1938,7 +1938,9 @@ impl HirGenerator {
                             .filter_map(|part| match part {
                                 hir::FormatTemplatePart::Placeholder(placeholder) => {
                                     match &placeholder.arg_ref {
-                                        hir::FormatArgRef::Named(name) => Some(name.as_str()),
+                                        hir::FormatArgRef::Named(name) => {
+                                            Some(name.as_str().to_string())
+                                        }
                                         _ => None,
                                     }
                                 }
@@ -1951,12 +1953,12 @@ impl HirGenerator {
                 .unwrap_or_default();
 
             for name in captured_names {
-                if existing.contains(name) {
+                if existing.contains(name.as_str()) {
                     continue;
                 }
 
                 let path = self.locator_to_hir_path_with_scope(
-                    &Name::Ident(ast::Ident::new(name)),
+                    &Name::Ident(ast::Ident::new(name.as_str())),
                     PathResolutionScope::Value,
                 )?;
                 let value = hir::Expr {
@@ -1966,10 +1968,10 @@ impl HirGenerator {
                 };
 
                 callargs.push(hir::CallArg {
-                    name: hir::Symbol::new(name.to_string()),
+                    name: hir::Symbol::new(name.clone()),
                     value,
                 });
-                existing.insert(name.to_string());
+                existing.insert(name);
             }
         }
 
