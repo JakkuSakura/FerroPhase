@@ -406,6 +406,47 @@ struct RuntimeFuture {
     impl_stack: Vec<ImplContext>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeSocketAddr {
+    host: String,
+    port: u16,
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeTcpListener {
+    listener: Arc<std::net::TcpListener>,
+}
+
+impl PartialEq for RuntimeTcpListener {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.listener, &other.listener)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeTcpStream {
+    stream: Arc<Mutex<std::net::TcpStream>>,
+    last_read: Arc<Mutex<Vec<u8>>>,
+}
+
+impl PartialEq for RuntimeTcpStream {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.stream, &other.stream) && Arc::ptr_eq(&self.last_read, &other.last_read)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct RuntimeUdpSocket {
+    socket: Arc<std::net::UdpSocket>,
+    last_recv: Arc<Mutex<Vec<u8>>>,
+}
+
+impl PartialEq for RuntimeUdpSocket {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.socket, &other.socket) && Arc::ptr_eq(&self.last_recv, &other.last_recv)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct TaskHandle {
     id: u64,
@@ -4608,8 +4649,23 @@ impl<'ctx> AstInterpreter<'ctx> {
     // Resolve receiver bindings, preserving mutability if possible.
     fn resolve_receiver_binding(&mut self, expr: &mut Expr) -> ReceiverBinding {
         if let ExprKind::Name(locator) = expr.kind_mut() {
-            if let Some(ident) = locator.as_ident() {
-                if let Some(stored) = self.lookup_stored_value(ident.as_str()) {
+            let local_name = if let Some(ident) = locator.as_ident() {
+                Some(ident.as_str())
+            } else {
+                match locator {
+                    Name::Path(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 1 => {
+                        Some(path.segments[0].as_str())
+                    }
+                    Name::ParameterPath(path)
+                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                    {
+                        Some(path.segments[0].ident.as_str())
+                    }
+                    _ => None,
+                }
+            };
+            if let Some(name) = local_name {
+                if let Some(stored) = self.lookup_stored_value(name) {
                     return ReceiverBinding {
                         value: stored.value(),
                         shared: stored.shared_handle(),

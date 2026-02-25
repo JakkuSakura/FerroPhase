@@ -315,7 +315,6 @@ impl<'ctx> AstInterpreter<'ctx> {
             }
             self.insert_value(param.name.as_str(), value);
         }
-
         let mut body = function.body.as_ref().clone();
         let flow = self.eval_expr_runtime(&mut body);
         if impl_context.is_some() {

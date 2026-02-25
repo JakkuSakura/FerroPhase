@@ -1,6 +1,7 @@
 use super::*;
 use fp_core::ast::Name;
 use fp_core::module::path::{parse_path, PathPrefix};
+use std::io::{Read, Write};
 
 impl<'ctx> AstInterpreter<'ctx> {
     /// Evaluate an expression in runtime-capable mode, returning structured control-flow.
@@ -626,6 +627,27 @@ impl<'ctx> AstInterpreter<'ctx> {
                 }
                 if let Some(ident) = locator.as_ident() {
                     if let Some(value) = self.lookup_value(ident.as_str()) {
+                        if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
+                            return RuntimeFlow::Value(placeholder);
+                        }
+                        return RuntimeFlow::Value(value);
+                    }
+                }
+                let simple_name = match locator {
+                    Name::Path(path)
+                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                    {
+                        Some(path.segments[0].as_str())
+                    }
+                    Name::ParameterPath(path)
+                        if path.prefix == PathPrefix::Plain && path.segments.len() == 1 =>
+                    {
+                        Some(path.segments[0].ident.as_str())
+                    }
+                    _ => None,
+                };
+                if let Some(name) = simple_name {
+                    if let Some(value) = self.lookup_value(name) {
                         if let Some(placeholder) = self.imported_placeholder_value(value.clone()) {
                             return RuntimeFlow::Value(placeholder);
                         }
@@ -2386,6 +2408,17 @@ impl<'ctx> AstInterpreter<'ctx> {
                     return RuntimeFlow::Value(Value::unit());
                 }
 
+                if let Some(flow) =
+                    self.try_eval_runtime_receiver_function_call(&locator, &mut invoke.args)
+                {
+                    return flow;
+                }
+
+                if let Some(flow) = self.try_eval_std_net_function_runtime(&locator, &mut invoke.args)
+                {
+                    return flow;
+                }
+
                 let args = match self.evaluate_args_runtime(&mut invoke.args) {
                     Ok(values) => values,
                     Err(flow) => return flow,
@@ -2553,8 +2586,16 @@ impl<'ctx> AstInterpreter<'ctx> {
         select: &mut fp_core::ast::ExprSelect,
         args: &mut Vec<Expr>,
     ) -> RuntimeFlow {
+        if let Some(flow) = self.try_eval_std_net_associated_method_runtime(select, args) {
+            return flow;
+        }
+
         let receiver = self.resolve_receiver_binding(select.obj.as_mut());
         let method_name = select.field.name.as_str().to_string();
+        if let Some(flow) = self.try_eval_std_net_method_runtime(&receiver.value, &method_name, args)
+        {
+            return flow;
+        }
 
         if matches!(
             method_name.as_str(),
@@ -2802,6 +2843,783 @@ impl<'ctx> AstInterpreter<'ctx> {
 
         self.emit_error(format!("cannot resolve method '{}'", method_name));
         return RuntimeFlow::Value(Value::undefined());
+    }
+
+    fn try_eval_std_net_associated_method_runtime(
+        &mut self,
+        select: &fp_core::ast::ExprSelect,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let ExprKind::Name(type_name) = select.obj.kind() else {
+            return None;
+        };
+        let method_name = select.field.name.as_str();
+
+        if Self::locator_suffix_matches(type_name, &["SocketAddr"]) {
+            if method_name == "new" {
+                let values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                if values.len() != 2 {
+                    self.emit_error("SocketAddr::new expects (host, port)");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let Some(host) = self.runtime_string_arg(&values[0], "SocketAddr::new host") else {
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                };
+                let Some(port) = self.runtime_port_arg(&values[1], "SocketAddr::new port") else {
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                };
+                return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(RuntimeSocketAddr {
+                    host,
+                    port,
+                }))));
+            }
+            if method_name == "parse" {
+                let values = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                if values.len() != 1 {
+                    self.emit_error("SocketAddr::parse expects one address string");
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+                let Some(addr) = self.runtime_string_arg(&values[0], "SocketAddr::parse addr") else {
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                };
+                match std::net::SocketAddr::from_str(addr.as_str()) {
+                    Ok(socket_addr) => {
+                        return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                            RuntimeSocketAddr {
+                                host: socket_addr.ip().to_string(),
+                                port: socket_addr.port(),
+                            },
+                        ))));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("SocketAddr::parse failed: {}", err));
+                        return Some(RuntimeFlow::Value(Value::undefined()));
+                    }
+                }
+            }
+            return None;
+        }
+
+        if Self::locator_suffix_matches(type_name, &["TcpListener"]) && method_name == "bind" {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpListener::bind expects one address argument");
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpListener::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            };
+            match std::net::TcpListener::bind(addr) {
+                Ok(listener) => {
+                    let runtime_listener = RuntimeTcpListener {
+                        listener: Arc::new(listener),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_listener));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpListener::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::undefined(),
+                    )));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(type_name, &["TcpStream"]) && method_name == "connect" {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpStream::connect expects one address argument");
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpStream::connect addr")
+            else {
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            };
+            match std::net::TcpStream::connect(addr) {
+                Ok(stream) => {
+                    let runtime_stream = RuntimeTcpStream {
+                        stream: Arc::new(Mutex::new(stream)),
+                        last_read: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_stream));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpStream::connect failed: {}", err));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::undefined(),
+                    )));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(type_name, &["UdpSocket"]) && method_name == "bind" {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("UdpSocket::bind expects one address argument");
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "UdpSocket::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            };
+            match std::net::UdpSocket::bind(addr) {
+                Ok(socket) => {
+                    let runtime_socket = RuntimeUdpSocket {
+                        socket: Arc::new(socket),
+                        last_recv: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_socket));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                }
+                Err(err) => {
+                    self.emit_error(format!("UdpSocket::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::undefined(),
+                    )));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn try_eval_std_net_function_runtime(
+        &mut self,
+        locator: &Name,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        if Self::locator_suffix_matches(locator, &["SocketAddr", "new"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 2 {
+                self.emit_error("SocketAddr::new expects (host, port)");
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            }
+            let Some(host) = self.runtime_string_arg(&values[0], "SocketAddr::new host") else {
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            };
+            let Some(port) = self.runtime_port_arg(&values[1], "SocketAddr::new port") else {
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            };
+            return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(RuntimeSocketAddr {
+                host,
+                port,
+            }))));
+        }
+
+        if Self::locator_suffix_matches(locator, &["SocketAddr", "parse"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("SocketAddr::parse expects one address string");
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            }
+            let Some(addr) = self.runtime_string_arg(&values[0], "SocketAddr::parse addr") else {
+                return Some(RuntimeFlow::Value(Value::undefined()));
+            };
+            match std::net::SocketAddr::from_str(addr.as_str()) {
+                Ok(socket_addr) => {
+                    return Some(RuntimeFlow::Value(Value::Any(AnyBox::new(
+                        RuntimeSocketAddr {
+                            host: socket_addr.ip().to_string(),
+                            port: socket_addr.port(),
+                        },
+                    ))));
+                }
+                Err(err) => {
+                    self.emit_error(format!("SocketAddr::parse failed: {}", err));
+                    return Some(RuntimeFlow::Value(Value::undefined()));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(locator, &["TcpListener", "bind"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpListener::bind expects one address argument");
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpListener::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            };
+            match std::net::TcpListener::bind(addr) {
+                Ok(listener) => {
+                    let runtime_listener = RuntimeTcpListener {
+                        listener: Arc::new(listener),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_listener));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpListener::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::undefined(),
+                    )));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(locator, &["TcpStream", "connect"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("TcpStream::connect expects one address argument");
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "TcpStream::connect addr")
+            else {
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            };
+            match std::net::TcpStream::connect(addr) {
+                Ok(stream) => {
+                    let runtime_stream = RuntimeTcpStream {
+                        stream: Arc::new(Mutex::new(stream)),
+                        last_read: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_stream));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                }
+                Err(err) => {
+                    self.emit_error(format!("TcpStream::connect failed: {}", err));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::undefined(),
+                    )));
+                }
+            }
+        }
+
+        if Self::locator_suffix_matches(locator, &["UdpSocket", "bind"]) {
+            let values = match self.evaluate_args_runtime(args) {
+                Ok(values) => values,
+                Err(flow) => return Some(flow),
+            };
+            if values.len() != 1 {
+                self.emit_error("UdpSocket::bind expects one address argument");
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            }
+            let Some(addr) = self.runtime_socket_addr_arg(&values[0], "UdpSocket::bind addr")
+            else {
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::undefined(),
+                )));
+            };
+            match std::net::UdpSocket::bind(addr) {
+                Ok(socket) => {
+                    let runtime_socket = RuntimeUdpSocket {
+                        socket: Arc::new(socket),
+                        last_recv: Arc::new(Mutex::new(Vec::new())),
+                    };
+                    let value = Value::Any(AnyBox::new(runtime_socket));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                }
+                Err(err) => {
+                    self.emit_error(format!("UdpSocket::bind failed: {}", err));
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::undefined(),
+                    )));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn try_eval_std_net_method_runtime(
+        &mut self,
+        receiver: &Value,
+        method_name: &str,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        if let Some(addr) = self.runtime_socket_addr_from_receiver(receiver) {
+            if method_name == "to_string" && args.is_empty() {
+                return Some(RuntimeFlow::Value(Value::string(format!(
+                    "{}:{}",
+                    addr.host, addr.port
+                ))));
+            }
+            return None;
+        }
+
+        let Value::Any(any) = receiver else {
+            return None;
+        };
+
+        if let Some(listener) = any.downcast_ref::<RuntimeTcpListener>() {
+            if method_name == "accept" && args.is_empty() {
+                for _ in 0..64 {
+                    if self.ready_tasks.is_empty() {
+                        break;
+                    }
+                    if !self.tick_scheduler() {
+                        break;
+                    }
+                }
+                match listener.listener.accept() {
+                    Ok((stream, _peer)) => {
+                        let runtime_stream = RuntimeTcpStream {
+                            stream: Arc::new(Mutex::new(stream)),
+                            last_read: Arc::new(Mutex::new(Vec::new())),
+                        };
+                        let value = Value::Any(AnyBox::new(runtime_stream));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(value)));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("TcpListener::accept failed: {}", err));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::undefined(),
+                        )));
+                    }
+                }
+            }
+            return None;
+        }
+
+        if let Some(stream) = any.downcast_ref::<RuntimeTcpStream>() {
+            if method_name == "read" && args.len() == 1 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut storage = vec![0u8; self.runtime_buffer_capacity_hint(&evaluated[0])];
+                let read_result = {
+                    let mut guard = match stream.stream.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    guard.read(&mut storage)
+                };
+                match read_result {
+                    Ok(size) => {
+                        let bytes = storage[..size].to_vec();
+                        {
+                            let mut last_read = match stream.last_read.lock() {
+                                Ok(guard) => guard,
+                                Err(err) => err.into_inner(),
+                            };
+                            *last_read = bytes.clone();
+                        }
+                        self.write_bytes_to_runtime_buffer(&evaluated[0], &bytes);
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::int(size as i64),
+                        )));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("TcpStream::read failed: {}", err));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::int(-1),
+                        )));
+                    }
+                }
+            }
+
+            if method_name == "write" && args.len() == 1 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut bytes = self.runtime_value_to_bytes(&evaluated[0]).unwrap_or_default();
+                if bytes.is_empty() {
+                    let last_read = match stream.last_read.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(err) => err.into_inner().clone(),
+                    };
+                    bytes = last_read;
+                }
+                let write_result = {
+                    let mut guard = match stream.stream.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    guard.write(&bytes)
+                };
+                match write_result {
+                    Ok(size) => {
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::int(size as i64),
+                        )));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("TcpStream::write failed: {}", err));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::int(-1),
+                        )));
+                    }
+                }
+            }
+
+            if method_name == "shutdown" && args.is_empty() {
+                let shutdown_result = {
+                    let guard = match stream.stream.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    guard.shutdown(std::net::Shutdown::Both)
+                };
+                if let Err(err) = shutdown_result {
+                    self.emit_error(format!("TcpStream::shutdown failed: {}", err));
+                }
+                return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                    Value::unit(),
+                )));
+            }
+
+            return None;
+        }
+
+        if let Some(socket) = any.downcast_ref::<RuntimeUdpSocket>() {
+            if method_name == "recv_from" && args.len() == 1 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut storage = vec![0u8; self.runtime_buffer_capacity_hint(&evaluated[0])];
+                match socket.socket.recv_from(&mut storage) {
+                    Ok((size, peer)) => {
+                        let bytes = storage[..size].to_vec();
+                        {
+                            let mut last_recv = match socket.last_recv.lock() {
+                                Ok(guard) => guard,
+                                Err(err) => err.into_inner(),
+                            };
+                            *last_recv = bytes.clone();
+                        }
+                        self.write_bytes_to_runtime_buffer(&evaluated[0], &bytes);
+                        let peer_value = Value::Any(AnyBox::new(RuntimeSocketAddr {
+                            host: peer.ip().to_string(),
+                            port: peer.port(),
+                        }));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::Tuple(ValueTuple::new(vec![Value::int(size as i64), peer_value])),
+                        )));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("UdpSocket::recv_from failed: {}", err));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::Tuple(ValueTuple::new(vec![
+                                Value::int(-1),
+                                Value::Any(AnyBox::new(RuntimeSocketAddr {
+                                    host: "0.0.0.0".to_string(),
+                                    port: 0,
+                                })),
+                            ])),
+                        )));
+                    }
+                }
+            }
+
+            if method_name == "send_to" && args.len() == 2 {
+                let evaluated = match self.evaluate_args_runtime(args) {
+                    Ok(values) => values,
+                    Err(flow) => return Some(flow),
+                };
+                let mut bytes = self.runtime_value_to_bytes(&evaluated[0]).unwrap_or_default();
+                if bytes.is_empty() {
+                    let last_recv = match socket.last_recv.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(err) => err.into_inner().clone(),
+                    };
+                    bytes = last_recv;
+                }
+                let Some(addr) = self.runtime_socket_addr_arg(&evaluated[1], "UdpSocket::send_to addr")
+                else {
+                    return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                        Value::int(-1),
+                    )));
+                };
+                match socket.socket.send_to(&bytes, addr) {
+                    Ok(size) => {
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::int(size as i64),
+                        )));
+                    }
+                    Err(err) => {
+                        self.emit_error(format!("UdpSocket::send_to failed: {}", err));
+                        return Some(RuntimeFlow::Value(self.make_ready_future_runtime_value(
+                            Value::int(-1),
+                        )));
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    fn try_eval_runtime_receiver_function_call(
+        &mut self,
+        locator: &Name,
+        args: &mut Vec<Expr>,
+    ) -> Option<RuntimeFlow> {
+        let (receiver_name, method_name) = match locator {
+            Name::Path(path) if path.prefix == PathPrefix::Plain && path.segments.len() == 2 => {
+                (path.segments[0].as_str(), path.segments[1].as_str())
+            }
+            Name::ParameterPath(path)
+                if path.prefix == PathPrefix::Plain && path.segments.len() == 2 =>
+            {
+                (path.segments[0].ident.as_str(), path.segments[1].ident.as_str())
+            }
+            _ => return None,
+        };
+
+        let receiver_value = self.lookup_stored_value(receiver_name).map(|value| value.value())?;
+        self.try_eval_std_net_method_runtime(&receiver_value, method_name, args)
+    }
+
+    fn make_ready_future_runtime_value(&self, value: Value) -> Value {
+        let expr = Expr::from_parts(None, ExprKind::Value(Box::new(value)));
+        let future = self.capture_runtime_future(&expr);
+        self.make_future_runtime_value(future)
+    }
+
+    fn locator_suffix_matches(locator: &Name, suffix: &[&str]) -> bool {
+        if suffix.is_empty() {
+            return false;
+        }
+        match locator {
+            Name::Ident(ident) => suffix.len() == 1 && ident.as_str() == suffix[0],
+            Name::Path(path) => {
+                if path.segments.len() < suffix.len() {
+                    return false;
+                }
+                path.segments[path.segments.len() - suffix.len()..]
+                    .iter()
+                    .zip(suffix.iter())
+                    .all(|(segment, expected)| segment.as_str() == *expected)
+            }
+            Name::ParameterPath(path) => {
+                if path.segments.len() < suffix.len() {
+                    return false;
+                }
+                path.segments[path.segments.len() - suffix.len()..]
+                    .iter()
+                    .zip(suffix.iter())
+                    .all(|(segment, expected)| segment.ident.as_str() == *expected)
+            }
+        }
+    }
+
+    fn runtime_string_arg(&mut self, value: &Value, context: &str) -> Option<String> {
+        match value {
+            Value::String(string) => Some(string.value.clone()),
+            other => {
+                self.emit_error(format!("{} must be a string, found {}", context, other));
+                None
+            }
+        }
+    }
+
+    fn runtime_port_arg(&mut self, value: &Value, context: &str) -> Option<u16> {
+        let port = self.numeric_to_i64(value, context)?;
+        if !(0..=u16::MAX as i64).contains(&port) {
+            self.emit_error(format!("{} must be in 0..=65535", context));
+            return None;
+        }
+        Some(port as u16)
+    }
+
+    fn runtime_socket_addr_arg(&mut self, value: &Value, context: &str) -> Option<std::net::SocketAddr> {
+        match value {
+            Value::Any(any) => {
+                if let Some(addr) = any.downcast_ref::<RuntimeSocketAddr>() {
+                    return std::net::SocketAddr::from_str(format!("{}:{}", addr.host, addr.port).as_str()).ok();
+                }
+            }
+            Value::String(string) => {
+                return std::net::SocketAddr::from_str(&string.value).ok();
+            }
+            Value::Struct(value_struct) => {
+                return self.runtime_socket_addr_from_structural(&value_struct.structural, context);
+            }
+            Value::Structural(structural) => {
+                return self.runtime_socket_addr_from_structural(structural, context);
+            }
+            _ => {}
+        }
+        self.emit_error(format!("{} must be a SocketAddr-compatible value", context));
+        None
+    }
+
+    fn runtime_socket_addr_from_structural(
+        &mut self,
+        structural: &ValueStructural,
+        context: &str,
+    ) -> Option<std::net::SocketAddr> {
+        let host_field = structural.get_field(&Ident::new("host"));
+        let port_field = structural.get_field(&Ident::new("port"));
+        let Some(host_value) = host_field.map(|field| &field.value) else {
+            self.emit_error(format!("{} is missing host field", context));
+            return None;
+        };
+        let Some(port_value) = port_field.map(|field| &field.value) else {
+            self.emit_error(format!("{} is missing port field", context));
+            return None;
+        };
+        let host = self.runtime_string_arg(host_value, context)?;
+        let port = self.runtime_port_arg(port_value, context)?;
+        std::net::SocketAddr::from_str(format!("{}:{}", host, port).as_str()).ok()
+    }
+
+    fn runtime_socket_addr_from_receiver(&self, receiver: &Value) -> Option<RuntimeSocketAddr> {
+        match receiver {
+            Value::Any(any) => any.downcast_ref::<RuntimeSocketAddr>().cloned(),
+            _ => None,
+        }
+    }
+
+    fn runtime_buffer_capacity_hint(&self, value: &Value) -> usize {
+        match value {
+            Value::List(list) => list.values.len().max(1),
+            Value::Bytes(bytes) => bytes.value.len().max(1),
+            Value::Any(any) => {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    let guard = match runtime_ref.shared.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    return match &*guard {
+                        Value::List(list) => list.values.len().max(1),
+                        Value::Bytes(bytes) => bytes.value.len().max(1),
+                        _ => 1024,
+                    };
+                }
+                1024
+            }
+            _ => 1024,
+        }
+    }
+
+    fn write_bytes_to_runtime_buffer(&mut self, target: &Value, bytes: &[u8]) {
+        let Value::Any(any) = target else {
+            return;
+        };
+        let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() else {
+            return;
+        };
+        let mut guard = match runtime_ref.shared.lock() {
+            Ok(guard) => guard,
+            Err(err) => err.into_inner(),
+        };
+        match &mut *guard {
+            Value::List(list) => {
+                for (index, byte) in bytes.iter().enumerate() {
+                    if index >= list.values.len() {
+                        break;
+                    }
+                    list.values[index] = Value::int(*byte as i64);
+                }
+            }
+            Value::Bytes(value_bytes) => {
+                if value_bytes.value.len() < bytes.len() {
+                    value_bytes.value.resize(bytes.len(), 0);
+                }
+                value_bytes.value[..bytes.len()].copy_from_slice(bytes);
+            }
+            _ => {}
+        }
+    }
+
+    fn runtime_value_to_bytes(&mut self, value: &Value) -> Option<Vec<u8>> {
+        match value {
+            Value::String(string) => Some(string.value.as_bytes().to_vec()),
+            Value::Bytes(bytes) => Some(bytes.value.to_vec()),
+            Value::List(list) => {
+                let mut out = Vec::with_capacity(list.values.len());
+                for value in &list.values {
+                    match value {
+                        Value::Int(int) if (0..=255).contains(&int.value) => out.push(int.value as u8),
+                        Value::Char(ch) => out.push(ch.value as u8),
+                        _ => return None,
+                    }
+                }
+                Some(out)
+            }
+            Value::Tuple(tuple) => {
+                let mut out = Vec::with_capacity(tuple.values.len());
+                for value in &tuple.values {
+                    match value {
+                        Value::Int(int) if (0..=255).contains(&int.value) => out.push(int.value as u8),
+                        Value::Char(ch) => out.push(ch.value as u8),
+                        _ => return None,
+                    }
+                }
+                Some(out)
+            }
+            Value::Any(any) => {
+                if let Some(runtime_ref) = any.downcast_ref::<RuntimeRef>() {
+                    let guard = match runtime_ref.shared.lock() {
+                        Ok(guard) => guard,
+                        Err(err) => err.into_inner(),
+                    };
+                    return self.runtime_value_to_bytes(&guard);
+                }
+                if let Some(slice_ref) = any.downcast_ref::<fp_native::ffi::FfiSliceRef>() {
+                    let mut out = Vec::new();
+                    for value in slice_ref.values.iter().skip(slice_ref.index) {
+                        match value {
+                            Value::Int(int) if (0..=255).contains(&int.value) => {
+                                out.push(int.value as u8)
+                            }
+                            Value::Char(ch) => out.push(ch.value as u8),
+                            _ => break,
+                        }
+                    }
+                    return Some(out);
+                }
+                None
+            }
+            _ => None,
+        }
     }
 
     pub(super) fn evaluate_args(&mut self, args: &mut Vec<Expr>) -> Vec<Value> {
