@@ -6,6 +6,21 @@ use fp_core::ast::{
 use std::sync::{Arc, Mutex};
 
 impl<'ctx> AstInterpreter<'ctx> {
+    fn alternate_symbol_name<'a>(name: &'a str, buffer: &'a mut String) -> Option<&'a str> {
+        if let Some(stripped) = name.strip_prefix('#') {
+            if stripped.is_empty() {
+                None
+            } else {
+                Some(stripped)
+            }
+        } else {
+            buffer.clear();
+            buffer.push('#');
+            buffer.push_str(name);
+            Some(buffer.as_str())
+        }
+    }
+
     pub(super) fn insert_value(&mut self, name: &str, value: Value) {
         if let Some(scope) = self.value_env.last_mut() {
             scope.insert(name.to_string(), StoredValue::Plain(value.clone()));
@@ -40,27 +55,48 @@ impl<'ctx> AstInterpreter<'ctx> {
     }
 
     pub fn lookup_value(&self, name: &str) -> Option<Value> {
+        let mut alternate = String::new();
+        let alternate = Self::alternate_symbol_name(name, &mut alternate);
         for scope in self.value_env.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Some(value.value());
+            }
+            if let Some(alt) = alternate {
+                if let Some(value) = scope.get(alt) {
+                    return Some(value.value());
+                }
             }
         }
         None
     }
 
     pub(super) fn lookup_stored_value(&self, name: &str) -> Option<StoredValue> {
+        let mut alternate = String::new();
+        let alternate = Self::alternate_symbol_name(name, &mut alternate);
         for scope in self.value_env.iter().rev() {
             if let Some(value) = scope.get(name) {
                 return Some(value.clone());
+            }
+            if let Some(alt) = alternate {
+                if let Some(value) = scope.get(alt) {
+                    return Some(value.clone());
+                }
             }
         }
         None
     }
 
     pub(super) fn lookup_stored_value_mut(&mut self, name: &str) -> Option<&mut StoredValue> {
+        let mut alternate = String::new();
+        let alternate = Self::alternate_symbol_name(name, &mut alternate);
         for scope in self.value_env.iter_mut().rev() {
             if scope.contains_key(name) {
                 return scope.get_mut(name);
+            }
+            if let Some(alt) = alternate {
+                if alt != name && scope.contains_key(alt) {
+                    return scope.get_mut(alt);
+                }
             }
         }
         None

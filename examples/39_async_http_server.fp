@@ -28,6 +28,6 @@ async fn main() {
 
     loop {
         let stream = listener.accept().await;
-        let _task = std::task::spawn(handle_client(stream));
+        handle_client(stream).await;
     }
 }
