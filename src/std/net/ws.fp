@@ -1,5 +1,7 @@
 #[unimplemented]
-pub struct WsStream {}
+pub struct WsStream {
+    handle: i64,
+}
 
 impl WsStream {
     pub async fn connect(url: &str) -> WsStream {
@@ -16,7 +18,9 @@ impl WsStream {
 }
 
 #[unimplemented]
-pub struct WsMessage {}
+pub struct WsMessage {
+    handle: i64,
+}
 
 impl WsMessage {
     pub fn text(value: &str) -> WsMessage {

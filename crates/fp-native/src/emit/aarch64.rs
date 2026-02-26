@@ -201,9 +201,6 @@ fn build_frame_layout(
     }
 
     for local in &func.locals {
-        if matches!(local.ty, LirType::Void) {
-            continue;
-        }
         let size = align8(size_of(&local.ty) as i32).max(8);
         offset = align_to(offset, 8);
         local_offsets.insert(local.id, offset);
@@ -476,7 +473,14 @@ fn local_offset(layout: &FrameLayout, id: u32) -> Result<i32> {
         .local_offsets
         .get(&id)
         .copied()
-        .ok_or_else(|| Error::from("missing local slot"))
+        .ok_or_else(|| {
+            let mut known = layout.local_offsets.keys().copied().collect::<Vec<_>>();
+            known.sort_unstable();
+            Error::from(format!(
+                "missing local slot: id={} known_local_ids={:?}",
+                id, known
+            ))
+        })
 }
 
 fn agg_offset(layout: &FrameLayout, id: u32) -> Result<i32> {
@@ -613,6 +617,9 @@ fn emit_const_globals(
 
 fn encode_const_bytes(constant: &LirConstant, ty: &LirType) -> Result<Vec<u8>> {
     match (constant, ty) {
+        (LirConstant::Array(values, _), LirType::Array(_, len)) if values.is_empty() || *len == 0 => {
+            Ok(Vec::new())
+        }
         (LirConstant::Array(values, elem_ty), LirType::Array(elem, _))
             if **elem == LirType::I8 && *elem_ty == LirType::I8 =>
         {
@@ -3432,6 +3439,8 @@ fn store_constant_aggregate_to_reg(
     }
     match constant {
         LirConstant::Undef(_) | LirConstant::Null(_) => return zero_reg_range(asm, base, size),
+        LirConstant::Int(value, _) if *value == 0 => return zero_reg_range(asm, base, size),
+        LirConstant::UInt(value, _) if *value == 0 => return zero_reg_range(asm, base, size),
         LirConstant::Struct(values, _) => {
             let LirType::Struct { fields, .. } = agg_ty else {
                 return Err(Error::from("expected struct type for aggregate return"));
@@ -3515,7 +3524,10 @@ fn store_constant_aggregate_to_reg(
             }
             Ok(())
         }
-        _ => Err(Error::from("unsupported aggregate constant for return")),
+        _ => Err(Error::from(format!(
+            "unsupported aggregate constant for return: constant={:?} ty={:?}",
+            constant, agg_ty
+        ))),
     }
 }
 
@@ -4197,6 +4209,9 @@ fn spill_arguments(
         let ty = local_types
             .get(&local.id)
             .ok_or_else(|| Error::from("missing local type"))?;
+        if matches!(ty, LirType::Void) {
+            continue;
+        }
         let offset = local_offset(layout, local.id)?;
         if is_large_aggregate(ty) {
             let size = size_of(ty) as i32;

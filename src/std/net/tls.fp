@@ -1,7 +1,9 @@
 use std::net::tcp::TcpStream;
 
 #[unimplemented]
-pub struct TlsConnector {}
+pub struct TlsConnector {
+    handle: i64,
+}
 
 impl TlsConnector {
     pub async fn connect(&self, domain: &str, stream: TcpStream) -> TlsStream {
@@ -10,7 +12,9 @@ impl TlsConnector {
 }
 
 #[unimplemented]
-pub struct TlsAcceptor {}
+pub struct TlsAcceptor {
+    handle: i64,
+}
 
 impl TlsAcceptor {
     pub async fn accept(&self, stream: TcpStream) -> TlsStream {
@@ -19,7 +23,9 @@ impl TlsAcceptor {
 }
 
 #[unimplemented]
-pub struct TlsStream {}
+pub struct TlsStream {
+    handle: i64,
+}
 
 impl TlsStream {
     pub async fn read(&mut self, buf: &mut [u8]) -> i64 {

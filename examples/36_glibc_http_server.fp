@@ -38,7 +38,7 @@ const ACCEPT_ERR: &std::ffi::CStr = "accept";
 fn make_addr(port: u16) -> SockAddrIn {
     [
         AF_INET as u8, 0,
-        ((port >> 8) & 0xff) as u8, (port & 0xff) as u8,
+        ((port >> 8) & 255) as u8, (port & 255) as u8,
         0, 0, 0, 0,
         0, 0, 0, 0,
         0, 0, 0, 0,
@@ -49,7 +49,7 @@ fn make_addr(port: u16) -> SockAddrIn {
 fn make_addr(port: u16) -> SockAddrIn {
     [
         SOCKADDR_LEN as u8, AF_INET as u8,
-        ((port >> 8) & 0xff) as u8, (port & 0xff) as u8,
+        ((port >> 8) & 255) as u8, (port & 255) as u8,
         0, 0, 0, 0,
         0, 0, 0, 0,
         0, 0, 0, 0,
